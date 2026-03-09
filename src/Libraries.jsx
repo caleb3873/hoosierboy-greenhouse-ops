@@ -1620,11 +1620,505 @@ function SpacingLibrary() {
 }
 
 
+// ═══ BROKER CATALOGS ═══
+
+import { useState, useRef, useEffect } from "react";
+
+// ── STORAGE ───────────────────────────────────────────────────────────────────
+function useCatalogs() {
+  const [catalogs, setCatalogs] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("gh_broker_catalogs_v1") || "[]"); }
+    catch { return []; }
+  });
+  const save = (v) => { setCatalogs(v); try { localStorage.setItem("gh_broker_catalogs_v1", JSON.stringify(v)); } catch {} };
+  return [catalogs, save];
+}
+
+
+// ── COLUMN FIELD OPTIONS ──────────────────────────────────────────────────────
+const FIELD_OPTIONS = [
+  { id: "skip",        label: "— Skip —"         },
+  { id: "crop",        label: "Crop Name"         },
+  { id: "description", label: "Description / Variety" },
+  { id: "size",        label: "Size / Form Type"  },
+  { id: "itemNumber",  label: "Item / Material #" },
+  { id: "perQty",      label: "Per (qty per tray)"},
+  { id: "sellPrice",   label: "Sell Price"        },
+  { id: "unitPrice",   label: "Unit Price"        },
+  { id: "shipDate",    label: "Ship Date"         },
+  { id: "isNew",       label: "New Flag"          },
+];
+
+// ── PARSE EXCEL IN BROWSER ────────────────────────────────────────────────────
+async function parseExcel(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        // SheetJS is loaded via CDN script tag — use global XLSX
+        const wb = window.XLSX.read(e.target.result, { type: "array" });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const rows = window.XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+        resolve(rows);
+      } catch (err) { reject(err); }
+    };
+    reader.onerror = reject;
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+// ── HELPERS ───────────────────────────────────────────────────────────────────
+function guessMapping(headers) {
+  const map = {};
+  const h = headers.map(h => String(h).toLowerCase());
+  h.forEach((col, i) => {
+    if (!col) return;
+    if (col.includes("crop"))                            map[i] = "crop";
+    else if (col.includes("desc"))                       map[i] = "description";
+    else if (col.includes("size") || col.includes("form")) map[i] = "size";
+    else if (col.includes("material") || col.includes("item") || col.includes("mat no")) map[i] = "itemNumber";
+    else if (col.includes("per") && !col.includes("percent")) map[i] = "perQty";
+    else if (col.includes("sell"))                       map[i] = "sellPrice";
+    else if (col.includes("unit price") || col === "unit") map[i] = "unitPrice";
+    else if (col.includes("ship"))                       map[i] = "shipDate";
+    else if (col.includes("new"))                        map[i] = "isNew";
+  });
+  return map;
+}
+
+function applyMapping(rows, mapping, headerRow) {
+  const items = [];
+  rows.forEach((row, i) => {
+    if (i <= headerRow) return;
+    if (!row || row.every(c => !c)) return;
+
+    const get = (field) => {
+      const idx = Object.entries(mapping).find(([, f]) => f === field)?.[0];
+      return idx !== undefined ? String(row[idx] ?? "").trim() : "";
+    };
+
+    const crop = get("crop");
+    const desc = get("description");
+    if (!crop && !desc) return;
+
+    items.push({
+      id:          uid(),
+      crop:        crop,
+      description: desc,
+      size:        get("size"),
+      itemNumber:  get("itemNumber"),
+      perQty:      get("perQty"),
+      sellPrice:   parseFloat(get("sellPrice")) || null,
+      unitPrice:   parseFloat(get("unitPrice")) || null,
+      shipDate:    get("shipDate"),
+      isNew:       !!get("isNew"),
+    });
+  });
+  return items;
+}
+
+// ── UPLOAD WIZARD ─────────────────────────────────────────────────────────────
+function UploadWizard({ onSave, onCancel }) {
+  const [step, setStep]       = useState(1); // 1=file, 2=map, 3=confirm
+  const [rows, setRows]       = useState([]);
+  const [headers, setHeaders] = useState([]);
+  const [headerRow, setHeaderRow] = useState(0);
+  const [mapping, setMapping] = useState({});
+  const [brokerName, setBrokerName] = useState("");
+  const [season, setSeason]   = useState("Spring 2026");
+  const [loading, setLoading] = useState(false);
+  const [error, setError]     = useState(null);
+  const fileRef = useRef();
+
+  const handleFile = async (file) => {
+    if (!file) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const allRows = await parseExcel(file);
+      // Find header row - first row with 3+ non-empty cells
+      let hRow = 0;
+      for (let i = 0; i < Math.min(10, allRows.length); i++) {
+        if (allRows[i].filter(c => c).length >= 3) { hRow = i; break; }
+      }
+      setHeaderRow(hRow);
+      setHeaders(allRows[hRow]);
+      setRows(allRows);
+      setMapping(guessMapping(allRows[hRow]));
+      setStep(2);
+    } catch (e) {
+      setError("Could not read file. Make sure it's a .xlsx or .xls file.");
+    }
+    setLoading(false);
+  };
+
+  const preview = rows.slice(headerRow + 1, headerRow + 6);
+  const items   = step === 3 ? applyMapping(rows, mapping, headerRow) : [];
+
+  const s = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
+
+  if (step === 1) return (
+    <div style={s}>
+      <div style={{ fontSize: 20, fontWeight: 800, color: "#1a2a1a", marginBottom: 6 }}>Upload Broker Price List</div>
+      <div style={{ fontSize: 13, color: "#7a8c74", marginBottom: 24 }}>Upload an Excel file (.xlsx or .xls) from any broker. You'll map the columns in the next step.</div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .6, marginBottom: 6 }}>Broker Name</div>
+          <input value={brokerName} onChange={e => setBrokerName(e.target.value)} placeholder="e.g. Ball Seed"
+            style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1.5px solid #c8d8c0", fontSize: 14, color: "#1a2a1a", fontFamily: "inherit", boxSizing: "border-box" }} />
+        </div>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .6, marginBottom: 6 }}>Season</div>
+          <input value={season} onChange={e => setSeason(e.target.value)} placeholder="e.g. Spring 2026"
+            style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1.5px solid #c8d8c0", fontSize: 14, color: "#1a2a1a", fontFamily: "inherit", boxSizing: "border-box" }} />
+        </div>
+      </div>
+
+      <div
+        onClick={() => fileRef.current?.click()}
+        onDragOver={e => e.preventDefault()}
+        onDrop={e => { e.preventDefault(); handleFile(e.dataTransfer.files[0]); }}
+        style={{ border: "2px dashed #c8d8c0", borderRadius: 14, padding: "48px 24px", textAlign: "center", cursor: "pointer", background: "#fafcf8" }}>
+        <div style={{ fontSize: 36, marginBottom: 10 }}>📊</div>
+        <div style={{ fontSize: 15, fontWeight: 700, color: "#4a5a40", marginBottom: 4 }}>Drop Excel file here</div>
+        <div style={{ fontSize: 13, color: "#7a8c74" }}>or click to browse</div>
+        {loading && <div style={{ fontSize: 13, color: "#7fb069", marginTop: 12, fontWeight: 700 }}>Reading file...</div>}
+        {error  && <div style={{ fontSize: 13, color: "#c03030", marginTop: 12 }}>{error}</div>}
+      </div>
+      <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" style={{ display: "none" }} onChange={e => handleFile(e.target.files[0])} />
+
+      <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
+        <button onClick={onCancel} style={{ flex: 1, padding: "12px 0", borderRadius: 10, border: "1.5px solid #c8d8c0", background: "#fff", color: "#7a8c74", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+      </div>
+    </div>
+  );
+
+  if (step === 2) return (
+    <div style={s}>
+      <div style={{ fontSize: 20, fontWeight: 800, color: "#1a2a1a", marginBottom: 6 }}>Map Columns</div>
+      <div style={{ fontSize: 13, color: "#7a8c74", marginBottom: 20 }}>Tell the app what each column contains. We've made our best guess — adjust anything that's wrong.</div>
+
+      <div style={{ overflowX: "auto", marginBottom: 20 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <thead>
+            <tr style={{ background: "#f2f5ef" }}>
+              <th style={{ padding: "8px 12px", textAlign: "left", fontWeight: 700, color: "#4a5a40", borderBottom: "1.5px solid #e0ead8" }}>Column Header</th>
+              <th style={{ padding: "8px 12px", textAlign: "left", fontWeight: 700, color: "#4a5a40", borderBottom: "1.5px solid #e0ead8" }}>Sample Data</th>
+              <th style={{ padding: "8px 12px", textAlign: "left", fontWeight: 700, color: "#4a5a40", borderBottom: "1.5px solid #e0ead8" }}>Maps To</th>
+            </tr>
+          </thead>
+          <tbody>
+            {headers.map((h, i) => (
+              <tr key={i} style={{ borderBottom: "1px solid #f0f5ee" }}>
+                <td style={{ padding: "8px 12px", color: "#1a2a1a", fontWeight: 600 }}>{h || <span style={{ color: "#aabba0" }}>(empty)</span>}</td>
+                <td style={{ padding: "8px 12px", color: "#7a8c74", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {preview.map(r => r[i]).filter(Boolean).slice(0, 2).join(", ") || "—"}
+                </td>
+                <td style={{ padding: "8px 12px" }}>
+                  <select value={mapping[i] || "skip"} onChange={e => setMapping(m => ({ ...m, [i]: e.target.value }))}
+                    style={{ padding: "6px 10px", borderRadius: 7, border: "1.5px solid #c8d8c0", fontSize: 13, color: "#1a2a1a", fontFamily: "inherit", background: "#fff" }}>
+                    {FIELD_OPTIONS.map(f => <option key={f.id} value={f.id}>{f.label}</option>)}
+                  </select>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div style={{ display: "flex", gap: 10 }}>
+        <button onClick={() => setStep(1)} style={{ flex: 1, padding: "12px 0", borderRadius: 10, border: "1.5px solid #c8d8c0", background: "#fff", color: "#7a8c74", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>Back</button>
+        <button onClick={() => setStep(3)} style={{ flex: 2, padding: "12px 0", borderRadius: 10, border: "none", background: "#7fb069", color: "#fff", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
+          Preview Import →
+        </button>
+      </div>
+    </div>
+  );
+
+  if (step === 3) return (
+    <div style={s}>
+      <div style={{ fontSize: 20, fontWeight: 800, color: "#1a2a1a", marginBottom: 4 }}>Confirm Import</div>
+      <div style={{ fontSize: 13, color: "#7a8c74", marginBottom: 20 }}>
+        Found <strong style={{ color: "#1a2a1a" }}>{items.length.toLocaleString()} items</strong> from {brokerName || "broker"} — {season}
+      </div>
+
+      {/* Crop summary */}
+      <div style={{ background: "#f2f5ef", borderRadius: 12, padding: "14px 16px", marginBottom: 16 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .6, marginBottom: 10 }}>Crops Found</div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {[...new Set(items.map(i => i.crop).filter(Boolean))].sort().map(crop => (
+            <span key={crop} style={{ background: "#fff", border: "1px solid #c8d8c0", borderRadius: 20, padding: "3px 12px", fontSize: 12, color: "#4a5a40", fontWeight: 600 }}>
+              {crop} ({items.filter(i => i.crop === crop).length})
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {/* Sample rows */}
+      <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .6, marginBottom: 8 }}>Sample Rows</div>
+      <div style={{ overflowX: "auto", marginBottom: 20 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <thead>
+            <tr style={{ background: "#f2f5ef" }}>
+              {["Crop","Description","Size","Item #","Per","Sell Price"].map(h => (
+                <th key={h} style={{ padding: "7px 10px", textAlign: "left", fontWeight: 700, color: "#4a5a40", borderBottom: "1.5px solid #e0ead8", whiteSpace: "nowrap" }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {items.slice(0, 8).map(item => (
+              <tr key={item.id} style={{ borderBottom: "1px solid #f0f5ee" }}>
+                <td style={{ padding: "6px 10px", color: "#1a2a1a", fontWeight: 600 }}>{item.crop}</td>
+                <td style={{ padding: "6px 10px", color: "#4a5a40", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.description}</td>
+                <td style={{ padding: "6px 10px", color: "#7a8c74" }}>{item.size}</td>
+                <td style={{ padding: "6px 10px", color: "#7a8c74" }}>{item.itemNumber}</td>
+                <td style={{ padding: "6px 10px", color: "#7a8c74" }}>{item.perQty}</td>
+                <td style={{ padding: "6px 10px", color: "#2e7a2e", fontWeight: 700 }}>{item.sellPrice ? `$${item.sellPrice.toFixed(4)}` : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div style={{ display: "flex", gap: 10 }}>
+        <button onClick={() => setStep(2)} style={{ flex: 1, padding: "12px 0", borderRadius: 10, border: "1.5px solid #c8d8c0", background: "#fff", color: "#7a8c74", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>Back</button>
+        <button onClick={() => onSave({ id: uid(), brokerName, season, items, importedAt: new Date().toISOString() })}
+          style={{ flex: 2, padding: "12px 0", borderRadius: 10, border: "none", background: "#7fb069", color: "#fff", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
+          Import {items.length.toLocaleString()} Items ✓
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── CATALOG DETAIL VIEW ───────────────────────────────────────────────────────
+function CatalogDetail({ catalog, onBack, onDelete }) {
+  const [search, setSearch] = useState("");
+  const [cropFilter, setCropFilter] = useState("all");
+
+  const crops = [...new Set(catalog.items.map(i => i.crop).filter(Boolean))].sort();
+  const filtered = catalog.items.filter(item => {
+    const matchesCrop = cropFilter === "all" || item.crop === cropFilter;
+    const matchesSearch = !search ||
+      item.description?.toLowerCase().includes(search.toLowerCase()) ||
+      item.crop?.toLowerCase().includes(search.toLowerCase()) ||
+      item.itemNumber?.includes(search);
+    return matchesCrop && matchesSearch;
+  });
+
+  return (
+    <div style={{ fontFamily: "'DM Sans','Segoe UI',sans-serif" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
+        <button onClick={onBack} style={{ background: "none", border: "none", color: "#7a8c74", fontSize: 20, cursor: "pointer", padding: 0 }}>←</button>
+        <div>
+          <div style={{ fontSize: 20, fontWeight: 800, color: "#1a2a1a" }}>{catalog.brokerName}</div>
+          <div style={{ fontSize: 13, color: "#7a8c74" }}>{catalog.season} · {catalog.items.length.toLocaleString()} items</div>
+        </div>
+        <button onClick={() => { if (window.confirm("Delete this catalog?")) onDelete(catalog.id); }}
+          style={{ marginLeft: "auto", background: "#fff0f0", border: "1px solid #f0c0c0", borderRadius: 8, padding: "6px 14px", color: "#c03030", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+          Delete
+        </button>
+      </div>
+
+      <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search varieties..."
+          style={{ flex: 1, padding: "10px 12px", borderRadius: 8, border: "1.5px solid #c8d8c0", fontSize: 14, color: "#1a2a1a", fontFamily: "inherit" }} />
+        <select value={cropFilter} onChange={e => setCropFilter(e.target.value)}
+          style={{ padding: "10px 12px", borderRadius: 8, border: "1.5px solid #c8d8c0", fontSize: 14, color: "#1a2a1a", fontFamily: "inherit", background: "#fff" }}>
+          <option value="all">All Crops</option>
+          {crops.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
+      </div>
+
+      <div style={{ fontSize: 12, color: "#7a8c74", marginBottom: 10 }}>{filtered.length.toLocaleString()} items</div>
+
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <thead>
+            <tr style={{ background: "#f2f5ef", position: "sticky", top: 0 }}>
+              {["Crop","Description","Size","Item #","Per","Sell Price"].map(h => (
+                <th key={h} style={{ padding: "8px 12px", textAlign: "left", fontWeight: 700, color: "#4a5a40", borderBottom: "1.5px solid #e0ead8", whiteSpace: "nowrap" }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.slice(0, 200).map(item => (
+              <tr key={item.id} style={{ borderBottom: "1px solid #f0f5ee" }}
+                onMouseEnter={e => e.currentTarget.style.background = "#fafcf8"}
+                onMouseLeave={e => e.currentTarget.style.background = ""}>
+                <td style={{ padding: "7px 12px", color: "#1a2a1a", fontWeight: 600 }}>{item.crop}</td>
+                <td style={{ padding: "7px 12px", color: "#4a5a40" }}>
+                  {item.isNew && <span style={{ background: "#8e44ad", color: "#fff", borderRadius: 4, padding: "1px 5px", fontSize: 9, fontWeight: 800, marginRight: 6 }}>NEW</span>}
+                  {item.description}
+                </td>
+                <td style={{ padding: "7px 12px", color: "#7a8c74" }}>{item.size}</td>
+                <td style={{ padding: "7px 12px", color: "#7a8c74", fontFamily: "monospace" }}>{item.itemNumber}</td>
+                <td style={{ padding: "7px 12px", color: "#7a8c74" }}>{item.perQty}</td>
+                <td style={{ padding: "7px 12px", color: "#2e7a2e", fontWeight: 700 }}>
+                  {item.sellPrice ? `$${item.sellPrice.toFixed(4)}` : "—"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {filtered.length > 200 && (
+          <div style={{ textAlign: "center", padding: "16px", fontSize: 13, color: "#7a8c74" }}>
+            Showing 200 of {filtered.length.toLocaleString()} — use search to narrow results
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── MAIN BROKER CATALOGS COMPONENT ───────────────────────────────────────────
+function BrokerCatalogs() {
+  const [catalogs, saveCatalogs] = useCatalogs();
+  const [view, setView]          = useState("list"); // list | upload | detail
+  const [selectedId, setSelectedId] = useState(null);
+
+  // Load SheetJS from CDN if not already loaded
+  useEffect(() => {
+    if (!window.XLSX) {
+      const script = document.createElement("script");
+      script.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+      document.head.appendChild(script);
+    }
+  }, []);
+
+  const handleSave = (catalog) => {
+    saveCatalogs([...catalogs, catalog]);
+    setView("list");
+  };
+
+  const handleDelete = (id) => {
+    saveCatalogs(catalogs.filter(c => c.id !== id));
+    setView("list");
+  };
+
+  const selected = catalogs.find(c => c.id === selectedId);
+
+  if (view === "upload") return (
+    <div style={{ maxWidth: 700, margin: "0 auto" }}>
+      <UploadWizard onSave={handleSave} onCancel={() => setView("list")} />
+    </div>
+  );
+
+  if (view === "detail" && selected) return (
+    <CatalogDetail
+      catalog={selected}
+      onBack={() => setView("list")}
+      onDelete={(id) => { handleDelete(id); setView("list"); }}
+    />
+  );
+
+  return (
+    <div style={{ fontFamily: "'DM Sans','Segoe UI',sans-serif" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+        <div>
+          <div style={{ fontSize: 20, fontWeight: 800, color: "#1a2a1a" }}>Broker Catalogs</div>
+          <div style={{ fontSize: 13, color: "#7a8c74" }}>Upload price lists to auto-fill varieties and pricing in crop runs</div>
+        </div>
+        <button onClick={() => setView("upload")}
+          style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 10, padding: "10px 20px", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
+          + Upload Price List
+        </button>
+      </div>
+
+      {catalogs.length === 0 ? (
+        <div style={{ background: "#fff", borderRadius: 16, border: "1.5px dashed #c8d8c0", padding: "60px 40px", textAlign: "center" }}>
+          <div style={{ fontSize: 48, marginBottom: 16 }}>📊</div>
+          <div style={{ fontSize: 16, fontWeight: 800, color: "#1a2a1a", marginBottom: 8 }}>No catalogs yet</div>
+          <div style={{ fontSize: 13, color: "#7a8c74", maxWidth: 400, margin: "0 auto 24px" }}>
+            Upload a price list from any broker. Once loaded, varieties and pricing will auto-fill when you select a broker in a crop run.
+          </div>
+          <button onClick={() => setView("upload")}
+            style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 10, padding: "12px 28px", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
+            Upload First Price List
+          </button>
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 14 }}>
+          {catalogs.map(cat => {
+            const crops = [...new Set(cat.items.map(i => i.crop).filter(Boolean))];
+            return (
+              <div key={cat.id}
+                onClick={() => { setSelectedId(cat.id); setView("detail"); }}
+                style={{ background: "#fff", border: "1.5px solid #e0ead8", borderRadius: 14, padding: "18px 20px", cursor: "pointer", transition: "all .15s" }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = "#7fb069"; e.currentTarget.style.background = "#fafcf8"; }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = "#e0ead8"; e.currentTarget.style.background = "#fff"; }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 16, fontWeight: 800, color: "#1a2a1a" }}>{cat.brokerName}</div>
+                    <div style={{ fontSize: 12, color: "#7a8c74" }}>{cat.season}</div>
+                  </div>
+                  <span style={{ background: "#f2f5ef", color: "#4a5a40", borderRadius: 20, padding: "3px 10px", fontSize: 12, fontWeight: 700 }}>
+                    {cat.items.length.toLocaleString()}
+                  </span>
+                </div>
+                <div style={{ fontSize: 11, color: "#7a8c74", marginBottom: 8 }}>{crops.length} crops</div>
+                <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+                  {crops.slice(0, 6).map(c => (
+                    <span key={c} style={{ background: "#f2f5ef", color: "#4a5a40", borderRadius: 20, padding: "2px 8px", fontSize: 10, fontWeight: 600 }}>{c}</span>
+                  ))}
+                  {crops.length > 6 && <span style={{ fontSize: 10, color: "#aabba0" }}>+{crops.length - 6} more</span>}
+                </div>
+                <div style={{ fontSize: 10, color: "#aabba0", marginTop: 10 }}>
+                  Imported {new Date(cat.importedAt).toLocaleDateString()}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── EXPORTED HOOK FOR CROP PLANNING ──────────────────────────────────────────
+// Use this in the sourcing tab to look up varieties from catalogs
+function useBrokerLookup() {
+  const [catalogs] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("gh_broker_catalogs_v1") || "[]"); }
+    catch { return []; }
+  });
+
+  const getBrokerNames = () => [...new Set(catalogs.map(c => c.brokerName).filter(Boolean))].sort();
+
+  const getCatalogForBroker = (brokerName) =>
+    catalogs.filter(c => c.brokerName === brokerName);
+
+  const searchVarieties = (brokerName, cropName, query = "") => {
+    const cats = getCatalogForBroker(brokerName);
+    const items = cats.flatMap(c => c.items);
+    return items.filter(item => {
+      const matchesCrop = !cropName || item.crop?.toLowerCase().includes(cropName.toLowerCase());
+      const matchesQuery = !query ||
+        item.description?.toLowerCase().includes(query.toLowerCase()) ||
+        item.itemNumber?.includes(query);
+      return matchesCrop && matchesQuery;
+    }).slice(0, 50);
+  };
+
+  const lookupByItemNumber = (itemNumber) => {
+    for (const cat of catalogs) {
+      const item = cat.items.find(i => i.itemNumber === itemNumber);
+      if (item) return { ...item, brokerName: cat.brokerName, season: cat.season };
+    }
+    return null;
+  };
+
+  return { getBrokerNames, getCatalogForBroker, searchVarieties, lookupByItemNumber };
+}
+
+
 // ── LIBRARIES TAB WRAPPER ────────────────────────────────────────────────────
 const LIBRARY_TABS = [
   { id: "variety",   label: "Varieties",  icon: "🌿" },
   { id: "container", label: "Containers", icon: "🪴" },
   { id: "spacing",   label: "Spacing",    icon: "📐" },
+  { id: "brokers",   label: "Brokers",    icon: "📊" },
 ];
 
 export default function Libraries() {
@@ -1632,7 +2126,7 @@ export default function Libraries() {
 
   return (
     <div>
-      <div style={{ display: "flex", gap: 8, marginBottom: 24 }}>
+      <div style={{ display: "flex", gap: 8, marginBottom: 24, flexWrap: "wrap" }}>
         {LIBRARY_TABS.map(t => (
           <button key={t.id} onClick={() => setTab(t.id)}
             style={{
@@ -1649,6 +2143,7 @@ export default function Libraries() {
       {tab === "variety"   && <VarietyLibrary />}
       {tab === "container" && <ContainerLibrary />}
       {tab === "spacing"   && <SpacingLibrary />}
+      {tab === "brokers"   && <BrokerCatalogs />}
     </div>
   );
 }
