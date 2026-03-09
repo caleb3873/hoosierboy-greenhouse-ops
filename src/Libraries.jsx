@@ -1,14 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-
-// ── STORAGE ───────────────────────────────────────────────────────────────────
-function useStorage(key, fallback) {
-  const [val, setVal] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(key)) ?? fallback; }
-    catch { return fallback; }
-  });
-  useEffect(() => { try { localStorage.setItem(key, JSON.stringify(val)); } catch {} }, [key, val]);
-  return [val, setVal];
-}
+import { useVarieties, useContainers, useSpacingProfiles, useBrokerCatalogs, useSoilMixes, useInputProducts } from "./supabase";
 
 // ── BREEDER CONFIG ────────────────────────────────────────────────────────────
 const BREEDERS = [
@@ -407,7 +398,7 @@ function PDFUploader({ onExtracted }) {
 
 // ── MAIN APP ──────────────────────────────────────────────────────────────────
 function VarietyLibrary() {
-  const [library, setLibrary] = useStorage("gh_variety_library", []);
+  const { rows: library, upsert: upsertVariety, remove: removeVarietyDb } = useVarieties();
   const [view, setView] = useState("library"); // library | add | edit | review
   const [editingId, setEditingId] = useState(null);
   const [reviewQueue, setReviewQueue] = useState([]);
@@ -416,13 +407,9 @@ function VarietyLibrary() {
   const [filterBreeder, setFilterBreeder] = useState("");
   const [filterType, setFilterType] = useState("");
 
-  function saveVariety(form) {
+  async function saveVariety(form) {
     if (!form.cropName) return;
-    if (editingId) {
-      setLibrary(l => l.map(x => x.id === editingId ? { ...x, ...form } : x));
-    } else {
-      setLibrary(l => [...l, { ...form, id: Date.now().toString() }]);
-    }
+    await upsertVariety(editingId ? { ...form, id: editingId } : { ...form, id: Date.now().toString() });
     setView("library");
     setEditingId(null);
   }
@@ -432,9 +419,9 @@ function VarietyLibrary() {
     setView("edit");
   }
 
-  function deleteVariety(id) {
+  async function deleteVariety(id) {
     if (window.confirm("Remove this variety from the library?")) {
-      setLibrary(l => l.filter(x => x.id !== id));
+      await removeVarietyDb(id);
     }
   }
 
@@ -444,8 +431,8 @@ function VarietyLibrary() {
     setView("review");
   }
 
-  function saveReviewed(form) {
-    setLibrary(l => [...l, { ...form, id: Date.now().toString() }]);
+  async function saveReviewed(form) {
+    await upsertVariety({ ...form, id: Date.now().toString() });
     if (reviewIndex < reviewQueue.length - 1) {
       setReviewIndex(i => i + 1);
     } else {
@@ -1006,16 +993,16 @@ function ContainerCard({ container: c, onEdit, onDelete, onDuplicate }) {
 
 // ── MAIN ──────────────────────────────────────────────────────────────────────
 function ContainerLibrary() {
-  const [containers, setContainers] = useStorage("gh_containers_v1", []);
+  const { rows: containers, upsert: upsertContainer, remove: removeContainerDb } = useContainers();
   const [view,      setView      ] = useState("list");
   const [editingId, setEditingId ] = useState(null);
   const [kindFilter, setKindFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
   const [search,     setSearch   ] = useState("");
 
-  function save(c) { if (editingId) setContainers(x => x.map(i => i.id === editingId ? c : i)); else setContainers(x => [...x, c]); setView("list"); setEditingId(null); }
-  function del(id) { if (window.confirm("Remove this container?")) setContainers(x => x.filter(i => i.id !== id)); }
-  function dup(c)  { setContainers(x => [...x, { ...dc(c), id: uid(), name: c.name + " (Copy)" }]); }
+  async function save(c) { await upsertContainer(c); setView("list"); setEditingId(null); }
+  async function del(id) { if (window.confirm("Remove this container?")) await removeContainerDb(id); }
+  async function dup(c)  { await upsertContainer({ ...dc(c), id: uid(), name: c.name + " (Copy)" }); }
 
   const finished     = containers.filter(c => c.kind === "finished");
   const propagation  = containers.filter(c => c.kind === "propagation");
@@ -1529,15 +1516,15 @@ function SpacingCard({ profile: p, onEdit, onDelete, onDuplicate }) {
 
 // ── MAIN ──────────────────────────────────────────────────────────────────────
 function SpacingLibrary() {
-  const [profiles,  setProfiles ] = useStorage("gh_spacing_v1", []);
+  const { rows: profiles, upsert: upsertProfile, remove: removeProfileDb } = useSpacingProfiles();
   const [view,      setView     ] = useState("list");
   const [editingId, setEditingId] = useState(null);
   const [tagFilter, setTagFilter] = useState("all");
   const [search,    setSearch   ] = useState("");
 
-  function save(p) { if (editingId) setProfiles(x => x.map(i => i.id === editingId ? p : i)); else setProfiles(x => [...x, p]); setView("list"); setEditingId(null); }
-  function del(id) { if (window.confirm("Remove this spacing profile?")) setProfiles(x => x.filter(i => i.id !== id)); }
-  function dup(p)  { setProfiles(x => [...x, { ...dc(p), id: uid(), name: p.name + " (Copy)" }]); }
+  async function save(p) { await upsertProfile(p); setView("list"); setEditingId(null); }
+  async function del(id) { if (window.confirm("Remove this spacing profile?")) await removeProfileDb(id); }
+  async function dup(p)  { await upsertProfile({ ...dc(p), id: uid(), name: p.name + " (Copy)" }); }
 
   const filtered = profiles.filter(p => {
     if (tagFilter !== "all" && p.tag !== tagFilter) return false;
@@ -1631,16 +1618,6 @@ function SpacingLibrary() {
 
 // ═══ BROKER CATALOGS ═══
 
-
-// ── STORAGE ───────────────────────────────────────────────────────────────────
-function useCatalogs() {
-  const [catalogs, setCatalogs] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("gh_broker_catalogs_v1") || "[]"); }
-    catch { return []; }
-  });
-  const save = (v) => { setCatalogs(v); try { localStorage.setItem("gh_broker_catalogs_v1", JSON.stringify(v)); } catch {} };
-  return [catalogs, save];
-}
 
 
 // ── COLUMN FIELD OPTIONS ──────────────────────────────────────────────────────
@@ -1982,7 +1959,7 @@ function CatalogDetail({ catalog, onBack, onDelete }) {
 
 // ── MAIN BROKER CATALOGS COMPONENT ───────────────────────────────────────────
 function BrokerCatalogs() {
-  const [catalogs, saveCatalogs] = useCatalogs();
+  const { rows: catalogs, upsert: upsertCatalog, remove: removeCatalogDb } = useBrokerCatalogs();
   const [view, setView]          = useState("list"); // list | upload | detail
   const [selectedId, setSelectedId] = useState(null);
 
@@ -1995,13 +1972,13 @@ function BrokerCatalogs() {
     }
   }, []);
 
-  const handleSave = (catalog) => {
-    saveCatalogs([...catalogs, catalog]);
+  const handleSave = async (catalog) => {
+    await upsertCatalog(catalog);
     setView("list");
   };
 
-  const handleDelete = (id) => {
-    saveCatalogs(catalogs.filter(c => c.id !== id));
+  const handleDelete = async (id) => {
+    await removeCatalogDb(id);
     setView("list");
   };
 
@@ -2085,12 +2062,8 @@ function BrokerCatalogs() {
 }
 
 // ── EXPORTED HOOK FOR CROP PLANNING ──────────────────────────────────────────
-// Use this in the sourcing tab to look up varieties from catalogs
 function useBrokerLookup() {
-  const [catalogs] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("gh_broker_catalogs_v1") || "[]"); }
-    catch { return []; }
-  });
+  const { rows: catalogs } = useBrokerCatalogs();
 
   const getBrokerNames = () => [...new Set(catalogs.map(c => c.brokerName).filter(Boolean))].sort();
 
@@ -2111,7 +2084,7 @@ function useBrokerLookup() {
 
   const lookupByItemNumber = (itemNumber) => {
     for (const cat of catalogs) {
-      const item = cat.items.find(i => i.itemNumber === itemNumber);
+      const item = cat.items?.find(i => i.itemNumber === itemNumber);
       if (item) return { ...item, brokerName: cat.brokerName, season: cat.season };
     }
     return null;
@@ -2174,14 +2147,6 @@ const SOIL_CATEGORIES = [
 
 const BAG_UNITS = ["cu ft", "gal", "L", "qt", "lbs"];
 
-function useSoilMixes() {
-  const [mixes, setMixes] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("gh_soil_mixes_v1") || "[]"); }
-    catch { return []; }
-  });
-  const save = (v) => { setMixes(v); try { localStorage.setItem("gh_soil_mixes_v1", JSON.stringify(v)); } catch {} };
-  return [mixes, save];
-}
 
 function SoilForm({ initial, onSave, onCancel }) {
   const blank = { id: null, name: "", category: "annual", vendor: "", productName: "", sku: "", bagSize: "", bagUnit: "cu ft", costPerBag: "", notes: "" };
@@ -2329,17 +2294,13 @@ function SoilCard({ mix, onEdit, onDelete }) {
 }
 
 function SoilLibrary() {
-  const [mixes, saveMixes] = useSoilMixes();
+  const { rows: mixes, upsert: upsertMix, remove: removeMixDb } = useSoilMixes();
   const [view, setView]       = useState("list");
   const [editingId, setEditId] = useState(null);
   const [catFilter, setCat]    = useState("all");
 
-  const save = (mix) => {
-    if (mix.id && mixes.find(m => m.id === mix.id)) {
-      saveMixes(mixes.map(m => m.id === mix.id ? mix : m));
-    } else {
-      saveMixes([...mixes, mix]);
-    }
+  const save = async (mix) => {
+    await upsertMix(mix);
     setView("list"); setEditId(null);
   };
 
@@ -2387,7 +2348,7 @@ function SoilLibrary() {
           {filtered.map(mix => (
             <SoilCard key={mix.id} mix={mix}
               onEdit={() => { setEditId(mix.id); setView("edit"); }}
-              onDelete={() => saveMixes(mixes.filter(m => m.id !== mix.id))} />
+              onDelete={() => removeMixDb(mix.id)} />
           ))}
         </div>
       )}
@@ -2423,15 +2384,6 @@ const STOCK_META = {
   low: { label: "Low — Reorder", color: "#c8791a", bg: "#fff4e8", dot: "#f0a040" },
   out: { label: "Out of Stock", color: "#c03030", bg: "#fff0f0", dot: "#e06060" },
 };
-
-function useInputs() {
-  const [inputs, setInputs] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("gh_inputs_v1") || "[]"); }
-    catch { return []; }
-  });
-  const save = (v) => { setInputs(v); try { localStorage.setItem("gh_inputs_v1", JSON.stringify(v)); } catch {} };
-  return [inputs, save];
-}
 
 function InputForm({ initial, onSave, onCancel }) {
   const blank = {
@@ -2706,23 +2658,19 @@ function InputCard({ product, onEdit, onDelete, onUpdateStock }) {
 }
 
 function InputsLibrary() {
-  const [inputs, saveInputs] = useInputs();
+  const { rows: inputs, upsert: upsertInput, remove: removeInputDb } = useInputProducts();
   const [view, setView]        = useState("list");
   const [editingId, setEditId] = useState(null);
   const [catFilter, setCat]    = useState("all");
   const [statusFilter, setStat] = useState("all");
   const [search, setSearch]    = useState("");
 
-  const save = (input) => {
-    if (input.id && inputs.find(i => i.id === input.id)) {
-      saveInputs(inputs.map(i => i.id === input.id ? input : i));
-    } else {
-      saveInputs([...inputs, input]);
-    }
+  const save = async (input) => {
+    await upsertInput(input);
     setView("list"); setEditId(null);
   };
 
-  const updateStock = (id, qty) => saveInputs(inputs.map(i => i.id === id ? { ...i, stockQty: qty } : i));
+  const updateStock = async (id, qty) => await upsertInput({ id, stockQty: qty });
 
   const needsReorder = inputs.filter(i => ["low","out"].includes(STOCK_STATUS(i)));
 
@@ -2786,7 +2734,7 @@ function InputsLibrary() {
             : filtered.map(product => (
                 <InputCard key={product.id} product={product}
                   onEdit={() => { setEditId(product.id); setView("edit"); }}
-                  onDelete={() => saveInputs(inputs.filter(i => i.id !== product.id))}
+                  onDelete={() => removeInputDb(product.id)}
                   onUpdateStock={updateStock} />
               ))
           }
