@@ -1622,7 +1622,6 @@ function SpacingLibrary() {
 
 // ═══ BROKER CATALOGS ═══
 
-import { useState, useRef, useEffect } from "react";
 
 // ── STORAGE ───────────────────────────────────────────────────────────────────
 function useCatalogs() {
