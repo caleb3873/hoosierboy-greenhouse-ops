@@ -177,6 +177,9 @@ function VarietyForm({ initial, onSave, onCancel, title }) {
       </div>
 
       <SectionHeader>Cultural Notes</SectionHeader>
+      <FormField label="Chemical Sensitivities" hint="Products this variety is known to react poorly to">
+        <textarea style={{ ...inputStyle(focus === "chemSens"), minHeight: 70, resize: "vertical" }} value={form.chemSensitivities || ""} onChange={e => setForm(x => ({ ...x, chemSensitivities: e.target.value }))} onFocus={() => setFocus("chemSens")} onBlur={() => setFocus(null)} placeholder="e.g. Sensitive to Avid — causes leaf distortion. Bonzi causes excessive stunting above 15 ppm. Avoid oil-based sprays." />
+      </FormField>
       <FormField label="Pinching & Pruning">
         <textarea style={{ ...inputStyle(focus === "pinching"), minHeight: 70, resize: "vertical" }} value={form.pinchingNotes || ""} onChange={e => setForm(x => ({ ...x, pinchingNotes: e.target.value }))} onFocus={() => setFocus("pinching")} onBlur={() => setFocus(null)} placeholder="Pinch timing, number of pinches, pruning recommendations..." />
       </FormField>
@@ -254,6 +257,12 @@ function VarietyCard({ variety, onEdit, onDelete }) {
             ))}
           </div>
 
+          {variety.chemSensitivities && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#c03030", letterSpacing: 0.8, textTransform: "uppercase", marginBottom: 4 }}>⚠️ Chemical Sensitivities</div>
+              <div style={{ fontSize: 13, color: "#c03030", background: "#fff0f0", borderRadius: 8, padding: "10px 14px", border: "1px solid #f0c0c0" }}>{variety.chemSensitivities}</div>
+            </div>
+          )}
           {variety.pinchingNotes && (
             <div style={{ marginBottom: 12 }}>
               <div style={{ fontSize: 10, fontWeight: 700, color: "#aabba0", letterSpacing: 0.8, textTransform: "uppercase", marginBottom: 4 }}>Pinching & Pruning</div>
@@ -2116,6 +2125,8 @@ function useBrokerLookup() {
 const LIBRARY_TABS = [
   { id: "variety",   label: "Varieties",  icon: "🌿" },
   { id: "container", label: "Containers", icon: "🪴" },
+  { id: "soil",      label: "Soil",       icon: "🪱" },
+  { id: "inputs",    label: "Inputs",     icon: "🧪" },
   { id: "spacing",   label: "Spacing",    icon: "📐" },
   { id: "brokers",   label: "Brokers",    icon: "📊" },
 ];
@@ -2141,8 +2152,646 @@ export default function Libraries() {
       </div>
       {tab === "variety"   && <VarietyLibrary />}
       {tab === "container" && <ContainerLibrary />}
+      {tab === "soil"      && <SoilLibrary />}
+      {tab === "inputs"    && <InputsLibrary />}
       {tab === "spacing"   && <SpacingLibrary />}
       {tab === "brokers"   && <BrokerCatalogs />}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════
+// SOIL / SUBSTRATE LIBRARY
+// ═══════════════════════════════════════════════════════
+
+const SOIL_CATEGORIES = [
+  { id: "annual",       label: "Annual",       color: "#e07b39", bg: "#fff4e8" },
+  { id: "geranium",     label: "Geranium",     color: "#c03030", bg: "#fff0f0" },
+  { id: "propagation",  label: "Propagation",  color: "#8e44ad", bg: "#f5f0ff" },
+  { id: "houseplant",   label: "Houseplant",   color: "#2e7d9e", bg: "#e8f4f8" },
+  { id: "other",        label: "Other",        color: "#7a8c74", bg: "#f0f5ee" },
+];
+
+const BAG_UNITS = ["cu ft", "gal", "L", "qt", "lbs"];
+
+function useSoilMixes() {
+  const [mixes, setMixes] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("gh_soil_mixes_v1") || "[]"); }
+    catch { return []; }
+  });
+  const save = (v) => { setMixes(v); try { localStorage.setItem("gh_soil_mixes_v1", JSON.stringify(v)); } catch {} };
+  return [mixes, save];
+}
+
+function SoilForm({ initial, onSave, onCancel }) {
+  const blank = { id: null, name: "", category: "annual", vendor: "", productName: "", sku: "", bagSize: "", bagUnit: "cu ft", costPerBag: "", notes: "" };
+  const [f, setF] = useState(initial ? { ...blank, ...initial } : blank);
+  const [focus, setFocus] = useState(null);
+  const upd = (k, v) => setF(p => ({ ...p, [k]: v }));
+
+  const costPerCuFt = () => {
+    if (!f.costPerBag || !f.bagSize) return null;
+    const cost = Number(f.costPerBag);
+    const size = Number(f.bagSize);
+    if (!cost || !size) return null;
+    if (f.bagUnit === "cu ft") return (cost / size).toFixed(3);
+    if (f.bagUnit === "gal")   return (cost / (size * 0.134)).toFixed(3);
+    if (f.bagUnit === "L")     return (cost / (size * 0.0353)).toFixed(3);
+    if (f.bagUnit === "qt")    return (cost / (size * 0.0334)).toFixed(3);
+    return null;
+  };
+
+  const cat = SOIL_CATEGORIES.find(c => c.id === f.category) || SOIL_CATEGORIES[0];
+  const cpf = costPerCuFt();
+
+  return (
+    <div style={{ background: "#fff", borderRadius: 16, border: "1.5px solid #e0ead8", padding: "24px" }}>
+      <div style={{ fontSize: 17, fontWeight: 800, color: "#1a2a1a", marginBottom: 20 }}>{initial ? "Edit Mix" : "New Soil Mix"}</div>
+
+      <div style={{ marginBottom: 14 }}>
+        <FL c="Mix Name" />
+        <input style={IS(focus === "name")} value={f.name} onChange={e => upd("name", e.target.value)}
+          onFocus={() => setFocus("name")} onBlur={() => setFocus(null)} placeholder="e.g. Annual Mix, Geranium Pro Mix" />
+      </div>
+
+      <div style={{ marginBottom: 16 }}>
+        <FL c="Category" />
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {SOIL_CATEGORIES.map(c => (
+            <button key={c.id} onClick={() => upd("category", c.id)}
+              style={{ padding: "8px 16px", borderRadius: 20, border: `1.5px solid ${f.category === c.id ? c.color : "#c8d8c0"}`, background: f.category === c.id ? c.bg : "#fff", color: f.category === c.id ? c.color : "#7a8c74", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
+              {c.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
+        <div>
+          <FL c="Vendor" />
+          <input style={IS(focus === "vendor")} value={f.vendor} onChange={e => upd("vendor", e.target.value)}
+            onFocus={() => setFocus("vendor")} onBlur={() => setFocus(null)} placeholder="e.g. Sun Gro, Berger" />
+        </div>
+        <div>
+          <FL c="Product Name" />
+          <input style={IS(focus === "product")} value={f.productName} onChange={e => upd("productName", e.target.value)}
+            onFocus={() => setFocus("product")} onBlur={() => setFocus(null)} placeholder="e.g. Metro-Mix 830" />
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 14 }}>
+        <div>
+          <FL c="SKU / Item #" />
+          <input style={IS(focus === "sku")} value={f.sku} onChange={e => upd("sku", e.target.value)}
+            onFocus={() => setFocus("sku")} onBlur={() => setFocus(null)} placeholder="Optional" />
+        </div>
+        <div>
+          <FL c="Bag Size" />
+          <div style={{ display: "flex", gap: 6 }}>
+            <input type="number" step="0.1" style={{ ...IS(focus === "bagSize"), flex: 1 }} value={f.bagSize} onChange={e => upd("bagSize", e.target.value)}
+              onFocus={() => setFocus("bagSize")} onBlur={() => setFocus(null)} placeholder="e.g. 3.8" />
+            <select value={f.bagUnit} onChange={e => upd("bagUnit", e.target.value)}
+              style={{ padding: "9px 8px", borderRadius: 8, border: "1.5px solid #c8d8c0", fontSize: 13, color: "#1a2a1a", fontFamily: "inherit", background: "#fff", flexShrink: 0 }}>
+              {BAG_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+            </select>
+          </div>
+        </div>
+        <div>
+          <FL c="Cost per Bag ($)" />
+          <input type="number" step="0.01" style={IS(focus === "cost")} value={f.costPerBag} onChange={e => upd("costPerBag", e.target.value)}
+            onFocus={() => setFocus("cost")} onBlur={() => setFocus(null)} placeholder="e.g. 28.50" />
+        </div>
+      </div>
+
+      {cpf && (
+        <div style={{ background: "#f0f8eb", border: "1.5px solid #c8e0b8", borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", gap: 20 }}>
+          <div><div style={{ fontSize: 11, color: "#7a8c74", fontWeight: 700, textTransform: "uppercase" }}>Cost / cu ft</div><div style={{ fontSize: 18, fontWeight: 800, color: "#2e5c1e" }}>${cpf}</div></div>
+          {f.bagSize && f.bagUnit !== "cu ft" && <div><div style={{ fontSize: 11, color: "#7a8c74", fontWeight: 700, textTransform: "uppercase" }}>Bag in cu ft</div><div style={{ fontSize: 18, fontWeight: 800, color: "#2e5c1e" }}>{(Number(f.bagSize) * (f.bagUnit === "gal" ? 0.134 : f.bagUnit === "L" ? 0.0353 : f.bagUnit === "qt" ? 0.0334 : 1)).toFixed(2)}</div></div>}
+        </div>
+      )}
+
+      <div style={{ marginBottom: 20 }}>
+        <FL c="Notes" />
+        <textarea style={{ ...IS(focus === "notes"), minHeight: 60, resize: "vertical" }} value={f.notes} onChange={e => upd("notes", e.target.value)}
+          onFocus={() => setFocus("notes")} onBlur={() => setFocus(null)} placeholder="Amendments, pH notes, drainage additives..." />
+      </div>
+
+      <div style={{ display: "flex", gap: 10 }}>
+        <button onClick={onCancel} style={{ flex: 1, padding: "12px 0", borderRadius: 10, border: "1.5px solid #c8d8c0", background: "#fff", color: "#7a8c74", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+        <button onClick={() => f.name && onSave({ ...f, id: f.id || uid() })}
+          style={{ flex: 2, padding: "12px 0", borderRadius: 10, border: "none", background: f.name ? "#7fb069" : "#c8d8c0", color: "#fff", fontWeight: 800, fontSize: 14, cursor: f.name ? "pointer" : "default", fontFamily: "inherit" }}>
+          {initial ? "Save Changes" : "Add Mix"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function SoilCard({ mix, onEdit, onDelete }) {
+  const cat = SOIL_CATEGORIES.find(c => c.id === mix.category) || SOIL_CATEGORIES[4];
+  const cpf = (() => {
+    if (!mix.costPerBag || !mix.bagSize) return null;
+    const cost = Number(mix.costPerBag), size = Number(mix.bagSize);
+    if (!cost || !size) return null;
+    if (mix.bagUnit === "cu ft") return (cost / size).toFixed(3);
+    if (mix.bagUnit === "gal")   return (cost / (size * 0.134)).toFixed(3);
+    if (mix.bagUnit === "L")     return (cost / (size * 0.0353)).toFixed(3);
+    if (mix.bagUnit === "qt")    return (cost / (size * 0.0334)).toFixed(3);
+    return null;
+  })();
+
+  return (
+    <div style={{ background: "#fff", border: "1.5px solid #e0ead8", borderRadius: 14, padding: "16px 18px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+            <span style={{ background: cat.bg, color: cat.color, border: `1px solid ${cat.color}30`, borderRadius: 20, padding: "2px 10px", fontSize: 11, fontWeight: 700 }}>{cat.label}</span>
+            {mix.vendor && <span style={{ fontSize: 12, color: "#7a8c74" }}>{mix.vendor}</span>}
+          </div>
+          <div style={{ fontSize: 17, fontWeight: 800, color: "#1a2a1a" }}>{mix.name}</div>
+          {mix.productName && <div style={{ fontSize: 13, color: "#4a5a40" }}>{mix.productName}</div>}
+        </div>
+        <div style={{ display: "flex", gap: 6, flexShrink: 0, marginLeft: 12 }}>
+          <button onClick={onEdit}   style={{ background: "none", border: "1px solid #c8d8c0", borderRadius: 7, padding: "5px 10px", fontSize: 12, color: "#7a8c74", cursor: "pointer", fontFamily: "inherit" }}>Edit</button>
+          <button onClick={onDelete} style={{ background: "none", border: "1px solid #f0c0c0", borderRadius: 7, padding: "5px 10px", fontSize: 12, color: "#c03030", cursor: "pointer", fontFamily: "inherit" }}>✕</button>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        {mix.bagSize && <div style={{ background: "#f2f5ef", borderRadius: 8, padding: "6px 12px", textAlign: "center" }}><div style={{ fontSize: 14, fontWeight: 800, color: "#1a2a1a" }}>{mix.bagSize} {mix.bagUnit}</div><div style={{ fontSize: 10, color: "#7a8c74", textTransform: "uppercase" }}>Bag Size</div></div>}
+        {mix.costPerBag && <div style={{ background: "#f2f5ef", borderRadius: 8, padding: "6px 12px", textAlign: "center" }}><div style={{ fontSize: 14, fontWeight: 800, color: "#1a2a1a" }}>${Number(mix.costPerBag).toFixed(2)}</div><div style={{ fontSize: 10, color: "#7a8c74", textTransform: "uppercase" }}>Per Bag</div></div>}
+        {cpf && <div style={{ background: "#f0f8eb", borderRadius: 8, padding: "6px 12px", textAlign: "center" }}><div style={{ fontSize: 14, fontWeight: 800, color: "#2e5c1e" }}>${cpf}</div><div style={{ fontSize: 10, color: "#7a8c74", textTransform: "uppercase" }}>Per Cu Ft</div></div>}
+        {mix.sku && <div style={{ background: "#f2f5ef", borderRadius: 8, padding: "6px 12px", textAlign: "center" }}><div style={{ fontSize: 13, fontWeight: 700, color: "#1a2a1a", fontFamily: "monospace" }}>{mix.sku}</div><div style={{ fontSize: 10, color: "#7a8c74", textTransform: "uppercase" }}>SKU</div></div>}
+      </div>
+      {mix.notes && <div style={{ fontSize: 12, color: "#7a8c74", marginTop: 10, fontStyle: "italic" }}>{mix.notes}</div>}
+    </div>
+  );
+}
+
+function SoilLibrary() {
+  const [mixes, saveMixes] = useSoilMixes();
+  const [view, setView]       = useState("list");
+  const [editingId, setEditId] = useState(null);
+  const [catFilter, setCat]    = useState("all");
+
+  const save = (mix) => {
+    if (mix.id && mixes.find(m => m.id === mix.id)) {
+      saveMixes(mixes.map(m => m.id === mix.id ? mix : m));
+    } else {
+      saveMixes([...mixes, mix]);
+    }
+    setView("list"); setEditId(null);
+  };
+
+  const filtered = mixes.filter(m => catFilter === "all" || m.category === catFilter);
+
+  if (view === "add")  return <SoilForm onSave={save} onCancel={() => setView("list")} />;
+  if (view === "edit" && editingId) return <SoilForm initial={mixes.find(m => m.id === editingId)} onSave={save} onCancel={() => { setView("list"); setEditId(null); }} />;
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <div style={{ fontSize: 16, fontWeight: 800, color: "#1a2a1a" }}>Soil & Substrate Mixes</div>
+        <button onClick={() => setView("add")}
+          style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 10, padding: "9px 18px", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
+          + Add Mix
+        </button>
+      </div>
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
+        <button onClick={() => setCat("all")}
+          style={{ padding: "6px 14px", borderRadius: 20, border: `1.5px solid ${catFilter === "all" ? "#7fb069" : "#c8d8c0"}`, background: catFilter === "all" ? "#7fb069" : "#fff", color: catFilter === "all" ? "#fff" : "#7a8c74", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+          All ({mixes.length})
+        </button>
+        {SOIL_CATEGORIES.map(c => {
+          const count = mixes.filter(m => m.category === c.id).length;
+          if (!count) return null;
+          return (
+            <button key={c.id} onClick={() => setCat(c.id)}
+              style={{ padding: "6px 14px", borderRadius: 20, border: `1.5px solid ${catFilter === c.id ? c.color : "#c8d8c0"}`, background: catFilter === c.id ? c.bg : "#fff", color: catFilter === c.id ? c.color : "#7a8c74", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+              {c.label} ({count})
+            </button>
+          );
+        })}
+      </div>
+
+      {mixes.length === 0 ? (
+        <div style={{ background: "#fff", borderRadius: 16, border: "1.5px dashed #c8d8c0", padding: "60px 40px", textAlign: "center" }}>
+          <div style={{ fontSize: 48, marginBottom: 16 }}>🪱</div>
+          <div style={{ fontSize: 16, fontWeight: 800, color: "#1a2a1a", marginBottom: 8 }}>No soil mixes yet</div>
+          <div style={{ fontSize: 13, color: "#7a8c74", maxWidth: 360, margin: "0 auto 24px" }}>Add your annual mix, geranium mix, prop mix and more. Cost per cubic foot is calculated automatically.</div>
+          <button onClick={() => setView("add")} style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 10, padding: "12px 28px", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>+ Add First Mix</button>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {filtered.map(mix => (
+            <SoilCard key={mix.id} mix={mix}
+              onEdit={() => { setEditId(mix.id); setView("edit"); }}
+              onDelete={() => saveMixes(mixes.filter(m => m.id !== mix.id))} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════
+// INPUTS INVENTORY (PGRs, Insecticides, Fungicides, Other)
+// ═══════════════════════════════════════════════════════
+
+const INPUT_CATEGORIES = [
+  { id: "pgr",         label: "PGR",         color: "#8e44ad", bg: "#f5f0ff", icon: "🌱" },
+  { id: "insecticide", label: "Insecticide",  color: "#c8791a", bg: "#fff4e8", icon: "🐛" },
+  { id: "fungicide",   label: "Fungicide",    color: "#2e7d9e", bg: "#e8f4f8", icon: "🍄" },
+  { id: "miticide",    label: "Miticide",     color: "#c03030", bg: "#fff0f0", icon: "🕷️" },
+  { id: "other",       label: "Other",        color: "#7a8c74", bg: "#f0f5ee", icon: "🧪" },
+];
+
+const INPUT_UNITS = ["oz", "lb", "fl oz", "gal", "L", "kg", "each"];
+const RATE_UNITS  = ["oz/100 gal", "fl oz/100 gal", "oz/gal", "fl oz/gal", "lb/100 gal", "ppm", "ml/L"];
+const SIGNAL_WORDS = ["Caution", "Warning", "Danger"];
+const STOCK_STATUS = (product) => {
+  if (!product.stockQty || !product.reorderAt) return "ok";
+  const qty = Number(product.stockQty);
+  const threshold = Number(product.reorderAt);
+  if (qty <= 0) return "out";
+  if (qty <= threshold) return "low";
+  return "ok";
+};
+const STOCK_META = {
+  ok:  { label: "In Stock",    color: "#2e7a2e", bg: "#e8f8e8", dot: "#7fb069" },
+  low: { label: "Low — Reorder", color: "#c8791a", bg: "#fff4e8", dot: "#f0a040" },
+  out: { label: "Out of Stock", color: "#c03030", bg: "#fff0f0", dot: "#e06060" },
+};
+
+function useInputs() {
+  const [inputs, setInputs] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("gh_inputs_v1") || "[]"); }
+    catch { return []; }
+  });
+  const save = (v) => { setInputs(v); try { localStorage.setItem("gh_inputs_v1", JSON.stringify(v)); } catch {} };
+  return [inputs, save];
+}
+
+function InputForm({ initial, onSave, onCancel }) {
+  const blank = {
+    id: null, name: "", category: "insecticide", activeIngredient: "", signalWord: "Caution",
+    formulation: "", appRate: "", appRateUnit: "oz/100 gal", rei: "", phi: "",
+    supplier: "", unitSize: "", unitSizeUnit: "oz", costPerUnit: "",
+    stockQty: "", stockUnit: "oz", reorderAt: "", preferredOrderQty: "",
+    lastOrderDate: "", lastOrderPrice: "", bulkPriceNote: "",
+    crossBenefits: "", tankMixNotes: "", cropSensitivities: "", notes: "",
+  };
+  const [f, setF] = useState(initial ? { ...blank, ...initial } : blank);
+  const [focus, setFocus] = useState(null);
+  const [section, setSection] = useState("product");
+  const upd = (k, v) => setF(p => ({ ...p, [k]: v }));
+
+  const cat = INPUT_CATEGORIES.find(c => c.id === f.category) || INPUT_CATEGORIES[4];
+
+  const SECTIONS = [
+    { id: "product",   label: "Product"   },
+    { id: "inventory", label: "Inventory" },
+    { id: "ordering",  label: "Ordering"  },
+    { id: "notes",     label: "Notes"     },
+  ];
+
+  return (
+    <div style={{ background: "#fff", borderRadius: 16, border: "1.5px solid #e0ead8", padding: "24px" }}>
+      <div style={{ fontSize: 17, fontWeight: 800, color: "#1a2a1a", marginBottom: 16 }}>{initial ? "Edit Input" : "New Input Product"}</div>
+
+      {/* Section tabs */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 20, borderBottom: "1.5px solid #e0ead8", paddingBottom: 0 }}>
+        {SECTIONS.map(s => (
+          <button key={s.id} onClick={() => setSection(s.id)}
+            style={{ padding: "8px 16px", background: "none", border: "none", borderBottom: `3px solid ${section === s.id ? "#7fb069" : "transparent"}`, color: section === s.id ? "#2e5c1e" : "#7a8c74", fontWeight: section === s.id ? 800 : 600, fontSize: 13, cursor: "pointer", fontFamily: "inherit", marginBottom: -1 }}>
+            {s.label}
+          </button>
+        ))}
+      </div>
+
+      {section === "product" && (<>
+        <div style={{ marginBottom: 14 }}>
+          <FL c="Product Name" />
+          <input style={IS(focus === "name")} value={f.name} onChange={e => upd("name", e.target.value)}
+            onFocus={() => setFocus("name")} onBlur={() => setFocus(null)} placeholder="e.g. Bonzi, Avid 0.15 EC" />
+        </div>
+
+        <div style={{ marginBottom: 16 }}>
+          <FL c="Category" />
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {INPUT_CATEGORIES.map(c => (
+              <button key={c.id} onClick={() => upd("category", c.id)}
+                style={{ padding: "8px 14px", borderRadius: 20, border: `1.5px solid ${f.category === c.id ? c.color : "#c8d8c0"}`, background: f.category === c.id ? c.bg : "#fff", color: f.category === c.id ? c.color : "#7a8c74", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
+                {c.icon} {c.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
+          <div>
+            <FL c="Active Ingredient" />
+            <input style={IS(focus === "ai")} value={f.activeIngredient} onChange={e => upd("activeIngredient", e.target.value)}
+              onFocus={() => setFocus("ai")} onBlur={() => setFocus(null)} placeholder="e.g. paclobutrazol" />
+          </div>
+          <div>
+            <FL c="Formulation" />
+            <input style={IS(focus === "form")} value={f.formulation} onChange={e => upd("formulation", e.target.value)}
+              onFocus={() => setFocus("form")} onBlur={() => setFocus(null)} placeholder="e.g. 0.4% SC, 50WP" />
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 14 }}>
+          <div>
+            <FL c="App Rate" />
+            <div style={{ display: "flex", gap: 6 }}>
+              <input style={{ ...IS(focus === "rate"), flex: 1 }} value={f.appRate} onChange={e => upd("appRate", e.target.value)}
+                onFocus={() => setFocus("rate")} onBlur={() => setFocus(null)} placeholder="e.g. 1" />
+              <select value={f.appRateUnit} onChange={e => upd("appRateUnit", e.target.value)}
+                style={{ padding: "9px 6px", borderRadius: 8, border: "1.5px solid #c8d8c0", fontSize: 12, color: "#1a2a1a", fontFamily: "inherit", background: "#fff" }}>
+                {RATE_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+              </select>
+            </div>
+          </div>
+          <div>
+            <FL c="REI (hrs)" />
+            <input style={IS(focus === "rei")} value={f.rei} onChange={e => upd("rei", e.target.value)}
+              onFocus={() => setFocus("rei")} onBlur={() => setFocus(null)} placeholder="e.g. 12" />
+          </div>
+          <div>
+            <FL c="Signal Word" />
+            <select value={f.signalWord} onChange={e => upd("signalWord", e.target.value)}
+              style={{ ...IS(false), padding: "9px 12px" }}>
+              {SIGNAL_WORDS.map(w => <option key={w} value={w}>{w}</option>)}
+            </select>
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div>
+            <FL c="Supplier" />
+            <input style={IS(focus === "supplier")} value={f.supplier} onChange={e => upd("supplier", e.target.value)}
+              onFocus={() => setFocus("supplier")} onBlur={() => setFocus(null)} placeholder="e.g. Helena, Wilbur-Ellis" />
+          </div>
+          <div>
+            <FL c="Unit Size" />
+            <div style={{ display: "flex", gap: 6 }}>
+              <input style={{ ...IS(focus === "unitSize"), flex: 1 }} value={f.unitSize} onChange={e => upd("unitSize", e.target.value)}
+                onFocus={() => setFocus("unitSize")} onBlur={() => setFocus(null)} placeholder="e.g. 1" />
+              <select value={f.unitSizeUnit} onChange={e => upd("unitSizeUnit", e.target.value)}
+                style={{ padding: "9px 6px", borderRadius: 8, border: "1.5px solid #c8d8c0", fontSize: 12, color: "#1a2a1a", fontFamily: "inherit", background: "#fff" }}>
+                {INPUT_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+              </select>
+            </div>
+          </div>
+        </div>
+        <div style={{ marginTop: 12 }}>
+          <FL c="Cost per Unit ($)" />
+          <input type="number" step="0.01" style={IS(focus === "cost")} value={f.costPerUnit} onChange={e => upd("costPerUnit", e.target.value)}
+            onFocus={() => setFocus("cost")} onBlur={() => setFocus(null)} placeholder="e.g. 84.50" />
+        </div>
+      </>)}
+
+      {section === "inventory" && (<>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
+          <div>
+            <FL c="Current Stock" />
+            <div style={{ display: "flex", gap: 6 }}>
+              <input type="number" step="0.1" style={{ ...IS(focus === "stockQty"), flex: 1 }} value={f.stockQty} onChange={e => upd("stockQty", e.target.value)}
+                onFocus={() => setFocus("stockQty")} onBlur={() => setFocus(null)} placeholder="0" />
+              <select value={f.stockUnit} onChange={e => upd("stockUnit", e.target.value)}
+                style={{ padding: "9px 6px", borderRadius: 8, border: "1.5px solid #c8d8c0", fontSize: 12, color: "#1a2a1a", fontFamily: "inherit", background: "#fff" }}>
+                {INPUT_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+              </select>
+            </div>
+          </div>
+          <div>
+            <FL c="Reorder When Below" />
+            <div style={{ display: "flex", gap: 6 }}>
+              <input type="number" step="0.1" style={{ ...IS(focus === "reorderAt"), flex: 1 }} value={f.reorderAt} onChange={e => upd("reorderAt", e.target.value)}
+                onFocus={() => setFocus("reorderAt")} onBlur={() => setFocus(null)} placeholder="e.g. 8" />
+              <div style={{ padding: "9px 10px", borderRadius: 8, border: "1.5px solid #e0ead8", background: "#f2f5ef", fontSize: 12, color: "#7a8c74", flexShrink: 0 }}>{f.stockUnit}</div>
+            </div>
+          </div>
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          <FL c="Preferred Order Quantity" />
+          <div style={{ display: "flex", gap: 6 }}>
+            <input type="number" step="1" style={{ ...IS(focus === "orderQty"), flex: 1 }} value={f.preferredOrderQty} onChange={e => upd("preferredOrderQty", e.target.value)}
+              onFocus={() => setFocus("orderQty")} onBlur={() => setFocus(null)} placeholder="e.g. 4 units at a time" />
+            <div style={{ padding: "9px 10px", borderRadius: 8, border: "1.5px solid #e0ead8", background: "#f2f5ef", fontSize: 12, color: "#7a8c74", flexShrink: 0 }}>units</div>
+          </div>
+        </div>
+        {f.stockQty && f.reorderAt && (
+          <div style={{ background: STOCK_META[STOCK_STATUS(f)].bg, border: `1.5px solid ${STOCK_META[STOCK_STATUS(f)].color}40`, borderRadius: 10, padding: "12px 16px" }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: STOCK_META[STOCK_STATUS(f)].color }}>{STOCK_META[STOCK_STATUS(f)].label}</div>
+            <div style={{ fontSize: 12, color: "#7a8c74", marginTop: 2 }}>{f.stockQty} {f.stockUnit} on hand · reorder at {f.reorderAt} {f.stockUnit}</div>
+          </div>
+        )}
+      </>)}
+
+      {section === "ordering" && (<>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
+          <div>
+            <FL c="Last Order Date" />
+            <input type="date" style={IS(focus === "lastDate")} value={f.lastOrderDate} onChange={e => upd("lastOrderDate", e.target.value)}
+              onFocus={() => setFocus("lastDate")} onBlur={() => setFocus(null)} />
+          </div>
+          <div>
+            <FL c="Last Order Price ($/unit)" />
+            <input type="number" step="0.01" style={IS(focus === "lastPrice")} value={f.lastOrderPrice} onChange={e => upd("lastOrderPrice", e.target.value)}
+              onFocus={() => setFocus("lastPrice")} onBlur={() => setFocus(null)} placeholder="e.g. 82.00" />
+          </div>
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          <FL c="Bulk Pricing Notes" />
+          <textarea style={{ ...IS(focus === "bulkNote"), minHeight: 70, resize: "vertical" }} value={f.bulkPriceNote} onChange={e => upd("bulkPriceNote", e.target.value)}
+            onFocus={() => setFocus("bulkNote")} onBlur={() => setFocus(null)} placeholder="e.g. Buy 4+ units: $78/unit. Pre-season order by Jan 15 for 10% discount." />
+        </div>
+      </>)}
+
+      {section === "notes" && (<>
+        <div style={{ marginBottom: 14 }}>
+          <FL c="Crop Sensitivities" />
+          <div style={{ fontSize: 11, color: "#aabba0", marginBottom: 6 }}>Crops that have shown phytotoxicity or adverse reactions to this product</div>
+          <textarea style={{ ...IS(focus === "cropSens"), minHeight: 70, resize: "vertical" }} value={f.cropSensitivities} onChange={e => upd("cropSensitivities", e.target.value)}
+            onFocus={() => setFocus("cropSens")} onBlur={() => setFocus(null)} placeholder="e.g. Impatiens — tip burn at label rate. Petunias — leaf curl above 2 oz/100 gal. New Guinea Impatiens — avoid entirely." />
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          <FL c="Cross Benefits / Secondary Activity" />
+          <textarea style={{ ...IS(focus === "cross"), minHeight: 70, resize: "vertical" }} value={f.crossBenefits} onChange={e => upd("crossBenefits", e.target.value)}
+            onFocus={() => setFocus("cross")} onBlur={() => setFocus(null)} placeholder="e.g. Also suppresses fungus gnats at label rate. Some mite suppression noted." />
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          <FL c="Tank Mix Notes" />
+          <textarea style={{ ...IS(focus === "tank"), minHeight: 70, resize: "vertical" }} value={f.tankMixNotes} onChange={e => upd("tankMixNotes", e.target.value)}
+            onFocus={() => setFocus("tank")} onBlur={() => setFocus(null)} placeholder="e.g. Compatible with most fungicides. Do not mix with alkaline products. pH 5.5–6.5." />
+        </div>
+        <div>
+          <FL c="General Notes" />
+          <textarea style={{ ...IS(focus === "notes"), minHeight: 70, resize: "vertical" }} value={f.notes} onChange={e => upd("notes", e.target.value)}
+            onFocus={() => setFocus("notes")} onBlur={() => setFocus(null)} placeholder="Timing, resistance notes..." />
+        </div>
+      </>)}
+
+      <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
+        <button onClick={onCancel} style={{ flex: 1, padding: "12px 0", borderRadius: 10, border: "1.5px solid #c8d8c0", background: "#fff", color: "#7a8c74", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+        <button onClick={() => f.name && onSave({ ...f, id: f.id || uid() })}
+          style={{ flex: 2, padding: "12px 0", borderRadius: 10, border: "none", background: f.name ? "#7fb069" : "#c8d8c0", color: "#fff", fontWeight: 800, fontSize: 14, cursor: f.name ? "pointer" : "default", fontFamily: "inherit" }}>
+          {initial ? "Save Changes" : "Add Product"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function InputCard({ product, onEdit, onDelete, onUpdateStock }) {
+  const cat    = INPUT_CATEGORIES.find(c => c.id === product.category) || INPUT_CATEGORIES[4];
+  const status = STOCK_STATUS(product);
+  const sm     = STOCK_META[status];
+  const [adjusting, setAdjusting] = useState(false);
+  const [adjQty, setAdjQty] = useState("");
+
+  return (
+    <div style={{ background: "#fff", border: `1.5px solid ${status === "low" ? "#f0c070" : status === "out" ? "#f0a0a0" : "#e0ead8"}`, borderRadius: 14, padding: "16px 18px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
+            <span style={{ background: cat.bg, color: cat.color, border: `1px solid ${cat.color}30`, borderRadius: 20, padding: "2px 10px", fontSize: 11, fontWeight: 700 }}>{cat.icon} {cat.label}</span>
+            {product.stockQty !== "" && <span style={{ background: sm.bg, color: sm.color, borderRadius: 20, padding: "2px 10px", fontSize: 11, fontWeight: 700 }}>{sm.label}</span>}
+            {product.signalWord && <span style={{ background: product.signalWord === "Danger" ? "#fff0f0" : product.signalWord === "Warning" ? "#fff8e8" : "#f8f8f8", color: product.signalWord === "Danger" ? "#c03030" : product.signalWord === "Warning" ? "#c8791a" : "#7a8c74", borderRadius: 20, padding: "2px 10px", fontSize: 10, fontWeight: 700, border: "1px solid currentColor", opacity: .7 }}>{product.signalWord}</span>}
+          </div>
+          <div style={{ fontSize: 17, fontWeight: 800, color: "#1a2a1a" }}>{product.name}</div>
+          {product.activeIngredient && <div style={{ fontSize: 12, color: "#7a8c74" }}>{product.activeIngredient}{product.formulation ? ` · ${product.formulation}` : ""}</div>}
+        </div>
+        <div style={{ display: "flex", gap: 6, flexShrink: 0, marginLeft: 12 }}>
+          <button onClick={onEdit}   style={{ background: "none", border: "1px solid #c8d8c0", borderRadius: 7, padding: "5px 10px", fontSize: 12, color: "#7a8c74", cursor: "pointer", fontFamily: "inherit" }}>Edit</button>
+          <button onClick={onDelete} style={{ background: "none", border: "1px solid #f0c0c0", borderRadius: 7, padding: "5px 10px", fontSize: 12, color: "#c03030", cursor: "pointer", fontFamily: "inherit" }}>✕</button>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+        {product.stockQty !== "" && <div style={{ background: "#f2f5ef", borderRadius: 8, padding: "6px 12px", textAlign: "center" }}><div style={{ fontSize: 14, fontWeight: 800, color: status === "out" ? "#c03030" : "#1a2a1a" }}>{product.stockQty} {product.stockUnit}</div><div style={{ fontSize: 10, color: "#7a8c74", textTransform: "uppercase" }}>On Hand</div></div>}
+        {product.appRate && <div style={{ background: "#f2f5ef", borderRadius: 8, padding: "6px 12px", textAlign: "center" }}><div style={{ fontSize: 13, fontWeight: 700, color: "#1a2a1a" }}>{product.appRate} {product.appRateUnit}</div><div style={{ fontSize: 10, color: "#7a8c74", textTransform: "uppercase" }}>App Rate</div></div>}
+        {product.rei && <div style={{ background: "#f2f5ef", borderRadius: 8, padding: "6px 12px", textAlign: "center" }}><div style={{ fontSize: 14, fontWeight: 800, color: "#1a2a1a" }}>{product.rei}hr</div><div style={{ fontSize: 10, color: "#7a8c74", textTransform: "uppercase" }}>REI</div></div>}
+        {product.costPerUnit && <div style={{ background: "#f2f5ef", borderRadius: 8, padding: "6px 12px", textAlign: "center" }}><div style={{ fontSize: 14, fontWeight: 800, color: "#1a2a1a" }}>${Number(product.costPerUnit).toFixed(2)}</div><div style={{ fontSize: 10, color: "#7a8c74", textTransform: "uppercase" }}>Per Unit</div></div>}
+      </div>
+
+      {product.cropSensitivities && <div style={{ fontSize: 12, color: "#c03030", background: "#fff0f0", borderRadius: 8, padding: "7px 10px", marginBottom: 8 }}>⚠️ <strong>Sensitive crops:</strong> {product.cropSensitivities}</div>}
+      {product.crossBenefits && <div style={{ fontSize: 12, color: "#4a5a40", background: "#f0f8eb", borderRadius: 8, padding: "7px 10px", marginBottom: 8 }}>✓ {product.crossBenefits}</div>}
+      {product.bulkPriceNote && <div style={{ fontSize: 12, color: "#2e7d9e", background: "#e8f4f8", borderRadius: 8, padding: "7px 10px", marginBottom: 8 }}>💰 {product.bulkPriceNote}</div>}
+
+      {/* Quick stock adjust */}
+      {product.stockQty !== "" && (
+        adjusting ? (
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
+            <input type="number" step="0.1" value={adjQty} onChange={e => setAdjQty(e.target.value)} placeholder="New qty"
+              style={{ flex: 1, padding: "8px 10px", borderRadius: 8, border: "1.5px solid #7fb069", fontSize: 14, fontFamily: "inherit" }} />
+            <span style={{ fontSize: 12, color: "#7a8c74" }}>{product.stockUnit}</span>
+            <button onClick={() => { onUpdateStock(product.id, adjQty); setAdjusting(false); setAdjQty(""); }}
+              style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 8, padding: "8px 14px", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>Save</button>
+            <button onClick={() => setAdjusting(false)}
+              style={{ background: "none", border: "1px solid #c8d8c0", borderRadius: 8, padding: "8px 10px", fontSize: 13, color: "#7a8c74", cursor: "pointer", fontFamily: "inherit" }}>✕</button>
+          </div>
+        ) : (
+          <button onClick={() => { setAdjusting(true); setAdjQty(product.stockQty); }}
+            style={{ marginTop: 8, background: "none", border: "1px solid #c8d8c0", borderRadius: 8, padding: "7px 14px", fontSize: 12, fontWeight: 700, color: "#7a8c74", cursor: "pointer", fontFamily: "inherit", width: "100%" }}>
+            Update Stock
+          </button>
+        )
+      )}
+    </div>
+  );
+}
+
+function InputsLibrary() {
+  const [inputs, saveInputs] = useInputs();
+  const [view, setView]        = useState("list");
+  const [editingId, setEditId] = useState(null);
+  const [catFilter, setCat]    = useState("all");
+  const [statusFilter, setStat] = useState("all");
+  const [search, setSearch]    = useState("");
+
+  const save = (input) => {
+    if (input.id && inputs.find(i => i.id === input.id)) {
+      saveInputs(inputs.map(i => i.id === input.id ? input : i));
+    } else {
+      saveInputs([...inputs, input]);
+    }
+    setView("list"); setEditId(null);
+  };
+
+  const updateStock = (id, qty) => saveInputs(inputs.map(i => i.id === id ? { ...i, stockQty: qty } : i));
+
+  const needsReorder = inputs.filter(i => ["low","out"].includes(STOCK_STATUS(i)));
+
+  const filtered = inputs.filter(i => {
+    const matchCat    = catFilter === "all" || i.category === catFilter;
+    const matchStatus = statusFilter === "all" || STOCK_STATUS(i) === statusFilter;
+    const matchSearch = !search || i.name?.toLowerCase().includes(search.toLowerCase()) || i.activeIngredient?.toLowerCase().includes(search.toLowerCase());
+    return matchCat && matchStatus && matchSearch;
+  });
+
+  if (view === "add")  return <InputForm onSave={save} onCancel={() => setView("list")} />;
+  if (view === "edit" && editingId) return <InputForm initial={inputs.find(i => i.id === editingId)} onSave={save} onCancel={() => { setView("list"); setEditId(null); }} />;
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <div style={{ fontSize: 16, fontWeight: 800, color: "#1a2a1a" }}>Inputs Inventory</div>
+        <button onClick={() => setView("add")}
+          style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 10, padding: "9px 18px", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
+          + Add Product
+        </button>
+      </div>
+
+      {/* Reorder alert */}
+      {needsReorder.length > 0 && (
+        <div style={{ background: "#fff4e8", border: "1.5px solid #f0c070", borderRadius: 12, padding: "12px 16px", marginBottom: 16, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span style={{ fontSize: 14, fontWeight: 700, color: "#7a5010" }}>⚠️ {needsReorder.length} product{needsReorder.length !== 1 ? "s" : ""} need reordering: {needsReorder.map(i => i.name).join(", ")}</span>
+          <button onClick={() => setStat("low")} style={{ background: "#e0a820", color: "#fff", border: "none", borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>View</button>
+        </div>
+      )}
+
+      {/* Filters */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search products..."
+          style={{ padding: "8px 12px", borderRadius: 8, border: "1.5px solid #c8d8c0", fontSize: 13, color: "#1a2a1a", fontFamily: "inherit", minWidth: 180 }} />
+        <button onClick={() => setStat("all")} style={{ padding: "6px 14px", borderRadius: 20, border: `1.5px solid ${statusFilter === "all" ? "#7fb069" : "#c8d8c0"}`, background: statusFilter === "all" ? "#7fb069" : "#fff", color: statusFilter === "all" ? "#fff" : "#7a8c74", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>All</button>
+        {["low","out"].map(s => (
+          <button key={s} onClick={() => setStat(s)} style={{ padding: "6px 14px", borderRadius: 20, border: `1.5px solid ${statusFilter === s ? STOCK_META[s].color : "#c8d8c0"}`, background: statusFilter === s ? STOCK_META[s].bg : "#fff", color: statusFilter === s ? STOCK_META[s].color : "#7a8c74", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>{STOCK_META[s].label}</button>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
+        <button onClick={() => setCat("all")} style={{ padding: "6px 14px", borderRadius: 20, border: `1.5px solid ${catFilter === "all" ? "#7fb069" : "#c8d8c0"}`, background: catFilter === "all" ? "#7fb069" : "#fff", color: catFilter === "all" ? "#fff" : "#7a8c74", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>All ({inputs.length})</button>
+        {INPUT_CATEGORIES.map(c => {
+          const count = inputs.filter(i => i.category === c.id).length;
+          if (!count) return null;
+          return <button key={c.id} onClick={() => setCat(c.id)} style={{ padding: "6px 14px", borderRadius: 20, border: `1.5px solid ${catFilter === c.id ? c.color : "#c8d8c0"}`, background: catFilter === c.id ? c.bg : "#fff", color: catFilter === c.id ? c.color : "#7a8c74", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>{c.icon} {c.label} ({count})</button>;
+        })}
+      </div>
+
+      {inputs.length === 0 ? (
+        <div style={{ background: "#fff", borderRadius: 16, border: "1.5px dashed #c8d8c0", padding: "60px 40px", textAlign: "center" }}>
+          <div style={{ fontSize: 48, marginBottom: 16 }}>🧪</div>
+          <div style={{ fontSize: 16, fontWeight: 800, color: "#1a2a1a", marginBottom: 8 }}>No inputs yet</div>
+          <div style={{ fontSize: 13, color: "#7a8c74", maxWidth: 360, margin: "0 auto 24px" }}>Add your PGRs, insecticides, fungicides and other crop protection products. Track stock levels, reorder thresholds, and bulk pricing notes.</div>
+          <button onClick={() => setView("add")} style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 10, padding: "12px 28px", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>+ Add First Product</button>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {filtered.length === 0
+            ? <div style={{ textAlign: "center", padding: "40px", fontSize: 13, color: "#7a8c74" }}>No products match your filters</div>
+            : filtered.map(product => (
+                <InputCard key={product.id} product={product}
+                  onEdit={() => { setEditId(product.id); setView("edit"); }}
+                  onDelete={() => saveInputs(inputs.filter(i => i.id !== product.id))}
+                  onUpdateStock={updateStock} />
+              ))
+          }
+        </div>
+      )}
     </div>
   );
 }
