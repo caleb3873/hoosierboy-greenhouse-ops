@@ -769,6 +769,138 @@ function ContainerForm({ initial, onSave, onCancel }) {
                   </select>
                 </div>
               </>)}
+
+              {/* Carrier / Tray section — finished pots only */}
+              {isFinished && (<>
+                <div style={{ gridColumn: "span 2" }}>
+                  <div style={{ borderTop: "1.5px solid #e0ead8", marginBottom: 14, marginTop: 4 }} />
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#1e2d1a" }}>Ships in Carrier / Tray?</div>
+                      <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2 }}>e.g. ST 450-10, Shuttle Tray 6pk — used for bench capacity math</div>
+                    </div>
+                    <Toggle value={!!form.hasCarrier} onChange={v => upd("hasCarrier", v)} label={form.hasCarrier ? "Yes" : "No"} />
+                  </div>
+                  {form.hasCarrier && (
+                    <div style={{ background: "#f0f8ff", border: "1.5px solid #b8d8f0", borderRadius: 10, padding: 14 }}>
+                      <div style={{ fontSize: 11, fontWeight: 800, color: "#2e5c8a", letterSpacing: .8, textTransform: "uppercase", marginBottom: 12 }}>Carrier / Tray Info</div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                        <div style={{ gridColumn: "span 2" }}>
+                          <FL c="Carrier Name" />
+                          <input style={{ ...IS(focus === "cname"), background: "#fff" }} value={form.carrierName || ""} onChange={e => upd("carrierName", e.target.value)} onFocus={() => setFocus("cname")} onBlur={() => setFocus(null)} placeholder="e.g. Shuttle Tray Trade Gallon 6pk" />
+                        </div>
+                        <div>
+                          <FL c="Carrier SKU" />
+                          <input style={{ ...IS(focus === "csku"), background: "#fff" }} value={form.carrierSku || ""} onChange={e => upd("carrierSku", e.target.value)} onFocus={() => setFocus("csku")} onBlur={() => setFocus(null)} placeholder="e.g. ST 450-10 OS V" />
+                        </div>
+                        <div>
+                          <FL c="Pots per Carrier" />
+                          <input type="number" style={{ ...IS(focus === "cpots"), background: "#fff" }} value={form.potsPerCarrier || ""} onChange={e => upd("potsPerCarrier", e.target.value)} onFocus={() => setFocus("cpots")} onBlur={() => setFocus(null)} placeholder="e.g. 10, 6, 18" />
+                        </div>
+                        <div>
+                          <FL c='Carrier Width (")' />
+                          <input type="number" step="0.5" style={{ ...IS(focus === "cw"), background: "#fff" }} value={form.carrierWidthIn || ""} onChange={e => upd("carrierWidthIn", e.target.value)} onFocus={() => setFocus("cw")} onBlur={() => setFocus(null)} placeholder='e.g. 11' />
+                        </div>
+                        <div>
+                          <FL c='Carrier Length (")' />
+                          <input type="number" step="0.5" style={{ ...IS(focus === "cl"), background: "#fff" }} value={form.carrierLengthIn || ""} onChange={e => upd("carrierLengthIn", e.target.value)} onFocus={() => setFocus("cl")} onBlur={() => setFocus(null)} placeholder='e.g. 21' />
+                        </div>
+                        {form.potsPerCarrier && form.carrierWidthIn && form.carrierLengthIn && (
+                          <div style={{ gridColumn: "span 2", background: "#fff", borderRadius: 8, border: "1px solid #b8d8f0", padding: "10px 14px" }}>
+                            <div style={{ fontSize: 11, fontWeight: 800, color: "#2e5c8a", textTransform: "uppercase", letterSpacing: .6, marginBottom: 6 }}>Carrier Footprint Preview</div>
+                            <div style={{ display: "flex", gap: 16, fontSize: 12, color: "#1e2d1a" }}>
+                              <span>📐 {form.carrierWidthIn}" × {form.carrierLengthIn}"</span>
+                              <span>🌱 {form.potsPerCarrier} pots/carrier</span>
+                              <span style={{ color: "#7a8c74" }}>
+                                {((Number(form.carrierWidthIn) * Number(form.carrierLengthIn)) / 144).toFixed(2)} sq ft each
+                              </span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </>)}
+              {/* Wire / Hanger section — baskets only */}
+              {isFinished && form.type === "basket" && (
+                <div style={{ gridColumn: "span 2" }}>
+                  <div style={{ borderTop: "1.5px solid #e0ead8", marginBottom: 14, marginTop: 4 }} />
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#1e2d1a" }}>Wire / Hanger</div>
+                      <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2 }}>Track the hanger that ships with this basket</div>
+                    </div>
+                    <Toggle value={!!form.hasWire} onChange={v => upd("hasWire", v)} label={form.hasWire ? "Yes" : "No"} />
+                  </div>
+                  {form.hasWire && (
+                    <div style={{ background: "#f5f5f0", border: "1.5px solid #d0cfc0", borderRadius: 10, padding: 14 }}>
+                      <div style={{ fontSize: 11, fontWeight: 800, color: "#5a5a40", letterSpacing: .8, textTransform: "uppercase", marginBottom: 12 }}>Wire / Hanger Info</div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                        <div style={{ gridColumn: "span 2" }}>
+                          <FL c="Wire Type" />
+                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                            {["Plastic Coated", "Galvanized", "Black Metal", "Other"].map(t => (
+                              <button key={t} onClick={() => upd("wireType", t)}
+                                style={{ padding: "6px 12px", borderRadius: 7, border: `1.5px solid ${form.wireType === t ? "#7a7a50" : "#c8d8c0"}`, background: form.wireType === t ? "#f0f0e0" : "#fff", color: form.wireType === t ? "#3a3a20" : "#7a8c74", fontWeight: 600, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+                                {t}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <div>
+                          <FL c='Wire Length (")' />
+                          <input type="number" step="0.5" style={{ ...IS(focus === "wlen"), background: "#fff" }} value={form.wireLength || ""} onChange={e => upd("wireLength", e.target.value)} onFocus={() => setFocus("wlen")} onBlur={() => setFocus(null)} placeholder='e.g. 12, 14, 16' />
+                        </div>
+                        <div>
+                          <FL c="Wire Gauge" />
+                          <input style={{ ...IS(focus === "wgauge"), background: "#fff" }} value={form.wireGauge || ""} onChange={e => upd("wireGauge", e.target.value)} onFocus={() => setFocus("wgauge")} onBlur={() => setFocus(null)} placeholder='e.g. 12ga, 14ga' />
+                        </div>
+                        <div style={{ gridColumn: "span 2", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: "#1e2d1a" }}>Swivel</div>
+                          <Toggle value={!!form.wireSwivel} onChange={v => upd("wireSwivel", v)} label={form.wireSwivel ? "Yes" : "No"} />
+                        </div>
+                        <div><FL c="Wire Supplier" /><input style={{ ...IS(focus === "wsup"), background: "#fff" }} value={form.wireSupplier || ""} onChange={e => upd("wireSupplier", e.target.value)} onFocus={() => setFocus("wsup")} onBlur={() => setFocus(null)} placeholder="e.g. Landmark" /></div>
+                        <div><FL c="Wire SKU" /><input style={{ ...IS(focus === "wsku"), background: "#fff" }} value={form.wireSku || ""} onChange={e => upd("wireSku", e.target.value)} onFocus={() => setFocus("wsku")} onBlur={() => setFocus(null)} placeholder="e.g. W-12-PC" /></div>
+                        <div>
+                          <FL c="Cost per Wire ($)" />
+                          <input type="number" step="0.001" style={{ ...IS(focus === "wcost"), background: "#fff" }} value={form.wireCost || ""} onChange={e => upd("wireCost", e.target.value)} onFocus={() => setFocus("wcost")} onBlur={() => setFocus(null)} placeholder="e.g. 0.18" />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Tag assignment — all finished containers */}
+              {isFinished && (
+                <div style={{ gridColumn: "span 2" }}>
+                  <div style={{ borderTop: "1.5px solid #e0ead8", marginBottom: 14, marginTop: 4 }} />
+                  <SH c="Tag / Label" mt={0} />
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                    <div>
+                      <FL c="Primary Tag" />
+                      <input style={IS(focus === "tag1")} value={form.primaryTag || ""} onChange={e => upd("primaryTag", e.target.value)} onFocus={() => setFocus("tag1")} onBlur={() => setFocus(null)} placeholder="Tag name or SKU" />
+                    </div>
+                    <div>
+                      <FL c="Secondary Tag (optional)" />
+                      <input style={IS(focus === "tag2")} value={form.secondaryTag || ""} onChange={e => upd("secondaryTag", e.target.value)} onFocus={() => setFocus("tag2")} onBlur={() => setFocus(null)} placeholder="e.g. retail premium tag" />
+                    </div>
+                    <div style={{ gridColumn: "span 2" }}>
+                      <FL c="Tag Tier" />
+                      <div style={{ display: "flex", gap: 6 }}>
+                        {[["standard", "Standard", "#7a8c74"], ["retail", "Retail / Premium", "#c8791a"]].map(([id, label, color]) => (
+                          <button key={id} onClick={() => upd("tagTier", id)}
+                            style={{ flex: 1, padding: "8px 0", borderRadius: 8, border: `1.5px solid ${form.tagTier === id ? color : "#c8d8c0"}`, background: form.tagTier === id ? color + "14" : "#fff", color: form.tagTier === id ? color : "#7a8c74", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {!isFinished && (
                 <div>
                   <FL c="Cells per Flat" />
@@ -909,6 +1041,10 @@ function ContainerCard({ container: c, onEdit, onDelete, onDuplicate }) {
             {c.volumeVal && <Pill label="Volume" value={fmtVolume(c.volumeVal, c.volumeUnit)} color="#4a90d9" />}
             {c.substrateVol && <Pill label="Substrate/unit" value={fmtVolume(c.substrateVol, c.substrateUnit)} color="#2e8b57" />}
             {hasSpacing && <Pill label="Spacing" value="Set" color="#c8791a" />}
+            {c.hasCarrier && c.potsPerCarrier && <Pill label="Carrier" value={`${c.potsPerCarrier}/tray`} color="#2e7d9e" />}
+            {c.hasWire && c.wireType && <Pill label="Wire" value={c.wireType} color="#5a5a40" />}
+            {c.tagTier === "retail" && <Pill label="Tag" value="Retail" color="#c8791a" />}
+            {c.tagTier === "standard" && c.primaryTag && <Pill label="Tag" value="Standard" color="#7a8c74" />}
           </div>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 5, flexShrink: 0 }}>
@@ -938,6 +1074,20 @@ function ContainerCard({ container: c, onEdit, onDelete, onDuplicate }) {
                 c.supplier     && ["Primary supplier",  c.supplier],
                 c.supplier2    && ["Secondary supplier",c.supplier2],
                 c.sku          && ["SKU",               c.sku],
+                c.hasCarrier && c.carrierName && ["Carrier name", c.carrierName],
+                c.hasCarrier && c.carrierSku  && ["Carrier SKU",  c.carrierSku],
+                c.hasCarrier && c.potsPerCarrier && ["Pots per carrier", c.potsPerCarrier],
+                c.hasCarrier && c.carrierWidthIn && c.carrierLengthIn && ["Carrier size", `${c.carrierWidthIn}" × ${c.carrierLengthIn}"`],
+                c.hasWire && c.wireType    && ["Wire type",     c.wireType],
+                c.hasWire && c.wireLength  && ["Wire length",   c.wireLength + '"'],
+                c.hasWire && c.wireGauge   && ["Wire gauge",    c.wireGauge],
+                c.hasWire                  && ["Wire swivel",   c.wireSwivel ? "Yes" : "No"],
+                c.hasWire && c.wireSupplier && ["Wire supplier", c.wireSupplier],
+                c.hasWire && c.wireSku     && ["Wire SKU",      c.wireSku],
+                c.hasWire && c.wireCost    && ["Cost per wire", `$${Number(c.wireCost).toFixed(3)}`],
+                c.primaryTag               && ["Primary tag",   c.primaryTag],
+                c.secondaryTag             && ["Secondary tag", c.secondaryTag],
+                c.tagTier                  && ["Tag tier",      c.tagTier === "retail" ? "Retail / Premium" : "Standard"],
               ].filter(Boolean).map(([label, val]) => (
                 <div key={label} style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12, padding: "5px 0", borderBottom: "1px solid #f0f5ee" }}>
                   <span style={{ color: "#7a8c74" }}>{label}</span>
@@ -2102,6 +2252,7 @@ const LIBRARY_TABS = [
   { id: "inputs",    label: "Inputs",     icon: "🧪" },
   { id: "spacing",   label: "Spacing",    icon: "📐" },
   { id: "brokers",   label: "Brokers",    icon: "📊" },
+  { id: "tags",      label: "Tags",       icon: "🏷️" },
 ];
 
 export default function Libraries() {
@@ -2129,6 +2280,7 @@ export default function Libraries() {
       {tab === "inputs"    && <InputsLibrary />}
       {tab === "spacing"   && <SpacingLibrary />}
       {tab === "brokers"   && <BrokerCatalogs />}
+      {tab === "tags"      && <TagsLibrary />}
     </div>
   );
 }
@@ -2738,6 +2890,228 @@ function InputsLibrary() {
                   onUpdateStock={updateStock} />
               ))
           }
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════
+// TAGS LIBRARY
+// ═══════════════════════════════════════════════════════
+
+const TAG_TYPES = [
+  { id: "potstake",  label: "Pot Stake",     icon: "📌", color: "#7fb069" },
+  { id: "hangtag",   label: "Hang Tag",      icon: "🏷️", color: "#4a90d9" },
+  { id: "banded",    label: "Banded Label",  icon: "🔖", color: "#8e44ad" },
+  { id: "sticker",   label: "Sticker",       icon: "⭐", color: "#e07b39" },
+  { id: "other",     label: "Other",         icon: "🗒️", color: "#7a8c74" },
+];
+const TAG_TIERS = [
+  { id: "standard", label: "Standard",        color: "#7a8c74", bg: "#f0f5ee" },
+  { id: "retail",   label: "Retail / Premium", color: "#c8791a", bg: "#fff4e8" },
+];
+
+function TagForm({ initial, onSave, onCancel }) {
+  const blank = {
+    id: null, name: "", tier: "standard", type: "potstake",
+    widthIn: "", heightIn: "", supplier: "", sku: "",
+    costPerUnit: "", unitsPerCase: "", printSpec: "", notes: "",
+  };
+  const [form, setForm] = useState(initial ? { ...blank, ...initial } : blank);
+  const [focus, setFocus] = useState(null);
+  const upd = (f, v) => setForm(x => ({ ...x, [f]: v }));
+  const tt = TAG_TIERS.find(t => t.id === form.tier) || TAG_TIERS[0];
+  const tp = TAG_TYPES.find(t => t.id === form.type) || TAG_TYPES[0];
+
+  return (
+    <div style={{ background: "#fff", borderRadius: 16, border: "1.5px solid #e0ead8", overflow: "hidden" }}>
+      <div style={{ background: "#1e2d1a", padding: "16px 24px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontSize: 17, color: "#c8e6b8" }}>{initial ? "Edit Tag" : "New Tag"}</div>
+        {onCancel && <button onClick={onCancel} style={{ background: "none", border: "none", color: "#7a9a6a", fontSize: 20, cursor: "pointer" }}>×</button>}
+      </div>
+      <div style={{ padding: "22px 24px" }}>
+
+        {/* Tier */}
+        <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
+          {TAG_TIERS.map(t => (
+            <button key={t.id} onClick={() => upd("tier", t.id)}
+              style={{ flex: 1, padding: "10px 0", borderRadius: 10, border: `2px solid ${form.tier === t.id ? t.color : "#c8d8c0"}`, background: form.tier === t.id ? t.bg : "#fff", color: form.tier === t.id ? t.color : "#7a8c74", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Type */}
+        <div style={{ marginBottom: 18 }}>
+          <FL c="Tag Type" />
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {TAG_TYPES.map(t => (
+              <button key={t.id} onClick={() => upd("type", t.id)}
+                style={{ display: "flex", alignItems: "center", gap: 5, padding: "7px 12px", borderRadius: 8, border: `1.5px solid ${form.type === t.id ? t.color : "#c8d8c0"}`, background: form.type === t.id ? t.color + "14" : "#fff", color: form.type === t.id ? t.color : "#7a8c74", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+                <span>{t.icon}</span>{t.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div style={{ gridColumn: "span 2" }}>
+            <FL c="Tag Name *" />
+            <input style={IS(focus === "name")} value={form.name} onChange={e => upd("name", e.target.value)} onFocus={() => setFocus("name")} onBlur={() => setFocus(null)} placeholder='e.g. 4.5" Standard Stake, HB Premium Hang Tag' />
+          </div>
+          <div>
+            <FL c='Width (")' />
+            <input type="number" step="0.25" style={IS(focus === "tw")} value={form.widthIn} onChange={e => upd("widthIn", e.target.value)} onFocus={() => setFocus("tw")} onBlur={() => setFocus(null)} placeholder='e.g. 2.5' />
+          </div>
+          <div>
+            <FL c='Height (")' />
+            <input type="number" step="0.25" style={IS(focus === "th")} value={form.heightIn} onChange={e => upd("heightIn", e.target.value)} onFocus={() => setFocus("th")} onBlur={() => setFocus(null)} placeholder='e.g. 4' />
+          </div>
+          <div><FL c="Supplier" /><input style={IS(focus === "tsup")} value={form.supplier} onChange={e => upd("supplier", e.target.value)} onFocus={() => setFocus("tsup")} onBlur={() => setFocus(null)} placeholder="e.g. Landmark, Berg's" /></div>
+          <div><FL c="SKU / Item #" /><input style={IS(focus === "tsku")} value={form.sku} onChange={e => upd("sku", e.target.value)} onFocus={() => setFocus("tsku")} onBlur={() => setFocus(null)} placeholder="e.g. TAG-450-STD" /></div>
+          <div>
+            <FL c="Cost per Unit ($)" />
+            <input type="number" step="0.001" style={IS(focus === "tcpu")} value={form.costPerUnit} onChange={e => upd("costPerUnit", e.target.value)} onFocus={() => setFocus("tcpu")} onBlur={() => setFocus(null)} placeholder="e.g. 0.04" />
+          </div>
+          <div>
+            <FL c="Units per Case" />
+            <input type="number" style={IS(focus === "tupc")} value={form.unitsPerCase} onChange={e => upd("unitsPerCase", e.target.value)} onFocus={() => setFocus("tupc")} onBlur={() => setFocus(null)} placeholder="e.g. 1000, 500" />
+            {form.costPerUnit && form.unitsPerCase && (
+              <div style={{ fontSize: 11, color: "#7fb069", marginTop: 4, fontWeight: 600 }}>
+                ${(Number(form.costPerUnit) * Number(form.unitsPerCase)).toFixed(2)} / case
+              </div>
+            )}
+          </div>
+          <div style={{ gridColumn: "span 2" }}>
+            <FL c="Print Spec / Design File" />
+            <input style={IS(focus === "tprint")} value={form.printSpec} onChange={e => upd("printSpec", e.target.value)} onFocus={() => setFocus("tprint")} onBlur={() => setFocus(null)} placeholder="e.g. HB-Annual-2026-v2.pdf, Pantone 376C" />
+          </div>
+          <div style={{ gridColumn: "span 2" }}>
+            <FL c="Notes" />
+            <textarea style={TA(focus === "tnotes")} value={form.notes} onChange={e => upd("notes", e.target.value)} onFocus={() => setFocus("tnotes")} onBlur={() => setFocus(null)} placeholder="Which containers or product lines use this tag, seasonal notes..." />
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 10, marginTop: 24 }}>
+          <button onClick={() => form.name.trim() && onSave({ ...form, id: form.id || uid() })}
+            style={{ flex: 1, background: "#7fb069", color: "#fff", border: "none", borderRadius: 10, padding: 12, fontWeight: 700, fontSize: 15, cursor: "pointer", fontFamily: "inherit" }}>
+            {initial ? "Save Changes" : "Add Tag"}
+          </button>
+          {onCancel && <button onClick={onCancel} style={{ background: "none", color: "#7a8c74", border: "1.5px solid #c8d8c0", borderRadius: 10, padding: "12px 20px", fontWeight: 600, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TagCard({ tag, onEdit, onDelete }) {
+  const tp = TAG_TYPES.find(t => t.id === tag.type) || TAG_TYPES[0];
+  const tt = TAG_TIERS.find(t => t.id === tag.tier) || TAG_TIERS[0];
+  return (
+    <div style={{ background: "#fff", borderRadius: 14, border: `1.5px solid ${tt.color}33`, overflow: "hidden" }}>
+      <div style={{ padding: "14px 18px", display: "flex", gap: 12, alignItems: "flex-start" }}>
+        <div style={{ width: 40, height: 40, borderRadius: 10, background: tp.color + "18", border: `1.5px solid ${tp.color}44`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, flexShrink: 0 }}>{tp.icon}</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+            <span style={{ fontWeight: 800, fontSize: 16, color: "#1e2d1a" }}>{tag.name}</span>
+            <span style={{ background: tt.bg, color: tt.color, border: `1px solid ${tt.color}44`, borderRadius: 20, padding: "2px 9px", fontSize: 11, fontWeight: 700 }}>{tt.label}</span>
+            <span style={{ background: tp.color + "14", color: tp.color, border: `1px solid ${tp.color}33`, borderRadius: 20, padding: "2px 9px", fontSize: 11, fontWeight: 700 }}>{tp.label}</span>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {tag.widthIn && tag.heightIn && <Pill label="Size" value={`${tag.widthIn}" × ${tag.heightIn}"`} color={tp.color} />}
+            {tag.costPerUnit && <Pill label="$/tag" value={`$${Number(tag.costPerUnit).toFixed(3)}`} color="#8e44ad" />}
+            {tag.unitsPerCase && <Pill label="/ Case" value={Number(tag.unitsPerCase).toLocaleString()} color="#7a8c74" />}
+            {tag.costPerUnit && tag.unitsPerCase && <Pill label="$/case" value={`$${(Number(tag.costPerUnit) * Number(tag.unitsPerCase)).toFixed(2)}`} color="#4a7a35" />}
+            {tag.supplier && <Pill label="Supplier" value={tag.supplier} color="#4a90d9" />}
+            {tag.sku && <Pill label="SKU" value={tag.sku} color="#7a8c74" />}
+          </div>
+          {tag.notes && <div style={{ fontSize: 12, color: "#7a8c74", marginTop: 8, fontStyle: "italic" }}>{tag.notes}</div>}
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 5, flexShrink: 0 }}>
+          <ABtn onClick={() => onEdit(tag)} label="Edit" color="#4a90d9" />
+          <ABtn onClick={() => onDelete(tag.id)} label="Remove" border="#f0d0c0" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TagsLibrary() {
+  const [tags, setTags] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("gh_tags_v1") || "[]"); } catch { return []; }
+  });
+  const [view, setView] = useState("list");
+  const [editId, setEditId] = useState(null);
+  const [tierFilter, setTierFilter] = useState("all");
+  const [typeFilter, setTypeFilter] = useState("all");
+
+  const save = (t) => {
+    const updated = editId ? tags.map(x => x.id === editId ? t : x) : [...tags, t];
+    setTags(updated);
+    localStorage.setItem("gh_tags_v1", JSON.stringify(updated));
+    setView("list"); setEditId(null);
+  };
+  const del = (id) => {
+    if (!window.confirm("Remove this tag?")) return;
+    const updated = tags.filter(t => t.id !== id);
+    setTags(updated);
+    localStorage.setItem("gh_tags_v1", JSON.stringify(updated));
+  };
+
+  const filtered = tags.filter(t =>
+    (tierFilter === "all" || t.tier === tierFilter) &&
+    (typeFilter === "all" || t.type === typeFilter)
+  );
+
+  if (view === "add") return <TagForm onSave={save} onCancel={() => setView("list")} />;
+  if (view === "edit") {
+    const tag = tags.find(t => t.id === editId);
+    return tag ? <TagForm initial={tag} onSave={save} onCancel={() => { setView("list"); setEditId(null); }} /> : null;
+  }
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <div style={{ fontSize: 16, fontWeight: 800, color: "#1a2a1a" }}>Tags & Labels</div>
+        <button onClick={() => setView("add")}
+          style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 10, padding: "9px 18px", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
+          + Add Tag
+        </button>
+      </div>
+
+      {/* Filters */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+        {[["all", "All Tiers"], ...TAG_TIERS.map(t => [t.id, t.label])].map(([id, label]) => (
+          <button key={id} onClick={() => setTierFilter(id)}
+            style={{ padding: "6px 14px", borderRadius: 20, border: `1.5px solid ${tierFilter === id ? "#7fb069" : "#c8d8c0"}`, background: tierFilter === id ? "#7fb069" : "#fff", color: tierFilter === id ? "#fff" : "#7a8c74", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+            {label}
+          </button>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
+        {[["all", "All Types", "#7a8c74"], ...TAG_TYPES.map(t => [t.id, t.label, t.color])].map(([id, label, color]) => (
+          <button key={id} onClick={() => setTypeFilter(id)}
+            style={{ padding: "6px 14px", borderRadius: 20, border: `1.5px solid ${typeFilter === id ? color : "#c8d8c0"}`, background: typeFilter === id ? color + "14" : "#fff", color: typeFilter === id ? color : "#7a8c74", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {filtered.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "60px 20px", background: "#fafcf8", borderRadius: 16, border: "1.5px dashed #c8d8c0" }}>
+          <div style={{ fontSize: 48, marginBottom: 16 }}>🏷️</div>
+          <div style={{ fontSize: 16, fontWeight: 700, color: "#4a5a40", marginBottom: 8 }}>No tags yet</div>
+          <div style={{ fontSize: 13, color: "#7a8c74", marginBottom: 20 }}>Add your standard and retail tags — pot stakes, hang tags, banded labels, stickers</div>
+          <button onClick={() => setView("add")} style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 10, padding: "10px 24px", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>+ Add First Tag</button>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {filtered.map(tag => (
+            <TagCard key={tag.id} tag={tag}
+              onEdit={() => { setEditId(tag.id); setView("edit"); }}
+              onDelete={del} />
+          ))}
         </div>
       )}
     </div>
