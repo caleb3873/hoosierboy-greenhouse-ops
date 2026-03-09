@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { computeSchedule, getCurrentWeek, getCropRunCalendarEvents, makeGCalUrl, CROP_STATUS, formatWeekDate } from "./shared";
+import { useCropRuns } from "./supabase";
 
 const CURRENT_WEEK = getCurrentWeek();
 const CURRENT_YEAR = new Date().getFullYear();
@@ -12,15 +13,8 @@ const EVENT_COLORS = {
 };
 
 export default function PlannerHome({ onNavigate }) {
-  const [runs, setRuns]   = useState([]);
+  const { rows: runs } = useCropRuns();
   const [gcalRun, setGcalRun] = useState(null); // run whose events we're previewing
-
-  useEffect(() => {
-    try {
-      const stored = JSON.parse(localStorage.getItem("gh_crop_runs_v1") || "[]");
-      setRuns(stored);
-    } catch {}
-  }, []);
 
   // Summary counts
   const byStatus = {};
