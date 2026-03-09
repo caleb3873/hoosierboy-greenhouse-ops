@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useVarieties, useContainers, useSpacingProfiles, useBrokerCatalogs, useSoilMixes, useInputProducts } from "./supabase";
+import ComboLibrary from "./ComboDesigner";
 
 // ── BREEDER CONFIG ────────────────────────────────────────────────────────────
 const BREEDERS = [
@@ -633,6 +634,24 @@ function FL({ c }) { return <label style={{ display: "block", fontSize: 11, font
 function SH({ c, mt, color }) { return <div style={{ fontSize: 11, fontWeight: 800, color: color || "#7fb069", letterSpacing: 1.2, textTransform: "uppercase", borderBottom: `1.5px solid ${color ? color + "33" : "#e0ead8"}`, paddingBottom: 7, marginBottom: 14, marginTop: mt || 10 }}>{c}</div>; }
 function IBtn({ onClick, danger, children }) { return <button onClick={onClick} style={{ background: "none", border: `1px solid ${danger ? "#f0d0c0" : "#e0ead8"}`, borderRadius: 5, width: 24, height: 24, cursor: "pointer", color: danger ? "#e07b39" : "#aabba0", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{children}</button>; }
 function ABtn({ onClick, label, color, border }) { return <button onClick={onClick} style={{ background: color || "none", color: color ? "#fff" : "#7a8c74", border: `1px solid ${border || "#c8d8c0"}`, borderRadius: 7, padding: "6px 14px", fontSize: 12, fontWeight: color ? 700 : 400, cursor: "pointer", fontFamily: "inherit" }}>{label}</button>; }
+function Toggle({ value, onChange, label }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }} onClick={() => onChange(!value)}>
+      <div style={{ width: 40, height: 22, borderRadius: 11, background: value ? "#7fb069" : "#c8d8c0", position: "relative", transition: "background .2s", flexShrink: 0 }}>
+        <div style={{ position: "absolute", top: 3, left: value ? 21 : 3, width: 16, height: 16, borderRadius: "50%", background: "#fff", transition: "left .2s", boxShadow: "0 1px 3px rgba(0,0,0,0.2)" }} />
+      </div>
+      {label && <span style={{ fontSize: 13, color: "#4a5a40", fontWeight: 600 }}>{label}</span>}
+    </div>
+  );
+}
+function Pill({ label, value, color = "#7fb069" }) {
+  return (
+    <div style={{ background: color + "14", border: `1px solid ${color}33`, borderRadius: 8, padding: "7px 13px", textAlign: "center", minWidth: 70 }}>
+      <div style={{ fontSize: 15, fontWeight: 800, color: "#1e2d1a" }}>{value}</div>
+      <div style={{ fontSize: 10, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .4, marginTop: 1 }}>{label}</div>
+    </div>
+  );
+}
 
 // ── SPACING BLOCK ─────────────────────────────────────────────────────────────
 function SpacingBlock({ spacing, onChange, cropSpecific }) {
@@ -2253,6 +2272,7 @@ const LIBRARY_TABS = [
   { id: "spacing",   label: "Spacing",    icon: "📐" },
   { id: "brokers",   label: "Brokers",    icon: "📊" },
   { id: "tags",      label: "Tags",       icon: "🏷️" },
+  { id: "combos",    label: "Combos",     icon: "🌸" },
 ];
 
 export default function Libraries() {
@@ -2281,6 +2301,7 @@ export default function Libraries() {
       {tab === "spacing"   && <SpacingLibrary />}
       {tab === "brokers"   && <BrokerCatalogs />}
       {tab === "tags"      && <TagsLibrary />}
+      {tab === "combos"    && <ComboLibrary />}
     </div>
   );
 }
