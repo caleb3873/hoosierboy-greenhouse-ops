@@ -1,268 +1,432 @@
-// Full operator view — content from operator-view.jsx
-// The onSwitchMode prop is passed in from App.jsx
+import { useState, useEffect } from "react";
+import { useCropRuns } from "./supabase";
 
-import { useState } from "react";
-import { computeSchedule, getCurrentWeek, FLAG_TYPES, uid } from "./shared";
+// ── CONSTANTS ─────────────────────────────────────────────────────────────────
+const MATERIAL_TYPES = [
+  { id: "urc",   label: "URC",   icon: "✂️",  color: "#8e44ad", bg: "#f5f0ff" },
+  { id: "seed",  label: "Seed",  icon: "🌾",  color: "#c8791a", bg: "#fff4e8" },
+  { id: "liner", label: "Liner", icon: "🪴",  color: "#2e7d9e", bg: "#e8f4f8" },
+];
 
-const CURRENT_WEEK = getCurrentWeek();
-const CURRENT_YEAR = new Date().getFullYear();
+// ── HELPERS ───────────────────────────────────────────────────────────────────
+function weekToDate(week, year) {
+  const jan4 = new Date(year, 0, 4);
+  const s = new Date(jan4);
+  s.setDate(jan4.getDate() - ((jan4.getDay() + 6) % 7));
+  const d = new Date(s);
+  d.setDate(d.getDate() + (week - 1) * 7);
+  return d;
+}
+function formatWeekDate(week, year) {
+  if (!week || !year) return "";
+  return weekToDate(+week, +year).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+function subtractWeeks(week, year, n) {
+  let w = +week - n, y = +year;
+  while (w <= 0) { w += 52; y--; }
+  return { week: w, year: y };
+}
+function computeArrivalWeek(run) {
+  if (!run.targetWeek || !run.targetYear) return null;
+  const finish = run.movesOutside
+    ? (+run.weeksIndoor || 0) + (+run.weeksOutdoor || 0)
+    : (+run.weeksIndoor || 0);
+  const transplant = subtractWeeks(run.targetWeek, run.targetYear, finish);
+  const prop = +run.weeksProp || 0;
+  return prop > 0 ? subtractWeeks(transplant.week, transplant.year, prop) : transplant;
+}
+function mt(id) { return MATERIAL_TYPES.find(m => m.id === id) || MATERIAL_TYPES[0]; }
 
-const STATUS_META = {
-  planned:     { label: "Planned",     color: "#8a9a80", dot: "#c8d8c0" },
-  propagating: { label: "Propagating", color: "#8e44ad", dot: "#c8a8e8" },
-  growing:     { label: "Growing",     color: "#2e7d9e", dot: "#90c8e8" },
-  outside:     { label: "Outside",     color: "#c8791a", dot: "#f0c080" },
-  ready:       { label: "Ready",       color: "#2e7a2e", dot: "#7fb069" },
-  shipped:     { label: "Shipped",     color: "#4a4a4a", dot: "#a0a0a0" },
-};
+// ── DERIVE LINES FROM CROP RUNS ───────────────────────────────────────────────
+function deriveLines(runs) {
+  const lines = [];
+  runs.forEach(run => {
+    if (!run.materialType) return;
+    const arrival = computeArrivalWeek(run);
+    const matType = mt(run.materialType);
+    const broker  = run.sourcingBroker || "Unassigned";
+    const varieties = run.varieties || [];
 
-const TASK_COLORS = {
-  seed:       { bg: "#f5f0ff", border: "#c8a8e8", text: "#6a2a9e", label: "PROPAGATE" },
-  transplant: { bg: "#e8f4ff", border: "#90c0e8", text: "#1e5a8e", label: "TRANSPLANT" },
-  moveout:    { bg: "#fff4e0", border: "#f0c070", text: "#8e5010", label: "MOVE OUT"  },
-  ready:      { bg: "#e8f8e8", border: "#90d890", text: "#1e6e1e", label: "SHIP"      },
-  manual:     { bg: "#f8f8f0", border: "#c8c8a0", text: "#5a5a30", label: "TASK"      },
-};
+    const makeLineBase = (qty) => {
+      const buffered = Math.ceil(qty * (1 + (+run.bufferPct || 0) / 100));
+      return {
+        runId: run.id,
+        cropName: run.cropName,
+        groupNumber: run.groupNumber || "",
+        materialType: run.materialType,
+        matType,
+        propTraySize: run.propTraySize || "",
+        linerSize: run.linerSize || "",
+        seedForm: run.seedForm || "",
+        broker,
+        supplier: run.sourcingSupplier || "",
+        arrivalWeek: arrival?.week,
+        arrivalYear: arrival?.year,
+        targetWeek: run.targetWeek,
+        targetYear: run.targetYear,
+        baseQty: qty,
+        bufferPct: +run.bufferPct || 0,
+        orderQty: buffered,
+        unitCost: run.unitCost ? +run.unitCost : null,
+        lineCost: (buffered && run.unitCost) ? buffered * +run.unitCost : null,
+      };
+    };
 
-function getAutoTasks(run) {
-  const sched = computeSchedule(run);
-  if (!sched) return [];
-  const loc = run.indoorAssignments?.[0];
-  const locStr = loc ? `${loc.structureName}${loc.zoneName ? " / " + loc.zoneName : ""}${loc.itemName ? " / " + loc.itemName : ""}` : "Unassigned";
-  const tasks = [];
-
-  const check = (event, label, type) => {
-    if (!event) return;
-    const diff = (event.year - CURRENT_YEAR) * 52 + event.week - CURRENT_WEEK;
-    if (diff >= -1 && diff <= 1) {
-      tasks.push({ id: `${run.id}-${type}`, runId: run.id, cropName: run.cropName, groupNumber: run.groupNumber, type, label, week: event.week, year: event.year, diff, location: locStr, varieties: run.varieties || [], auto: true });
+    if (varieties.length > 0) {
+      varieties.forEach(v => {
+        const qty = (+v.cases || 0) * (+run.packSize || 10);
+        lines.push({
+          ...makeLineBase(qty),
+          cultivar: v.cultivar || "",
+          variety: v.name || "",
+          ballItemNumber: v.ballItemNumber || "",
+        });
+      });
+    } else {
+      const qty = (+run.cases || 0) * (+run.packSize || 10);
+      lines.push({
+        ...makeLineBase(qty),
+        cultivar: "",
+        variety: run.cropName,
+        ballItemNumber: "",
+      });
     }
-  };
-
-  check(sched.seed,       "Order / start propagation",      "seed");
-  check(sched.transplant, "Transplant to finish containers", "transplant");
-  check(sched.moveOut,    "Move outside",                   "moveout");
-  check(sched.ready,      "Ready to ship",                  "ready");
-  return tasks;
+  });
+  return lines;
 }
 
-function TaskCard({ task, onComplete }) {
-  const [done, setDone] = useState(false);
-  const tc = TASK_COLORS[task.type] || TASK_COLORS.manual;
-  const timing = task.diff === 0 ? "THIS WEEK" : task.diff < 0 ? "OVERDUE" : "NEXT WEEK";
-  const timingColor = task.diff < 0 ? "#c03030" : task.diff === 0 ? "#2e7a2e" : "#8a9a80";
+// ── PO DOCUMENT ───────────────────────────────────────────────────────────────
+function PODocument({ broker, lines, onClose }) {
+  const totalQty  = lines.reduce((s, l) => s + (l.orderQty || 0), 0);
+  const totalCost = lines.reduce((s, l) => s + (l.lineCost || 0), 0);
+  const hasCosts  = lines.some(l => l.lineCost != null);
+  const today     = new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+
+  // Group by arrival week
+  const byWeek = {};
+  lines.forEach(l => {
+    const k = l.arrivalWeek ? `${l.arrivalYear}-${String(l.arrivalWeek).padStart(2,"0")}` : "zzz";
+    if (!byWeek[k]) byWeek[k] = [];
+    byWeek[k].push(l);
+  });
+  const weekGroups = Object.entries(byWeek).sort(([a],[b]) => a.localeCompare(b));
+
+  function exportCSV() {
+    const headers = ["Crop","Group","Cultivar","Variety","Ball Item #","Material","Tray/Size","Arrival Week","Arrival Date","Base Qty","Buffer %","Order Qty","Unit Cost","Line Total","Supplier"];
+    const rows = lines.map(l => [
+      l.cropName, l.groupNumber, l.cultivar, l.variety, l.ballItemNumber,
+      l.matType.label,
+      l.propTraySize ? `${l.propTraySize}-cell` : l.linerSize || l.seedForm || "",
+      l.arrivalWeek ? `Wk ${l.arrivalWeek}` : "",
+      l.arrivalWeek ? formatWeekDate(l.arrivalWeek, l.arrivalYear) : "",
+      l.baseQty, `${l.bufferPct}%`, l.orderQty,
+      l.unitCost != null ? `$${l.unitCost.toFixed(3)}` : "",
+      l.lineCost != null ? `$${l.lineCost.toFixed(2)}` : "",
+      l.supplier,
+    ]);
+    const csv = [headers, ...rows].map(r => r.map(c => `"${String(c ?? "").replace(/"/g,'""')}"`).join(",")).join("\n");
+    const a = Object.assign(document.createElement("a"), {
+      href: URL.createObjectURL(new Blob([csv], { type: "text/csv" })),
+      download: `PO-${broker.replace(/\s+/g,"-")}-${new Date().toISOString().slice(0,10)}.csv`,
+    });
+    a.click();
+  }
+
+  const colTemplate = `90px 1fr 1.2fr 70px 70px 80px 70px 90px${hasCosts ? " 90px" : ""}`;
 
   return (
-    <div style={{ background: done ? "#f0f5ee" : tc.bg, border: `1.5px solid ${done ? "#c8d8c0" : tc.border}`, borderRadius: 16, padding: "16px 18px", opacity: done ? .5 : 1, transition: "all .3s" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
-        <span style={{ background: tc.text + "18", color: tc.text, border: `1px solid ${tc.text}30`, borderRadius: 20, padding: "3px 10px", fontSize: 10, fontWeight: 900, letterSpacing: 1 }}>{tc.label}</span>
-        <span style={{ fontSize: 10, fontWeight: 800, color: timingColor, letterSpacing: .8 }}>{timing}</span>
-      </div>
-      <div style={{ fontSize: 20, fontWeight: 800, color: "#1a2a1a", marginBottom: 4, fontFamily: "'DM Serif Display',Georgia,serif" }}>
-        {task.cropName}
-        {task.groupNumber && <span style={{ fontSize: 12, fontWeight: 600, color: "#8a9a80", marginLeft: 8 }}>Grp {task.groupNumber}</span>}
-      </div>
-      <div style={{ fontSize: 14, color: tc.text, fontWeight: 600, marginBottom: 10 }}>{task.label}</div>
-      {task.location && task.location !== "Unassigned" && (
-        <div style={{ fontSize: 12, color: "#6a7a60", background: "#fff", borderRadius: 8, padding: "6px 10px", marginBottom: 12, border: "1px solid #e0ead8" }}>{task.location}</div>
-      )}
-      {task.varieties?.length > 0 && (
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
-          {task.varieties.map(v => (
-            <span key={v.id} style={{ background: "#fff", border: "1px solid #e0ead8", borderRadius: 20, padding: "2px 10px", fontSize: 11, color: "#4a5a40" }}>{v.name || v.cultivar}</span>
-          ))}
+    <div style={{ position: "fixed", inset: 0, background: "rgba(10,20,10,.6)", zIndex: 400, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "20px 16px", overflowY: "auto" }}>
+      <div style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 960, boxShadow: "0 30px 90px rgba(0,0,0,.3)" }}>
+
+        {/* Toolbar */}
+        <div style={{ display: "flex", gap: 10, padding: "14px 24px", borderBottom: "1.5px solid #e0ead8", alignItems: "center" }}>
+          <span style={{ flex: 1, fontSize: 13, color: "#7a8c74", fontWeight: 600 }}>PO Preview — {broker}</span>
+          <button onClick={exportCSV} style={{ background: "#4a90d9", color: "#fff", border: "none", borderRadius: 8, padding: "8px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>⬇ Export CSV</button>
+          <button onClick={() => window.print()} style={{ background: "#1e2d1a", color: "#c8e6b8", border: "none", borderRadius: 8, padding: "8px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>🖨 Print</button>
+          <button onClick={onClose} style={{ background: "none", border: "1.5px solid #c8d8c0", borderRadius: 8, padding: "8px 14px", fontSize: 12, color: "#7a8c74", cursor: "pointer", fontFamily: "inherit" }}>Close</button>
         </div>
-      )}
-      <button onClick={() => { setDone(true); setTimeout(() => onComplete?.(task.id), 400); }} disabled={done}
-        style={{ width: "100%", padding: "12px 0", borderRadius: 10, border: "none", background: done ? "#c8d8c0" : "#1a2a1a", color: done ? "#8a9a80" : "#c8e6b8", fontSize: 14, fontWeight: 800, cursor: done ? "default" : "pointer", fontFamily: "inherit" }}>
-        {done ? "Done" : "Mark Complete"}
-      </button>
-    </div>
-  );
-}
 
-function FlagForm({ runs, onSubmit, onCancel }) {
-  const [type, setType]    = useState("pest");
-  const [runId, setRunId]  = useState("");
-  const [location, setLoc] = useState("");
-  const [notes, setNotes]  = useState("");
-  const ft = FLAG_TYPES.find(f => f.id === type);
-
-  return (
-    <div style={{ background: "#fff", borderRadius: 20, padding: "24px 20px" }}>
-      <div style={{ fontSize: 20, fontWeight: 800, color: "#1a2a1a", marginBottom: 4, fontFamily: "'DM Serif Display',Georgia,serif" }}>Flag a Problem</div>
-      <div style={{ fontSize: 13, color: "#8a9a80", marginBottom: 20 }}>This will be logged and visible to the planner.</div>
-      <div style={{ fontSize: 10, fontWeight: 800, color: "#8a9a80", textTransform: "uppercase", letterSpacing: .8, marginBottom: 8 }}>Problem Type</div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 20 }}>
-        {FLAG_TYPES.map(f => (
-          <button key={f.id} onClick={() => setType(f.id)}
-            style={{ padding: "12px 10px", borderRadius: 12, border: `2px solid ${type === f.id ? f.color : "#e4eed8"}`, background: type === f.id ? f.color + "12" : "#fafcf8", cursor: "pointer", fontFamily: "inherit", textAlign: "center" }}>
-            <div style={{ fontSize: 13, fontWeight: 800, color: type === f.id ? f.color : "#6a7a60" }}>{f.label}</div>
-          </button>
-        ))}
-      </div>
-      <select value={runId} onChange={e => setRunId(e.target.value)} style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: "1.5px solid #e4eed8", background: "#fafcf8", fontSize: 14, color: "#1a2a1a", marginBottom: 12, fontFamily: "inherit", boxSizing: "border-box" }}>
-        <option value="">Crop (optional)</option>
-        {runs.map(r => <option key={r.id} value={r.id}>{r.cropName}{r.groupNumber ? ` Grp ${r.groupNumber}` : ""}</option>)}
-      </select>
-      <input value={location} onChange={e => setLoc(e.target.value)} placeholder="Location (e.g. House 1, Bench A)"
-        style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: "1.5px solid #e4eed8", background: "#fafcf8", fontSize: 14, color: "#1a2a1a", marginBottom: 12, fontFamily: "inherit", boxSizing: "border-box" }} />
-      <textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder="Describe what you're seeing..."
-        style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: "1.5px solid #e4eed8", background: "#fafcf8", fontSize: 14, color: "#1a2a1a", marginBottom: 20, fontFamily: "inherit", minHeight: 80, resize: "vertical", boxSizing: "border-box" }} />
-      <button onClick={() => onSubmit({ id: uid(), type, runId, location, notes, ts: new Date().toISOString(), resolved: false })}
-        style={{ width: "100%", padding: "15px 0", borderRadius: 12, border: "none", background: ft?.color || "#1a2a1a", color: "#fff", fontSize: 16, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", marginBottom: 10 }}>
-        Submit Flag
-      </button>
-      <button onClick={onCancel} style={{ width: "100%", padding: "13px 0", borderRadius: 12, border: "1.5px solid #e4eed8", background: "none", color: "#8a9a80", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
-    </div>
-  );
-}
-
-const LOGO_WHITE = "https://cdn.prod.website-files.com/63b5c78a53ecb12c888ba09a/63b5d5e281aa6766b5cb8ace_HOO-Boy%20Logo%20Reversed-White.png";
-
-export default function OperatorView({ onSwitchMode }) {
-  const [runs]  = useState(() => { try { return JSON.parse(localStorage.getItem("gh_crop_runs_v1") || "[]"); } catch { return []; } });
-  const [flags, setFlags]       = useState([]);
-  const [completedIds, setDone] = useState(new Set());
-  const [tab, setTab]           = useState("tasks");
-  const [flagging, setFlagging] = useState(false);
-
-  const autoTasks = runs.flatMap(r => getAutoTasks(r)).filter(t => !completedIds.has(t.id));
-  autoTasks.sort((a, b) => (a.diff ?? 99) - (b.diff ?? 99));
-
-  const readyRuns  = runs.filter(r => r.status === "ready");
-  const activeRuns = runs.filter(r => !["planned", "shipped"].includes(r.status));
-
-  const TABS = [
-    { id: "tasks", label: "Tasks",  count: autoTasks.length },
-    { id: "ready", label: "Ready",  count: readyRuns.length },
-    { id: "crops", label: "Crops",  count: activeRuns.length },
-    { id: "flags", label: "Flags",  count: flags.filter(f => !f.resolved).length },
-  ];
-
-  return (
-    <div style={{ fontFamily: "'DM Sans','Segoe UI',sans-serif", background: "#f2f5ef", minHeight: "100vh", maxWidth: 480, margin: "0 auto" }}>
-      <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
-
-      <div style={{ background: "#1a2a1a", padding: "16px 20px 0", position: "sticky", top: 0, zIndex: 100 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-          <div>
-            <div style={{ fontSize: 10, color: "#6a8a5a", fontWeight: 700, letterSpacing: 1.5, textTransform: "uppercase" }}>Hoosier Boy</div>
-            <div style={{ fontSize: 20, fontWeight: 900, color: "#e8f4d8", fontFamily: "'DM Serif Display',Georgia,serif" }}>Floor View</div>
-          </div>
-          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-            <div style={{ textAlign: "right" }}>
-              <div style={{ fontSize: 11, color: "#6a8a5a" }}>Week {CURRENT_WEEK}</div>
-              <div style={{ fontSize: 12, color: "#c8e6b8", fontWeight: 700 }}>{new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" })}</div>
+        <div style={{ padding: "36px 40px" }}>
+          {/* Letterhead */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 32, paddingBottom: 24, borderBottom: "3px solid #1e2d1a" }}>
+            <div>
+              <img src="https://cdn.prod.website-files.com/63b5c78a53ecb12c888ba09a/63b5db6db690723f878c284b_HOO-Full%20Logo-Color.png" alt="Hoosier Boy" style={{ height: 52, objectFit: "contain", marginBottom: 6 }} />
+              <div style={{ fontSize: 11, color: "#7a8c74" }}>Schlegel Greenhouse · Indianapolis, IN</div>
             </div>
-            <button onClick={onSwitchMode} style={{ background: "none", border: "1px solid #4a6a3a", borderRadius: 8, padding: "5px 10px", color: "#6a8a5a", fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>Switch</button>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontSize: 26, color: "#1e2d1a", fontWeight: 700 }}>Purchase Order</div>
+              <div style={{ fontSize: 12, color: "#7a8c74", marginTop: 4 }}>Generated: {today}</div>
+            </div>
           </div>
-        </div>
-        <div style={{ display: "flex" }}>
-          {TABS.map(t => (
-            <button key={t.id} onClick={() => setTab(t.id)}
-              style={{ flex: 1, padding: "9px 4px", background: "none", border: "none", borderBottom: `3px solid ${tab === t.id ? "#7fb069" : "transparent"}`, color: tab === t.id ? "#c8e6b8" : "#6a8a5a", fontWeight: tab === t.id ? 800 : 600, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
-              {t.label}{t.count > 0 && <span style={{ marginLeft: 4, background: tab === t.id ? "#7fb069" : "#3a4a3a", color: tab === t.id ? "#1a2a1a" : "#6a8a5a", borderRadius: 20, padding: "1px 6px", fontSize: 10, fontWeight: 800 }}>{t.count}</span>}
-            </button>
-          ))}
-        </div>
-      </div>
 
-      <div style={{ padding: "16px 16px 100px" }}>
-        {tab === "tasks" && (
-          autoTasks.length === 0
-            ? <div style={{ textAlign: "center", padding: "60px 20px" }}><div style={{ fontSize: 48, marginBottom: 12 }}>✓</div><div style={{ fontSize: 18, fontWeight: 800, color: "#2e5a2e" }}>All caught up</div></div>
-            : <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                {autoTasks.map(t => <TaskCard key={t.id} task={t} onComplete={id => setDone(prev => new Set([...prev, id]))} />)}
-              </div>
-        )}
-
-        {tab === "ready" && (
-          readyRuns.length === 0
-            ? <div style={{ textAlign: "center", padding: "60px 20px" }}><div style={{ fontSize: 14, color: "#8a9a80" }}>Nothing ready yet.</div></div>
-            : <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                {readyRuns.map(run => {
-                  const units = (+run.cases||0) * (+run.packSize||10);
-                  const loc   = run.indoorAssignments?.[0];
-                  return (
-                    <div key={run.id} style={{ background: "#fff", borderRadius: 16, border: "2px solid #90d890", padding: "16px 18px" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
-                        <div style={{ fontSize: 20, fontWeight: 800, color: "#1a2a1a", fontFamily: "'DM Serif Display',Georgia,serif" }}>{run.cropName}</div>
-                        <span style={{ background: "#e8f8e8", color: "#1e6e1e", borderRadius: 20, padding: "4px 12px", fontSize: 11, fontWeight: 800, border: "1px solid #90d890" }}>READY</span>
-                      </div>
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
-                        {[{v: units.toLocaleString(), l:"Units"},{v: run.cases, l:"Cases"}].map(s => (
-                          <div key={s.l} style={{ background: "#f4faf4", borderRadius: 10, padding: "10px", textAlign: "center" }}>
-                            <div style={{ fontSize: 20, fontWeight: 800, color: "#1a2a1a" }}>{s.v}</div>
-                            <div style={{ fontSize: 10, color: "#8a9a80", textTransform: "uppercase" }}>{s.l}</div>
-                          </div>
-                        ))}
-                      </div>
-                      {loc && <div style={{ fontSize: 12, color: "#6a7a60", background: "#f4faf4", borderRadius: 8, padding: "7px 10px" }}>{loc.structureName}{loc.itemName ? " / " + loc.itemName : ""}</div>}
-                    </div>
-                  );
+          {/* PO meta */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 24, marginBottom: 32 }}>
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .7, marginBottom: 4 }}>Vendor / Broker</div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: "#1e2d1a" }}>{broker}</div>
+              {lines[0]?.supplier && lines[0].supplier !== broker && (
+                <div style={{ fontSize: 12, color: "#7a8c74", marginTop: 2 }}>Supplier: {lines[0].supplier}</div>
+              )}
+            </div>
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .7, marginBottom: 6 }}>Material Type(s)</div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {[...new Set(lines.map(l => l.materialType))].map(id => {
+                  const m = mt(id);
+                  return <span key={id} style={{ background: m.bg, color: m.color, border: `1px solid ${m.color}40`, borderRadius: 20, padding: "3px 10px", fontSize: 11, fontWeight: 700 }}>{m.icon} {m.label}</span>;
                 })}
               </div>
-        )}
+            </div>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .7, marginBottom: 4 }}>Total Order</div>
+              <div style={{ fontSize: 26, fontWeight: 800, color: "#1e2d1a" }}>{totalQty.toLocaleString()}</div>
+              {hasCosts && totalCost > 0 && <div style={{ fontSize: 14, fontWeight: 700, color: "#7fb069", marginTop: 2 }}>${totalCost.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</div>}
+            </div>
+          </div>
 
-        {tab === "crops" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {activeRuns.map(run => {
-              const sm   = STATUS_META[run.status] || STATUS_META.planned;
-              const loc  = run.indoorAssignments?.[0];
-              const sched = computeSchedule(run);
-              const wtr  = sched ? (sched.ready.year - CURRENT_YEAR) * 52 + sched.ready.week - CURRENT_WEEK : null;
-              return (
-                <div key={run.id} style={{ background: "#fff", border: "1.5px solid #e4eed8", borderRadius: 14, padding: "14px 16px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <div style={{ width: 10, height: 10, borderRadius: 5, background: sm.dot, flexShrink: 0 }} />
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 16, fontWeight: 800, color: "#1a2a1a", fontFamily: "'DM Serif Display',Georgia,serif" }}>{run.cropName}</div>
-                      {loc && <div style={{ fontSize: 11, color: "#8a9a80" }}>{loc.structureName}{loc.itemName ? " / " + loc.itemName : ""}</div>}
-                    </div>
-                    <div style={{ textAlign: "right" }}>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: sm.color, background: sm.color + "15", borderRadius: 20, padding: "2px 10px" }}>{sm.label}</div>
-                      {wtr != null && <div style={{ fontSize: 11, color: wtr <= 0 ? "#2e7a2e" : "#8a9a80", marginTop: 4 }}>{wtr <= 0 ? "Ready now" : `${wtr}wk to ready`}</div>}
-                    </div>
+          {/* Lines by arrival week */}
+          {weekGroups.map(([wk, wLines]) => {
+            const sample   = wLines[0];
+            const wkQty    = wLines.reduce((s,l) => s+(l.orderQty||0),0);
+            const wkCost   = wLines.reduce((s,l) => s+(l.lineCost||0),0);
+            const wkLabel  = sample.arrivalWeek
+              ? `Arrival Week ${sample.arrivalWeek} — ${formatWeekDate(sample.arrivalWeek, sample.arrivalYear)}`
+              : "No Arrival Date Set";
+            return (
+              <div key={wk} style={{ marginBottom: 28 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#1e2d1a", borderRadius: "10px 10px 0 0", padding: "9px 16px" }}>
+                  <div style={{ fontSize: 12, fontWeight: 800, color: "#c8e6b8" }}>{wkLabel}</div>
+                  <div style={{ fontSize: 11, color: "#7a9a6a" }}>{wkQty.toLocaleString()} units{wkCost > 0 ? ` · $${wkCost.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}` : ""}</div>
+                </div>
+                <div style={{ border: "1.5px solid #e0ead8", borderTop: "none", borderRadius: "0 0 10px 10px", overflow: "hidden" }}>
+                  {/* Column headers */}
+                  <div style={{ display: "grid", gridTemplateColumns: colTemplate, padding: "7px 14px", gap: 8, background: "#f0f5ee" }}>
+                    {["Item #","Cultivar","Variety","Type","Tray","Base","Buffer","Order Qty",...(hasCosts?["Est. Cost"]:[])].map((h,i) => (
+                      <div key={i} style={{ fontSize: 9, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5, textAlign: i >= 5 ? "right" : "left" }}>{h}</div>
+                    ))}
+                  </div>
+                  {/* Rows */}
+                  {wLines.map((l, i) => {
+                    const m = l.matType;
+                    const tray = l.propTraySize ? `${l.propTraySize}-cell` : l.linerSize || (l.seedForm ? `${l.seedForm} seed` : "—");
+                    return (
+                      <div key={i} style={{ display: "grid", gridTemplateColumns: colTemplate, padding: "9px 14px", gap: 8, borderTop: "1px solid #f0f5ee", alignItems: "center", background: i%2===0 ? "#fff" : "#fafcf8" }}>
+                        <div style={{ fontSize: 11, color: "#7a8c74", fontFamily: "monospace" }}>{l.ballItemNumber || "—"}</div>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: "#1e2d1a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {l.cultivar || l.cropName}
+                          {l.groupNumber && <span style={{ marginLeft: 6, background: "#e0ead8", borderRadius: 4, padding: "1px 5px", fontSize: 9, fontWeight: 800, color: "#7a8c74" }}>G{l.groupNumber}</span>}
+                        </div>
+                        <div style={{ fontSize: 12, color: "#1e2d1a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.variety}</div>
+                        <div><span style={{ background: m.bg, color: m.color, borderRadius: 12, padding: "2px 8px", fontSize: 10, fontWeight: 700 }}>{m.icon} {m.label}</span></div>
+                        <div style={{ fontSize: 11, color: "#7a8c74" }}>{tray}</div>
+                        <div style={{ fontSize: 11, color: "#7a8c74", textAlign: "right" }}>{(l.baseQty||0).toLocaleString()}</div>
+                        <div style={{ fontSize: 11, color: "#7a8c74", textAlign: "right" }}>+{l.bufferPct}%</div>
+                        <div style={{ fontSize: 13, fontWeight: 800, color: "#1e2d1a", textAlign: "right" }}>{(l.orderQty||0).toLocaleString()}</div>
+                        {hasCosts && <div style={{ fontSize: 11, fontWeight: 700, color: "#7fb069", textAlign: "right" }}>{l.lineCost != null ? `$${l.lineCost.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}` : "—"}</div>}
+                      </div>
+                    );
+                  })}
+                  {/* Subtotal row */}
+                  <div style={{ display: "grid", gridTemplateColumns: colTemplate, padding: "8px 14px", gap: 8, background: "#f0f5ee", borderTop: "1.5px solid #e0ead8" }}>
+                    <div style={{ gridColumn: "1 / 8", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", textAlign: "right" }}>Week subtotal</div>
+                    <div style={{ fontSize: 13, fontWeight: 800, color: "#1e2d1a", textAlign: "right" }}>{wkQty.toLocaleString()}</div>
+                    {hasCosts && <div style={{ fontSize: 11, fontWeight: 800, color: "#7fb069", textAlign: "right" }}>{wkCost > 0 ? `$${wkCost.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}` : "—"}</div>}
                   </div>
                 </div>
-              );
-            })}
+              </div>
+            );
+          })}
+
+          {/* Grand total */}
+          <div style={{ display: "flex", justifyContent: "flex-end", paddingTop: 20, borderTop: "2px solid #1e2d1a" }}>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .7, marginBottom: 4 }}>Total Order</div>
+              <div style={{ fontSize: 30, fontWeight: 800, color: "#1e2d1a" }}>{totalQty.toLocaleString()} units</div>
+              {hasCosts && totalCost > 0 && <div style={{ fontSize: 16, fontWeight: 700, color: "#7fb069", marginTop: 4 }}>${totalCost.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</div>}
+            </div>
+          </div>
+
+          <div style={{ marginTop: 28, paddingTop: 16, borderTop: "1px solid #e0ead8", fontSize: 10, color: "#aabba0" }}>
+            Generated by Hoosier Boy Greenhouse Ops · {today} · Quantities include loss buffer. Confirm availability with broker before finalizing.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── BROKER CARD ───────────────────────────────────────────────────────────────
+function BrokerCard({ broker, lines, onViewPO }) {
+  const [expanded, setExpanded] = useState(false);
+  const totalQty  = lines.reduce((s,l) => s+(l.orderQty||0), 0);
+  const totalCost = lines.reduce((s,l) => s+(l.lineCost||0), 0);
+  const hasCosts  = lines.some(l => l.lineCost != null);
+  const matTypes  = [...new Set(lines.map(l => l.materialType))];
+
+  const weekMap = {};
+  lines.forEach(l => { const k = l.arrivalWeek||0; weekMap[k]=(weekMap[k]||0)+(l.orderQty||0); });
+  const weeks = Object.entries(weekMap).sort(([a],[b])=>+a-+b);
+
+  return (
+    <div style={{ background: "#fff", borderRadius: 16, border: "1.5px solid #e0ead8", overflow: "hidden", marginBottom: 16 }}>
+      <div style={{ padding: "18px 22px", display: "flex", alignItems: "center", gap: 16, cursor: "pointer", background: "#fafcf8" }}
+        onClick={() => setExpanded(e => !e)}>
+        <div style={{ width: 44, height: 44, borderRadius: 12, background: "#1e2d1a", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <span style={{ fontSize: 20 }}>📋</span>
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 800, fontSize: 17, color: "#1e2d1a" }}>{broker}</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 5 }}>
+            <span style={{ fontSize: 11, color: "#7a8c74" }}>{lines.length} line{lines.length !== 1 ? "s" : ""}</span>
+            {matTypes.map(id => { const m = mt(id); return <span key={id} style={{ background: m.bg, color: m.color, border: `1px solid ${m.color}40`, borderRadius: 20, padding: "2px 9px", fontSize: 10, fontWeight: 700 }}>{m.icon} {m.label}</span>; })}
+            {weeks.slice(0,5).map(([wk, qty]) => (
+              <span key={wk} style={{ background: "#f0f8eb", color: "#2e5c1e", border: "1px solid #c8e0b8", borderRadius: 20, padding: "2px 9px", fontSize: 10, fontWeight: 600 }}>
+                Wk {wk}: {qty.toLocaleString()}
+              </span>
+            ))}
+            {weeks.length > 5 && <span style={{ fontSize: 10, color: "#aabba0" }}>+{weeks.length-5} more weeks</span>}
+          </div>
+        </div>
+        <div style={{ textAlign: "right", flexShrink: 0 }}>
+          <div style={{ fontSize: 22, fontWeight: 800, color: "#1e2d1a" }}>{totalQty.toLocaleString()}</div>
+          <div style={{ fontSize: 11, color: "#7a8c74" }}>total units</div>
+          {hasCosts && totalCost > 0 && <div style={{ fontSize: 13, fontWeight: 700, color: "#7fb069", marginTop: 2 }}>${totalCost.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</div>}
+        </div>
+        <button onClick={e => { e.stopPropagation(); onViewPO(); }}
+          style={{ background: "#1e2d1a", color: "#c8e6b8", border: "none", borderRadius: 9, padding: "9px 18px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}>
+          View PO →
+        </button>
+      </div>
+
+      {expanded && (
+        <div style={{ borderTop: "1.5px solid #f0f5ee" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "80px 1fr 1.2fr 60px 80px 60px 90px", padding: "7px 22px", gap: 10, background: "#f8faf6" }}>
+            {["Item #","Cultivar","Variety","Type","Tray","Wk","Order Qty"].map((h,i) => (
+              <div key={i} style={{ fontSize: 9, fontWeight: 800, color: "#aabba0", textTransform: "uppercase", letterSpacing: .5, textAlign: i>=5?"right":"left" }}>{h}</div>
+            ))}
+          </div>
+          {lines.map((l, i) => {
+            const m = l.matType;
+            const tray = l.propTraySize ? `${l.propTraySize}-cell` : l.linerSize || (l.seedForm ? `${l.seedForm}` : "—");
+            return (
+              <div key={i} style={{ display: "grid", gridTemplateColumns: "80px 1fr 1.2fr 60px 80px 60px 90px", padding: "9px 22px", gap: 10, borderTop: "1px solid #f0f5ee", alignItems: "center", background: i%2===0?"#fff":"#fafcf8" }}>
+                <div style={{ fontSize: 11, color: "#7a8c74", fontFamily: "monospace" }}>{l.ballItemNumber || "—"}</div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "#1e2d1a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {l.cultivar || l.cropName}
+                  {l.groupNumber && <span style={{ marginLeft: 5, background: "#e0ead8", borderRadius: 4, padding: "1px 5px", fontSize: 9, color: "#7a8c74", fontWeight: 700 }}>G{l.groupNumber}</span>}
+                </div>
+                <div style={{ fontSize: 12, color: "#1e2d1a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.variety}</div>
+                <div><span style={{ background: m.bg, color: m.color, borderRadius: 10, padding: "2px 7px", fontSize: 10, fontWeight: 700 }}>{m.icon}</span></div>
+                <div style={{ fontSize: 11, color: "#7a8c74" }}>{tray}</div>
+                <div style={{ fontSize: 11, color: "#4a90d9", fontWeight: 700, textAlign: "right" }}>{l.arrivalWeek ? `Wk ${l.arrivalWeek}` : "—"}</div>
+                <div style={{ fontSize: 13, fontWeight: 800, color: "#1e2d1a", textAlign: "right" }}>{(l.orderQty||0).toLocaleString()}</div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── MAIN ──────────────────────────────────────────────────────────────────────
+export default function App() {
+  const { rows: runs } = useCropRuns();
+  const currentYear = new Date().getFullYear();
+  const [yearFilter, setYearFilter] = useState(currentYear);
+  const [matFilter,  setMatFilter ] = useState("all");
+  const [activePO,   setActivePO  ] = useState(null);
+
+  const allLines = deriveLines(runs);
+
+  const filtered = allLines.filter(l => {
+    if (yearFilter !== "all" && l.arrivalYear && +l.arrivalYear !== +yearFilter) return false;
+    if (matFilter !== "all" && l.materialType !== matFilter) return false;
+    return true;
+  });
+
+  const brokerMap = {};
+  filtered.forEach(l => { if (!brokerMap[l.broker]) brokerMap[l.broker]=[]; brokerMap[l.broker].push(l); });
+  const brokers = Object.entries(brokerMap).sort(([a],[b]) => a.localeCompare(b));
+
+  const years = [...new Set([currentYear, currentYear+1, ...allLines.map(l=>+l.arrivalYear).filter(Boolean)])].sort();
+  const grandQty  = filtered.reduce((s,l) => s+(l.orderQty||0), 0);
+  const grandCost = filtered.reduce((s,l) => s+(l.lineCost||0), 0);
+  const noSourcing = runs.filter(r => !r.materialType).length;
+
+  return (
+    <div style={{ fontFamily: "'DM Sans','Segoe UI',sans-serif", background: "#f2f5ef", minHeight: "100vh" }}>
+      <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=DM+Sans:wght@400;600;700;800&display=swap" rel="stylesheet" />
+
+      {/* NAV */}
+      <div style={{ background: "#1e2d1a", padding: "12px 32px", display: "flex", alignItems: "center", gap: 16 }}>
+        <img src="https://cdn.prod.website-files.com/63b5c78a53ecb12c888ba09a/63b5d5e281aa6766b5cb8ace_HOO-Boy%20Logo%20Reversed-White.png" alt="Hoosier Boy" style={{ height: 52, objectFit: "contain" }} />
+        <div style={{ width: 1, height: 36, background: "#4a6a3a" }} />
+        <div style={{ fontSize: 11, color: "#7a9a6a", letterSpacing: 1.2, textTransform: "uppercase" }}>Young Plant Orders</div>
+      </div>
+
+      <div style={{ maxWidth: 1040, margin: "0 auto", padding: "32px 24px" }}>
+
+        {/* Warning — runs with no sourcing */}
+        {noSourcing > 0 && (
+          <div style={{ background: "#fff8e8", border: "1.5px solid #f0d080", borderRadius: 12, padding: "12px 18px", marginBottom: 20, display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 18 }}>⚠️</span>
+            <div style={{ fontSize: 13, color: "#7a5a10" }}>
+              <strong>{noSourcing} crop run{noSourcing !== 1 ? "s" : ""}</strong> {noSourcing === 1 ? "has" : "have"} no sourcing set — open each run and complete the <strong>Sourcing tab</strong> to include {noSourcing === 1 ? "it" : "them"} here.
+            </div>
           </div>
         )}
 
-        {tab === "flags" && (<>
-          {flagging
-            ? <FlagForm runs={runs} onSubmit={f => { setFlags(p => [f, ...p]); setFlagging(false); }} onCancel={() => setFlagging(false)} />
-            : <>
-                <button onClick={() => setFlagging(true)} style={{ width: "100%", padding: "16px", borderRadius: 14, border: "2px dashed #c8d8c0", background: "#fafcf8", color: "#6a7a60", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", marginBottom: 14 }}>
-                  + Flag a Problem
-                </button>
-                {flags.map(f => {
-                  const ft  = FLAG_TYPES.find(x => x.id === f.type);
-                  const run = runs.find(r => r.id === f.runId);
-                  return (
-                    <div key={f.id} style={{ background: "#fff", borderRadius: 12, border: `1.5px solid ${ft?.color + "40" || "#e4eed8"}`, padding: "12px 16px", marginBottom: 8 }}>
-                      <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 4 }}>
-                        <span style={{ fontSize: 13, fontWeight: 800, color: ft?.color }}>{ft?.label}</span>
-                        {run && <span style={{ fontSize: 12, color: "#8a9a80" }}>— {run.cropName}</span>}
-                      </div>
-                      {f.location && <div style={{ fontSize: 12, color: "#6a7a60" }}>{f.location}</div>}
-                      {f.notes    && <div style={{ fontSize: 13, color: "#4a5a40", marginTop: 4 }}>{f.notes}</div>}
-                    </div>
-                  );
-                })}
-              </>
-          }
-        </>)}
+        {/* Summary tiles */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 14, marginBottom: 28 }}>
+          {[
+            { label: "Total Order Qty",    value: grandQty.toLocaleString(),  sub: "all brokers",        color: "#1e2d1a" },
+            { label: "Est. Total Cost",     value: grandCost > 0 ? `$${grandCost.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}` : "—", sub: "where cost entered", color: "#7fb069" },
+            { label: "Brokers / Vendors",   value: brokers.length,             sub: "separate POs",       color: "#4a90d9" },
+            { label: "Order Lines",         value: filtered.length,            sub: "varieties + runs",   color: "#8e44ad" },
+          ].map(s => (
+            <div key={s.label} style={{ background: "#fff", borderRadius: 12, border: "1.5px solid #e0ead8", padding: "16px 18px" }}>
+              <div style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .7, marginBottom: 4 }}>{s.label}</div>
+              <div style={{ fontSize: 22, fontWeight: 800, color: s.color }}>{s.value}</div>
+              <div style={{ fontSize: 11, color: "#aabba0", marginTop: 2 }}>{s.sub}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Filters */}
+        <div style={{ display: "flex", gap: 10, marginBottom: 22, flexWrap: "wrap", alignItems: "center" }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5 }}>Filter</span>
+          <div style={{ display: "flex", gap: 6 }}>
+            {[["all","All Years"], ...years.map(y=>[String(y),String(y)])].map(([val,label]) => (
+              <button key={val} onClick={() => setYearFilter(val==="all"?"all":+val)}
+                style={{ padding: "5px 13px", borderRadius: 20, border: `1.5px solid ${yearFilter==val?"#1e2d1a":"#c8d8c0"}`, background: yearFilter==val?"#1e2d1a":"#fff", color: yearFilter==val?"#c8e6b8":"#7a8c74", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{label}</button>
+            ))}
+          </div>
+          <div style={{ width: 1, height: 20, background: "#c8d8c0" }} />
+          <div style={{ display: "flex", gap: 6 }}>
+            {[["all","All Types"], ...MATERIAL_TYPES.map(m=>[m.id,`${m.icon} ${m.label}`])].map(([val,label]) => (
+              <button key={val} onClick={() => setMatFilter(val)}
+                style={{ padding: "5px 13px", borderRadius: 20, border: `1.5px solid ${matFilter===val?"#7fb069":"#c8d8c0"}`, background: matFilter===val?"#f0f8eb":"#fff", color: matFilter===val?"#2e5c1e":"#7a8c74", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{label}</button>
+            ))}
+          </div>
+        </div>
+
+        {/* Broker cards */}
+        {brokers.length === 0 ? (
+          <div style={{ background: "#fff", borderRadius: 16, border: "1.5px dashed #c8d8c0", padding: "60px 40px", textAlign: "center" }}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}>📋</div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: "#1e2d1a", marginBottom: 8 }}>No orders to show yet</div>
+            <div style={{ fontSize: 13, color: "#7a8c74", maxWidth: 400, margin: "0 auto", lineHeight: 1.6 }}>
+              Open your crop runs and fill in the <strong>Sourcing tab</strong> — set material type (URC, Seed, or Liner), broker, tray size, and unit cost. Orders will appear here automatically, one card per broker.
+            </div>
+          </div>
+        ) : brokers.map(([broker, lines]) => (
+          <BrokerCard key={broker} broker={broker} lines={lines} onViewPO={() => setActivePO({ broker, lines })} />
+        ))}
+
       </div>
 
-      {tab !== "flags" && !flagging && (
-        <button onClick={() => { setTab("flags"); setFlagging(true); }}
-          style={{ position: "fixed", bottom: 24, right: 20, width: 52, height: 52, borderRadius: 26, background: "#c03030", border: "none", color: "#fff", fontSize: 20, cursor: "pointer", boxShadow: "0 4px 20px rgba(192,48,48,.4)", zIndex: 200 }}>
-          ⚑
-        </button>
-      )}
+      {activePO && <PODocument broker={activePO.broker} lines={activePO.lines} onClose={() => setActivePO(null)} />}
     </div>
   );
 }
