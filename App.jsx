@@ -1,13 +1,13 @@
 import { useState } from "react";
-import { CROP_STATUS } from "./lib/shared";
+import { CROP_STATUS } from "./shared";
 
 // Module imports — each is a self-contained page
-import PlannerHome      from "./components/PlannerHome";
-import CropPlanning     from "./components/CropPlanning";
-import YoungPlantOrders from "./components/YoungPlantOrders";
-import SpaceManagement  from "./components/SpaceManagement";
-import Libraries        from "./components/Libraries";
-import OperatorView     from "./components/OperatorView";
+import PlannerHome      from "./PlannerHome";
+import CropPlanning     from "./CropPlanning";
+import YoungPlantOrders from "./YoungPlantOrders";
+import SpaceManagement  from "./SpaceManagement";
+import Libraries        from "./Libraries";
+import OperatorView     from "./OperatorView";
 
 const LOGO_WHITE = "https://cdn.prod.website-files.com/63b5c78a53ecb12c888ba09a/63b5d5e281aa6766b5cb8ace_HOO-Boy%20Logo%20Reversed-White.png";
 
