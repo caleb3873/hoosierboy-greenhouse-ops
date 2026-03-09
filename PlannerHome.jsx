@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { computeSchedule, getCurrentWeek, getCropRunCalendarEvents, makeGCalUrl, CROP_STATUS, formatWeekDate } from "../lib/shared";
+import { computeSchedule, getCurrentWeek, getCropRunCalendarEvents, makeGCalUrl, CROP_STATUS, formatWeekDate } from "./shared";
 
 const CURRENT_WEEK = getCurrentWeek();
 const CURRENT_YEAR = new Date().getFullYear();
