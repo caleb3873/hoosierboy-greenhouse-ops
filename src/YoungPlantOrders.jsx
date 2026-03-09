@@ -1,14 +1,5 @@
 import { useState, useEffect } from "react";
-
-// ── STORAGE ───────────────────────────────────────────────────────────────────
-function useStorage(key, fallback) {
-  const [val, setVal] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(key)) ?? fallback; }
-    catch { return fallback; }
-  });
-  useEffect(() => { try { localStorage.setItem(key, JSON.stringify(val)); } catch {} }, [key, val]);
-  return [val, setVal];
-}
+import { useCropRuns } from "./supabase";
 
 // ── CONSTANTS ─────────────────────────────────────────────────────────────────
 const MATERIAL_TYPES = [
@@ -340,7 +331,7 @@ function BrokerCard({ broker, lines, onViewPO }) {
 
 // ── MAIN ──────────────────────────────────────────────────────────────────────
 export default function App() {
-  const [runs] = useStorage("gh_crop_runs_v1", []);
+  const { rows: runs } = useCropRuns();
   const currentYear = new Date().getFullYear();
   const [yearFilter, setYearFilter] = useState(currentYear);
   const [matFilter,  setMatFilter ] = useState("all");
