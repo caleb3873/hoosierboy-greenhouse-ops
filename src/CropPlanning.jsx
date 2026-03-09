@@ -784,11 +784,35 @@ const MATERIAL_TYPES = [
 ];
 const URC_TRAY_SIZES = ["50", "72", "84", "102"];
 
+function useBrokerLookup() {
+  const [catalogs] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("gh_broker_catalogs_v1") || "[]"); }
+    catch { return []; }
+  });
+  const getBrokerNames = () => [...new Set(catalogs.map(c => c.brokerName).filter(Boolean))].sort();
+  const searchVarieties = (brokerName, cropName, query = "") => {
+    const items = catalogs.filter(c => c.brokerName === brokerName).flatMap(c => c.items);
+    return items.filter(item => {
+      const matchesCrop = !cropName || item.crop?.toLowerCase().includes(cropName.toLowerCase());
+      const matchesQuery = !query || item.description?.toLowerCase().includes(query.toLowerCase()) || item.itemNumber?.includes(query);
+      return matchesCrop && matchesQuery;
+    }).slice(0, 60);
+  };
+  return { getBrokerNames, searchVarieties };
+}
+
 function SourcingSection({ form, upd, focus, setFocus }) {
   const mt = MATERIAL_TYPES.find(m => m.id === form.materialType) || MATERIAL_TYPES[0];
   const units = form.cases && form.packSize ? Number(form.cases) * Number(form.packSize) : 0;
   const buffered = units > 0 ? Math.ceil(units * (1 + (Number(form.bufferPct) || 0) / 100)) : 0;
   const totalCost = buffered && form.unitCost ? (buffered * Number(form.unitCost)).toFixed(2) : null;
+  const { getBrokerNames, searchVarieties } = useBrokerLookup();
+  const brokerNames = getBrokerNames();
+  const [varQuery, setVarQuery] = useState("");
+  const [showPicker, setShowPicker] = useState(false);
+  const catalogVarieties = form.sourcingBroker
+    ? searchVarieties(form.sourcingBroker, form.cropName, varQuery)
+    : [];
 
   return (
     <div>
@@ -868,8 +892,20 @@ function SourcingSection({ form, upd, focus, setFocus }) {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
         <div>
           <FL c="Broker" />
-          <input style={IS(focus === "sBroker")} value={form.sourcingBroker || ""} onChange={e => upd("sourcingBroker", e.target.value)}
-            onFocus={() => setFocus("sBroker")} onBlur={() => setFocus(null)} placeholder="e.g. Ball Seed" />
+          {brokerNames.length > 0 ? (
+            <select style={IS(false)} value={form.sourcingBroker || ""} onChange={e => { upd("sourcingBroker", e.target.value); setShowPicker(false); setVarQuery(""); }}>
+              <option value="">— Select broker —</option>
+              {brokerNames.map(b => <option key={b} value={b}>{b}</option>)}
+              <option value="__other__">Other (type below)</option>
+            </select>
+          ) : (
+            <input style={IS(focus === "sBroker")} value={form.sourcingBroker || ""} onChange={e => upd("sourcingBroker", e.target.value)}
+              onFocus={() => setFocus("sBroker")} onBlur={() => setFocus(null)} placeholder="e.g. Ball Seed" />
+          )}
+          {form.sourcingBroker === "__other__" && (
+            <input style={{ ...IS(focus === "sBrokerOther"), marginTop: 6 }} value={form.sourcingBrokerCustom || ""} onChange={e => upd("sourcingBrokerCustom", e.target.value)}
+              onFocus={() => setFocus("sBrokerOther")} onBlur={() => setFocus(null)} placeholder="Enter broker name" />
+          )}
         </div>
         <div>
           <FL c="Supplier / Breeder" />
@@ -877,6 +913,45 @@ function SourcingSection({ form, upd, focus, setFocus }) {
             onFocus={() => setFocus("sSupplier")} onBlur={() => setFocus(null)} placeholder="e.g. Dümmen Orange" />
         </div>
       </div>
+
+      {form.sourcingBroker && form.sourcingBroker !== "__other__" && catalogVarieties.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <SH c={`Varieties from ${form.sourcingBroker}`} />
+          <input value={varQuery} onChange={e => setVarQuery(e.target.value)} placeholder={`Search ${form.cropName || "varieties"}...`}
+            style={{ ...IS(false), marginBottom: 8 }} />
+          <div style={{ maxHeight: 220, overflowY: "auto", border: "1.5px solid #e0ead8", borderRadius: 10, background: "#fff" }}>
+            {catalogVarieties.map(item => (
+              <div key={item.id}
+                onClick={() => {
+                  const brokerDisplay = form.sourcingBroker;
+                  upd("unitCost", item.sellPrice ? (item.sellPrice / (Number(item.perQty) || 100)).toFixed(4) : form.unitCost);
+                  const varName = item.description?.replace(/#$/, "").trim();
+                  const existing = form.varieties || [];
+                  if (!existing.find(v => v.ballItemNumber === item.itemNumber)) {
+                    const newVar = { id: dc({}), ballItemNumber: item.itemNumber, cultivar: varName, name: varName, color: "", cases: 0, costPerUnit: item.sellPrice ? (item.sellPrice / (Number(item.perQty)||100)).toFixed(4) : "", broker: brokerDisplay, supplier: item.size, tags: [] };
+                    newVar.id = Date.now().toString(36);
+                    upd("varieties", [...existing, newVar]);
+                  }
+                }}
+                style={{ padding: "9px 14px", borderBottom: "1px solid #f0f5ee", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}
+                onMouseEnter={e => e.currentTarget.style.background = "#f8fcf4"}
+                onMouseLeave={e => e.currentTarget.style.background = ""}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "#1a2a1a" }}>
+                    {item.isNew && <span style={{ background: "#8e44ad", color: "#fff", borderRadius: 4, padding: "1px 5px", fontSize: 9, fontWeight: 800, marginRight: 6 }}>NEW</span>}
+                    {item.description?.replace(/#$/, "").trim()}
+                  </div>
+                  <div style={{ fontSize: 11, color: "#7a8c74" }}>{item.size} · #{item.itemNumber} · {item.perQty}/tray</div>
+                </div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#2e7a2e", flexShrink: 0, marginLeft: 12 }}>
+                  {item.sellPrice ? `$${item.sellPrice.toFixed(2)}/${item.perQty}` : "—"}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div style={{ fontSize: 11, color: "#aabba0", marginTop: 5 }}>Click a variety to add it to the Varieties tab and auto-fill cost</div>
+        </div>
+      )}
 
       <SH c="Cost & Buffer" />
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 8 }}>
