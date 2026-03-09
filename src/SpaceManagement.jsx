@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { useHouses, usePads, useManualTasks } from "./supabase";
-  return [val, setVal];
-}
+
 
 const LOCATIONS = ["Bluff Road", "Sprague Road"];
 const BENCH_WIDTHS = [4, 6, 8];
