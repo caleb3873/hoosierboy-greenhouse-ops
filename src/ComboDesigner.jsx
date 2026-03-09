@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react";
+import { useContainers, useSoilMixes } from "./supabase";
 
 // ── CONSTANTS ─────────────────────────────────────────────────────────────────
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -19,12 +20,6 @@ const PLANT_ROLES = [
   { id: "accent",   label: "Accent",   color: "#e07b39", emoji: "✨" },
 ];
 
-const CONTAINER_TYPES = [
-  { id: "basket",  label: "Hanging Basket", icon: "🧺" },
-  { id: "planter", label: "Combo Planter",  icon: "🪴" },
-  { id: "window",  label: "Window Box",     icon: "📦" },
-];
-
 const STATUSES = [
   { id: "draft",     label: "Draft",               color: "#7a8c74", bg: "#f0f5ee" },
   { id: "submitted", label: "Submitted for Review", color: "#2e7d9e", bg: "#e8f4f8" },
@@ -38,6 +33,18 @@ const BROKERS = [
   "PanAmerican Seed", "Dümmen Orange", "Selecta", "Other",
 ];
 
+// ── SOIL COST HELPER ──────────────────────────────────────────────────────────
+function soilCostPerCuFt(mix) {
+  if (!mix?.costPerBag || !mix?.bagSize) return null;
+  const cost = Number(mix.costPerBag), size = Number(mix.bagSize);
+  if (!cost || !size) return null;
+  if (mix.bagUnit === "cu ft") return cost / size;
+  if (mix.bagUnit === "gal")   return cost / (size * 0.134);
+  if (mix.bagUnit === "L")     return cost / (size * 0.0353);
+  if (mix.bagUnit === "qt")    return cost / (size * 0.0334);
+  return null;
+}
+
 // ── STYLE HELPERS ─────────────────────────────────────────────────────────────
 const IS = (active) => ({
   width: "100%", padding: "8px 10px", borderRadius: 7,
@@ -50,70 +57,53 @@ function FL({ c }) {
   return <div style={{ fontSize: 10, fontWeight: 700, color: "#9aaa90", textTransform: "uppercase", letterSpacing: .7, marginBottom: 3 }}>{c}</div>;
 }
 
+function SH({ c }) {
+  return <div style={{ fontSize: 11, fontWeight: 800, color: "#7fb069", letterSpacing: 1, textTransform: "uppercase", borderBottom: "1.5px solid #e0ead8", paddingBottom: 7, marginBottom: 14 }}>{c}</div>;
+}
+
 // ── VISUAL PREVIEW ────────────────────────────────────────────────────────────
-function ComboVisual({ plants, containerType }) {
+function ComboVisual({ plants, isBasket }) {
   const slots = [];
   plants.forEach(p => { for (let i = 0; i < (p.qty || 1); i++) slots.push(p); });
   const total = slots.length;
-  const size = 220;
-  const cx = size / 2, cy = size / 2;
+  const size = 220, cx = size / 2, cy = size / 2;
 
-  if (containerType !== "planter") {
+  if (isBasket !== false) {
     const rings = total <= 1 ? [slots] :
                   total <= 7 ? [slots.slice(0,1), slots.slice(1)] :
                   total <= 14 ? [slots.slice(0,1), slots.slice(1,7), slots.slice(7)] :
                   [slots.slice(0,1), slots.slice(1,7), slots.slice(7,13), slots.slice(13)];
     const radii = [0, 38, 72, 98].slice(0, rings.length);
-
     return (
-      <div style={{ position: "relative", width: size, height: size, margin: "0 auto" }}>
-        <svg width={size} height={size} style={{ position: "absolute", top: 0, left: 0, pointerEvents: "none" }}>
+      <div style={{ position:"relative", width:size, height:size, margin:"0 auto" }}>
+        <svg width={size} height={size} style={{ position:"absolute", top:0, left:0, pointerEvents:"none" }}>
           <circle cx={cx} cy={cy} r={104} fill="#f0f5ee" stroke="#c8d8c0" strokeWidth={2.5} />
           <circle cx={cx} cy={cy} r={86} fill="none" stroke="#e0ead8" strokeWidth={1} strokeDasharray="3 4" />
         </svg>
-        {rings.map((ring, ri) => ring.map((p, i) => {
+        {rings.map((ring,ri) => ring.map((p,i) => {
           const r = radii[ri];
-          const angle = ri === 0 ? 0 : (2 * Math.PI * i / ring.length) - Math.PI / 2;
-          const x = cx + r * Math.cos(angle);
-          const y = cy + r * Math.sin(angle);
-          const role = PLANT_ROLES.find(r => r.id === p.role) || PLANT_ROLES[1];
-          const sz = ri === 0 ? 42 : ri === 1 ? 34 : ri === 2 ? 28 : 22;
+          const angle = ri===0 ? 0 : (2*Math.PI*i/ring.length) - Math.PI/2;
+          const x = cx + r*Math.cos(angle), y = cy + r*Math.sin(angle);
+          const role = PLANT_ROLES.find(r=>r.id===p.role)||PLANT_ROLES[1];
+          const sz = ri===0?42:ri===1?34:ri===2?28:22;
           return (
-            <div key={`${ri}-${i}`} style={{
-              position: "absolute", width: sz, height: sz, borderRadius: "50%",
-              border: `2.5px solid ${role.color}`,
-              background: p.imageUrl ? "transparent" : role.color + "28",
-              overflow: "hidden", left: x - sz/2, top: y - sz/2,
-              boxShadow: "0 2px 5px rgba(0,0,0,0.12)",
-            }}>
-              {p.imageUrl
-                ? <img src={p.imageUrl} style={{ width:"100%",height:"100%",objectFit:"cover" }} onError={e=>e.target.style.display="none"} />
-                : <div style={{ width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:sz*.4 }}>🌸</div>
-              }
+            <div key={`${ri}-${i}`} style={{ position:"absolute", width:sz, height:sz, borderRadius:"50%", border:`2.5px solid ${role.color}`, background:p.imageUrl?"transparent":role.color+"28", overflow:"hidden", left:x-sz/2, top:y-sz/2, boxShadow:"0 2px 5px rgba(0,0,0,0.12)" }}>
+              {p.imageUrl ? <img src={p.imageUrl} style={{width:"100%",height:"100%",objectFit:"cover"}} onError={e=>e.target.style.display="none"} /> : <div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:sz*.4}}>🌸</div>}
             </div>
           );
         }))}
-        <div style={{ position:"absolute", bottom:4, left:"50%", transform:"translateX(-50%)", fontSize:10, color:"#7a8c74", fontWeight:600, background:"rgba(255,255,255,.85)", borderRadius:10, padding:"2px 8px", whiteSpace:"nowrap" }}>
-          {total} plants
-        </div>
+        <div style={{ position:"absolute", bottom:4, left:"50%", transform:"translateX(-50%)", fontSize:10, color:"#7a8c74", fontWeight:600, background:"rgba(255,255,255,.85)", borderRadius:10, padding:"2px 8px", whiteSpace:"nowrap" }}>{total} plants</div>
       </div>
     );
   }
 
   return (
-    <div style={{ width: size, margin: "0 auto", background: "linear-gradient(180deg,#f0f5ee,#e0ead8)", borderRadius: 14, border: "2px solid #c8d8c0", padding: "16px 12px 12px", minHeight: 130 }}>
+    <div style={{ width:size, margin:"0 auto", background:"linear-gradient(180deg,#f0f5ee,#e0ead8)", borderRadius:14, border:"2px solid #c8d8c0", padding:"16px 12px 12px", minHeight:130 }}>
       <div style={{ display:"flex", flexWrap:"wrap", gap:5, justifyContent:"center", alignItems:"flex-end" }}>
-        {slots.map((p, i) => {
-          const role = PLANT_ROLES.find(r => r.id === p.role) || PLANT_ROLES[1];
-          const sz = p.role==="thriller" ? 42 : p.role==="filler" ? 34 : 26;
-          return (
-            <div key={i} style={{ width:sz, height:sz, borderRadius:"50%", border:`2.5px solid ${role.color}`, background:p.imageUrl?"transparent":role.color+"28", overflow:"hidden", boxShadow:"0 2px 5px rgba(0,0,0,0.1)" }}>
-              {p.imageUrl
-                ? <img src={p.imageUrl} style={{width:"100%",height:"100%",objectFit:"cover"}} onError={e=>e.target.style.display="none"} />
-                : <div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:sz*.38}}>🌸</div>
-              }
-            </div>
-          );
+        {slots.map((p,i) => {
+          const role = PLANT_ROLES.find(r=>r.id===p.role)||PLANT_ROLES[1];
+          const sz = p.role==="thriller"?42:p.role==="filler"?34:26;
+          return <div key={i} style={{ width:sz, height:sz, borderRadius:"50%", border:`2.5px solid ${role.color}`, background:p.imageUrl?"transparent":role.color+"28", overflow:"hidden", boxShadow:"0 2px 5px rgba(0,0,0,0.1)" }}>{p.imageUrl?<img src={p.imageUrl} style={{width:"100%",height:"100%",objectFit:"cover"}} onError={e=>e.target.style.display="none"}/>:<div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:sz*.38}}>🌸</div>}</div>;
         })}
       </div>
       <div style={{ textAlign:"center", marginTop:8, fontSize:10, color:"#7a8c74", fontWeight:600 }}>{total} plants</div>
@@ -126,13 +116,12 @@ function ComponentRow({ plant, index, onChange, onRemove }) {
   const [imgErr, setImgErr] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [focusField, setFocusField] = useState(null);
-  const role = PLANT_ROLES.find(r => r.id === plant.role) || PLANT_ROLES[1];
+  const role = PLANT_ROLES.find(r=>r.id===plant.role)||PLANT_ROLES[1];
 
   const handleDrop = useCallback((e) => {
-    e.preventDefault();
-    setDragging(false);
-    const url = e.dataTransfer.getData("text/uri-list") || e.dataTransfer.getData("text/plain") || e.dataTransfer.getData("URL");
-    if (url && url.startsWith("http")) { onChange("imageUrl", url); setImgErr(false); }
+    e.preventDefault(); setDragging(false);
+    const url = e.dataTransfer.getData("text/uri-list")||e.dataTransfer.getData("text/plain")||e.dataTransfer.getData("URL");
+    if (url && url.startsWith("http")) { onChange("imageUrl",url); setImgErr(false); }
   }, [onChange]);
 
   return (
@@ -148,7 +137,7 @@ function ComponentRow({ plant, index, onChange, onRemove }) {
           <div style={{ position:"absolute",top:3,left:3,width:16,height:16,borderRadius:"50%",background:role.color,color:"#fff",fontSize:9,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center" }}>{index+1}</div>
         </div>
 
-        {/* Fields */}
+        {/* Fields grid */}
         <div style={{ flex:1, minWidth:0 }}>
           <div style={{ display:"grid", gridTemplateColumns:"1.8fr 1fr 0.9fr 0.9fr 0.8fr 0.8fr auto", gap:8, alignItems:"end" }}>
             <div>
@@ -195,8 +184,7 @@ function ComponentRow({ plant, index, onChange, onRemove }) {
               <button onClick={onRemove} style={{width:30,height:34,borderRadius:7,border:"1.5px solid #f0d0c0",background:"#fff",color:"#e07b39",fontSize:16,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
             </div>
           </div>
-
-          {/* Second row */}
+          {/* Role + image URL row */}
           <div style={{display:"flex",gap:8,marginTop:8,alignItems:"center",flexWrap:"wrap"}}>
             <div style={{display:"flex",gap:4}}>
               {PLANT_ROLES.map(r=>(
@@ -214,27 +202,214 @@ function ComponentRow({ plant, index, onChange, onRemove }) {
   );
 }
 
+// ── LOT MATERIALS PANEL ───────────────────────────────────────────────────────
+// Container, soil, tag selectors with cost display
+function LotMaterials({ lot, onChange, containers, soilMixes, tags }) {
+  const [focus, setFocus] = useState(null);
+
+  // Derived selections
+  const selContainer = containers.find(c=>c.id===lot.containerId);
+  const selSoil      = soilMixes.find(s=>s.id===lot.soilId);
+  const selTag       = tags.find(t=>t.id===lot.tagId);
+
+  // Filter to finished containers only (not trays)
+  const finishedContainers = containers.filter(c=>c.kind==="finished");
+
+  // Soil cost per unit (needs substrateVol from container if available)
+  const soilCpf = selSoil ? soilCostPerCuFt(selSoil) : null;
+  const substrateVolCuFt = selContainer?.substrateVol
+    ? (selContainer.substrateUnit==="qt"    ? Number(selContainer.substrateVol)/25.71
+     : selContainer.substrateUnit==="gal"   ? Number(selContainer.substrateVol)*0.134
+     : selContainer.substrateUnit==="cu in" ? Number(selContainer.substrateVol)/1728
+     : selContainer.substrateUnit==="L"     ? Number(selContainer.substrateVol)*0.0353
+     : Number(selContainer.substrateVol))
+    : null;
+  const soilCostPerUnit = soilCpf && substrateVolCuFt ? soilCpf * substrateVolCuFt : null;
+
+  return (
+    <div style={{ background:"#f8faf6", borderRadius:16, border:"1.5px solid #e0ead8", padding:"20px 22px", marginBottom:24 }}>
+      <SH c="Materials" />
+
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:20 }}>
+
+        {/* ── CONTAINER ── */}
+        <div>
+          <FL c="Container" />
+          <select value={lot.containerId||""} onChange={e=>onChange("containerId",e.target.value)}
+            style={{...IS(false), marginBottom:8}}>
+            <option value="">— Select container —</option>
+            {finishedContainers.map(c=>(
+              <option key={c.id} value={c.id}>
+                {c.name}{c.diameter?` (${c.diameter}")`:""}
+              </option>
+            ))}
+          </select>
+          {selContainer && (
+            <div style={{ background:"#fff", borderRadius:10, border:"1.5px solid #e0ead8", padding:"10px 14px" }}>
+              <div style={{ fontWeight:700, fontSize:13, color:"#1e2d1a", marginBottom:6 }}>{selContainer.name}</div>
+              <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+                {selContainer.diameter && <CostPill label='Size' value={`${selContainer.diameter}"`} color="#4a90d9" />}
+                {selContainer.type && <CostPill label="Type" value={selContainer.type} color="#7a8c74" />}
+                {selContainer.costPerUnit && <CostPill label="$/unit" value={`$${Number(selContainer.costPerUnit).toFixed(3)}`} color="#8e44ad" />}
+                {selContainer.supplier && <CostPill label="Supplier" value={selContainer.supplier} color="#7a8c74" />}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* ── SOIL ── */}
+        <div>
+          <FL c="Soil Mix" />
+          <select value={lot.soilId||""} onChange={e=>onChange("soilId",e.target.value)}
+            style={{...IS(false), marginBottom:8}}>
+            <option value="">— Select soil mix —</option>
+            {soilMixes.map(s=>(
+              <option key={s.id} value={s.id}>{s.name}{s.category?` · ${s.category}`:""}</option>
+            ))}
+          </select>
+          {selSoil && (
+            <div style={{ background:"#fff", borderRadius:10, border:"1.5px solid #e0ead8", padding:"10px 14px" }}>
+              <div style={{ fontWeight:700, fontSize:13, color:"#1e2d1a", marginBottom:6 }}>{selSoil.name}</div>
+              <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+                {selSoil.vendor && <CostPill label="Vendor" value={selSoil.vendor} color="#7a8c74" />}
+                {selSoil.bagSize && <CostPill label="Bag" value={`${selSoil.bagSize} ${selSoil.bagUnit}`} color="#c8791a" />}
+                {soilCpf && <CostPill label="$/cu ft" value={`$${soilCpf.toFixed(3)}`} color="#4a7a35" />}
+                {soilCostPerUnit && <CostPill label="$/unit" value={`$${soilCostPerUnit.toFixed(3)}`} color="#8e44ad" />}
+              </div>
+              {!substrateVolCuFt && selContainer && (
+                <div style={{ fontSize:10, color:"#c8791a", marginTop:6 }}>💡 Add substrate volume to container for per-unit soil cost</div>
+              )}
+              {!selContainer && soilCpf && (
+                <div style={{ fontSize:10, color:"#9aaa90", marginTop:6 }}>Select a container to calculate per-unit soil cost</div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* ── TAG ── */}
+        <div>
+          <FL c="Tag" />
+          <select value={lot.tagId||""} onChange={e=>onChange("tagId",e.target.value)}
+            style={{...IS(false), marginBottom:8}}>
+            <option value="">— Select tag —</option>
+            {tags.map(t=>(
+              <option key={t.id} value={t.id}>{t.name}{t.tier?` · ${t.tier}`:""}</option>
+            ))}
+          </select>
+          {selTag && (
+            <div style={{ background:"#fff", borderRadius:10, border:"1.5px solid #e0ead8", padding:"10px 14px", marginBottom:8 }}>
+              <div style={{ fontWeight:700, fontSize:13, color:"#1e2d1a", marginBottom:6 }}>{selTag.name}</div>
+              <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+                {selTag.tier && <CostPill label="Tier" value={selTag.tier} color={selTag.tier==="retail"?"#c8791a":"#7a8c74"} />}
+                {selTag.type && <CostPill label="Type" value={selTag.type} color="#4a90d9" />}
+                {selTag.costPerUnit && <CostPill label="$/tag" value={`$${Number(selTag.costPerUnit).toFixed(3)}`} color="#8e44ad" />}
+                {selTag.printSpec && <CostPill label="Print file" value={selTag.printSpec} color="#2e7d9e" />}
+              </div>
+            </div>
+          )}
+          {/* Tag description — always show */}
+          <div style={{ marginTop: selTag ? 0 : 8 }}>
+            <FL c="Tag Description / Print Copy" />
+            <textarea value={lot.tagDescription||""} onChange={e=>onChange("tagDescription",e.target.value)}
+              onFocus={()=>setFocus("td")} onBlur={()=>setFocus(null)}
+              placeholder={"e.g.\nTropical Sunset™ Hanging Basket\nFull Sun · Water regularly\nSchlegel Greenhouse / Hoosier Boy"}
+              style={{...IS(focus==="td"), minHeight:80, resize:"vertical", fontSize:12, lineHeight:1.5}} />
+            <div style={{ fontSize:10, color:"#9aaa90", marginTop:3 }}>This copy will appear on printed tags for this lot</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Small pill for material details
+function CostPill({ label, value, color }) {
+  return (
+    <div style={{ background: color+"12", border:`1px solid ${color}30`, borderRadius:6, padding:"3px 8px" }}>
+      <span style={{ fontSize:9, color:"#9aaa90", textTransform:"uppercase", letterSpacing:.5 }}>{label} </span>
+      <span style={{ fontSize:11, fontWeight:700, color }}>{value}</span>
+    </div>
+  );
+}
+
+// ── COST ROLLUP BAR ───────────────────────────────────────────────────────────
+function CostRollup({ plants, lot, containers, soilMixes, tags }) {
+  const selContainer = containers.find(c=>c.id===lot.containerId);
+  const selSoil      = soilMixes.find(s=>s.id===lot.soilId);
+  const selTag       = tags.find(t=>t.id===lot.tagId);
+
+  const plantCost = plants.reduce((s,p)=>s+(Number(p.costPerPlant||0)*(p.qty||1)),0);
+  const containerCost = selContainer?.costPerUnit ? Number(selContainer.costPerUnit) : 0;
+  const tagCost = selTag?.costPerUnit ? Number(selTag.costPerUnit) : 0;
+
+  const soilCpf = selSoil ? soilCostPerCuFt(selSoil) : null;
+  const substrateVolCuFt = selContainer?.substrateVol
+    ? (selContainer.substrateUnit==="qt"    ? Number(selContainer.substrateVol)/25.71
+     : selContainer.substrateUnit==="gal"   ? Number(selContainer.substrateVol)*0.134
+     : selContainer.substrateUnit==="cu in" ? Number(selContainer.substrateVol)/1728
+     : selContainer.substrateUnit==="L"     ? Number(selContainer.substrateVol)*0.0353
+     : Number(selContainer.substrateVol))
+    : null;
+  const soilCost = soilCpf && substrateVolCuFt ? soilCpf * substrateVolCuFt : 0;
+
+  const totalPerUnit = plantCost + containerCost + soilCost + tagCost;
+  const comboQty = Number(lot.qty) || Number(lot.totalQty) || 0;
+  const totalMaterial = totalPerUnit * comboQty;
+
+  const items = [
+    { label:"Plants",    value: plantCost,     color:"#7fb069",  show: plantCost>0 },
+    { label:"Container", value: containerCost, color:"#4a90d9",  show: containerCost>0 },
+    { label:"Soil",      value: soilCost,       color:"#c8791a",  show: soilCost>0 },
+    { label:"Tag",       value: tagCost,        color:"#8e44ad",  show: tagCost>0 },
+  ].filter(i=>i.show);
+
+  if (items.length===0) return null;
+
+  return (
+    <div style={{ background:"linear-gradient(135deg,#1e2d1a,#2e4a22)", borderRadius:14, padding:"16px 22px", display:"flex", gap:20, flexWrap:"wrap", alignItems:"center" }}>
+      {items.map(item=>(
+        <div key={item.label} style={{ minWidth:80 }}>
+          <div style={{ fontSize:10, color:item.color, textTransform:"uppercase", letterSpacing:.8, marginBottom:3 }}>{item.label}</div>
+          <div style={{ fontSize:18, fontWeight:800, color:"#fff" }}>${item.value.toFixed(3)}</div>
+        </div>
+      ))}
+      <div style={{ width:"1px", background:"rgba(255,255,255,.15)", alignSelf:"stretch" }} />
+      <div style={{ minWidth:100 }}>
+        <div style={{ fontSize:10, color:"#7fb069", textTransform:"uppercase", letterSpacing:.8, marginBottom:3 }}>Total / unit</div>
+        <div style={{ fontSize:24, fontWeight:900, color:"#fff" }}>${totalPerUnit.toFixed(2)}</div>
+      </div>
+      {comboQty>0 && (
+        <div style={{ minWidth:100 }}>
+          <div style={{ fontSize:10, color:"#7fb069", textTransform:"uppercase", letterSpacing:.8, marginBottom:3 }}>Total ({comboQty.toLocaleString()} units)</div>
+          <div style={{ fontSize:24, fontWeight:900, color:"#c8e6b8" }}>${totalMaterial.toFixed(0)}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── SINGLE COMBO EDITOR ───────────────────────────────────────────────────────
-function ComboEditor({ combo, onChange, lotQty, containerType }) {
+function ComboEditor({ combo, onChange, lotQty, containerType, containers, soilMixes, tags }) {
   const plants = combo.plants || [];
   const totalPlantsPerUnit = plants.reduce((s,p)=>s+(p.qty||1),0);
-  const costPerUnit = plants.reduce((s,p)=>s+(Number(p.costPerPlant||0)*(p.qty||1)),0);
-  const comboQty = combo.qty || lotQty || 0;
-  const totalMaterialCost = costPerUnit * comboQty;
 
-  const updPlant = (idx, field, val) => {
-    const updated = [...plants];
-    updated[idx] = { ...updated[idx], [field]: val };
-    onChange({ ...combo, plants: updated });
+  const updPlant = (idx,field,val) => {
+    const updated=[...plants]; updated[idx]={...updated[idx],[field]:val};
+    onChange({...combo,plants:updated});
   };
   const addPlant = () => {
-    if (plants.length >= 10) return;
-    onChange({ ...combo, plants: [...plants, { id:uid(), name:"", imageUrl:"", role:"filler", qty:1, costPerPlant:"", broker:"", formType:"URC", needBy:"" }] });
+    if(plants.length>=10) return;
+    onChange({...combo,plants:[...plants,{id:uid(),name:"",imageUrl:"",role:"filler",qty:1,costPerPlant:"",broker:"",formType:"URC",needBy:""}]});
   };
-  const removePlant = (idx) => onChange({ ...combo, plants: plants.filter((_,i)=>i!==idx) });
+  const removePlant = (idx) => onChange({...combo,plants:plants.filter((_,i)=>i!==idx)});
+
+  // Determine preview type from selected container
+  const selContainer = containers.find(c=>c.id===combo.containerId);
+  const isBasket = selContainer?.type==="basket" || combo.containerId==null;
 
   return (
     <div>
+      {/* Combo name + qty */}
       <div style={{display:"flex",gap:14,marginBottom:18,alignItems:"flex-end",flexWrap:"wrap"}}>
         <div style={{flex:2,minWidth:200}}>
           <FL c="Combo Name" />
@@ -245,21 +420,32 @@ function ComboEditor({ combo, onChange, lotQty, containerType }) {
           <input type="number" min="1" value={combo.qty||""} onChange={e=>onChange({...combo,qty:Number(e.target.value)})} placeholder={String(lotQty||"")} style={{...IS(false),fontWeight:700,fontSize:15,textAlign:"center"}} />
           {lotQty>0 && <div style={{fontSize:10,color:"#9aaa90",marginTop:2,textAlign:"center"}}>of {lotQty} total</div>}
         </div>
-        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-          {totalPlantsPerUnit>0 && <div style={{background:"#f0f8eb",borderRadius:10,padding:"8px 14px",textAlign:"center"}}><div style={{fontSize:20,fontWeight:900,color:"#2e5c1e"}}>{totalPlantsPerUnit}</div><div style={{fontSize:9,color:"#7a8c74",textTransform:"uppercase",letterSpacing:.5}}>plants/unit</div></div>}
-          {costPerUnit>0 && <div style={{background:"#f5f0ff",borderRadius:10,padding:"8px 14px",textAlign:"center"}}><div style={{fontSize:20,fontWeight:900,color:"#6a3db0"}}>${costPerUnit.toFixed(2)}</div><div style={{fontSize:9,color:"#7a8c74",textTransform:"uppercase",letterSpacing:.5}}>$/unit</div></div>}
-          {totalMaterialCost>0 && <div style={{background:"#e8f4f8",borderRadius:10,padding:"8px 14px",textAlign:"center"}}><div style={{fontSize:20,fontWeight:900,color:"#1e5a7a"}}>${totalMaterialCost.toFixed(0)}</div><div style={{fontSize:9,color:"#7a8c74",textTransform:"uppercase",letterSpacing:.5}}>total material</div></div>}
-        </div>
+        {totalPlantsPerUnit>0 && (
+          <div style={{background:"#f0f8eb",borderRadius:10,padding:"8px 14px",textAlign:"center"}}>
+            <div style={{fontSize:20,fontWeight:900,color:"#2e5c1e"}}>{totalPlantsPerUnit}</div>
+            <div style={{fontSize:9,color:"#7a8c74",textTransform:"uppercase",letterSpacing:.5}}>plants/unit</div>
+          </div>
+        )}
       </div>
 
+      {/* Materials panel — per combo so each combo can have its own container/soil/tag */}
+      <LotMaterials
+        lot={combo}
+        onChange={(f,v)=>onChange({...combo,[f]:v})}
+        containers={containers}
+        soilMixes={soilMixes}
+        tags={tags}
+      />
+
+      {/* Visual + components */}
       <div style={{display:"grid",gridTemplateColumns:"240px 1fr",gap:20}}>
-        {/* Visual */}
+        {/* Preview */}
         <div>
           <div style={{fontSize:10,fontWeight:700,color:"#9aaa90",textTransform:"uppercase",letterSpacing:.7,marginBottom:10}}>Preview</div>
           <div style={{background:"#f8faf6",borderRadius:14,border:"1.5px solid #e0ead8",padding:16}}>
             {plants.length===0
               ? <div style={{textAlign:"center",padding:"30px 0",color:"#aabba0"}}><div style={{fontSize:32,marginBottom:6}}>🌸</div><div style={{fontSize:11}}>Add plants to preview</div></div>
-              : <ComboVisual plants={plants} containerType={containerType} />
+              : <ComboVisual plants={plants} isBasket={isBasket} />
             }
           </div>
           {plants.length>0 && (
@@ -275,17 +461,17 @@ function ComboEditor({ combo, onChange, lotQty, containerType }) {
         {/* Components */}
         <div>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-            <div style={{fontSize:10,fontWeight:700,color:"#9aaa90",textTransform:"uppercase",letterSpacing:.7}}>Components ({plants.length}/10)</div>
+            <div style={{fontSize:10,fontWeight:700,color:"#9aaa90",textTransform:"uppercase",letterSpacing:.7}}>Plants ({plants.length}/10)</div>
             <button onClick={addPlant} disabled={plants.length>=10} style={{background:plants.length>=10?"#f0f0f0":"#7fb069",color:plants.length>=10?"#aabba0":"#fff",border:"none",borderRadius:9,padding:"7px 16px",fontSize:12,fontWeight:700,cursor:plants.length>=10?"not-allowed":"pointer",fontFamily:"inherit"}}>
-              + Add Component
+              + Add Plant
             </button>
           </div>
           {plants.length===0 && (
             <div style={{textAlign:"center",padding:"32px 20px",background:"#f8faf6",borderRadius:14,border:"2px dashed #c8d8c0"}}>
               <div style={{fontSize:32,marginBottom:8}}>🌿</div>
-              <div style={{fontSize:13,fontWeight:700,color:"#4a5a40",marginBottom:6}}>No components yet</div>
-              <div style={{fontSize:12,color:"#7a8c74",marginBottom:14,lineHeight:1.5}}>Drag photos from supplier sites or paste a URL.<br/>Set variety, broker, form, date, and quantity.</div>
-              <button onClick={addPlant} style={{background:"#7fb069",color:"#fff",border:"none",borderRadius:10,padding:"9px 22px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>+ Add First Component</button>
+              <div style={{fontSize:13,fontWeight:700,color:"#4a5a40",marginBottom:6}}>No plants yet</div>
+              <div style={{fontSize:12,color:"#7a8c74",marginBottom:14,lineHeight:1.5}}>Drag photos from supplier sites or paste a URL.</div>
+              <button onClick={addPlant} style={{background:"#7fb069",color:"#fff",border:"none",borderRadius:10,padding:"9px 22px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>+ Add First Plant</button>
             </div>
           )}
           {plants.map((plant,idx)=>(
@@ -293,12 +479,19 @@ function ComboEditor({ combo, onChange, lotQty, containerType }) {
           ))}
         </div>
       </div>
+
+      {/* Cost rollup */}
+      {plants.length>0 && (
+        <div style={{marginTop:20}}>
+          <CostRollup plants={plants} lot={{...combo, totalQty: combo.qty||lotQty}} containers={containers} soilMixes={soilMixes} tags={tags} />
+        </div>
+      )}
     </div>
   );
 }
 
 // ── ORDER SUMMARY MODAL ───────────────────────────────────────────────────────
-function OrderSummary({ lot, onClose, onMarkOrdered }) {
+function OrderSummary({ lot, onClose, onMarkOrdered, containers, soilMixes, tags }) {
   const [copied, setCopied] = useState(null);
 
   const brokerMap = {};
@@ -306,59 +499,123 @@ function OrderSummary({ lot, onClose, onMarkOrdered }) {
     const qty = combo.qty || lot.totalQty || 0;
     (combo.plants||[]).forEach(p=>{
       if(!p.name) return;
-      const broker = p.broker || "Unassigned";
+      const broker = p.broker||"Unassigned";
       if(!brokerMap[broker]) brokerMap[broker]=[];
       const existing = brokerMap[broker].find(x=>x.name===p.name&&x.formType===p.formType&&x.needBy===p.needBy);
-      if(existing) { existing.totalQty += (p.qty||1)*qty; }
-      else brokerMap[broker].push({ name:p.name, formType:p.formType, needBy:p.needBy, costPerPlant:p.costPerPlant, totalQty:(p.qty||1)*qty, comboName:combo.name||lot.name });
+      if(existing) existing.totalQty += (p.qty||1)*qty;
+      else brokerMap[broker].push({name:p.name,formType:p.formType,needBy:p.needBy,costPerPlant:p.costPerPlant,totalQty:(p.qty||1)*qty,comboName:combo.name||lot.name});
     });
   });
 
   const brokers = Object.keys(brokerMap).sort();
   const grandTotal = brokers.reduce((s,b)=>s+brokerMap[b].reduce((ss,p)=>ss+(Number(p.costPerPlant||0)*p.totalQty),0),0);
 
+  // Per-combo material summary
+  const materialRows = (lot.combos||[]).map(combo=>{
+    const qty = combo.qty||lot.totalQty||0;
+    const selContainer = containers.find(c=>c.id===combo.containerId);
+    const selSoil      = soilMixes.find(s=>s.id===combo.soilId);
+    const selTag       = tags.find(t=>t.id===combo.tagId);
+    const soilCpf      = selSoil ? soilCostPerCuFt(selSoil) : null;
+    const substrateVolCuFt = selContainer?.substrateVol
+      ? (selContainer.substrateUnit==="qt"?Number(selContainer.substrateVol)/25.71
+        :selContainer.substrateUnit==="gal"?Number(selContainer.substrateVol)*0.134
+        :selContainer.substrateUnit==="cu in"?Number(selContainer.substrateVol)/1728
+        :selContainer.substrateUnit==="L"?Number(selContainer.substrateVol)*0.0353
+        :Number(selContainer.substrateVol)) : null;
+    const soilCost = soilCpf && substrateVolCuFt ? soilCpf*substrateVolCuFt : 0;
+    const containerCost = selContainer?.costPerUnit ? Number(selContainer.costPerUnit) : 0;
+    const tagCost = selTag?.costPerUnit ? Number(selTag.costPerUnit) : 0;
+    const plantCost = (combo.plants||[]).reduce((s,p)=>s+(Number(p.costPerPlant||0)*(p.qty||1)),0);
+    const totalPerUnit = plantCost+containerCost+soilCost+tagCost;
+    return { combo, qty, selContainer, selSoil, selTag, plantCost, containerCost, soilCost, tagCost, totalPerUnit, totalCost: totalPerUnit*qty };
+  });
+
+  const grandMaterialTotal = materialRows.reduce((s,r)=>s+r.totalCost,0);
+
   const buildEmail = (broker) => {
     const lines = brokerMap[broker];
-    const dateStr = new Date().toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});
-    return `Hi,\n\nPlease see our young plant order below for the ${lot.name||"upcoming"} production run.\n\nORDER DATE: ${dateStr}\nACCOUNT: Schlegel Greenhouse / Hoosier Boy\n\n${lines.map(p=>`${p.name} | ${p.formType} | Qty: ${p.totalQty.toLocaleString()} | Need by: ${p.needBy||"TBD"}${p.costPerPlant?` | $${Number(p.costPerPlant).toFixed(2)}/unit`:""}`).join("\n")}\n\nTotal: ${lines.reduce((s,p)=>s+(Number(p.costPerPlant||0)*p.totalQty),0).toLocaleString("en-US",{style:"currency",currency:"USD"})}\n\nPlease confirm availability and ship dates. Thank you.\n\nSchlegel Greenhouse`;
+    return `Hi,\n\nPlease see our young plant order for the ${lot.name||"upcoming"} production run.\n\nORDER DATE: ${new Date().toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"})}\nACCOUNT: Schlegel Greenhouse / Hoosier Boy\n\n${lines.map(p=>`${p.name} | ${p.formType} | Qty: ${p.totalQty.toLocaleString()} | Need by: ${p.needBy||"TBD"}${p.costPerPlant?` | $${Number(p.costPerPlant).toFixed(2)}/unit`:""}`).join("\n")}\n\nTotal: ${lines.reduce((s,p)=>s+(Number(p.costPerPlant||0)*p.totalQty),0).toLocaleString("en-US",{style:"currency",currency:"USD"})}\n\nPlease confirm availability and ship dates. Thank you.\n\nSchlegel Greenhouse`;
   };
-
   const copyEmail = (broker) => { navigator.clipboard.writeText(buildEmail(broker)); setCopied(broker); setTimeout(()=>setCopied(null),2000); };
 
   return (
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
-      <div style={{background:"#fff",borderRadius:20,width:"100%",maxWidth:780,maxHeight:"90vh",overflow:"auto",boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
+      <div style={{background:"#fff",borderRadius:20,width:"100%",maxWidth:820,maxHeight:"90vh",overflow:"auto",boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
         <div style={{background:"linear-gradient(135deg,#1e2d1a,#2e4a22)",padding:"22px 28px",borderRadius:"20px 20px 0 0",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <div>
             <div style={{fontFamily:"Georgia,serif",fontSize:20,color:"#c8e6b8"}}>Order Summary</div>
-            <div style={{fontSize:12,color:"#7fb069",marginTop:3}}>{lot.name} · {brokers.length} broker{brokers.length!==1?"s":""} · ${grandTotal.toFixed(2)} total</div>
+            <div style={{fontSize:12,color:"#7fb069",marginTop:3}}>{lot.name} · {brokers.length} broker{brokers.length!==1?"s":""}</div>
           </div>
           <button onClick={onClose} style={{background:"rgba(255,255,255,.12)",border:"none",color:"#c8e6b8",borderRadius:10,padding:"8px 16px",fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Close</button>
         </div>
         <div style={{padding:"24px 28px"}}>
-          {brokers.length===0 && <div style={{textAlign:"center",padding:40,color:"#7a8c74"}}>No components with brokers assigned yet.</div>}
+
+          {/* Material cost summary per combo */}
+          {materialRows.length>0 && (
+            <div style={{marginBottom:24}}>
+              <SH c="Material Cost Summary" />
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+                <thead>
+                  <tr style={{background:"#f0f5ee"}}>
+                    {["Combo","Qty","Container","Soil","Tag","Plants","Total/unit","Total"].map(h=>(
+                      <th key={h} style={{padding:"7px 12px",textAlign:"left",fontSize:10,fontWeight:700,color:"#7a8c74",textTransform:"uppercase",letterSpacing:.4}}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {materialRows.map((r,i)=>(
+                    <tr key={i} style={{borderTop:"1px solid #e8ede4"}}>
+                      <td style={{padding:"9px 12px",fontWeight:700,color:"#1e2d1a"}}>{r.combo.name||`Combo ${i+1}`}</td>
+                      <td style={{padding:"9px 12px",color:"#7a8c74"}}>{r.qty}</td>
+                      <td style={{padding:"9px 12px",color:"#4a90d9"}}>{r.selContainer?.name||"—"}{r.containerCost>0?<span style={{color:"#4a90d9",fontWeight:700}}> ${r.containerCost.toFixed(3)}</span>:""}</td>
+                      <td style={{padding:"9px 12px",color:"#c8791a"}}>{r.selSoil?.name||"—"}{r.soilCost>0?<span style={{fontWeight:700}}> ${r.soilCost.toFixed(3)}</span>:""}</td>
+                      <td style={{padding:"9px 12px",color:"#8e44ad"}}>{r.selTag?.name||"—"}{r.tagCost>0?<span style={{fontWeight:700}}> ${r.tagCost.toFixed(3)}</span>:""}</td>
+                      <td style={{padding:"9px 12px",color:"#7fb069",fontWeight:700}}>${r.plantCost.toFixed(2)}</td>
+                      <td style={{padding:"9px 12px",fontWeight:800,color:"#1e2d1a"}}>${r.totalPerUnit.toFixed(2)}</td>
+                      <td style={{padding:"9px 12px",fontWeight:800,color:"#4a7a35"}}>${r.totalCost.toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Tag descriptions */}
+          {(lot.combos||[]).some(c=>c.tagDescription) && (
+            <div style={{marginBottom:24}}>
+              <SH c="Tag Descriptions" />
+              {(lot.combos||[]).filter(c=>c.tagDescription).map((c,i)=>(
+                <div key={i} style={{background:"#f8faf6",borderRadius:10,border:"1.5px solid #e0ead8",padding:"12px 16px",marginBottom:10}}>
+                  <div style={{fontWeight:700,fontSize:12,color:"#4a5a40",marginBottom:6}}>{c.name||`Combo ${i+1}`}</div>
+                  <pre style={{margin:0,fontFamily:"inherit",fontSize:13,color:"#1e2d1a",whiteSpace:"pre-wrap"}}>{c.tagDescription}</pre>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Plant orders by broker */}
+          {brokers.length===0 && <div style={{textAlign:"center",padding:40,color:"#7a8c74"}}>No plants with brokers assigned yet.</div>}
           {brokers.map(broker=>{
             const lines = brokerMap[broker];
             const subtotal = lines.reduce((s,p)=>s+(Number(p.costPerPlant||0)*p.totalQty),0);
             return (
-              <div key={broker} style={{marginBottom:24,background:"#f8faf6",borderRadius:14,border:"1.5px solid #e0ead8",overflow:"hidden"}}>
+              <div key={broker} style={{marginBottom:20,background:"#f8faf6",borderRadius:14,border:"1.5px solid #e0ead8",overflow:"hidden"}}>
                 <div style={{background:"#1e2d1a",padding:"12px 18px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                   <div style={{fontWeight:800,fontSize:15,color:"#c8e6b8"}}>{broker}</div>
                   <div style={{display:"flex",gap:8,alignItems:"center"}}>
                     <span style={{fontSize:13,color:"#7fb069",fontWeight:700}}>${subtotal.toFixed(2)}</span>
-                    <button onClick={()=>copyEmail(broker)} style={{background:copied===broker?"#4a7a35":"#7fb069",color:"#fff",border:"none",borderRadius:8,padding:"6px 14px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"background .2s"}}>
+                    <button onClick={()=>copyEmail(broker)} style={{background:copied===broker?"#4a7a35":"#7fb069",color:"#fff",border:"none",borderRadius:8,padding:"6px 14px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
                       {copied===broker?"✓ Copied!":"📋 Copy Email Draft"}
                     </button>
                   </div>
                 </div>
                 <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
-                  <thead>
-                    <tr style={{background:"#f0f5ee"}}>
-                      {["Variety","Form","Qty","Need By","$/unit","Subtotal","Combo"].map(h=>(
-                        <th key={h} style={{padding:"8px 14px",textAlign:"left",fontSize:10,fontWeight:700,color:"#7a8c74",textTransform:"uppercase",letterSpacing:.5}}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
+                  <thead><tr style={{background:"#f0f5ee"}}>
+                    {["Variety","Form","Qty","Need By","$/unit","Subtotal"].map(h=>(
+                      <th key={h} style={{padding:"8px 14px",textAlign:"left",fontSize:10,fontWeight:700,color:"#7a8c74",textTransform:"uppercase",letterSpacing:.5}}>{h}</th>
+                    ))}
+                  </tr></thead>
                   <tbody>
                     {lines.map((p,i)=>{
                       const ft=FORM_TYPES.find(f=>f.id===p.formType);
@@ -370,7 +627,6 @@ function OrderSummary({ lot, onClose, onMarkOrdered }) {
                           <td style={{padding:"10px 14px",color:"#7a8c74"}}>{p.needBy||"—"}</td>
                           <td style={{padding:"10px 14px",color:"#7a8c74"}}>{p.costPerPlant?`$${Number(p.costPerPlant).toFixed(2)}`:"—"}</td>
                           <td style={{padding:"10px 14px",fontWeight:700,color:"#4a7a35"}}>{p.costPerPlant?`$${(Number(p.costPerPlant)*p.totalQty).toFixed(2)}`:"—"}</td>
-                          <td style={{padding:"10px 14px",fontSize:11,color:"#9aaa90"}}>{p.comboName}</td>
                         </tr>
                       );
                     })}
@@ -379,17 +635,27 @@ function OrderSummary({ lot, onClose, onMarkOrdered }) {
               </div>
             );
           })}
-          {brokers.length>0 && (
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"linear-gradient(135deg,#1e2d1a,#2e4a22)",borderRadius:14,padding:"18px 22px"}}>
-              <div>
-                <div style={{fontSize:11,color:"#7fb069",textTransform:"uppercase",letterSpacing:.8,marginBottom:4}}>Grand Total</div>
-                <div style={{fontSize:28,fontWeight:900,color:"#fff"}}>${grandTotal.toFixed(2)}</div>
-              </div>
-              <button onClick={()=>{onMarkOrdered();onClose();}} style={{background:"#7fb069",color:"#fff",border:"none",borderRadius:12,padding:"12px 28px",fontSize:15,fontWeight:800,cursor:"pointer",fontFamily:"inherit",boxShadow:"0 4px 14px rgba(127,176,105,.4)"}}>
-                ✓ Mark as Ordered
-              </button>
+
+          {/* Grand total */}
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"linear-gradient(135deg,#1e2d1a,#2e4a22)",borderRadius:14,padding:"18px 22px"}}>
+            <div style={{display:"flex",gap:28}}>
+              {grandMaterialTotal>0 && (
+                <div>
+                  <div style={{fontSize:11,color:"#7fb069",textTransform:"uppercase",letterSpacing:.8,marginBottom:4}}>Total Material Cost</div>
+                  <div style={{fontSize:24,fontWeight:900,color:"#fff"}}>${grandMaterialTotal.toFixed(2)}</div>
+                </div>
+              )}
+              {grandTotal>0 && (
+                <div>
+                  <div style={{fontSize:11,color:"#7fb069",textTransform:"uppercase",letterSpacing:.8,marginBottom:4}}>Plant Order Total</div>
+                  <div style={{fontSize:24,fontWeight:900,color:"#c8e6b8"}}>${grandTotal.toFixed(2)}</div>
+                </div>
+              )}
             </div>
-          )}
+            <button onClick={()=>{onMarkOrdered();onClose();}} style={{background:"#7fb069",color:"#fff",border:"none",borderRadius:12,padding:"12px 28px",fontSize:15,fontWeight:800,cursor:"pointer",fontFamily:"inherit",boxShadow:"0 4px 14px rgba(127,176,105,.4)"}}>
+              ✓ Mark as Ordered
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -397,9 +663,9 @@ function OrderSummary({ lot, onClose, onMarkOrdered }) {
 }
 
 // ── LOT DESIGNER ─────────────────────────────────────────────────────────────
-function LotDesigner({ initial, onSave, onCancel }) {
-  const blankCombo = (name="") => ({ id:uid(), name, qty:null, plants:[] });
-  const blank = { id:null, name:"", containerType:"basket", containerSize:"", season:"", totalQty:"", status:"draft", notes:"", approvalNote:"", combos:[blankCombo()] };
+function LotDesigner({ initial, onSave, onCancel, containers, soilMixes, tags }) {
+  const blankCombo = (name="") => ({ id:uid(), name, qty:null, plants:[], containerId:"", soilId:"", tagId:"", tagDescription:"" });
+  const blank = { id:null, name:"", season:"", totalQty:"", status:"draft", notes:"", approvalNote:"", combos:[blankCombo()] };
   const [lot, setLot] = useState(initial ? dc({...blank,...initial}) : blank);
   const [activeIdx, setActiveIdx] = useState(0);
   const [showOrder, setShowOrder] = useState(false);
@@ -421,11 +687,8 @@ function LotDesigner({ initial, onSave, onCancel }) {
   const totalQty = Number(lot.totalQty)||0;
   const assignedQty = lot.combos.reduce((s,c)=>s+(Number(c.qty)||0),0);
   const remaining = totalQty - assignedQty;
-  const ct = CONTAINER_TYPES.find(c=>c.id===lot.containerType)||CONTAINER_TYPES[0];
   const status = STATUSES.find(s=>s.id===lot.status)||STATUSES[0];
-
-  // When only one combo, auto-assign full qty
-  const effectiveLot = { ...lot, combos: lot.combos.map((c,i)=> lot.combos.length===1 ? {...c,qty:totalQty} : c) };
+  const effectiveLot = { ...lot, combos: lot.combos.map(c=> lot.combos.length===1 ? {...c,qty:totalQty} : c) };
 
   const handleSave = (newStatus) => {
     if(!lot.name.trim()) return;
@@ -434,17 +697,16 @@ function LotDesigner({ initial, onSave, onCancel }) {
 
   return (
     <div style={{maxWidth:1100,margin:"0 auto"}}>
-      {showOrder && <OrderSummary lot={{...effectiveLot,name:lot.name}} onClose={()=>setShowOrder(false)} onMarkOrdered={()=>handleSave("ordered")} />}
+      {showOrder && <OrderSummary lot={{...effectiveLot,name:lot.name}} onClose={()=>setShowOrder(false)} onMarkOrdered={()=>handleSave("ordered")} containers={containers} soilMixes={soilMixes} tags={tags} />}
 
-      {/* Header */}
+      {/* Header bar */}
       <div style={{background:"linear-gradient(135deg,#1e2d1a,#2e4a22)",borderRadius:"20px 20px 0 0",padding:"20px 28px"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:16,flexWrap:"wrap"}}>
           <div style={{flex:1,minWidth:240}}>
             <input value={lot.name} onChange={e=>updLot("name",e.target.value)} placeholder="Lot name, e.g. Spring 400 Hanging Baskets..."
               style={{background:"transparent",border:"none",borderBottom:"2px solid rgba(200,230,184,.4)",outline:"none",fontFamily:"Georgia,serif",fontSize:20,color:"#c8e6b8",width:"100%",paddingBottom:6,letterSpacing:.3}} />
             <div style={{fontSize:12,color:"#7fb069",marginTop:6,display:"flex",gap:10,flexWrap:"wrap"}}>
-              <span>{ct.icon} {ct.label}{lot.containerSize?` · ${lot.containerSize}`:""}</span>
-              {lot.season&&<span>· {lot.season}</span>}
+              {lot.season&&<span>🌱 {lot.season}</span>}
               {totalQty>0&&<span>· {totalQty.toLocaleString()} total</span>}
               {totalQty>0&&lot.combos.length>1&&<span style={{color:remaining===0?"#c8e6b8":remaining<0?"#f08080":"#f0c080"}}>{remaining===0?"✓ Fully assigned":remaining<0?`⚠️ ${Math.abs(remaining)} over`:`${remaining} unassigned`}</span>}
             </div>
@@ -457,51 +719,34 @@ function LotDesigner({ initial, onSave, onCancel }) {
             {(lot.status==="approved"||lot.status==="submitted")&&<button onClick={()=>setShowOrder(true)} style={{background:"#7fb069",color:"#fff",border:"none",borderRadius:10,padding:"8px 18px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit",boxShadow:"0 3px 10px rgba(127,176,105,.4)"}}>📦 View Order →</button>}
           </div>
         </div>
-
-        {/* Metadata */}
-        <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginTop:18}}>
-          <div>
-            <div style={{fontSize:10,color:"rgba(200,230,184,.7)",textTransform:"uppercase",letterSpacing:.7,marginBottom:5}}>Container</div>
-            <div style={{display:"flex",gap:5}}>
-              {CONTAINER_TYPES.map(c=>(
-                <button key={c.id} onClick={()=>updLot("containerType",c.id)} style={{flex:1,padding:"5px 0",borderRadius:7,border:`1.5px solid ${lot.containerType===c.id?"#7fb069":"rgba(200,230,184,.2)"}`,background:lot.containerType===c.id?"rgba(127,176,105,.25)":"transparent",color:lot.containerType===c.id?"#c8e6b8":"rgba(200,230,184,.5)",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
-                  {c.icon}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div>
-            <div style={{fontSize:10,color:"rgba(200,230,184,.7)",textTransform:"uppercase",letterSpacing:.7,marginBottom:5}}>Size</div>
-            <input value={lot.containerSize} onChange={e=>updLot("containerSize",e.target.value)} placeholder='10", 12", 14"'
-              style={{...IS(false),background:"rgba(255,255,255,.1)",border:"1.5px solid rgba(200,230,184,.25)",color:"#c8e6b8",fontSize:13}} />
-          </div>
+        {/* Season + qty */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginTop:18,maxWidth:400}}>
           <div>
             <div style={{fontSize:10,color:"rgba(200,230,184,.7)",textTransform:"uppercase",letterSpacing:.7,marginBottom:5}}>Season</div>
-            <input value={lot.season||""} onChange={e=>updLot("season",e.target.value)} placeholder="Spring 2026"
-              style={{...IS(false),background:"rgba(255,255,255,.1)",border:"1.5px solid rgba(200,230,184,.25)",color:"#c8e6b8",fontSize:13}} />
+            <input value={lot.season||""} onChange={e=>updLot("season",e.target.value)} placeholder="Spring 2026" style={{...IS(false),background:"rgba(255,255,255,.1)",border:"1.5px solid rgba(200,230,184,.25)",color:"#c8e6b8",fontSize:13}} />
           </div>
           <div>
             <div style={{fontSize:10,color:"rgba(200,230,184,.7)",textTransform:"uppercase",letterSpacing:.7,marginBottom:5}}>Total Qty</div>
-            <input type="number" min="1" value={lot.totalQty||""} onChange={e=>updLot("totalQty",e.target.value)} placeholder="e.g. 400"
-              style={{...IS(false),background:"rgba(255,255,255,.1)",border:"1.5px solid rgba(200,230,184,.25)",color:"#c8e6b8",fontSize:16,fontWeight:800,textAlign:"center"}} />
+            <input type="number" min="1" value={lot.totalQty||""} onChange={e=>updLot("totalQty",e.target.value)} placeholder="e.g. 400" style={{...IS(false),background:"rgba(255,255,255,.1)",border:"1.5px solid rgba(200,230,184,.25)",color:"#c8e6b8",fontSize:16,fontWeight:800,textAlign:"center"}} />
           </div>
         </div>
       </div>
 
-      {/* Tabs + editor */}
+      {/* Combo tabs */}
       <div style={{background:"#fff",borderRadius:"0 0 20px 20px",border:"2px solid #e0ead8",borderTop:"none"}}>
-        {/* Tab bar */}
         <div style={{display:"flex",alignItems:"center",borderBottom:"2px solid #e0ead8",paddingLeft:20,overflowX:"auto"}}>
           {lot.combos.map((combo,idx)=>{
-            const comboQty = lot.combos.length===1 ? totalQty : (combo.qty||0);
+            const comboQty = lot.combos.length===1?totalQty:(combo.qty||0);
             const plantCount = (combo.plants||[]).reduce((s,p)=>s+(p.qty||1),0);
             const isActive = idx===activeIdx;
+            const hasContainer = !!combo.containerId;
             return (
               <div key={combo.id} style={{display:"flex",alignItems:"center",borderBottom:`3px solid ${isActive?"#7fb069":"transparent"}`,marginBottom:-2,flexShrink:0}}>
                 <button onClick={()=>setActiveIdx(idx)} style={{background:"none",border:"none",padding:"14px 18px 12px",cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:6}}>
                   <span style={{fontWeight:isActive?800:600,fontSize:14,color:isActive?"#1e2d1a":"#7a8c74"}}>{combo.name||`Combo ${idx+1}`}</span>
                   {comboQty>0&&<span style={{background:isActive?"#f0f8eb":"#f5f5f5",color:isActive?"#4a7a35":"#9aaa90",borderRadius:10,padding:"1px 7px",fontSize:10,fontWeight:700}}>×{comboQty}</span>}
                   {plantCount>0&&<span style={{fontSize:10,color:"#9aaa90"}}>· {plantCount}🌸</span>}
+                  {hasContainer&&<span style={{fontSize:10,color:"#4a90d9"}}>🪴</span>}
                 </button>
                 {lot.combos.length>1&&<button onClick={()=>removeCombo(idx)} style={{background:"none",border:"none",color:"#c8d8c0",fontSize:14,cursor:"pointer",paddingRight:12,paddingTop:2}}>×</button>}
               </div>
@@ -511,7 +756,6 @@ function LotDesigner({ initial, onSave, onCancel }) {
         </div>
 
         <div style={{padding:"24px 28px"}}>
-          {/* Allocation bar (multi-combo only) */}
           {lot.combos.length>1&&totalQty>0&&(
             <div style={{background:"#f8faf6",borderRadius:12,border:"1.5px solid #e0ead8",padding:"12px 18px",marginBottom:20,display:"flex",alignItems:"center",gap:16,flexWrap:"wrap"}}>
               <div style={{fontSize:12,fontWeight:700,color:"#4a5a40"}}>Allocation:</div>
@@ -532,7 +776,9 @@ function LotDesigner({ initial, onSave, onCancel }) {
             combo={effectiveLot.combos[activeIdx]||effectiveLot.combos[0]}
             onChange={(updated)=>updCombo(activeIdx,updated)}
             lotQty={totalQty}
-            containerType={lot.containerType}
+            containers={containers}
+            soilMixes={soilMixes}
+            tags={tags}
           />
         </div>
       </div>
@@ -541,15 +787,27 @@ function LotDesigner({ initial, onSave, onCancel }) {
 }
 
 // ── LOT CARD ─────────────────────────────────────────────────────────────────
-function LotCard({ lot, onEdit, onDelete, onDuplicate, onApprove, onRevision, isApprover }) {
+function LotCard({ lot, onEdit, onDelete, onDuplicate, onApprove, onRevision, isApprover, containers, soilMixes, tags }) {
   const status = STATUSES.find(s=>s.id===lot.status)||STATUSES[0];
-  const ct = CONTAINER_TYPES.find(c=>c.id===lot.containerType)||CONTAINER_TYPES[0];
   const allPlants = (lot.combos||[]).flatMap(c=>c.plants||[]);
-  const totalPlantsPerUnit = allPlants.reduce((s,p)=>s+(p.qty||1),0);
-  const costPerUnit = allPlants.reduce((s,p)=>s+(Number(p.costPerPlant||0)*(p.qty||1)),0);
-  const materialCost = costPerUnit*(Number(lot.totalQty)||0);
-  const brokers = [...new Set(allPlants.map(p=>p.broker).filter(Boolean))];
   const hasPhotos = allPlants.some(p=>p.imageUrl);
+
+  // Cost rollup across all combos
+  const totalMaterial = (lot.combos||[]).reduce((sum,combo)=>{
+    const qty = combo.qty||Number(lot.totalQty)||0;
+    const selContainer = containers.find(c=>c.id===combo.containerId);
+    const selSoil = soilMixes.find(s=>s.id===combo.soilId);
+    const selTag = tags.find(t=>t.id===combo.tagId);
+    const plantCost = (combo.plants||[]).reduce((s,p)=>s+(Number(p.costPerPlant||0)*(p.qty||1)),0);
+    const containerCost = selContainer?.costPerUnit?Number(selContainer.costPerUnit):0;
+    const tagCost = selTag?.costPerUnit?Number(selTag.costPerUnit):0;
+    const soilCpf = selSoil?soilCostPerCuFt(selSoil):null;
+    const subVol = selContainer?.substrateVol?(selContainer.substrateUnit==="qt"?Number(selContainer.substrateVol)/25.71:selContainer.substrateUnit==="gal"?Number(selContainer.substrateVol)*0.134:selContainer.substrateUnit==="cu in"?Number(selContainer.substrateVol)/1728:selContainer.substrateUnit==="L"?Number(selContainer.substrateVol)*0.0353:Number(selContainer.substrateVol)):null;
+    const soilCost = soilCpf&&subVol?soilCpf*subVol:0;
+    return sum + (plantCost+containerCost+soilCost+tagCost)*qty;
+  },0);
+
+  const brokers = [...new Set(allPlants.map(p=>p.broker).filter(Boolean))];
 
   return (
     <div style={{background:"#fff",borderRadius:16,border:`2px solid ${status.color}33`,overflow:"hidden",boxShadow:"0 2px 10px rgba(0,0,0,0.05)"}}>
@@ -564,7 +822,7 @@ function LotCard({ lot, onEdit, onDelete, onDuplicate, onApprove, onRevision, is
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
           <div>
             <div style={{fontWeight:800,fontSize:16,color:"#1e2d1a",marginBottom:3}}>{lot.name||"Untitled Lot"}</div>
-            <div style={{fontSize:12,color:"#7a8c74"}}>{ct.icon} {ct.label}{lot.containerSize?` · ${lot.containerSize}`:""}{lot.season?` · ${lot.season}`:""}{lot.totalQty?` · ${Number(lot.totalQty).toLocaleString()} units`:""}</div>
+            <div style={{fontSize:12,color:"#7a8c74"}}>{lot.season?`🌱 ${lot.season} · `:""}{lot.totalQty?`${Number(lot.totalQty).toLocaleString()} units`:""}</div>
           </div>
           <span style={{background:status.bg,color:status.color,border:`1px solid ${status.color}44`,borderRadius:20,padding:"3px 10px",fontSize:11,fontWeight:700}}>{status.label}</span>
         </div>
@@ -574,8 +832,7 @@ function LotCard({ lot, onEdit, onDelete, onDuplicate, onApprove, onRevision, is
           </div>
         )}
         <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap"}}>
-          {totalPlantsPerUnit>0&&<div style={{background:"#f0f8eb",borderRadius:8,padding:"6px 12px",textAlign:"center"}}><div style={{fontSize:16,fontWeight:800,color:"#2e5c1e"}}>{totalPlantsPerUnit}</div><div style={{fontSize:9,color:"#7a8c74",textTransform:"uppercase"}}>plants/unit</div></div>}
-          {materialCost>0&&<div style={{background:"#f5f0ff",borderRadius:8,padding:"6px 12px",textAlign:"center"}}><div style={{fontSize:16,fontWeight:800,color:"#6a3db0"}}>${materialCost.toFixed(0)}</div><div style={{fontSize:9,color:"#7a8c74",textTransform:"uppercase"}}>total material</div></div>}
+          {totalMaterial>0&&<div style={{background:"#f5f0ff",borderRadius:8,padding:"6px 12px",textAlign:"center"}}><div style={{fontSize:16,fontWeight:800,color:"#6a3db0"}}>${totalMaterial.toFixed(0)}</div><div style={{fontSize:9,color:"#7a8c74",textTransform:"uppercase"}}>total material</div></div>}
           {brokers.length>0&&<div style={{background:"#e8f4f8",borderRadius:8,padding:"6px 12px"}}><div style={{fontSize:10,fontWeight:700,color:"#2e7d9e",marginBottom:2}}>Brokers</div><div style={{fontSize:12,color:"#1e2d1a"}}>{brokers.join(", ")}</div></div>}
         </div>
         {lot.approvalNote&&<div style={{background:"#fff8f0",border:"1px solid #f0c080",borderRadius:8,padding:"8px 12px",marginBottom:12,fontSize:12,color:"#7a5010"}}>💬 {lot.approvalNote}</div>}
@@ -595,24 +852,29 @@ function LotCard({ lot, onEdit, onDelete, onDuplicate, onApprove, onRevision, is
 
 // ── MAIN EXPORT ───────────────────────────────────────────────────────────────
 export default function ComboLibrary() {
+  const { rows: containers } = useContainers();
+  const { rows: soilMixes  } = useSoilMixes();
+  const [tags] = useState(()=>{ try{return JSON.parse(localStorage.getItem("gh_tags_v1")||"[]")}catch{return[]} });
+
   const [lots, setLots] = useState(()=>{ try{return JSON.parse(localStorage.getItem("gh_combos_v1")||"[]")}catch{return[]} });
   const [view, setView] = useState("list");
   const [editId, setEditId] = useState(null);
   const [statusFilter, setStatusFilter] = useState("all");
-  const [typeFilter, setTypeFilter] = useState("all");
   const isApprover = true;
 
   const persist = (u) => { setLots(u); localStorage.setItem("gh_combos_v1",JSON.stringify(u)); };
   const save = (lot) => { persist(editId?lots.map(l=>l.id===editId?lot:l):[...lots,lot]); setView("list"); setEditId(null); };
-  const del  = (id) => { if(window.confirm("Remove this combo lot?")) persist(lots.filter(l=>l.id!==id)); };
+  const del  = (id) => { if(window.confirm("Remove this lot?")) persist(lots.filter(l=>l.id!==id)); };
   const dup  = (lot) => persist([...lots,{...dc(lot),id:uid(),name:lot.name+" (Copy)",status:"draft"}]);
   const approve  = (id) => persist(lots.map(l=>l.id===id?{...l,status:"approved"}:l));
   const revision = (id) => persist(lots.map(l=>l.id===id?{...l,status:"revision"}:l));
 
-  if(view==="add") return <LotDesigner onSave={save} onCancel={()=>setView("list")} />;
-  if(view==="edit"){ const lot=lots.find(l=>l.id===editId); return lot?<LotDesigner initial={lot} onSave={save} onCancel={()=>{setView("list");setEditId(null);}} />:null; }
+  const shared = { containers, soilMixes, tags };
 
-  const filtered = lots.filter(l=>(statusFilter==="all"||l.status===statusFilter)&&(typeFilter==="all"||l.containerType===typeFilter));
+  if(view==="add") return <LotDesigner onSave={save} onCancel={()=>setView("list")} {...shared} />;
+  if(view==="edit"){ const lot=lots.find(l=>l.id===editId); return lot?<LotDesigner initial={lot} onSave={save} onCancel={()=>{setView("list");setEditId(null);}} {...shared} />:null; }
+
+  const filtered = lots.filter(l=>statusFilter==="all"||l.status===statusFilter);
   const pending = lots.filter(l=>l.status==="submitted").length;
 
   return (
@@ -627,16 +889,11 @@ export default function ComboLibrary() {
           <button onClick={()=>setView("add")} style={{background:"linear-gradient(135deg,#7fb069,#4a7a35)",color:"#fff",border:"none",borderRadius:12,padding:"10px 22px",fontWeight:800,fontSize:14,cursor:"pointer",fontFamily:"inherit",boxShadow:"0 4px 12px rgba(79,160,69,.3)"}}>+ New Combo Lot</button>
         </div>
       </div>
-      <div style={{display:"flex",gap:8,marginBottom:8,flexWrap:"wrap"}}>
+      <div style={{display:"flex",gap:8,marginBottom:20,flexWrap:"wrap"}}>
         {[["all","All Statuses"],...STATUSES.map(s=>[s.id,s.label])].map(([id,label])=>{
           const s=STATUSES.find(x=>x.id===id);
           return <button key={id} onClick={()=>setStatusFilter(id)} style={{padding:"6px 14px",borderRadius:20,border:`1.5px solid ${statusFilter===id?(s?.color||"#7fb069"):"#c8d8c0"}`,background:statusFilter===id?(s?.bg||"#f0f8eb"):"#fff",color:statusFilter===id?(s?.color||"#2e5c1e"):"#7a8c74",fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>{label}</button>;
         })}
-      </div>
-      <div style={{display:"flex",gap:8,marginBottom:20,flexWrap:"wrap"}}>
-        {[["all","All Types"],...CONTAINER_TYPES.map(t=>[t.id,`${t.icon} ${t.label}`])].map(([id,label])=>(
-          <button key={id} onClick={()=>setTypeFilter(id)} style={{padding:"6px 14px",borderRadius:20,border:`1.5px solid ${typeFilter===id?"#7fb069":"#c8d8c0"}`,background:typeFilter===id?"#f0f8eb":"#fff",color:typeFilter===id?"#2e5c1e":"#7a8c74",fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>{label}</button>
-        ))}
       </div>
       {filtered.length===0?(
         <div style={{textAlign:"center",padding:"60px 20px",background:"#fafcf8",borderRadius:20,border:"2px dashed #c8d8c0"}}>
@@ -648,7 +905,7 @@ export default function ComboLibrary() {
       ):(
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(340px,1fr))",gap:16}}>
           {filtered.map(lot=>(
-            <LotCard key={lot.id} lot={lot} isApprover={isApprover} onEdit={()=>{setEditId(lot.id);setView("edit");}} onDelete={del} onDuplicate={dup} onApprove={approve} onRevision={revision} />
+            <LotCard key={lot.id} lot={lot} isApprover={isApprover} onEdit={()=>{setEditId(lot.id);setView("edit");}} onDelete={del} onDuplicate={dup} onApprove={approve} onRevision={revision} {...shared} />
           ))}
         </div>
       )}
