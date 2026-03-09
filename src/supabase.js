@@ -1,0 +1,192 @@
+import { useState, useEffect, useCallback, useRef } from "react";
+import { createClient } from "@supabase/supabase-js";
+
+// ── CLIENT ────────────────────────────────────────────────────────────────────
+const SUPABASE_URL     = process.env.REACT_APP_SUPABASE_URL     || "";
+const SUPABASE_ANON_KEY = process.env.REACT_APP_SUPABASE_ANON_KEY || "";
+
+let _client = null;
+export function getSupabase() {
+  if (!_client && SUPABASE_URL && SUPABASE_ANON_KEY) {
+    _client = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  }
+  return _client;
+}
+
+// ── HELPERS ───────────────────────────────────────────────────────────────────
+// Convert snake_case DB row to camelCase app object
+function toCamel(obj) {
+  if (!obj || typeof obj !== "object") return obj;
+  if (Array.isArray(obj)) return obj.map(toCamel);
+  return Object.fromEntries(
+    Object.entries(obj).map(([k, v]) => [
+      k.replace(/_([a-z])/g, (_, c) => c.toUpperCase()),
+      toCamel(v),
+    ])
+  );
+}
+
+// Convert camelCase app object to snake_case for DB
+function toSnake(obj) {
+  if (!obj || typeof obj !== "object") return obj;
+  if (Array.isArray(obj)) return obj.map(toSnake);
+  return Object.fromEntries(
+    Object.entries(obj).map(([k, v]) => [
+      k.replace(/([A-Z])/g, "_$1").toLowerCase(),
+      // Don't recurse into jsonb fields — keep them as-is
+      typeof v === "object" && v !== null && !Array.isArray(v) &&
+        !["varieties","indoorAssignments","outsideAssignments","zones","sections","stages","items"].includes(k)
+        ? toSnake(v)
+        : v,
+    ])
+  );
+}
+
+// ── GENERIC TABLE HOOK ────────────────────────────────────────────────────────
+// useTable("crop_runs") → { rows, loading, error, insert, update, remove, refresh }
+export function useTable(tableName, { orderBy = "created_at", localKey = null } = {}) {
+  const [rows, setRows]       = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError]     = useState(null);
+  const mounted = useRef(true);
+
+  const db = getSupabase();
+  const hasDb = !!db;
+
+  // Load from localStorage fallback if no Supabase
+  useEffect(() => {
+    if (!hasDb && localKey) {
+      try {
+        const stored = JSON.parse(localStorage.getItem(localKey) || "[]");
+        setRows(stored);
+      } catch {}
+      setLoading(false);
+    }
+  }, [hasDb, localKey]);
+
+  // Fetch from Supabase
+  const refresh = useCallback(async () => {
+    if (!db) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const { data, error: err } = await db
+        .from(tableName)
+        .select("*")
+        .order(orderBy, { ascending: false });
+      if (err) throw err;
+      if (mounted.current) setRows(toCamel(data || []));
+    } catch (e) {
+      if (mounted.current) setError(e.message);
+    } finally {
+      if (mounted.current) setLoading(false);
+    }
+  }, [db, tableName, orderBy]);
+
+  useEffect(() => {
+    if (hasDb) refresh();
+    return () => { mounted.current = false; };
+  }, [hasDb, refresh]);
+
+  // Real-time subscription
+  useEffect(() => {
+    if (!db) return;
+    const channel = db
+      .channel(`rt-${tableName}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: tableName }, () => {
+        refresh();
+      })
+      .subscribe();
+    return () => db.removeChannel(channel);
+  }, [db, tableName, refresh]);
+
+  const insert = useCallback(async (row) => {
+    const { id, ...rest } = row;
+    const snaked = toSnake(rest);
+    if (!db) {
+      // localStorage fallback
+      const newRow = { ...row, id: row.id || Date.now().toString(36) };
+      setRows(prev => {
+        const updated = [newRow, ...prev];
+        if (localKey) localStorage.setItem(localKey, JSON.stringify(updated));
+        return updated;
+      });
+      return newRow;
+    }
+    const { data, error: err } = await db.from(tableName).insert(snaked).select().single();
+    if (err) throw err;
+    const converted = toCamel(data);
+    setRows(prev => [converted, ...prev]);
+    return converted;
+  }, [db, tableName, localKey]);
+
+  const update = useCallback(async (id, changes) => {
+    const snaked = toSnake(changes);
+    if (!db) {
+      setRows(prev => {
+        const updated = prev.map(r => r.id === id ? { ...r, ...changes } : r);
+        if (localKey) localStorage.setItem(localKey, JSON.stringify(updated));
+        return updated;
+      });
+      return;
+    }
+    const { error: err } = await db.from(tableName).update(snaked).eq("id", id);
+    if (err) throw err;
+    setRows(prev => prev.map(r => r.id === id ? { ...r, ...changes } : r));
+  }, [db, tableName, localKey]);
+
+  const remove = useCallback(async (id) => {
+    if (!db) {
+      setRows(prev => {
+        const updated = prev.filter(r => r.id !== id);
+        if (localKey) localStorage.setItem(localKey, JSON.stringify(updated));
+        return updated;
+      });
+      return;
+    }
+    const { error: err } = await db.from(tableName).delete().eq("id", id);
+    if (err) throw err;
+    setRows(prev => prev.filter(r => r.id !== id));
+  }, [db, tableName]);
+
+  const upsert = useCallback(async (row) => {
+    const snaked = toSnake(row);
+    if (!db) {
+      setRows(prev => {
+        const exists = prev.find(r => r.id === row.id);
+        const updated = exists
+          ? prev.map(r => r.id === row.id ? { ...r, ...row } : r)
+          : [row, ...prev];
+        if (localKey) localStorage.setItem(localKey, JSON.stringify(updated));
+        return updated;
+      });
+      return row;
+    }
+    const { data, error: err } = await db.from(tableName).upsert(snaked).select().single();
+    if (err) throw err;
+    const converted = toCamel(data);
+    setRows(prev => {
+      const exists = prev.find(r => r.id === converted.id);
+      return exists
+        ? prev.map(r => r.id === converted.id ? converted : r)
+        : [converted, ...prev];
+    });
+    return converted;
+  }, [db, tableName, localKey]);
+
+  return { rows, loading, error, insert, update, remove, upsert, refresh, hasDb };
+}
+
+// ── TABLE-SPECIFIC HOOKS ──────────────────────────────────────────────────────
+export const useCropRuns      = () => useTable("crop_runs",       { orderBy: "created_at", localKey: "gh_crop_runs_v1" });
+export const useHouses        = () => useTable("houses",          { orderBy: "name",       localKey: "gh_houses_v3" });
+export const usePads          = () => useTable("pads",            { orderBy: "name",       localKey: "gh_pads_v2" });
+export const useManualTasks   = () => useTable("manual_tasks",    { orderBy: "created_at", localKey: "gh_tasks_v1" });
+export const useVarieties     = () => useTable("variety_library", { orderBy: "crop_name",  localKey: "gh_variety_library" });
+export const useContainers    = () => useTable("containers",      { orderBy: "name",       localKey: "gh_containers_v1" });
+export const useSpacingProfiles = () => useTable("spacing_profiles", { orderBy: "name",   localKey: "gh_spacing_v1" });
+export const useBrokerCatalogs = () => useTable("broker_catalogs", { orderBy: "created_at", localKey: "gh_broker_catalogs_v1" });
+export const useSoilMixes     = () => useTable("soil_mixes",      { orderBy: "name",       localKey: "gh_soil_mixes_v1" });
+export const useInputProducts  = () => useTable("inputs",         { orderBy: "name",       localKey: "gh_inputs_v1" });
+export const useFlags         = () => useTable("flags",           { orderBy: "created_at", localKey: "gh_flags_v1" });
+export const useTaskCompletions = () => useTable("task_completions", { orderBy: "completed_at", localKey: "gh_task_completions_v1" });
