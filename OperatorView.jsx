@@ -2,7 +2,7 @@
 // The onSwitchMode prop is passed in from App.jsx
 
 import { useState } from "react";
-import { computeSchedule, getCurrentWeek, FLAG_TYPES, uid } from "../lib/shared";
+import { computeSchedule, getCurrentWeek, FLAG_TYPES, uid } from "./shared";
 
 const CURRENT_WEEK = getCurrentWeek();
 const CURRENT_YEAR = new Date().getFullYear();
