@@ -1,8 +1,5 @@
 import { useState, useEffect } from "react";
-
-function useStorage(key, fallback) {
-  const [val, setVal] = useState(() => { try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } });
-  useEffect(() => { try { localStorage.setItem(key, JSON.stringify(val)); } catch {} }, [key, val]);
+import { useHouses, usePads, useManualTasks } from "./supabase";
   return [val, setVal];
 }
 
@@ -809,7 +806,7 @@ const PRIORITIES = [
 const ptc  = (id) => PRIORITIES.find(p => p.id === id) || PRIORITIES[1];
 const catc = (id) => TASK_CATEGORIES.find(c => c.id === id) || TASK_CATEGORIES[0];
 
-function TasksPage({ tasks, setTasks, houses, pads }) {
+function TasksPage({ tasks, onAddTask, onCompleteTask, onUncompleteTask, onRemoveTask, houses, pads }) {
   const [focus, setFocus] = useState(null);
   const [catFilter, setCatFilter] = useState("all");
   const [priFilter, setPriFilter] = useState("all");
@@ -850,28 +847,27 @@ function TasksPage({ tasks, setTasks, houses, pads }) {
 
   function addTask() {
     if (!form.text.trim()) return;
-    setTasks(x => [...x, { id: uid(), ...form, text: form.text.trim(), completedAt: null, createdAt: new Date().toISOString() }]);
+    onAddTask({ id: uid(), ...form, text: form.text.trim(), completedAt: null, createdAt: new Date().toISOString() });
     setForm(f => ({ ...f, text: "", source: "" }));
   }
 
   function completeTask(task) {
     if (task.auto) {
-      // Log the auto task as completed so it stays off the list
-      setTasks(x => [...x, { id: uid(), autoRef: task.id, text: task.text, category: task.category, priority: task.priority, source: task.source, completedAt: new Date().toISOString() }]);
+      onAddTask({ id: uid(), autoRef: task.id, text: task.text, category: task.category, priority: task.priority, source: task.source, completedAt: new Date().toISOString() });
     } else {
-      setTasks(x => x.map(t => t.id === task.id ? { ...t, completedAt: new Date().toISOString() } : t));
+      onCompleteTask(task.id);
     }
   }
 
   function uncompleteTask(task) {
     if (task.autoRef) {
-      setTasks(x => x.filter(t => t.id !== task.id));
+      onRemoveTask(task.id);
     } else {
-      setTasks(x => x.map(t => t.id === task.id ? { ...t, completedAt: null } : t));
+      onUncompleteTask(task.id);
     }
   }
 
-  function removeTask(id) { setTasks(x => x.filter(t => t.id !== id)); }
+  function removeTask(id) { onRemoveTask(id); }
 
   const sourceOptions = [
     { value: "", label: "— No source —" },
@@ -1027,26 +1023,32 @@ function TasksPage({ tasks, setTasks, houses, pads }) {
 
 // ── MAIN ──────────────────────────────────────────────────────────────────────
 export default function App() {
-  const [houses, setHouses] = useStorage("gh_houses_v3", []);
-  const [pads,   setPads  ] = useStorage("gh_pads_v2",   []);
-  const [tasks,  setTasks ] = useStorage("gh_tasks_v1",  []);
+  const { rows: houses, upsert: upsertHouse, remove: removeHouseDb } = useHouses();
+  const { rows: pads,   upsert: upsertPad,   remove: removePadDb   } = usePads();
+  const { rows: tasks,  upsert: upsertTask,  remove: removeTaskDb  } = useManualTasks();
+
   const [section,   setSection  ] = useState("overview");
   const [view,      setView     ] = useState("list");
   const [editingId, setEditingId] = useState(null);
   const [filter,    setFilter   ] = useState("all");
   const [locFilter, setLocFilter] = useState("");
 
-  function saveHouse(h) { if (editingId) setHouses(x => x.map(i => i.id === editingId ? h : i)); else setHouses(x => [...x, h]); setView("list"); setEditingId(null); }
-  function deleteHouse(id) { if (window.confirm("Remove this house?")) setHouses(x => x.filter(i => i.id !== id)); }
-  function dupHouse(h) { setHouses(x => [...x, reIdHouse(dc(h))]); }
-  function toggleHouseActive(id) { setHouses(x => x.map(i => i.id === id ? { ...i, active: i.active === false } : i)); }
+  async function saveHouse(h) { await upsertHouse(h); setView("list"); setEditingId(null); }
+  async function deleteHouse(id) { if (window.confirm("Remove this house?")) await removeHouseDb(id); }
+  async function dupHouse(h) { const { id, ...rest } = reIdHouse(dc(h)); await upsertHouse({ ...rest }); }
+  async function toggleHouseActive(id) { const h = houses.find(i => i.id === id); if (h) await upsertHouse({ ...h, active: h.active === false }); }
 
-  function savePad(p) { if (editingId) setPads(x => x.map(i => i.id === editingId ? p : i)); else setPads(x => [...x, p]); setView("list"); setEditingId(null); }
-  function deletePad(id) { if (window.confirm("Remove this pad?")) setPads(x => x.filter(i => i.id !== id)); }
-  function dupPad(p) { setPads(x => [...x, reIdPad(dc(p))]); }
-  function togglePadActive(id) { setPads(x => x.map(i => i.id === id ? { ...i, active: i.active === false } : i)); }
+  async function savePad(p) { await upsertPad(p); setView("list"); setEditingId(null); }
+  async function deletePad(id) { if (window.confirm("Remove this pad?")) await removePadDb(id); }
+  async function dupPad(p) { const { id, ...rest } = reIdPad(dc(p)); await upsertPad({ ...rest }); }
+  async function togglePadActive(id) { const p = pads.find(i => i.id === id); if (p) await upsertPad({ ...p, active: p.active === false }); }
 
   function switchSection(s) { setSection(s); setView("list"); setEditingId(null); setFilter("all"); }
+
+  async function addTask(task)         { await upsertTask(task); }
+  async function completeTask(id)      { await upsertTask({ id, completedAt: new Date().toISOString() }); }
+  async function uncompleteTask(id)    { await upsertTask({ id, completedAt: null }); }
+  async function deleteTask(id)        { await removeTaskDb(id); }
 
   const filteredHouses = houses.filter(h => {
     if (locFilter && h.location !== locFilter) return false;
@@ -1133,7 +1135,7 @@ export default function App() {
         {section === "outdoor" && view === "edit" && editingId && <PadForm initial={pads.find(p => p.id === editingId)} onSave={savePad} onCancel={() => { setView("list"); setEditingId(null); }} />}
 
         {/* ── TASKS ── */}
-        {section === "tasks" && <TasksPage tasks={tasks} setTasks={setTasks} houses={houses} pads={pads} />}
+        {section === "tasks" && <TasksPage tasks={tasks} onAddTask={addTask} onCompleteTask={completeTask} onUncompleteTask={uncompleteTask} onRemoveTask={deleteTask} houses={houses} pads={pads} />}
       </div>
     </div>
   );
