@@ -1,10 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 
-// ═══════════════════════════════════════════════════════
-// LIBRARIES — Variety, Container, Spacing
-// ═══════════════════════════════════════════════════════
-
-// ── STORAGE ───────────────────────────────────────────
+// ── STORAGE ───────────────────────────────────────────────────────────────────
 function useStorage(key, fallback) {
   const [val, setVal] = useState(() => {
     try { return JSON.parse(localStorage.getItem(key)) ?? fallback; }
@@ -13,8 +9,6 @@ function useStorage(key, fallback) {
   useEffect(() => { try { localStorage.setItem(key, JSON.stringify(val)); } catch {} }, [key, val]);
   return [val, setVal];
 }
-
-
 
 // ── BREEDER CONFIG ────────────────────────────────────────────────────────────
 const BREEDERS = [
@@ -593,8 +587,10 @@ function VarietyLibrary() {
 }
 
 
+// ═══ CONTAINER LIBRARY ═══
 
 
+// ── STORAGE ───────────────────────────────────────────────────────────────────
 // ── CONSTANTS ─────────────────────────────────────────────────────────────────
 const CONTAINER_TYPES = [
   { id: "pot",     label: "Pot / Container",    icon: "🪴", color: "#7fb069" },
@@ -639,15 +635,6 @@ const IS = (f) => ({ width: "100%", padding: "9px 12px", borderRadius: 8, border
 const TA = (f) => ({ ...IS(f), minHeight: 55, resize: "vertical" });
 function FL({ c }) { return <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#7a8c74", marginBottom: 5, letterSpacing: .6, textTransform: "uppercase" }}>{c}</label>; }
 function SH({ c, mt, color }) { return <div style={{ fontSize: 11, fontWeight: 800, color: color || "#7fb069", letterSpacing: 1.2, textTransform: "uppercase", borderBottom: `1.5px solid ${color ? color + "33" : "#e0ead8"}`, paddingBottom: 7, marginBottom: 14, marginTop: mt || 10 }}>{c}</div>; }
-function Badge({ label, color }) { return <span style={{ background: color + "22", color, border: `1px solid ${color}44`, borderRadius: 20, padding: "2px 9px", fontSize: 11, fontWeight: 700, whiteSpace: "nowrap" }}>{label}</span>; }
-function Pill({ label, value, color = "#7fb069" }) {
-  return (
-    <div style={{ background: color + "14", border: `1px solid ${color}33`, borderRadius: 8, padding: "6px 12px", textAlign: "center", minWidth: 60 }}>
-      <div style={{ fontSize: 14, fontWeight: 800, color: "#1e2d1a" }}>{value}</div>
-      <div style={{ fontSize: 10, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .4, marginTop: 1 }}>{label}</div>
-    </div>
-  );
-}
 function IBtn({ onClick, danger, children }) { return <button onClick={onClick} style={{ background: "none", border: `1px solid ${danger ? "#f0d0c0" : "#e0ead8"}`, borderRadius: 5, width: 24, height: 24, cursor: "pointer", color: danger ? "#e07b39" : "#aabba0", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{children}</button>; }
 function ABtn({ onClick, label, color, border }) { return <button onClick={onClick} style={{ background: color || "none", color: color ? "#fff" : "#7a8c74", border: `1px solid ${border || "#c8d8c0"}`, borderRadius: 7, padding: "6px 14px", fontSize: 12, fontWeight: color ? 700 : 400, cursor: "pointer", fontFamily: "inherit" }}>{label}</button>; }
 
@@ -1134,8 +1121,10 @@ function ContainerLibrary() {
 }
 
 
+// ═══ SPACING LIBRARY ═══
 
 
+// ── STORAGE ───────────────────────────────────────────────────────────────────
 // ── CONSTANTS ─────────────────────────────────────────────────────────────────
 const PROFILE_TAGS = [
   { id: "crop",      label: "Crop-Based",      icon: "🌿", color: "#7fb069", desc: "Defined by crop behavior (e.g. Impatiens, Geranium)" },
@@ -1150,8 +1139,6 @@ const STAGE_DEFS = [
 ];
 
 // ── HELPERS ───────────────────────────────────────────────────────────────────
-const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-const dc  = (o) => JSON.parse(JSON.stringify(o));
 
 function calcSqFt(x, y) {
   const xn = Number(x), yn = Number(y || x);
@@ -1168,21 +1155,6 @@ function calcPotsPerBench(x, y, benchW, benchL) {
 }
 
 // ── PRIMITIVES ────────────────────────────────────────────────────────────────
-const IS = (f) => ({ width: "100%", padding: "9px 12px", borderRadius: 8, border: `1.5px solid ${f ? "#7fb069" : "#c8d8c0"}`, background: "#fff", fontSize: 14, color: "#1e2d1a", outline: "none", boxSizing: "border-box", fontFamily: "inherit" });
-const TA = (f) => ({ ...IS(f), minHeight: 55, resize: "vertical" });
-function FL({ c }) { return <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#7a8c74", marginBottom: 5, letterSpacing: .6, textTransform: "uppercase" }}>{c}</label>; }
-function SH({ c, mt, color }) { return <div style={{ fontSize: 11, fontWeight: 800, color: color || "#7fb069", letterSpacing: 1.2, textTransform: "uppercase", borderBottom: `1.5px solid ${color ? color + "33" : "#e0ead8"}`, paddingBottom: 7, marginBottom: 14, marginTop: mt ?? 10 }}>{c}</div>; }
-function Badge({ label, color }) { return <span style={{ background: color + "22", color, border: `1px solid ${color}44`, borderRadius: 20, padding: "2px 9px", fontSize: 11, fontWeight: 700, whiteSpace: "nowrap" }}>{label}</span>; }
-function Pill({ label, value, color = "#7fb069", sub }) {
-  return (
-    <div style={{ background: color + "14", border: `1px solid ${color}33`, borderRadius: 8, padding: "6px 12px", textAlign: "center", minWidth: 64 }}>
-      <div style={{ fontSize: 14, fontWeight: 800, color: "#1e2d1a" }}>{value}</div>
-      {sub && <div style={{ fontSize: 9, color, fontWeight: 700, marginTop: 1 }}>{sub}</div>}
-      <div style={{ fontSize: 10, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .4, marginTop: 1 }}>{label}</div>
-    </div>
-  );
-}
-
 // ── STAGE EDITOR ──────────────────────────────────────────────────────────────
 function StageEditor({ stage, data, onChange, benchW, benchL }) {
   const [focus, setFocus] = useState(null);
@@ -1648,8 +1620,7 @@ function SpacingLibrary() {
 }
 
 
-
-// ── LIBRARIES TAB WRAPPER ────────────────────────────
+// ── LIBRARIES TAB WRAPPER ────────────────────────────────────────────────────
 const LIBRARY_TABS = [
   { id: "variety",   label: "Varieties",  icon: "🌿" },
   { id: "container", label: "Containers", icon: "🪴" },
