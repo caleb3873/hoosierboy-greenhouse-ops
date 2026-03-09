@@ -1,11 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-
-// ── STORAGE ───────────────────────────────────────────────────────────────────
-function useStorage(key, fallback) {
-  // localStorage not available in artifact environment — use in-memory state
-  const [val, setVal] = useState(fallback);
-  return [val, setVal];
-}
+import { useCropRuns, useHouses, usePads, useContainers, useSpacingProfiles, useVarieties, useBrokerCatalogs } from "./supabase";
 
 // ── CONSTANTS ─────────────────────────────────────────────────────────────────
 const SENSITIVITY = [
@@ -785,10 +779,7 @@ const MATERIAL_TYPES = [
 const URC_TRAY_SIZES = ["50", "72", "84", "102"];
 
 function useBrokerLookup() {
-  const [catalogs] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("gh_broker_catalogs_v1") || "[]"); }
-    catch { return []; }
-  });
+  const { rows: catalogs } = useBrokerCatalogs ? useBrokerCatalogs() : { rows: [] };
   const getBrokerNames = () => [...new Set(catalogs.map(c => c.brokerName).filter(Boolean))].sort();
   const searchVarieties = (brokerName, cropName, query = "") => {
     const items = catalogs.filter(c => c.brokerName === brokerName).flatMap(c => c.items);
@@ -1581,12 +1572,12 @@ function WeekCalendar({ runs, currentYear }) {
 
 // ── MAIN ──────────────────────────────────────────────────────────────────────
 export default function App() {
-  const [runs,            setRuns           ] = useStorage("gh_crop_runs_v1",  []);
-  const [houses,          setHouses         ] = useStorage("gh_houses_v3",     []);
-  const [pads,            setPads           ] = useStorage("gh_pads_v2",       []);
-  const [containers,      setContainers     ] = useStorage("gh_containers_v1", []);
-  const [spacingProfiles, setSpacingProfiles] = useStorage("gh_spacing_v1",   []);
-  const [varietyLibrary,  setVarietyLibrary ] = useStorage("gh_variety_library", []);
+  const { rows: runs,            upsert: upsertRun,   remove: removeRun,   loading: runsLoading   } = useCropRuns();
+  const { rows: houses                                                                              } = useHouses();
+  const { rows: pads                                                                                } = usePads();
+  const { rows: containers                                                                          } = useContainers();
+  const { rows: spacingProfiles                                                                     } = useSpacingProfiles();
+  const { rows: varietyLibrary                                                                      } = useVarieties();
 
   const currentYear = new Date().getFullYear();
   const [view,      setView     ] = useState("list");
@@ -1595,9 +1586,17 @@ export default function App() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [yearFilter,   setYearFilter  ] = useState(currentYear);
 
-  function saveRun(r) { if (editingId) setRuns(x => x.map(i => i.id === editingId ? r : i)); else setRuns(x => [...x, r]); setView("list"); setEditingId(null); }
-  function deleteRun(id) { if (window.confirm("Remove this crop run?")) setRuns(x => x.filter(i => i.id !== id)); }
-  function statusChange(id, status) { setRuns(x => x.map(r => r.id === id ? { ...r, status } : r)); }
+  async function saveRun(r) {
+    await upsertRun(r);
+    setView("list");
+    setEditingId(null);
+  }
+  async function deleteRun(id) {
+    if (window.confirm("Remove this crop run?")) await removeRun(id);
+  }
+  async function statusChange(id, status) {
+    await upsertRun({ id, status });
+  }
 
   const filtered = runs
     .filter(r => statusFilter === "all" || r.status === statusFilter)
