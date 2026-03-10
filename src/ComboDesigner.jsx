@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { useContainers, useSoilMixes } from "./supabase";
+import { useContainers, useSoilMixes, useCropRuns } from "./supabase";
 
 // ── CONSTANTS ─────────────────────────────────────────────────────────────────
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -850,10 +850,131 @@ function LotCard({ lot, onEdit, onDelete, onDuplicate, onApprove, onRevision, is
   );
 }
 
+// ── WEEK → DATE HELPER (mirrors CropPlanning logic) ──────────────────────────
+function weekToDate(week, year) {
+  const jan4 = new Date(year, 0, 4);
+  const s = new Date(jan4);
+  s.setDate(jan4.getDate() - ((jan4.getDay() + 6) % 7));
+  const d = new Date(s);
+  d.setDate(d.getDate() + (week - 1) * 7);
+  return d;
+}
+function fmtWeekDate(week, year) {
+  if (!week || !year) return "—";
+  return weekToDate(+week, +year).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+function subtractWeeks(week, year, n) {
+  let w = +week - n, y = +year;
+  while (w <= 0) { w += 52; y--; }
+  return { week: w, year: y };
+}
+function computeRunSchedule(run) {
+  const { targetWeek, targetYear, movesOutside, weeksIndoor, weeksOutdoor, weeksProp } = run;
+  if (!targetWeek || !targetYear) return null;
+  const totalFinish = (movesOutside ? (+weeksIndoor||0) + (+weeksOutdoor||0) : (+weeksIndoor||0));
+  const transplantWk = subtractWeeks(targetWeek, targetYear, totalFinish);
+  const prop = +weeksProp || 0;
+  const seedWk = prop > 0 ? subtractWeeks(transplantWk.week, transplantWk.year, prop) : null;
+  return {
+    transplant: transplantWk,
+    seed: seedWk,
+    ready: { week: +targetWeek, year: +targetYear },
+  };
+}
+
+// ── DESIGN QUEUE SCREEN ───────────────────────────────────────────────────────
+function DesignQueue({ runs, containers, onStartDesign }) {
+  const queued = runs.filter(r => r.status === "needs_design");
+
+  if (queued.length === 0) {
+    return (
+      <div style={{ background: "#f8faf6", borderRadius: 16, border: "2px dashed #c8d8c0", padding: "32px 24px", marginBottom: 28, textAlign: "center" }}>
+        <div style={{ fontSize: 28, marginBottom: 8 }}>✅</div>
+        <div style={{ fontSize: 14, fontWeight: 700, color: "#4a5a40", marginBottom: 4 }}>No lots waiting on design</div>
+        <div style={{ fontSize: 12, color: "#7a8c74" }}>When Tyler marks a crop run "Needs Design" it will appear here</div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ marginBottom: 28 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+        <div style={{ fontSize: 13, fontWeight: 800, color: "#e07b39", textTransform: "uppercase", letterSpacing: .8 }}>
+          🎨 Ready to Design
+        </div>
+        <div style={{ background: "#e07b39", color: "#fff", borderRadius: 20, padding: "2px 9px", fontSize: 11, fontWeight: 800 }}>
+          {queued.length}
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 12 }}>
+        {queued.map(run => {
+          const sched = computeRunSchedule(run);
+          const container = containers.find(c => c.id === run.containerId);
+          const units = run.cases && run.packSize ? Number(run.cases) * Number(run.packSize) : null;
+          const readyDate = sched ? fmtWeekDate(sched.ready.week, sched.ready.year) : null;
+          const transplantDate = sched ? fmtWeekDate(sched.transplant.week, sched.transplant.year) : null;
+
+          return (
+            <div key={run.id} style={{ background: "#fff", borderRadius: 14, border: "2px solid #f0d8c0", overflow: "hidden", boxShadow: "0 2px 10px rgba(0,0,0,0.05)" }}>
+              {/* Orange header */}
+              <div style={{ background: "linear-gradient(135deg, #e07b39, #c8791a)", padding: "12px 16px" }}>
+                <div style={{ fontWeight: 800, fontSize: 15, color: "#fff", marginBottom: 2 }}>
+                  {run.cropName || "Unnamed Crop"}
+                  {run.groupNumber ? <span style={{ fontSize: 12, fontWeight: 400, opacity: .8 }}> — Group {run.groupNumber}</span> : ""}
+                </div>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,.8)" }}>
+                  {container ? `${container.name}${container.diameter ? ` · ${container.diameter}"` : ""}` : "No container set"}
+                </div>
+              </div>
+
+              <div style={{ padding: "14px 16px" }}>
+                {/* Key dates + qty */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 14 }}>
+                  {units && (
+                    <div style={{ background: "#f0f8eb", borderRadius: 8, padding: "8px 10px", textAlign: "center" }}>
+                      <div style={{ fontSize: 18, fontWeight: 900, color: "#2e5c1e" }}>{units.toLocaleString()}</div>
+                      <div style={{ fontSize: 9, color: "#7a8c74", textTransform: "uppercase" }}>Units</div>
+                    </div>
+                  )}
+                  {readyDate && (
+                    <div style={{ background: "#f0f8eb", borderRadius: 8, padding: "8px 10px", textAlign: "center" }}>
+                      <div style={{ fontSize: 11, fontWeight: 800, color: "#2e5c1e" }}>{readyDate}</div>
+                      <div style={{ fontSize: 9, color: "#7a8c74", textTransform: "uppercase" }}>Ready Wk {sched.ready.week}</div>
+                    </div>
+                  )}
+                  {transplantDate && (
+                    <div style={{ background: "#e8f4f8", borderRadius: 8, padding: "8px 10px", textAlign: "center" }}>
+                      <div style={{ fontSize: 11, fontWeight: 800, color: "#2e7d9e" }}>{transplantDate}</div>
+                      <div style={{ fontSize: 9, color: "#7a8c74", textTransform: "uppercase" }}>Transplant</div>
+                    </div>
+                  )}
+                </div>
+
+                {run.notes && (
+                  <div style={{ fontSize: 11, color: "#7a8c74", background: "#f8faf6", borderRadius: 7, padding: "6px 10px", marginBottom: 12, fontStyle: "italic" }}>
+                    {run.notes}
+                  </div>
+                )}
+
+                <button onClick={() => onStartDesign(run, sched, container, units)}
+                  style={{ width: "100%", background: "linear-gradient(135deg, #e07b39, #c8791a)", color: "#fff", border: "none", borderRadius: 10, padding: "10px 0", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                  🎨 Start Designing →
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ── MAIN EXPORT ───────────────────────────────────────────────────────────────
 export default function ComboLibrary() {
   const { rows: containers } = useContainers();
   const { rows: soilMixes  } = useSoilMixes();
+  const { rows: runs        } = useCropRuns();
   const [tags] = useState(()=>{ try{return JSON.parse(localStorage.getItem("gh_tags_v1")||"[]")}catch{return[]} });
 
   const [lots, setLots] = useState(()=>{ try{return JSON.parse(localStorage.getItem("gh_combos_v1")||"[]")}catch{return[]} });
@@ -871,11 +992,62 @@ export default function ComboLibrary() {
 
   const shared = { containers, soilMixes, tags };
 
-  if(view==="add") return <LotDesigner onSave={save} onCancel={()=>setView("list")} {...shared} />;
-  if(view==="edit"){ const lot=lots.find(l=>l.id===editId); return lot?<LotDesigner initial={lot} onSave={save} onCancel={()=>{setView("list");setEditId(null);}} {...shared} />:null; }
+  // Pre-populate a new lot from a crop run
+  const handleStartDesign = (run, sched, container, units) => {
+    const needByDate = sched?.seed
+      ? weekToDate(sched.seed.week, sched.seed.year).toISOString().slice(0, 10)
+      : sched?.transplant
+      ? weekToDate(sched.transplant.week, sched.transplant.year).toISOString().slice(0, 10)
+      : "";
+
+    const prefilled = {
+      id: null,
+      name: [run.cropName, run.groupNumber ? `Group ${run.groupNumber}` : null].filter(Boolean).join(" — "),
+      season: `Spring ${sched?.ready.year || new Date().getFullYear()}`,
+      totalQty: units || "",
+      status: "draft",
+      notes: run.notes || "",
+      approvalNote: "",
+      cropRunId: run.id,
+      combos: [{
+        id: uid(),
+        name: "",
+        qty: null,
+        plants: [],
+        containerId: run.containerId || "",
+        soilId: "",
+        tagId: "",
+        tagDescription: "",
+        // Store the need-by date so Mario can see it while designing
+        suggestedNeedBy: needByDate,
+        readyWeek: sched?.ready.week,
+        readyYear: sched?.ready.year,
+      }],
+    };
+    setEditId(null);
+    // Pass prefilled lot into LotDesigner via a temporary state slot
+    setPrefilledLot(prefilled);
+    setView("add");
+  };
+
+  const [prefilledLot, setPrefilledLot] = useState(null);
+
+  if (view==="add") return (
+    <LotDesigner
+      initial={prefilledLot || undefined}
+      onSave={(lot) => { save(lot); setPrefilledLot(null); }}
+      onCancel={() => { setView("list"); setPrefilledLot(null); }}
+      {...shared}
+    />
+  );
+  if (view==="edit") {
+    const lot = lots.find(l=>l.id===editId);
+    return lot ? <LotDesigner initial={lot} onSave={save} onCancel={()=>{setView("list");setEditId(null);}} {...shared} /> : null;
+  }
 
   const filtered = lots.filter(l=>statusFilter==="all"||l.status===statusFilter);
   const pending = lots.filter(l=>l.status==="submitted").length;
+  const needsDesign = runs.filter(r=>r.status==="needs_design").length;
 
   return (
     <div>
@@ -885,22 +1057,28 @@ export default function ComboLibrary() {
           <div style={{fontSize:12,color:"#7a8c74",marginTop:2}}>{lots.length} lot{lots.length!==1?"s":""}</div>
         </div>
         <div style={{display:"flex",gap:10,alignItems:"center"}}>
+          {needsDesign>0&&<div style={{background:"#fff4e8",border:"1.5px solid #f0c080",borderRadius:10,padding:"8px 14px",fontSize:13,color:"#e07b39",fontWeight:700}}>🎨 {needsDesign} lot{needsDesign!==1?"s":""} need design</div>}
           {pending>0&&<div style={{background:"#e8f4f8",border:"1.5px solid #b0d8e8",borderRadius:10,padding:"8px 14px",fontSize:13,color:"#2e7d9e",fontWeight:700}}>🔔 {pending} awaiting approval</div>}
-          <button onClick={()=>setView("add")} style={{background:"linear-gradient(135deg,#7fb069,#4a7a35)",color:"#fff",border:"none",borderRadius:12,padding:"10px 22px",fontWeight:800,fontSize:14,cursor:"pointer",fontFamily:"inherit",boxShadow:"0 4px 12px rgba(79,160,69,.3)"}}>+ New Combo Lot</button>
+          <button onClick={()=>{setPrefilledLot(null);setView("add");}} style={{background:"linear-gradient(135deg,#7fb069,#4a7a35)",color:"#fff",border:"none",borderRadius:12,padding:"10px 22px",fontWeight:800,fontSize:14,cursor:"pointer",fontFamily:"inherit",boxShadow:"0 4px 12px rgba(79,160,69,.3)"}}>+ New Combo Lot</button>
         </div>
       </div>
+
+      {/* Design queue — always shown at top when there are runs waiting */}
+      <DesignQueue runs={runs} containers={containers} onStartDesign={handleStartDesign} />
+
       <div style={{display:"flex",gap:8,marginBottom:20,flexWrap:"wrap"}}>
         {[["all","All Statuses"],...STATUSES.map(s=>[s.id,s.label])].map(([id,label])=>{
           const s=STATUSES.find(x=>x.id===id);
           return <button key={id} onClick={()=>setStatusFilter(id)} style={{padding:"6px 14px",borderRadius:20,border:`1.5px solid ${statusFilter===id?(s?.color||"#7fb069"):"#c8d8c0"}`,background:statusFilter===id?(s?.bg||"#f0f8eb"):"#fff",color:statusFilter===id?(s?.color||"#2e5c1e"):"#7a8c74",fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>{label}</button>;
         })}
       </div>
+
       {filtered.length===0?(
-        <div style={{textAlign:"center",padding:"60px 20px",background:"#fafcf8",borderRadius:20,border:"2px dashed #c8d8c0"}}>
+        <div style={{textAlign:"center",padding:"40px 20px",background:"#fafcf8",borderRadius:20,border:"2px dashed #c8d8c0"}}>
           <div style={{fontSize:52,marginBottom:16}}>🌸</div>
           <div style={{fontSize:18,fontWeight:800,color:"#4a5a40",marginBottom:8}}>No combo lots yet</div>
-          <div style={{fontSize:13,color:"#7a8c74",marginBottom:24,lineHeight:1.6,maxWidth:400,margin:"0 auto 24px"}}>Design your combos here. Each lot can have multiple combo designs split across a quantity.</div>
-          <button onClick={()=>setView("add")} style={{background:"#7fb069",color:"#fff",border:"none",borderRadius:12,padding:"12px 28px",fontWeight:700,fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>+ Create First Lot</button>
+          <div style={{fontSize:13,color:"#7a8c74",marginBottom:24,lineHeight:1.6,maxWidth:400,margin:"0 auto 24px"}}>Design your combos here, or start from a lot in the queue above.</div>
+          <button onClick={()=>{setPrefilledLot(null);setView("add");}} style={{background:"#7fb069",color:"#fff",border:"none",borderRadius:12,padding:"12px 28px",fontWeight:700,fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>+ Create First Lot</button>
         </div>
       ):(
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(340px,1fr))",gap:16}}>
