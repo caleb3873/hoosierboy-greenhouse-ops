@@ -8,6 +8,7 @@ import YoungPlantOrders from "./YoungPlantOrders";
 import SpaceManagement  from "./SpaceManagement";
 import Libraries        from "./Libraries";
 import OperatorView     from "./OperatorView";
+import Preseason        from "./Preseason";
 
 const LOGO_WHITE = "https://cdn.prod.website-files.com/63b5c78a53ecb12c888ba09a/63b5d5e281aa6766b5cb8ace_HOO-Boy%20Logo%20Reversed-White.png";
 
@@ -43,11 +44,12 @@ function ModePicker({ onSelect }) {
 
 // ── PLANNER SHELL ─────────────────────────────────────────────────────────────
 const PLANNER_TABS = [
-  { id: "home",    label: "Home"    },
-  { id: "crops",   label: "Crops"   },
-  { id: "orders",  label: "Orders"  },
-  { id: "space",   label: "Space"   },
-  { id: "library", label: "Library" },
+  { id: "home",       label: "Home"       },
+  { id: "preseason",  label: "Preseason"  },
+  { id: "crops",      label: "Crops"      },
+  { id: "orders",     label: "Orders"     },
+  { id: "space",      label: "Space"      },
+  { id: "library",    label: "Library"    },
 ];
 
 function PlannerShell({ onSwitchMode }) {
@@ -78,11 +80,12 @@ function PlannerShell({ onSwitchMode }) {
 
       {/* Page content */}
       <div style={{ maxWidth: 1100, margin: "0 auto", padding: "28px 24px" }}>
-        {page === "home"    && <PlannerHome    onNavigate={setPage} />}
-        {page === "crops"   && <CropPlanning   />}
-        {page === "orders"  && <YoungPlantOrders />}
-        {page === "space"   && <SpaceManagement />}
-        {page === "library" && <Libraries      />}
+        {page === "home"       && <PlannerHome    onNavigate={setPage} />}
+        {page === "preseason"  && <Preseason      onNavigate={setPage} onCreateCropRun={() => setPage("crops")} />}
+        {page === "crops"      && <CropPlanning   />}
+        {page === "orders"     && <YoungPlantOrders />}
+        {page === "space"      && <SpaceManagement />}
+        {page === "library"    && <Libraries      />}
       </div>
     </div>
   );
