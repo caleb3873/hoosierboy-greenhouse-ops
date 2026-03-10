@@ -64,12 +64,69 @@ function PlusMinus({ value, onChange, mode, onModeChange, baseValue }) {
 }
 
 // ── CSV IMPORT MODAL ──────────────────────────────────────────────────────────
-function ImportModal({ onImport, onClose }) {
-  const [step, setStep] = useState("upload"); // upload | map | preview
-  const [raw, setRaw]   = useState([]);
+const CURRENT_YEAR = new Date().getFullYear();
+
+// ── NOAA WEATHER FETCHER ──────────────────────────────────────────────────────
+async function fetchWeatherHistory(zip, year) {
+  // Use Open-Meteo historical API (free, no key needed) with geocoding
+  try {
+    // First geocode the zip
+    const geoRes = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${zip}&count=1&country=US`);
+    const geoData = await geoRes.json();
+    if (!geoData.results?.length) return null;
+    const { latitude, longitude } = geoData.results[0];
+
+    // Fetch weekly temp + precip for the year
+    const start = `${year}-01-01`;
+    const end   = `${year}-12-31`;
+    const wxRes = await fetch(
+      `https://archive.open-meteo.com/v1/archive?latitude=${latitude}&longitude=${longitude}&start_date=${start}&end_date=${end}&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&temperature_unit=fahrenheit&precipitation_unit=inch&timezone=America%2FNew_York`
+    );
+    const wxData = await wxRes.json();
+    if (!wxData.daily) return null;
+
+    // Aggregate into weeks
+    const weeks = {};
+    wxData.daily.time.forEach((date, i) => {
+      const d = new Date(date);
+      const week = getWeekNumber(d);
+      if (!weeks[week]) weeks[week] = { highs: [], lows: [], precip: 0, count: 0 };
+      weeks[week].highs.push(wxData.daily.temperature_2m_max[i] || 0);
+      weeks[week].lows.push(wxData.daily.temperature_2m_min[i] || 0);
+      weeks[week].precip += wxData.daily.precipitation_sum[i] || 0;
+      weeks[week].count++;
+    });
+
+    return Object.entries(weeks).map(([week, data]) => ({
+      week: Number(week),
+      year,
+      avgHigh: Math.round(data.highs.reduce((a, b) => a + b, 0) / data.highs.length),
+      avgLow:  Math.round(data.lows.reduce((a, b) => a + b, 0) / data.lows.length),
+      precip:  Number(data.precip.toFixed(2)),
+    }));
+  } catch (e) {
+    console.error("Weather fetch failed:", e);
+    return null;
+  }
+}
+
+function getWeekNumber(d) {
+  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const dayNum = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+  return Math.ceil((((date - yearStart) / 86400000) + 1) / 7);
+}
+
+// ── IMPORT MODAL ──────────────────────────────────────────────────────────────
+function ImportModal({ onImport, onClose, currentSeason }) {
+  const [step, setStep]       = useState("label"); // label | upload | map | preview
+  const [label, setLabel]     = useState({ season: currentSeason, year: CURRENT_YEAR - 1, detail: "season" });
+  const [raw, setRaw]         = useState([]);
   const [headers, setHeaders] = useState([]);
-  const [mapping, setMapping] = useState({ product: "", size: "", qty: "", price: "", year: "" });
+  const [mapping, setMapping] = useState({ product: "", size: "", qty: "", price: "", year: "", week: "" });
   const [preview, setPreview] = useState([]);
+  const [focusL, setFocusL]   = useState(null);
   const fileRef = useRef();
 
   const FIELDS = [
@@ -77,8 +134,12 @@ function ImportModal({ onImport, onClose }) {
     { id: "size",    label: "Size / Container",    required: false },
     { id: "qty",     label: "Quantity Sold",       required: true },
     { id: "price",   label: "Unit Price",          required: true },
-    { id: "year",    label: "Year",                required: false },
+    { id: "week",    label: "Week Number",         required: false, show: label.detail === "weekly" },
+    { id: "year",    label: "Year (if in file)",   required: false },
   ];
+
+  const SEASON_OPTS = ["spring", "summer", "fall", "winter"];
+  const YEAR_OPTS   = [CURRENT_YEAR - 3, CURRENT_YEAR - 2, CURRENT_YEAR - 1, CURRENT_YEAR];
 
   function handleFile(e) {
     const file = e.target.files[0];
@@ -87,17 +148,29 @@ function ImportModal({ onImport, onClose }) {
     reader.onload = (ev) => {
       const lines = ev.target.result.split("\n").filter(l => l.trim());
       const heads = lines[0].split(",").map(h => h.trim().replace(/^"|"$/g, ""));
-      const rows  = lines.slice(1).map(l => l.split(",").map(c => c.trim().replace(/^"|"$/g, "")));
+      const rows  = lines.slice(1).map(l => {
+        // Handle quoted fields with commas inside
+        const result = [];
+        let cur = "", inQuote = false;
+        for (const ch of l) {
+          if (ch === '"') { inQuote = !inQuote; }
+          else if (ch === "," && !inQuote) { result.push(cur.trim()); cur = ""; }
+          else cur += ch;
+        }
+        result.push(cur.trim());
+        return result;
+      });
       setHeaders(heads);
       setRaw(rows);
-      // Auto-map obvious columns
-      const autoMap = { product: "", size: "", qty: "", price: "", year: "" };
-      heads.forEach((h, i) => {
+      // Auto-map
+      const autoMap = { product: "", size: "", qty: "", price: "", year: "", week: "" };
+      heads.forEach(h => {
         const lh = h.toLowerCase();
-        if (!autoMap.product && (lh.includes("product") || lh.includes("crop") || lh.includes("item") || lh.includes("name"))) autoMap.product = h;
+        if (!autoMap.product && (lh.includes("product") || lh.includes("crop") || lh.includes("item") || lh.includes("name") || lh.includes("description"))) autoMap.product = h;
         if (!autoMap.size    && (lh.includes("size") || lh.includes("container") || lh.includes("pot"))) autoMap.size = h;
-        if (!autoMap.qty     && (lh.includes("qty") || lh.includes("quantity") || lh.includes("units") || lh.includes("sold"))) autoMap.qty = h;
-        if (!autoMap.price   && (lh.includes("price") || lh.includes("rate") || lh.includes("unit price"))) autoMap.price = h;
+        if (!autoMap.qty     && (lh.includes("qty") || lh.includes("quantity") || lh.includes("units") || lh.includes("sold") || lh.includes("count"))) autoMap.qty = h;
+        if (!autoMap.price   && (lh.includes("price") || lh.includes("rate") || lh.includes("unit") || lh.includes("amount"))) autoMap.price = h;
+        if (!autoMap.week    && (lh.includes("week") || lh.includes("wk"))) autoMap.week = h;
         if (!autoMap.year    && (lh.includes("year") || lh.includes("season"))) autoMap.year = h;
       });
       setMapping(autoMap);
@@ -108,13 +181,8 @@ function ImportModal({ onImport, onClose }) {
 
   function buildPreview() {
     const rows = raw.slice(0, 5).map(row => {
-      const get = (field) => {
-        const h = mapping[field];
-        if (!h) return "";
-        const idx = headers.indexOf(h);
-        return idx >= 0 ? row[idx] : "";
-      };
-      return { product: get("product"), size: get("size"), qty: get("qty"), price: get("price"), year: get("year") };
+      const get = (field) => { const h = mapping[field]; if (!h) return ""; const idx = headers.indexOf(h); return idx >= 0 ? (row[idx] || "") : ""; };
+      return { product: get("product"), size: get("size"), qty: get("qty"), price: get("price"), week: get("week"), year: get("year") };
     });
     setPreview(rows);
     setStep("preview");
@@ -122,51 +190,155 @@ function ImportModal({ onImport, onClose }) {
 
   function handleImport() {
     const imported = raw.map(row => {
-      const get = (field) => { const h = mapping[field]; if (!h) return ""; const idx = headers.indexOf(h); return idx >= 0 ? row[idx] : ""; };
-      return { id: uid(), product: get("product"), size: get("size"), qty: Number(get("qty")) || 0, price: Number(get("price").replace(/[$,]/g, "")) || 0, year: Number(get("year")) || new Date().getFullYear() - 1 };
+      const get = (field) => { const h = mapping[field]; if (!h) return ""; const idx = headers.indexOf(h); return idx >= 0 ? (row[idx] || "") : ""; };
+      const rowYear = Number(get("year")) || label.year;
+      return {
+        id: uid(),
+        product:  get("product"),
+        size:     get("size"),
+        qty:      Number(get("qty").replace(/[,$]/g, "")) || 0,
+        price:    Number(get("price").replace(/[$,]/g, "")) || 0,
+        week:     label.detail === "weekly" ? (Number(get("week")) || null) : null,
+        year:     rowYear,
+        season:   label.season,
+        importLabel: `${label.season.charAt(0).toUpperCase() + label.season.slice(1)} ${label.year}`,
+        detail:   label.detail,
+      };
     }).filter(r => r.product && r.qty > 0);
-    onImport(imported);
+    onImport(imported, label);
     onClose();
   }
 
+  const stepLabels = ["label", "upload", "map", "preview"];
+  const stepIdx    = stepLabels.indexOf(step);
+
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
-      <div style={{ background: "#fff", borderRadius: 20, width: "100%", maxWidth: 640, maxHeight: "85vh", overflow: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
+      <div style={{ background: "#fff", borderRadius: 20, width: "100%", maxWidth: 680, maxHeight: "88vh", overflow: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
+
+        {/* Header */}
         <div style={{ background: "linear-gradient(135deg,#1e2d1a,#2e4a22)", padding: "20px 24px", borderRadius: "20px 20px 0 0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div style={{ fontFamily: "Georgia,serif", fontSize: 18, color: "#c8e6b8" }}>Import Sales History</div>
+          <div>
+            <div style={{ fontFamily: "Georgia,serif", fontSize: 18, color: "#c8e6b8" }}>Import Sales Report</div>
+            <div style={{ fontSize: 11, color: "#7fb069", marginTop: 3 }}>Step {stepIdx + 1} of 4</div>
+          </div>
           <button onClick={onClose} style={{ background: "rgba(255,255,255,.12)", border: "none", color: "#c8e6b8", borderRadius: 8, padding: "6px 14px", fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>Close</button>
         </div>
+
+        {/* Step indicator */}
+        <div style={{ display: "flex", background: "#f8faf6", borderBottom: "1px solid #e0ead8" }}>
+          {[["label","1. Label"], ["upload","2. File"], ["map","3. Map"], ["preview","4. Preview"]].map(([id, lbl], i) => (
+            <div key={id} style={{ flex: 1, padding: "10px 0", textAlign: "center", fontSize: 11, fontWeight: 700, color: step === id ? "#2e5c1e" : stepIdx > i ? "#7fb069" : "#aabba0", borderBottom: `2px solid ${step === id ? "#7fb069" : "transparent"}` }}>{lbl}</div>
+          ))}
+        </div>
+
         <div style={{ padding: "24px" }}>
 
-          {step === "upload" && (
-            <div style={{ textAlign: "center", padding: "32px 20px" }}>
-              <div style={{ fontSize: 40, marginBottom: 16 }}>📊</div>
-              <div style={{ fontSize: 16, fontWeight: 700, color: "#1e2d1a", marginBottom: 8 }}>Upload a CSV file</div>
-              <div style={{ fontSize: 13, color: "#7a8c74", marginBottom: 24, lineHeight: 1.6 }}>
-                Export sales data from QuickBooks, Excel, or any spreadsheet as a CSV.<br />
-                You'll map the columns on the next step.
+          {/* ── STEP 1: LABEL ── */}
+          {step === "label" && (
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 800, color: "#1e2d1a", marginBottom: 4 }}>Label this report</div>
+              <div style={{ fontSize: 12, color: "#7a8c74", marginBottom: 22, lineHeight: 1.6 }}>
+                Tag this import so you always know which season and year you're working from. This label will appear throughout the app for reference.
               </div>
-              <input ref={fileRef} type="file" accept=".csv" style={{ display: "none" }} onChange={handleFile} />
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
+                <div>
+                  <FL c="Season" />
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {SEASON_OPTS.map(s => (
+                      <button key={s} onClick={() => setLabel(l => ({ ...l, season: s }))}
+                        style={{ padding: "8px 14px", borderRadius: 10, border: `1.5px solid ${label.season === s ? "#7fb069" : "#dde8d5"}`, background: label.season === s ? "#f0f8eb" : "#fff", color: label.season === s ? "#2e5c1e" : "#7a8c74", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
+                        {s.charAt(0).toUpperCase() + s.slice(1)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <FL c="Year" />
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {YEAR_OPTS.map(y => (
+                      <button key={y} onClick={() => setLabel(l => ({ ...l, year: y }))}
+                        style={{ padding: "8px 14px", borderRadius: 10, border: `1.5px solid ${label.year === y ? "#7fb069" : "#dde8d5"}`, background: label.year === y ? "#f0f8eb" : "#fff", color: label.year === y ? "#2e5c1e" : "#7a8c74", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
+                        {y}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ marginBottom: 22 }}>
+                <FL c="Report Detail Level" />
+                <div style={{ display: "flex", gap: 10 }}>
+                  {[["season", "📊 Season Totals", "One row per product — total qty and revenue for the whole season"], ["weekly", "📅 Week by Week", "One row per product per week — more detail for trend analysis"]].map(([id, label2, desc]) => (
+                    <button key={id} onClick={() => setLabel(l => ({ ...l, detail: id }))}
+                      style={{ flex: 1, padding: "14px 16px", borderRadius: 12, border: `2px solid ${label.detail === id ? "#7fb069" : "#dde8d5"}`, background: label.detail === id ? "#f0f8eb" : "#fff", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+                      <div style={{ fontWeight: 800, fontSize: 13, color: label.detail === id ? "#2e5c1e" : "#4a5a40", marginBottom: 4 }}>{label2}</div>
+                      <div style={{ fontSize: 11, color: "#7a8c74", lineHeight: 1.4 }}>{desc}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Label preview */}
+              <div style={{ background: "linear-gradient(135deg,#1e2d1a,#2e4a22)", borderRadius: 12, padding: "14px 18px", marginBottom: 20, display: "flex", alignItems: "center", gap: 14 }}>
+                <div style={{ fontSize: 28 }}>🏷️</div>
+                <div>
+                  <div style={{ fontSize: 16, fontWeight: 800, color: "#c8e6b8" }}>
+                    {label.season.charAt(0).toUpperCase() + label.season.slice(1)} {label.year} Sales Report
+                  </div>
+                  <div style={{ fontSize: 11, color: "#7fb069", marginTop: 2 }}>
+                    {label.detail === "weekly" ? "Week-by-week detail" : "Season totals"} · Will be tagged to all imported rows
+                  </div>
+                </div>
+              </div>
+
+              <button onClick={() => setStep("upload")}
+                style={{ width: "100%", background: "#7fb069", color: "#fff", border: "none", borderRadius: 12, padding: "12px 0", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                Continue →
+              </button>
+            </div>
+          )}
+
+          {/* ── STEP 2: UPLOAD ── */}
+          {step === "upload" && (
+            <div style={{ textAlign: "center", padding: "24px 20px" }}>
+              <div style={{ background: "#f0f8eb", borderRadius: 12, padding: "10px 16px", marginBottom: 20, display: "inline-flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: "#2e5c1e" }}>
+                  🏷️ {label.season.charAt(0).toUpperCase() + label.season.slice(1)} {label.year} · {label.detail === "weekly" ? "Week by week" : "Season totals"}
+                </span>
+                <button onClick={() => setStep("label")} style={{ background: "none", border: "none", color: "#7fb069", fontSize: 11, cursor: "pointer", fontFamily: "inherit", textDecoration: "underline" }}>change</button>
+              </div>
+              <div style={{ fontSize: 40, marginBottom: 16 }}>📊</div>
+              <div style={{ fontSize: 16, fontWeight: 700, color: "#1e2d1a", marginBottom: 8 }}>Upload your CSV file</div>
+              <div style={{ fontSize: 13, color: "#7a8c74", marginBottom: 24, lineHeight: 1.6 }}>
+                Export from QuickBooks, Excel, or any POS system as a CSV.<br />
+                {label.detail === "weekly" ? "Should have one row per product per week." : "Should have one row per product with season totals."}
+              </div>
+              <input ref={fileRef} type="file" accept=".csv,.txt" style={{ display: "none" }} onChange={handleFile} />
               <button onClick={() => fileRef.current.click()}
                 style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 12, padding: "12px 28px", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
-                Choose CSV File
+                Choose File
               </button>
-              <div style={{ marginTop: 20, fontSize: 11, color: "#9aaa90" }}>
-                Expected columns: Product name, Size, Quantity, Price, Year (optional)
+              <div style={{ marginTop: 16, fontSize: 11, color: "#9aaa90" }}>
+                Expected: Product, {label.detail === "weekly" ? "Week, " : ""}Quantity, Price{label.detail === "weekly" ? "" : " — one row per product"}
               </div>
             </div>
           )}
 
+          {/* ── STEP 3: MAP ── */}
           {step === "map" && (
             <div>
-              <div style={{ fontSize: 14, fontWeight: 700, color: "#1e2d1a", marginBottom: 4 }}>Map your columns</div>
-              <div style={{ fontSize: 12, color: "#7a8c74", marginBottom: 20 }}>Tell us which column in your file corresponds to each field. We've guessed where we can.</div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: "#1e2d1a", marginBottom: 4 }}>Map your columns</div>
+              <div style={{ fontSize: 12, color: "#7a8c74", marginBottom: 20 }}>We've guessed where we can. Correct anything that looks wrong.</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                {FIELDS.map(f => (
-                  <div key={f.id}>
-                    <FL c={f.label + (f.required ? " *" : "")} />
+                {FIELDS.filter(f => f.show !== false).map(f => (
+                  <div key={f.id} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, alignItems: "center" }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "#4a5a40" }}>
+                      {f.label} {f.required && <span style={{ color: "#c03030" }}>*</span>}
+                    </div>
                     <select value={mapping[f.id]} onChange={e => setMapping(m => ({ ...m, [f.id]: e.target.value }))}
-                      style={{ ...IS(false), maxWidth: 300 }}>
+                      style={{ ...IS(false) }}>
                       <option value="">— Not in file —</option>
                       {headers.map(h => <option key={h} value={h}>{h}</option>)}
                     </select>
@@ -177,21 +349,22 @@ function ImportModal({ onImport, onClose }) {
                 <button onClick={() => setStep("upload")} style={{ padding: "10px 20px", borderRadius: 10, border: "1.5px solid #c8d8c0", background: "#fff", fontSize: 13, cursor: "pointer", fontFamily: "inherit", color: "#7a8c74" }}>Back</button>
                 <button onClick={buildPreview} disabled={!mapping.product || !mapping.qty || !mapping.price}
                   style={{ flex: 1, background: mapping.product && mapping.qty && mapping.price ? "#7fb069" : "#c8d8c0", color: "#fff", border: "none", borderRadius: 10, padding: "10px 0", fontSize: 13, fontWeight: 700, cursor: mapping.product ? "pointer" : "not-allowed", fontFamily: "inherit" }}>
-                  Preview Import →
+                  Preview →
                 </button>
               </div>
             </div>
           )}
 
+          {/* ── STEP 4: PREVIEW ── */}
           {step === "preview" && (
             <div>
-              <div style={{ fontSize: 14, fontWeight: 700, color: "#1e2d1a", marginBottom: 4 }}>Preview (first 5 rows)</div>
-              <div style={{ fontSize: 12, color: "#7a8c74", marginBottom: 16 }}>{raw.length.toLocaleString()} total rows will be imported</div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: "#1e2d1a", marginBottom: 4 }}>Preview</div>
+              <div style={{ fontSize: 12, color: "#7a8c74", marginBottom: 16 }}>{raw.length.toLocaleString()} rows · first 5 shown</div>
               <div style={{ overflowX: "auto", marginBottom: 20 }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                   <thead>
                     <tr style={{ background: "#f0f5ee" }}>
-                      {["Product", "Size", "Qty", "Price", "Year"].map(h => (
+                      {["Product", "Size", label.detail === "weekly" ? "Week" : null, "Qty", "Price", "Year"].filter(Boolean).map(h => (
                         <th key={h} style={{ padding: "7px 12px", textAlign: "left", fontSize: 10, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase" }}>{h}</th>
                       ))}
                     </tr>
@@ -201,17 +374,27 @@ function ImportModal({ onImport, onClose }) {
                       <tr key={i} style={{ borderTop: "1px solid #e8ede4" }}>
                         <td style={{ padding: "8px 12px", fontWeight: 700, color: "#1e2d1a" }}>{row.product}</td>
                         <td style={{ padding: "8px 12px", color: "#7a8c74" }}>{row.size || "—"}</td>
+                        {label.detail === "weekly" && <td style={{ padding: "8px 12px", color: "#4a90d9" }}>{row.week || "—"}</td>}
                         <td style={{ padding: "8px 12px" }}>{Number(row.qty).toLocaleString()}</td>
                         <td style={{ padding: "8px 12px" }}>${Number(row.price).toFixed(2)}</td>
-                        <td style={{ padding: "8px 12px", color: "#7a8c74" }}>{row.year}</td>
+                        <td style={{ padding: "8px 12px", color: "#7a8c74" }}>{label.year}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
+
+              {/* Final label confirmation */}
+              <div style={{ background: "#f0f8eb", borderRadius: 10, border: "1.5px solid #c8e0b8", padding: "12px 16px", marginBottom: 16 }}>
+                <div style={{ fontSize: 12, color: "#4a5a40" }}>
+                  Importing as: <strong>{label.season.charAt(0).toUpperCase() + label.season.slice(1)} {label.year}</strong> · {label.detail === "weekly" ? "Week-by-week" : "Season totals"} · {raw.length.toLocaleString()} rows
+                </div>
+              </div>
+
               <div style={{ display: "flex", gap: 10 }}>
                 <button onClick={() => setStep("map")} style={{ padding: "10px 20px", borderRadius: 10, border: "1.5px solid #c8d8c0", background: "#fff", fontSize: 13, cursor: "pointer", fontFamily: "inherit", color: "#7a8c74" }}>Back</button>
-                <button onClick={handleImport} style={{ flex: 1, background: "#7fb069", color: "#fff", border: "none", borderRadius: 10, padding: "10px 0", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                <button onClick={handleImport}
+                  style={{ flex: 1, background: "#7fb069", color: "#fff", border: "none", borderRadius: 10, padding: "10px 0", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
                   ✓ Import {raw.length.toLocaleString()} Rows
                 </button>
               </div>
@@ -536,6 +719,13 @@ export default function Preseason({ onNavigate, onCreateCropRun }) {
   const [yearFilter,    setYearFilter]    = useState("all");
   const [sortBy,        setSortBy]        = useState("revenue");
   const [focusCap,      setFocusCap]      = useState(null);
+  const [zip,           setZip]           = useState(() => load("gh_zip_v1", ""));
+  const [weatherData,   setWeatherData]   = useState(() => load("gh_weather_v1", {}));
+  const [weatherLoading,setWeatherLoading]= useState(false);
+  const [weatherError,  setWeatherError]  = useState(null);
+  const [focusZip,      setFocusZip]      = useState(false);
+
+  const persistZip = (z) => { setZip(z); save("gh_zip_v1", z); };
 
   // Persist on change
   const persistItems    = (u) => { setItems(u);     save(`gh_preseason_${season}_v1`, u); };
@@ -544,34 +734,41 @@ export default function Preseason({ onNavigate, onCreateCropRun }) {
   const persistCapacity = (u) => { setCapacity(u);  save("gh_capacity_v1", u); };
 
   // When sales data is imported, build projection items from it
-  function handleImport(imported) {
+  function handleImport(imported, label) {
     persistSales([...salesData, ...imported]);
-    // Group by product+size, take most recent year as "last year"
+    // Group by product+size, take the row with most qty from the labeled year
     const grouped = {};
     imported.forEach(row => {
       const key = `${row.product}||${row.size || ""}`;
-      if (!grouped[key] || row.year > grouped[key].year) {
-        grouped[key] = row;
-      }
+      if (!grouped[key]) grouped[key] = { ...row, totalQty: 0 };
+      grouped[key].totalQty += row.qty;
+      // Use largest single qty row as representative for price
+      if (row.qty > (grouped[key].qty || 0)) grouped[key] = { ...grouped[key], ...row, totalQty: grouped[key].totalQty + row.qty };
     });
     const newItems = Object.values(grouped).map(row => ({
       id: uid(),
-      product: row.product,
-      size: row.size || "",
-      lastQty: row.qty,
-      lastPrice: row.price,
-      price: row.price,
-      year: row.year,
-      adj: 0,
-      adjMode: "pct",
+      product:     row.product,
+      size:        row.size || "",
+      lastQty:     row.totalQty || row.qty,
+      lastPrice:   row.price,
+      price:       row.price,
+      year:        row.year,
+      season:      row.season,
+      importLabel: row.importLabel,
+      adj:         0,
+      adjMode:     "pct",
       costPerUnit: "",
-      notes: "",
-      isNew: false,
+      notes:       "",
+      isNew:       false,
     }));
-    // Merge with existing — don't duplicate
+    // Merge — don't duplicate
     const existing = items.map(i => `${i.product}||${i.size || ""}`);
     const toAdd = newItems.filter(n => !existing.includes(`${n.product}||${n.size || ""}`));
     persistItems([...items, ...toAdd]);
+    // Auto-fetch weather for the imported year if zip is set
+    if (zip && zip.length === 5 && label?.year && !weatherData[label.year]) {
+      fetchWeatherForYear(label.year);
+    }
   }
 
   // Cross-reference crop runs to get planned quantities per product
@@ -666,16 +863,40 @@ export default function Preseason({ onNavigate, onCreateCropRun }) {
   });
   const salesRows = Object.values(salesByProduct).sort((a, b) => b.totalRevenue - a.totalRevenue);
 
+  // Weather fetching
+  async function fetchWeatherForYear(year) {
+    if (!zip || zip.length !== 5) return;
+    setWeatherLoading(true);
+    setWeatherError(null);
+    try {
+      const data = await fetchWeatherHistory(zip, year);
+      if (data) {
+        const updated = { ...weatherData, [year]: data };
+        setWeatherData(updated);
+        save("gh_weather_v1", updated);
+      } else {
+        setWeatherError("Could not fetch weather data. Check your zip code.");
+      }
+    } catch (e) {
+      setWeatherError("Weather fetch failed. Try again later.");
+    }
+    setWeatherLoading(false);
+  }
+
+  // Get available import labels for the sales history view
+  const importLabels = [...new Set(salesData.map(r => r.importLabel).filter(Boolean))];
+
   const TABS = [
-    { id: "projection", label: "📊 Season Projection" },
-    { id: "sales",      label: "📈 Sales History" },
-    { id: "payroll",    label: "💼 Payroll" },
-    { id: "capacity",   label: "🏡 Capacity" },
+    { id: "projection", label: "📊 Projection"    },
+    { id: "sales",      label: "📈 Sales History"  },
+    { id: "weather",    label: "🌤 Weather"         },
+    { id: "payroll",    label: "💼 Payroll"         },
+    { id: "capacity",   label: "🏡 Capacity"        },
   ];
 
   return (
     <div>
-      {showImport  && <ImportModal  onImport={handleImport} onClose={() => setShowImport(false)} />}
+      {showImport  && <ImportModal  onImport={handleImport} onClose={() => setShowImport(false)} currentSeason={season} />}
       {showPayroll && <PayrollModal data={payroll} onSave={persistPayroll} onClose={() => setShowPayroll(false)} />}
 
       {/* Header */}
@@ -845,6 +1066,18 @@ export default function Preseason({ onNavigate, onCreateCropRun }) {
       {/* ── SALES HISTORY TAB ── */}
       {tab === "sales" && (
         <div>
+          {importLabels.length > 0 && (
+            <div style={{ background: "#f0f8eb", borderRadius: 12, border: "1.5px solid #c8e0b8", padding: "12px 16px", marginBottom: 18 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#4a5a40", textTransform: "uppercase", letterSpacing: .6, marginBottom: 8 }}>Imported Reports</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {importLabels.map(lbl => (
+                  <div key={lbl} style={{ background: "#fff", border: "1.5px solid #c8e0b8", borderRadius: 20, padding: "4px 12px", fontSize: 12, fontWeight: 700, color: "#2e5c1e" }}>
+                    🏷️ {lbl}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <button onClick={() => setYearFilter("all")}
@@ -860,15 +1093,14 @@ export default function Preseason({ onNavigate, onCreateCropRun }) {
             </div>
             <button onClick={() => setShowImport(true)}
               style={{ background: "#4a90d9", color: "#fff", border: "none", borderRadius: 10, padding: "8px 18px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
-              📥 Import More Data
+              📥 Import Report
             </button>
           </div>
-
           {salesRows.length === 0 ? (
             <div style={{ textAlign: "center", padding: "60px 20px", background: "#fafcf8", borderRadius: 20, border: "2px dashed #c8d8c0" }}>
               <div style={{ fontSize: 48, marginBottom: 16 }}>📈</div>
               <div style={{ fontSize: 18, fontWeight: 800, color: "#4a5a40", marginBottom: 8 }}>No sales history yet</div>
-              <div style={{ fontSize: 13, color: "#7a8c74", marginBottom: 24 }}>Import a CSV from QuickBooks or Excel to see your historical data here.</div>
+              <div style={{ fontSize: 13, color: "#7a8c74", marginBottom: 24 }}>Import a labeled CSV from QuickBooks or Excel to see your historical data here.</div>
               <button onClick={() => setShowImport(true)}
                 style={{ background: "#4a90d9", color: "#fff", border: "none", borderRadius: 12, padding: "12px 24px", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
                 📥 Import Sales Data
@@ -899,6 +1131,115 @@ export default function Preseason({ onNavigate, onCreateCropRun }) {
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── WEATHER TAB ── */}
+      {tab === "weather" && (
+        <div>
+          <div style={{ fontSize: 16, fontWeight: 800, color: "#1e2d1a", marginBottom: 4 }}>Historical Weather</div>
+          <div style={{ fontSize: 12, color: "#7a8c74", marginBottom: 20 }}>Weekly temperature and precipitation for your location. Dots on bars indicate weeks where you have sales data — useful for spotting weather-driven dips or spikes.</div>
+
+          <div style={{ background: "#fff", borderRadius: 14, border: "1.5px solid #e0ead8", padding: "18px 20px", marginBottom: 20 }}>
+            <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
+              <div style={{ flex: "0 0 180px" }}>
+                <FL c="Your Zip Code" />
+                <input type="text" value={zip} onChange={e => persistZip(e.target.value)}
+                  onFocus={() => setFocusZip(true)} onBlur={() => setFocusZip(false)}
+                  placeholder="46227" maxLength={5}
+                  style={{ ...IS(focusZip), fontSize: 20, fontWeight: 800, letterSpacing: 3, textAlign: "center" }} />
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", paddingBottom: 2 }}>
+                {(availableYears.length > 0 ? availableYears : [CURRENT_YEAR - 2, CURRENT_YEAR - 1, CURRENT_YEAR]).map(y => (
+                  <button key={y} onClick={() => fetchWeatherForYear(y)}
+                    disabled={weatherLoading || zip.length !== 5}
+                    style={{ padding: "8px 16px", borderRadius: 10, border: `1.5px solid ${weatherData[y] ? "#7fb069" : "#c8d8c0"}`, background: weatherData[y] ? "#f0f8eb" : "#fff", color: weatherData[y] ? "#2e5c1e" : "#4a5a40", fontWeight: 700, fontSize: 13, cursor: (weatherLoading || zip.length !== 5) ? "not-allowed" : "pointer", fontFamily: "inherit", opacity: zip.length !== 5 ? .5 : 1 }}>
+                    {weatherData[y] ? "✓" : "+"} {y}
+                  </button>
+                ))}
+              </div>
+              {weatherLoading && <div style={{ fontSize: 13, color: "#7fb069", fontWeight: 700, paddingBottom: 4 }}>⏳ Fetching...</div>}
+              {weatherError  && <div style={{ fontSize: 12, color: "#c03030", paddingBottom: 4 }}>{weatherError}</div>}
+            </div>
+            {zip.length !== 5 && <div style={{ fontSize: 11, color: "#9aaa90", marginTop: 8 }}>Enter your 5-digit zip code, then click a year to load weather data.</div>}
+          </div>
+
+          {Object.keys(weatherData).length === 0 ? (
+            <div style={{ textAlign: "center", padding: "50px 20px", background: "#fafcf8", borderRadius: 20, border: "2px dashed #c8d8c0" }}>
+              <div style={{ fontSize: 40, marginBottom: 12 }}>🌤</div>
+              <div style={{ fontSize: 16, fontWeight: 800, color: "#4a5a40", marginBottom: 8 }}>No weather data yet</div>
+              <div style={{ fontSize: 13, color: "#7a8c74" }}>Enter your zip code above and click a year to load historical weather.</div>
+            </div>
+          ) : (
+            <div>
+              {Object.entries(weatherData).sort(([a], [b]) => Number(b) - Number(a)).map(([year, weeks]) => {
+                const seasonWeeks = season === "spring" ? weeks.filter(w => w.week >= 8 && w.week <= 22)
+                  : season === "fall"   ? weeks.filter(w => w.week >= 32 && w.week <= 46)
+                  : season === "summer" ? weeks.filter(w => w.week >= 22 && w.week <= 35)
+                  : weeks.filter(w => w.week >= 44 || w.week <= 6);
+                const avgTemp = seasonWeeks.length ? Math.round(seasonWeeks.reduce((s, w) => s + (w.avgHigh + w.avgLow) / 2, 0) / seasonWeeks.length) : null;
+                const totalPrecip = seasonWeeks.reduce((s, w) => s + w.precip, 0).toFixed(1);
+                const coldWeeks = seasonWeeks.filter(w => w.avgHigh < 45).map(w => `Wk ${w.week}`);
+                const wetWeeks  = seasonWeeks.filter(w => w.precip > 2).map(w => `Wk ${w.week}`);
+                return (
+                  <div key={year} style={{ background: "#fff", borderRadius: 16, border: "1.5px solid #e0ead8", padding: "20px 22px", marginBottom: 16 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                      <div style={{ fontWeight: 800, fontSize: 18, color: "#1e2d1a" }}>{year}</div>
+                      <div style={{ display: "flex", gap: 20 }}>
+                        {avgTemp !== null && (
+                          <div style={{ textAlign: "right" }}>
+                            <div style={{ fontSize: 10, color: "#9aaa90", textTransform: "uppercase" }}>Season Avg</div>
+                            <div style={{ fontSize: 20, fontWeight: 900, color: avgTemp > 70 ? "#c8791a" : avgTemp > 55 ? "#7fb069" : "#4a90d9" }}>{avgTemp}°F</div>
+                          </div>
+                        )}
+                        <div style={{ textAlign: "right" }}>
+                          <div style={{ fontSize: 10, color: "#9aaa90", textTransform: "uppercase" }}>Season Precip</div>
+                          <div style={{ fontSize: 20, fontWeight: 900, color: "#4a90d9" }}>{totalPrecip}"</div>
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ overflowX: "auto" }}>
+                      <div style={{ display: "flex", gap: 3, minWidth: seasonWeeks.length * 32, alignItems: "flex-end", height: 80, paddingBottom: 4 }}>
+                        {seasonWeeks.map(w => {
+                          const mid = (w.avgHigh + w.avgLow) / 2;
+                          const barH = Math.max(10, Math.min(68, Math.round(mid)));
+                          const barColor = mid > 75 ? "#e07b39" : mid > 60 ? "#7fb069" : mid > 45 ? "#4a90d9" : "#8e44ad";
+                          const hasSales = salesData.some(r => r.year === Number(year) && r.week === w.week);
+                          return (
+                            <div key={w.week} title={`Week ${w.week}: ${w.avgLow}–${w.avgHigh}°F · ${w.precip}" rain`}
+                              style={{ flex: "0 0 28px", display: "flex", flexDirection: "column", alignItems: "center", gap: 2, cursor: "default" }}>
+                              <div style={{ width: "100%", height: barH, background: barColor, borderRadius: "3px 3px 0 0", opacity: .85, position: "relative" }}>
+                                {hasSales && <div style={{ position: "absolute", top: -5, right: 0, width: 7, height: 7, borderRadius: "50%", background: "#c8791a", border: "2px solid #fff" }} />}
+                              </div>
+                              <div style={{ fontSize: 8, color: "#aabba0", writingMode: "vertical-rl", transform: "rotate(180deg)", height: 16 }}>W{w.week}</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 14, marginTop: 14, flexWrap: "wrap", alignItems: "center" }}>
+                      {[["#8e44ad","<45°F"],["#4a90d9","45–60°F"],["#7fb069","60–75°F"],["#e07b39",">75°F"]].map(([c,l]) => (
+                        <div key={l} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                          <div style={{ width: 10, height: 10, borderRadius: 2, background: c }} />
+                          <span style={{ fontSize: 10, color: "#7a8c74" }}>{l}</span>
+                        </div>
+                      ))}
+                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#c8791a", border: "2px solid #fff", outline: "1px solid #c8791a" }} />
+                        <span style={{ fontSize: 10, color: "#7a8c74" }}>Sales data</span>
+                      </div>
+                    </div>
+                    {(coldWeeks.length > 0 || wetWeeks.length > 0) && (
+                      <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                        {coldWeeks.length > 0 && <div style={{ background: "#e8f0f8", borderRadius: 8, padding: "5px 12px", fontSize: 11, color: "#2a4a7a" }}>🥶 Cold: {coldWeeks.join(", ")}</div>}
+                        {wetWeeks.length > 0  && <div style={{ background: "#e8f0f8", borderRadius: 8, padding: "5px 12px", fontSize: 11, color: "#2a4a7a" }}>🌧 Heavy rain: {wetWeeks.join(", ")}</div>}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
