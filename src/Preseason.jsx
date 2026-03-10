@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useCropRuns, useContainers } from "./supabase";
 
 // ── HELPERS ───────────────────────────────────────────────────────────────────
@@ -491,29 +491,55 @@ function ProjectionRow({ item, onChange, onRemove, isNew, containers, onCreateCr
   );
 }
 
+const SEASONS = [
+  { id: "spring", label: "🌸 Spring", color: "#7fb069", bg: "#f0f8eb", description: "Main season — baskets, combos, annuals" },
+  { id: "summer", label: "☀️ Summer", color: "#c8791a", bg: "#fff4e8", description: "Summer color, tropicals, perennials" },
+  { id: "fall",   label: "🍂 Fall",   color: "#b05a20", bg: "#fdf0e0", description: "Mums, ornamental cabbage, fall color" },
+  { id: "winter", label: "❄️ Winter", color: "#4a90d9", bg: "#e8f4f8", description: "Poinsettias, holiday, forced bulbs" },
+];
+
 // ── MAIN PRESEASON COMPONENT ──────────────────────────────────────────────────
 export default function Preseason({ onNavigate, onCreateCropRun }) {
   const { rows: runs }       = useCropRuns();
   const { rows: containers } = useContainers();
   const currentYear          = new Date().getFullYear();
 
-  // Persisted state
+  // Season selector
+  const [season, setSeason] = useState(() => load("gh_preseason_season", "spring"));
+  const persistSeason = (s) => { setSeason(s); save("gh_preseason_season", s); };
+
+  // Season-scoped storage keys
+  const STORAGE_KEY = `gh_preseason_${season}_v1`;
+  const SALES_KEY   = `gh_sales_history_${season}_v1`;
+
+  // Persisted state — re-initialize when season changes
   const [items,      setItems]      = useState(() => load(STORAGE_KEY,   []));
   const [salesData,  setSalesData]  = useState(() => load(SALES_KEY,     []));
   const [payroll,    setPayroll]    = useState(() => load(PAYROLL_KEY,    {}));
-  const [capacity,   setCapacity]   = useState(() => load("gh_capacity_v1", { basketLines: "", sqFt: "", sqFtBench: "" }));
+  const [capacity,   setCapacity]   = useState(() => load("gh_capacity_v1", { basketLines: "", sqFt: "", sqFtBench: "", padSqFt: "", padSections: "", padBasketLines: "" }));
+
+  // Re-load season-specific data when season changes
+  const prevSeason = useRef(season);
+  useEffect(() => {
+    if (prevSeason.current !== season) {
+      setItems(load(`gh_preseason_${season}_v1`, []));
+      setSalesData(load(`gh_sales_history_${season}_v1`, []));
+      prevSeason.current = season;
+      setTab("projection");
+    }
+  }, [season]);
 
   // UI state
-  const [tab,           setTab]           = useState("projection"); // projection | sales | payroll | capacity
+  const [tab,           setTab]           = useState("projection");
   const [showImport,    setShowImport]    = useState(false);
   const [showPayroll,   setShowPayroll]   = useState(false);
   const [yearFilter,    setYearFilter]    = useState("all");
-  const [sortBy,        setSortBy]        = useState("revenue"); // revenue | margin | product
+  const [sortBy,        setSortBy]        = useState("revenue");
   const [focusCap,      setFocusCap]      = useState(null);
 
   // Persist on change
-  const persistItems    = (u) => { setItems(u);     save(STORAGE_KEY, u); };
-  const persistSales    = (u) => { setSalesData(u); save(SALES_KEY, u); };
+  const persistItems    = (u) => { setItems(u);     save(`gh_preseason_${season}_v1`, u); };
+  const persistSales    = (u) => { setSalesData(u); save(`gh_sales_history_${season}_v1`, u); };
   const persistPayroll  = (u) => { setPayroll(u);   save(PAYROLL_KEY, u); };
   const persistCapacity = (u) => { setCapacity(u);  save("gh_capacity_v1", u); };
 
@@ -654,8 +680,22 @@ export default function Preseason({ onNavigate, onCreateCropRun }) {
 
       {/* Header */}
       <div style={{ background: "linear-gradient(135deg,#1e2d1a,#2e4a22)", borderRadius: 20, padding: "24px 28px", marginBottom: 24 }}>
-        <div style={{ fontFamily: "Georgia,serif", fontSize: 26, color: "#c8e6b8", marginBottom: 4 }}>Preseason Planning</div>
-        <div style={{ fontSize: 13, color: "#7fb069" }}>{currentYear} Season · {items.length} products planned</div>
+        {/* Season selector */}
+        <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
+          {SEASONS.map(s => (
+            <button key={s.id} onClick={() => persistSeason(s.id)}
+              style={{ padding: "8px 18px", borderRadius: 20, border: `2px solid ${season === s.id ? s.color : "rgba(255,255,255,.2)"}`, background: season === s.id ? s.color + "28" : "rgba(255,255,255,.06)", color: season === s.id ? s.color : "#7fb069", fontWeight: season === s.id ? 800 : 600, fontSize: 13, cursor: "pointer", fontFamily: "inherit", transition: "all .15s" }}>
+              {s.label}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ fontFamily: "Georgia,serif", fontSize: 26, color: "#c8e6b8", marginBottom: 4 }}>
+          {SEASONS.find(s => s.id === season)?.label} Planning
+        </div>
+        <div style={{ fontSize: 13, color: "#7fb069", marginBottom: totalRevenue > 0 ? 20 : 0 }}>
+          {currentYear} · {SEASONS.find(s => s.id === season)?.description} · {items.length} products planned
+        </div>
 
         {/* Season totals */}
         {totalRevenue > 0 && (
@@ -935,13 +975,15 @@ export default function Preseason({ onNavigate, onCreateCropRun }) {
       {tab === "capacity" && (
         <div>
           <div style={{ fontSize: 16, fontWeight: 800, color: "#1e2d1a", marginBottom: 4 }}>Facility Capacity</div>
-          <div style={{ fontSize: 12, color: "#7a8c74", marginBottom: 20 }}>Enter your maximum capacity. Projections are checked against these limits.</div>
+          <div style={{ fontSize: 12, color: "#7a8c74", marginBottom: 20 }}>Capacity is shared across all seasons — enter your full facility once. Projections are checked against these limits.</div>
 
+          {/* Greenhouse */}
+          <div style={{ fontSize: 12, fontWeight: 800, color: "#4a5a40", textTransform: "uppercase", letterSpacing: .8, marginBottom: 10 }}>🏡 Greenhouse</div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, marginBottom: 24 }}>
             {[
-              { key: "basketLines", label: "Basket Lines", sub: "Total hanging positions", icon: "🧺" },
-              { key: "sqFt",        label: "Total Sq Ft",  sub: "All greenhouse space",    icon: "🏡" },
-              { key: "sqFtBench",   label: "Bench Sq Ft",  sub: "Bench/flat growing space", icon: "📐" },
+              { key: "basketLines", label: "Basket Lines",   sub: "Total hanging positions",    icon: "🧺" },
+              { key: "sqFt",        label: "Total Sq Ft",    sub: "All greenhouse space",        icon: "📐" },
+              { key: "sqFtBench",   label: "Bench Sq Ft",    sub: "Bench/flat growing space",    icon: "🪴" },
             ].map(({ key, label, sub, icon }) => (
               <div key={key} style={{ background: "#fff", borderRadius: 14, border: "1.5px solid #e0ead8", padding: "18px 20px" }}>
                 <div style={{ fontSize: 24, marginBottom: 8 }}>{icon}</div>
@@ -954,14 +996,64 @@ export default function Preseason({ onNavigate, onCreateCropRun }) {
             ))}
           </div>
 
-          {(basketLines > 0 || sqFt > 0) && (
+          {/* Outdoor Pads */}
+          <div style={{ fontSize: 12, fontWeight: 800, color: "#4a5a40", textTransform: "uppercase", letterSpacing: .8, marginBottom: 10 }}>🌤 Outdoor Pads</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 16, marginBottom: 24 }}>
+            {[
+              { key: "padSqFt",        label: "Total Pad Sq Ft",    sub: "All outdoor pad space",       icon: "☀️" },
+              { key: "padSections",    label: "Pad Sections",       sub: "Number of separate pads",     icon: "🗺️" },
+              { key: "padBasketLines", label: "Outdoor Basket Lines", sub: "Overhead lines on pads",    icon: "🧺" },
+              { key: "padBenchSqFt",   label: "Pad Bench Sq Ft",    sub: "Benched space on pads",       icon: "📐" },
+            ].map(({ key, label, sub, icon }) => (
+              <div key={key} style={{ background: "#fff", borderRadius: 14, border: "1.5px solid #e0ead8", padding: "18px 20px" }}>
+                <div style={{ fontSize: 24, marginBottom: 8 }}>{icon}</div>
+                <FL c={label} />
+                <input type="number" value={capacity[key] || ""} onChange={e => persistCapacity({ ...capacity, [key]: e.target.value })}
+                  onFocus={() => setFocusCap(key)} onBlur={() => setFocusCap(null)}
+                  placeholder="0" style={{ ...IS(focusCap === key), fontSize: 20, fontWeight: 800, textAlign: "center", marginBottom: 4 }} />
+                <div style={{ fontSize: 11, color: "#9aaa90" }}>{sub}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Totals */}
+          {(Number(capacity.sqFt) > 0 || Number(capacity.padSqFt) > 0) && (
+            <div style={{ background: "#f0f8eb", borderRadius: 14, border: "1.5px solid #c8e0b8", padding: "16px 20px", marginBottom: 20 }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: "#1e2d1a", marginBottom: 4 }}>Total Facility</div>
+              <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
+                {(Number(capacity.sqFt) + Number(capacity.padSqFt)) > 0 && (
+                  <div>
+                    <div style={{ fontSize: 10, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5 }}>Combined Sq Ft</div>
+                    <div style={{ fontSize: 22, fontWeight: 900, color: "#2e5c1e" }}>{(Number(capacity.sqFt || 0) + Number(capacity.padSqFt || 0)).toLocaleString()}</div>
+                  </div>
+                )}
+                {(Number(capacity.basketLines) + Number(capacity.padBasketLines)) > 0 && (
+                  <div>
+                    <div style={{ fontSize: 10, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5 }}>Total Basket Lines</div>
+                    <div style={{ fontSize: 22, fontWeight: 900, color: "#2e5c1e" }}>{(Number(capacity.basketLines || 0) + Number(capacity.padBasketLines || 0)).toLocaleString()}</div>
+                  </div>
+                )}
+                {(Number(capacity.sqFtBench) + Number(capacity.padBenchSqFt)) > 0 && (
+                  <div>
+                    <div style={{ fontSize: 10, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5 }}>Total Bench Sq Ft</div>
+                    <div style={{ fontSize: 22, fontWeight: 900, color: "#2e5c1e" }}>{(Number(capacity.sqFtBench || 0) + Number(capacity.padBenchSqFt || 0)).toLocaleString()}</div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Capacity bars */}
+          {(Number(capacity.basketLines) > 0 || Number(capacity.sqFt) > 0 || Number(capacity.padSqFt) > 0) && (
             <div style={{ background: "#fff", borderRadius: 16, border: "1.5px solid #e0ead8", padding: "20px 22px" }}>
-              <div style={{ fontSize: 13, fontWeight: 800, color: "#1e2d1a", marginBottom: 16 }}>Capacity vs Projection</div>
-              {basketLines > 0 && <CapacityBar label="Basket Lines" used={plannedBaskets} total={basketLines} color="#7fb069" />}
-              {sqFt > 0 && <CapacityBar label="Total Sq Ft" used={0} total={sqFt} color="#4a90d9" />}
-              {sqFtBench > 0 && <CapacityBar label="Bench Sq Ft" used={0} total={sqFtBench} color="#8e44ad" />}
+              <div style={{ fontSize: 13, fontWeight: 800, color: "#1e2d1a", marginBottom: 16 }}>Capacity vs {SEASONS.find(s => s.id === season)?.label} Projection</div>
+              {Number(capacity.basketLines) > 0 && <CapacityBar label="🏡 Greenhouse Basket Lines" used={plannedBaskets} total={Number(capacity.basketLines)} color="#7fb069" />}
+              {Number(capacity.padBasketLines) > 0 && <CapacityBar label="🌤 Outdoor Basket Lines" used={0} total={Number(capacity.padBasketLines)} color="#c8791a" />}
+              {Number(capacity.sqFtBench) > 0 && <CapacityBar label="🏡 Greenhouse Bench Sq Ft" used={0} total={Number(capacity.sqFtBench)} color="#4a90d9" />}
+              {Number(capacity.padBenchSqFt) > 0 && <CapacityBar label="🌤 Outdoor Bench Sq Ft" used={0} total={Number(capacity.padBenchSqFt)} color="#8e44ad" />}
+              {Number(capacity.padSqFt) > 0 && <CapacityBar label="🌤 Total Pad Sq Ft" used={0} total={Number(capacity.padSqFt)} color="#b05a20" />}
               <div style={{ fontSize: 11, color: "#9aaa90", marginTop: 12 }}>
-                Bench/flat capacity will fill in automatically as crop runs are added with spacing profiles.
+                Bench utilization will fill in automatically as crop runs are added with spacing profiles.
               </div>
             </div>
           )}
