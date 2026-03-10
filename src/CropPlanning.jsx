@@ -16,12 +16,13 @@ const VARIETY_TAGS = [
 ];
 
 const CROP_STATUS = [
-  { id: "planned",     label: "Planned",      color: "#7a8c74" },
-  { id: "propagating", label: "Propagating",  color: "#8e44ad" },
-  { id: "growing",     label: "Growing",      color: "#4a90d9" },
-  { id: "outside",     label: "Outside",      color: "#c8791a" },
-  { id: "ready",       label: "Ready",        color: "#7fb069" },
-  { id: "shipped",     label: "Shipped",      color: "#1e2d1a" },
+  { id: "planned",      label: "Planned",       color: "#7a8c74" },
+  { id: "needs_design", label: "Needs Design",  color: "#e07b39" },
+  { id: "propagating",  label: "Propagating",   color: "#8e44ad" },
+  { id: "growing",      label: "Growing",       color: "#4a90d9" },
+  { id: "outside",      label: "Outside",       color: "#c8791a" },
+  { id: "ready",        label: "Ready",         color: "#7fb069" },
+  { id: "shipped",      label: "Shipped",       color: "#1e2d1a" },
 ];
 
 // ── HELPERS ───────────────────────────────────────────────────────────────────
