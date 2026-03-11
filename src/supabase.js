@@ -190,3 +190,7 @@ export const useSoilMixes     = () => useTable("soil_mixes",      { orderBy: "na
 export const useInputProducts  = () => useTable("inputs",         { orderBy: "name",       localKey: "gh_inputs_v1" });
 export const useFlags         = () => useTable("flags",           { orderBy: "created_at", localKey: "gh_flags_v1" });
 export const useTaskCompletions = () => useTable("task_completions", { orderBy: "completed_at", localKey: "gh_task_completions_v1" });
+export const useCombos = () => useTable("combo_lots", { orderBy: "created_at", localKey: "gh_combos_v1" });
+export const useComboTags = () => useTable("combo_tags", { orderBy: "name", localKey: "gh_tags_v1" });
+export const useOrderMeta = () => useTable("order_meta", { orderBy: "created_at", localKey: "gh_order_meta_v1" });
+export const useReceiving = () => useTable("receiving_records", { orderBy: "week_key", localKey: "gh_receiving_v1" });
