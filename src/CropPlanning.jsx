@@ -26,7 +26,7 @@ const CROP_STATUS = [
 ];
 
 // ── HELPERS ───────────────────────────────────────────────────────────────────
-const uid  = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+const uid  = () => crypto.randomUUID();
 const dc   = (o) => JSON.parse(JSON.stringify(o));
 const sens = (id) => SENSITIVITY.find(s => s.id === id) || SENSITIVITY[1];
 const stat = (id) => CROP_STATUS.find(s => s.id === id) || CROP_STATUS[0];
@@ -921,7 +921,7 @@ function SourcingSection({ form, upd, focus, setFocus }) {
                   const existing = form.varieties || [];
                   if (!existing.find(v => v.ballItemNumber === item.itemNumber)) {
                     const newVar = { id: dc({}), ballItemNumber: item.itemNumber, cultivar: varName, name: varName, color: "", cases: 0, costPerUnit: item.sellPrice ? (item.sellPrice / (Number(item.perQty)||100)).toFixed(4) : "", broker: brokerDisplay, supplier: item.size, tags: [] };
-                    newVar.id = Date.now().toString(36);
+                    newVar.id = crypto.randomUUID();
                     upd("varieties", [...existing, newVar]);
                   }
                 }}
