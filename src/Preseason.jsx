@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { useCropRuns, useContainers } from "./supabase";
 
 // ── HELPERS ───────────────────────────────────────────────────────────────────
-const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+const uid = () => crypto.randomUUID();
 const fmt$ = (n) => Number(n).toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 0, maximumFractionDigits: 0 });
 const fmtDec = (n) => Number(n).toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
