@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useCropRuns, useHouses, usePads, useContainers, useSpacingProfiles, useVarieties, useBrokerCatalogs } from "./supabase";
+import { CatalogPicker } from "./Libraries";
 
 // ── CONSTANTS ─────────────────────────────────────────────────────────────────
 const SENSITIVITY = [
@@ -506,8 +507,42 @@ function VarietyManager({ varieties, lotCases, packSize, onChange, onIncreaseLot
               </div>
 
               <div style={{ padding: "12px 14px" }}>
-                {/* Identity row: Ball item# | Cultivar | Variety | Color */}
-                <div style={{ display: "grid", gridTemplateColumns: "140px 1fr 1fr 140px", gap: 10, marginBottom: 12 }}>
+                {/* Identity row: toggle between catalog picker and manual entry */}
+                {/* Catalog mode toggle */}
+                <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+                  <button onClick={() => { const next = varieties.map((x,i) => i!==idx?x:{...x,_useCatalog:!v._useCatalog}); onChange(next); }}
+                    style={{ padding: "5px 14px", borderRadius: 20, border: `1.5px solid ${v._useCatalog ? "#7fb069" : "#c8d8c0"}`, background: v._useCatalog ? "#f0f8eb" : "#fff", color: v._useCatalog ? "#2e5c1e" : "#7a8c74", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+                    📋 From Catalog
+                  </button>
+                  <button onClick={() => { const next = varieties.map((x,i) => i!==idx?x:{...x,_useCatalog:false}); onChange(next); }}
+                    style={{ padding: "5px 14px", borderRadius: 20, border: `1.5px solid ${!v._useCatalog ? "#7fb069" : "#c8d8c0"}`, background: !v._useCatalog ? "#f0f8eb" : "#fff", color: !v._useCatalog ? "#2e5c1e" : "#7a8c74", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+                    ✏️ Manual
+                  </button>
+                </div>
+
+                {v._useCatalog && (
+                  <div style={{ marginBottom: 12 }}>
+                    <CatalogPicker
+                      broker={form.sourcingBroker}
+                      initial={{ crop: v.cultivar, series: v.cultivar, color: v.color }}
+                      onSelect={({ crop, series, color, itemNumber, perQty, sellPrice, shortCode }) => {
+                        const next = varieties.map((x,i) => i!==idx ? x : {
+                          ...x,
+                          cultivar:      series,
+                          name:          color,
+                          color:         color,
+                          ballItemNumber: itemNumber || shortCode || "",
+                          costPerUnit:   sellPrice ? String(sellPrice) : x.costPerUnit,
+                          _useCatalog:   true,
+                        });
+                        onChange(next);
+                      }}
+                    />
+                  </div>
+                )}
+
+              {/* Identity row: Ball item# | Cultivar | Variety | Color */}
+                <div style={{ display: v._useCatalog ? "none" : "grid", gridTemplateColumns: "140px 1fr 1fr 140px", gap: 10, marginBottom: 12 }}>
                   <div>
                     <FL c="Ball Item #" />
                     <input
