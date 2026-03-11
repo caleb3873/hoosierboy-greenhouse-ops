@@ -1383,6 +1383,10 @@ function ContainerLibrary() {
         .filter(([k]) => DB_FIELDS.includes(k))
         .map(([k, v]) => [k, NUMERIC_FIELDS.includes(k) ? (v === "" || v === null || v === undefined ? null : Number(v)) : v])
     );
+    // Ensure ID is a valid UUID for Supabase
+    if (!clean.id || !clean.id.includes("-")) {
+      clean.id = crypto.randomUUID();
+    }
     try {
       await upsertContainer(clean);
       setView("list");
