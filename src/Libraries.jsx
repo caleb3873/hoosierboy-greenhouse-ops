@@ -3427,9 +3427,20 @@ function InputsLibrary() {
   }
 
   const save = async (input) => {
+    const DB_FIELDS = ["id","name","category","activeIngredient","signalWord","formulation",
+      "appRate","appRateUnit","rei","supplier","unitSize","unitSizeUnit","costPerUnit",
+      "stockQty","stockUnit","reorderAt","preferredOrderQty","lastOrderDate","lastOrderPrice",
+      "bulkPriceNote","crossBenefits","tankMixNotes","cropSensitivities","notes"];
     const NUMERIC = ["costPerUnit","stockQty","reorderAt","preferredOrderQty","lastOrderPrice"];
+    const DATE_FIELDS = ["lastOrderDate"];
     const clean = Object.fromEntries(
-      Object.entries(input).map(([k,v]) => [k, NUMERIC.includes(k) ? (v===""||v==null?null:Number(v)) : v])
+      Object.entries(input)
+        .filter(([k]) => DB_FIELDS.includes(k))
+        .map(([k,v]) => {
+          if (NUMERIC.includes(k))    return [k, v===""||v==null ? null : Number(v)];
+          if (DATE_FIELDS.includes(k)) return [k, v===""||v==null ? null : v];
+          return [k, v];
+        })
     );
     if (!clean.id || !clean.id.includes("-")) clean.id = crypto.randomUUID();
     try { await upsertInput(clean); setView("list"); setEditId(null); }
