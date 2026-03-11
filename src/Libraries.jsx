@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { useVarieties, useContainers, useSpacingProfiles, useBrokerCatalogs, useSoilMixes, useInputProducts } from "./supabase";
+import { useVarieties, useContainers, useSpacingProfiles, useBrokerCatalogs, useSoilMixes, useInputProducts, useComboTags } from "./supabase";
 import ComboLibrary from "./ComboDesigner";
 
 // ── BREEDER CONFIG ────────────────────────────────────────────────────────────
@@ -3059,25 +3059,20 @@ function TagCard({ tag, onEdit, onDelete }) {
 }
 
 function TagsLibrary() {
-  const [tags, setTags] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("gh_tags_v1") || "[]"); } catch { return []; }
-  });
+  const { rows: tags, insert: insertTag, update: updateTag, remove: removeTag } = useComboTags();
   const [view, setView] = useState("list");
   const [editId, setEditId] = useState(null);
   const [tierFilter, setTierFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
 
-  const save = (t) => {
-    const updated = editId ? tags.map(x => x.id === editId ? t : x) : [...tags, t];
-    setTags(updated);
-    localStorage.setItem("gh_tags_v1", JSON.stringify(updated));
+  const save = async (t) => {
+    if (editId) { await updateTag(editId, t); }
+    else { await insertTag({ ...t, id: t.id || (Date.now().toString(36) + Math.random().toString(36).slice(2,5)) }); }
     setView("list"); setEditId(null);
   };
-  const del = (id) => {
+  const del = async (id) => {
     if (!window.confirm("Remove this tag?")) return;
-    const updated = tags.filter(t => t.id !== id);
-    setTags(updated);
-    localStorage.setItem("gh_tags_v1", JSON.stringify(updated));
+    await removeTag(id);
   };
 
   const filtered = tags.filter(t =>
