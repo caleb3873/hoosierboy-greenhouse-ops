@@ -284,6 +284,32 @@ function LineCheckCard({ line, lineData, onUpdate, receiverName }) {
 
 // ── OPERATOR RECEIVING VIEW ───────────────────────────────────────────────────
 export function OperatorReceiving() {
+  const [recTab, setRecTab] = useState("plants");
+  const [receiverName, setReceiverNameOuter] = useState(() => localStorage.getItem("gh_receiver_name") || "");
+
+  const TAB_STYLE = (active) => ({
+    flex: 1, padding: "10px 4px", background: "none", border: "none",
+    borderBottom: `3px solid ${active ? "#7fb069" : "transparent"}`,
+    color: active ? "#c8e6b8" : "#6a8a5a", fontWeight: active ? 800 : 600,
+    fontSize: 12, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap"
+  });
+
+  return (
+    <div>
+      <div style={{ display: "flex", marginBottom: 16, borderBottom: "1px solid #2a3a2a" }}>
+        {[["plants","🌱 Plants"],["containers","🪴 Containers"],["soil","🌿 Soil"]].map(([id, lbl]) => (
+          <button key={id} onClick={() => setRecTab(id)} style={TAB_STYLE(recTab === id)}>{lbl}</button>
+        ))}
+      </div>
+      {recTab === "plants"     && <OperatorReceivingPlants onNameChange={setReceiverNameOuter} />}
+      {recTab === "containers" && <SupplyReceivingTab storageKey={CONTAINER_REC_KEY} icon="🪴" label="Containers" receiverName={receiverName} />}
+      {recTab === "soil"       && <SupplyReceivingTab storageKey={SOIL_REC_KEY}      icon="🌿" label="Soil / Media" receiverName={receiverName} />}
+    </div>
+  );
+}
+
+// Original operator receiving logic (plants only) — renamed
+function OperatorReceivingPlants({ onNameChange }) {
   const { rows: runs } = useCropRuns();
   const [allData,       setAllData]       = useState(() => load(STORAGE_KEY, {}));
   const [selectedWeek,  setSelectedWeek]  = useState(() => weekKey(CURRENT_WEEK, CURRENT_YEAR));
@@ -323,6 +349,7 @@ export function OperatorReceiving() {
     setReceiverName(nameInput.trim());
     localStorage.setItem("gh_receiver_name", nameInput.trim());
     setNameConfirmed(true);
+    if (onNameChange) onNameChange(nameInput.trim());
   }
 
   const totalLines    = lines.length;
@@ -451,6 +478,31 @@ export function OperatorReceiving() {
 
 // ── PLANNER RECEIVING SUMMARY ─────────────────────────────────────────────────
 export function PlannerReceiving() {
+  const [recTab, setRecTab] = useState("plants");
+
+  const TAB_STYLE = (active) => ({
+    padding: "10px 20px", background: "none", border: "none",
+    borderBottom: `3px solid ${active ? "#7fb069" : "transparent"}`,
+    color: active ? "#1e2d1a" : "#7a8c74", fontWeight: active ? 800 : 600,
+    fontSize: 13, cursor: "pointer", fontFamily: "inherit"
+  });
+
+  return (
+    <div>
+      <div style={{ display: "flex", borderBottom: "1.5px solid #e0ead8", marginBottom: 20 }}>
+        {[["plants","🌱 Young Plants"],["containers","🪴 Containers"],["soil","🌿 Soil / Media"]].map(([id, lbl]) => (
+          <button key={id} onClick={() => setRecTab(id)} style={TAB_STYLE(recTab === id)}>{lbl}</button>
+        ))}
+      </div>
+      {recTab === "plants"     && <PlannerReceivingPlants />}
+      {recTab === "containers" && <PlannerSupplyReceiving storageKey={CONTAINER_REC_KEY} label="Containers" />}
+      {recTab === "soil"       && <PlannerSupplyReceiving storageKey={SOIL_REC_KEY}      label="Soil / Media" />}
+    </div>
+  );
+}
+
+// Original planner receiving logic (plants only) — renamed
+function PlannerReceivingPlants() {
   const { rows: runs } = useCropRuns();
   const [allData,      setAllData]      = useState(() => load(STORAGE_KEY, {}));
   const [selectedWeek, setSelectedWeek] = useState(() => weekKey(CURRENT_WEEK, CURRENT_YEAR));
@@ -567,6 +619,242 @@ export function PlannerReceiving() {
               </div>
             );
           })}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CONTAINER & SOIL RECEIVING
+// ══════════════════════════════════════════════════════════════════════════════
+
+const CONTAINER_REC_KEY = "gh_receiving_containers_v1";
+const SOIL_REC_KEY      = "gh_receiving_soil_v1";
+
+// A simple "log a delivery" form for containers and soil
+// Each entry: { id, date, supplier, items: [{name, orderedQty, receivedQty, notes}], packingSlipPhoto, receivedBy, status }
+
+function SupplyReceivingTab({ storageKey, icon, label, receiverName }) {
+  const [entries,    setEntries]    = useState(() => load(storageKey, []));
+  const [view,       setView]       = useState("list"); // list | add
+  const [form,       setForm]       = useState(null);
+  const packingRef                  = useRef();
+
+  function persist(updated) { setEntries(updated); save(storageKey, updated); }
+
+  function startNew() {
+    setForm({
+      id:               crypto.randomUUID(),
+      date:             new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+      supplier:         "",
+      invoiceNum:       "",
+      packingSlipPhoto: null,
+      receivedBy:       receiverName || "",
+      status:           "open",
+      items:            [{ id: crypto.randomUUID(), name: "", orderedQty: "", receivedQty: "", notes: "" }],
+    });
+    setView("add");
+  }
+
+  function saveEntry() {
+    if (!form.supplier.trim()) return;
+    const updated = [form, ...entries.filter(e => e.id !== form.id)];
+    persist(updated);
+    setView("list");
+    setForm(null);
+  }
+
+  function updForm(k, v) { setForm(f => ({ ...f, [k]: v })); }
+  function updItem(idx, k, v) { setForm(f => ({ ...f, items: f.items.map((it, i) => i === idx ? { ...it, [k]: v } : it) })); }
+  function addItem() { setForm(f => ({ ...f, items: [...f.items, { id: crypto.randomUUID(), name: "", orderedQty: "", receivedQty: "", notes: "" }] })); }
+  function removeItem(idx) { setForm(f => ({ ...f, items: f.items.filter((_, i) => i !== idx) })); }
+
+  function handlePhoto(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => updForm("packingSlipPhoto", ev.target.result);
+    reader.readAsDataURL(file);
+  }
+
+  function closeEntry(id) {
+    persist(entries.map(e => e.id === id ? { ...e, status: "closed" } : e));
+  }
+
+  const IS = { width: "100%", padding: "11px 12px", borderRadius: 10, border: "1.5px solid #c8d8c0", fontSize: 14, fontFamily: "inherit", boxSizing: "border-box", marginBottom: 8 };
+
+  if (view === "add" && form) return (
+    <div>
+      <button onClick={() => setView("list")} style={{ background: "none", border: "none", color: "#6a8a5a", fontSize: 13, cursor: "pointer", fontFamily: "inherit", marginBottom: 16, padding: 0 }}>← Back</button>
+
+      <div style={{ background: "#fff", borderRadius: 14, border: "1.5px solid #e0ead8", padding: "18px", marginBottom: 12 }}>
+        <div style={{ fontSize: 15, fontWeight: 800, color: "#1a2a1a", marginBottom: 14 }}>New {label} Delivery</div>
+
+        <input value={form.supplier} onChange={e => updForm("supplier", e.target.value)} placeholder={`Supplier / Vendor *`} style={IS} />
+        <input value={form.invoiceNum} onChange={e => updForm("invoiceNum", e.target.value)} placeholder="Invoice / PO # (optional)" style={IS} />
+        <input value={form.date} onChange={e => updForm("date", e.target.value)} placeholder="Date" style={IS} />
+
+        {/* Packing slip photo */}
+        <input ref={packingRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={handlePhoto} />
+        {form.packingSlipPhoto
+          ? <div style={{ position: "relative", marginBottom: 8 }}>
+              <img src={form.packingSlipPhoto} alt="slip" style={{ width: "100%", borderRadius: 10, maxHeight: 160, objectFit: "cover" }} />
+              <button onClick={() => packingRef.current.click()} style={{ position: "absolute", bottom: 6, right: 6, background: "rgba(0,0,0,.55)", border: "none", borderRadius: 8, padding: "4px 10px", color: "#fff", fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>Replace</button>
+            </div>
+          : <button onClick={() => packingRef.current.click()}
+              style={{ width: "100%", padding: "12px", borderRadius: 10, border: "2px dashed #c8d8c0", background: "#f8fbf6", color: "#7a8c74", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", marginBottom: 8 }}>
+              📄 Photo Packing Slip
+            </button>
+        }
+      </div>
+
+      {/* Line items */}
+      <div style={{ background: "#fff", borderRadius: 14, border: "1.5px solid #e0ead8", padding: "18px", marginBottom: 12 }}>
+        <div style={{ fontSize: 13, fontWeight: 800, color: "#5a7050", textTransform: "uppercase", letterSpacing: .7, marginBottom: 12 }}>Items Received</div>
+        {form.items.map((item, idx) => (
+          <div key={item.id} style={{ background: "#f8fbf6", borderRadius: 10, padding: "12px", marginBottom: 8, border: "1px solid #e0ead8" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#5a7050" }}>Item {idx + 1}</div>
+              {form.items.length > 1 && <button onClick={() => removeItem(idx)} style={{ background: "none", border: "none", color: "#c03030", fontSize: 16, cursor: "pointer", padding: 0 }}>×</button>}
+            </div>
+            <input value={item.name} onChange={e => updItem(idx, "name", e.target.value)} placeholder={`${label} name / description *`} style={{ ...IS, marginBottom: 6 }} />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              <input type="number" value={item.orderedQty} onChange={e => updItem(idx, "orderedQty", e.target.value)} placeholder="Ordered qty" inputMode="numeric" style={{ ...IS, marginBottom: 0 }} />
+              <input type="number" value={item.receivedQty} onChange={e => updItem(idx, "receivedQty", e.target.value)} placeholder="Received qty" inputMode="numeric" style={{ ...IS, marginBottom: 0, borderColor: item.orderedQty && item.receivedQty && Number(item.receivedQty) < Number(item.orderedQty) ? "#f0a030" : "#c8d8c0" }} />
+            </div>
+            {item.orderedQty && item.receivedQty && Number(item.receivedQty) < Number(item.orderedQty) && (
+              <div style={{ fontSize: 11, color: "#c8791a", fontWeight: 700, marginTop: 4 }}>⚠ Short by {Number(item.orderedQty) - Number(item.receivedQty)}</div>
+            )}
+            <input value={item.notes} onChange={e => updItem(idx, "notes", e.target.value)} placeholder="Notes / damage / substitution" style={{ ...IS, marginTop: 6, marginBottom: 0 }} />
+          </div>
+        ))}
+        <button onClick={addItem} style={{ width: "100%", padding: "10px", borderRadius: 10, border: "1.5px dashed #7fb069", background: "#f2f8ee", color: "#4a7a30", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
+          + Add Item
+        </button>
+      </div>
+
+      <button onClick={saveEntry} disabled={!form.supplier.trim()}
+        style={{ width: "100%", padding: "14px", borderRadius: 10, border: "none", background: form.supplier.trim() ? "#7fb069" : "#c8d8c0", color: "#fff", fontWeight: 800, fontSize: 15, cursor: form.supplier.trim() ? "pointer" : "default", fontFamily: "inherit" }}>
+        Save Delivery Record
+      </button>
+    </div>
+  );
+
+  // List view
+  const open   = entries.filter(e => e.status !== "closed");
+  const closed = entries.filter(e => e.status === "closed");
+  const hasShorts = (entry) => entry.items.some(it => it.orderedQty && it.receivedQty && Number(it.receivedQty) < Number(it.orderedQty));
+
+  return (
+    <div>
+      <button onClick={startNew}
+        style={{ width: "100%", padding: "13px", borderRadius: 10, border: "none", background: "#7fb069", color: "#fff", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit", marginBottom: 16 }}>
+        + Log {label} Delivery
+      </button>
+
+      {open.length === 0 && closed.length === 0 && (
+        <div style={{ textAlign: "center", padding: "48px 0", color: "#8a9a80", fontSize: 13 }}>No {label.toLowerCase()} deliveries logged yet.</div>
+      )}
+
+      {open.map(entry => (
+        <div key={entry.id} style={{ background: "#fff", borderRadius: 14, border: `1.5px solid ${hasShorts(entry) ? "#f0c070" : "#e0ead8"}`, padding: "14px 16px", marginBottom: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 800, color: "#1a2a1a" }}>{entry.supplier}</div>
+              <div style={{ fontSize: 11, color: "#8a9a80" }}>{entry.date}{entry.invoiceNum ? ` · #${entry.invoiceNum}` : ""}{entry.receivedBy ? ` · ${entry.receivedBy}` : ""}</div>
+            </div>
+            {hasShorts(entry) && <span style={{ background: "#fff4e8", color: "#c8791a", borderRadius: 20, padding: "3px 10px", fontSize: 11, fontWeight: 800 }}>⚠ Short</span>}
+          </div>
+          <div style={{ fontSize: 12, color: "#5a7050", marginBottom: 10 }}>
+            {entry.items.map((it, i) => (
+              <div key={i} style={{ padding: "4px 0", borderBottom: i < entry.items.length - 1 ? "1px solid #f0f5ee" : "none" }}>
+                <span style={{ fontWeight: 700 }}>{it.name || "—"}</span>
+                {it.receivedQty && <span style={{ color: "#8a9a80", marginLeft: 6 }}>{it.receivedQty}{it.orderedQty ? `/${it.orderedQty}` : ""}</span>}
+                {it.notes && <span style={{ color: "#c8791a", marginLeft: 6 }}>{it.notes}</span>}
+              </div>
+            ))}
+          </div>
+          <button onClick={() => closeEntry(entry.id)}
+            style={{ background: "none", border: "1px solid #c8d8c0", borderRadius: 8, padding: "6px 14px", color: "#5a7050", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+            ✓ Mark Complete
+          </button>
+        </div>
+      ))}
+
+      {closed.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#9aaa90", textTransform: "uppercase", letterSpacing: .7, marginBottom: 8 }}>Completed</div>
+          {closed.map(entry => (
+            <div key={entry.id} style={{ background: "#f8faf6", borderRadius: 12, border: "1px solid #e8ede4", padding: "10px 14px", marginBottom: 8, opacity: .8 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#5a7050" }}>{entry.supplier}</div>
+              <div style={{ fontSize: 11, color: "#9aaa90" }}>{entry.date} · {entry.items.length} item{entry.items.length !== 1 ? "s" : ""}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── PLANNER VIEW OF CONTAINER / SOIL DELIVERIES ───────────────────────────────
+function PlannerSupplyReceiving({ storageKey, label }) {
+  const [entries] = useState(() => load(storageKey, []));
+
+  if (entries.length === 0) return (
+    <div style={{ background: "#fff", borderRadius: 14, border: "1.5px dashed #c8d8c0", padding: "40px 24px", textAlign: "center" }}>
+      <div style={{ fontSize: 13, color: "#7a8c74" }}>No {label.toLowerCase()} deliveries logged yet. Floor operators log these on their end.</div>
+    </div>
+  );
+
+  const hasShorts = (entry) => entry.items.some(it => it.orderedQty && it.receivedQty && Number(it.receivedQty) < Number(it.orderedQty));
+  const shorts  = entries.filter(hasShorts);
+  const open    = entries.filter(e => e.status !== "closed");
+
+  return (
+    <div>
+      {/* Summary */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 18 }}>
+        {[
+          { label: "Total",    value: entries.length,  color: "#1e2d1a" },
+          { label: "Open",     value: open.length,     color: open.length > 0 ? "#c8791a" : "#7a8c74" },
+          { label: "Shorts",   value: shorts.length,   color: shorts.length > 0 ? "#c03030" : "#7a8c74" },
+        ].map(s => (
+          <div key={s.label} style={{ background: "#fff", borderRadius: 12, border: "1.5px solid #e0ead8", padding: "12px 14px" }}>
+            <div style={{ fontSize: 9, fontWeight: 800, color: "#9aaa90", textTransform: "uppercase", letterSpacing: .6, marginBottom: 3 }}>{s.label}</div>
+            <div style={{ fontSize: 22, fontWeight: 900, color: s.color }}>{s.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {entries.map(entry => (
+        <div key={entry.id} style={{ background: "#fff", borderRadius: 14, border: `1.5px solid ${hasShorts(entry) ? "#f0c070" : "#e0ead8"}`, overflow: "hidden", marginBottom: 12 }}>
+          <div style={{ padding: "10px 16px", background: "#f8faf6", borderBottom: "1px solid #e8ede4", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div>
+              <div style={{ fontWeight: 800, fontSize: 13, color: "#1e2d1a" }}>{entry.supplier}</div>
+              <div style={{ fontSize: 11, color: "#9aaa90" }}>{entry.date}{entry.invoiceNum ? ` · #${entry.invoiceNum}` : ""}{entry.receivedBy ? ` · by ${entry.receivedBy}` : ""}</div>
+            </div>
+            <div style={{ display: "flex", gap: 6 }}>
+              {hasShorts(entry) && <span style={{ background: "#fff4e8", color: "#c8791a", borderRadius: 20, padding: "3px 10px", fontSize: 10, fontWeight: 800 }}>⚠ Short</span>}
+              <span style={{ background: entry.status === "closed" ? "#e8f8e8" : "#f0f5ee", color: entry.status === "closed" ? "#2e7d32" : "#7a8c74", borderRadius: 20, padding: "3px 10px", fontSize: 10, fontWeight: 800 }}>
+                {entry.status === "closed" ? "✓ Done" : "Open"}
+              </span>
+            </div>
+          </div>
+          {entry.items.map((it, i) => (
+            <div key={i} style={{ padding: "9px 16px", borderTop: i > 0 ? "1px solid #f0f5ee" : "none", display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ flex: 1, fontSize: 13, fontWeight: 600, color: "#1e2d1a" }}>{it.name || "—"}</div>
+              <div style={{ textAlign: "right" }}>
+                {it.receivedQty && <div style={{ fontSize: 13, fontWeight: 800, color: it.orderedQty && Number(it.receivedQty) < Number(it.orderedQty) ? "#c8791a" : "#1e2d1a" }}>{it.receivedQty}{it.orderedQty ? `/${it.orderedQty}` : ""}</div>}
+                {it.notes && <div style={{ fontSize: 11, color: "#c8791a" }}>{it.notes}</div>}
+              </div>
+            </div>
+          ))}
+          {entry.packingSlipPhoto && (
+            <div style={{ padding: "0 16px 12px" }}>
+              <img src={entry.packingSlipPhoto} alt="slip" style={{ width: "100%", borderRadius: 10, maxHeight: 140, objectFit: "cover" }} />
+            </div>
+          )}
         </div>
       ))}
     </div>
