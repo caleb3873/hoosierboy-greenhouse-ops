@@ -1362,9 +1362,25 @@ function ContainerLibrary() {
     { id: "notes",        label: "Notes",          required: false, guesses: ["note","comment"] },
   ];
   async function bulkImportContainers(rows) {
+    const DB_FIELDS = ["id","name","kind","type","trayType","diameterIn","heightIn","widthIn","lengthIn",
+      "material","volumeVal","volumeUnit","cellsPerFlat","unitsPerCase","qtyPerPallet","costPerUnit",
+      "substrateVol","substrateUnit","supplier","supplier2","sku","notes","spacing",
+      "photo","stockQty","stockLocation","inventoryHistory","priceHistory"];
+    const NUMERIC_FIELDS = ["diameterIn","heightIn","widthIn","lengthIn","volumeVal",
+      "cellsPerFlat","unitsPerCase","qtyPerPallet","costPerUnit","substrateVol"];
+    let errors = 0;
     for (const r of rows) {
-      await upsertContainer({ ...r, id: uid(), kind: r.kind || "finished" });
+      const row = { ...r, kind: r.kind || "finished" };
+      const clean = Object.fromEntries(
+        Object.entries(row)
+          .filter(([k]) => DB_FIELDS.includes(k))
+          .map(([k, v]) => [k, NUMERIC_FIELDS.includes(k) ? (v === "" || v === null || v === undefined ? null : Number(v)) : v])
+      );
+      clean.id = crypto.randomUUID();
+      try { await upsertContainer(clean); }
+      catch(e) { errors++; console.error("Row failed:", clean.name, e.message); }
     }
+    if (errors > 0) alert("Import complete with " + errors + " error(s). Check console for details.");
   }
   const [kindFilter, setKindFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
