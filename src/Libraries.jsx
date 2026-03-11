@@ -716,7 +716,7 @@ function ContainerForm({ initial, onSave, onCancel }) {
   const blank = {
     kind: "finished", // finished | propagation
     type: "pot", trayType: "plug",
-    name: "", diameter: "", heightIn: "", material: "",
+    name: "", diameter: "", heightIn: "", widthIn: "", lengthIn: "", material: "",
     volumeVal: "", volumeUnit: "qt",
     cellsPerFlat: "", unitsPerCase: "", qtyPerPallet: "",
     costPerUnit: "",
@@ -926,12 +926,20 @@ function ContainerForm({ initial, onSave, onCancel }) {
                 </div>
               )}
 
-              {!isFinished && (
+              {!isFinished && (<>
+                <div>
+                  <FL c='Width (")' />
+                  <input type="number" step="0.5" style={IS(focus === "tw")} value={form.widthIn} onChange={e => upd("widthIn", e.target.value)} onFocus={() => setFocus("tw")} onBlur={() => setFocus(null)} placeholder='e.g. 11' />
+                </div>
+                <div>
+                  <FL c='Length (")' />
+                  <input type="number" step="0.5" style={IS(focus === "tl")} value={form.lengthIn} onChange={e => upd("lengthIn", e.target.value)} onFocus={() => setFocus("tl")} onBlur={() => setFocus(null)} placeholder='e.g. 21' />
+                </div>
                 <div>
                   <FL c="Cells per Flat" />
                   <input type="number" style={IS(focus === "cells")} value={form.cellsPerFlat} onChange={e => upd("cellsPerFlat", e.target.value)} onFocus={() => setFocus("cells")} onBlur={() => setFocus(null)} placeholder="e.g. 128, 288, 512" />
                 </div>
-              )}
+              </>)}
               <div>
                 <FL c="Units per Case" />
                 <input type="number" style={IS(focus === "upc")} value={form.unitsPerCase} onChange={e => upd("unitsPerCase", e.target.value)} onFocus={() => setFocus("upc")} onBlur={() => setFocus(null)} placeholder="e.g. 10, 18, 50" />
@@ -1087,6 +1095,7 @@ function ContainerCard({ container: c, onEdit, onDelete, onDuplicate }) {
               <div style={{ fontSize: 11, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .6, marginBottom: 10 }}>Details</div>
               {[
                 c.diameter     && ["Diameter",          c.diameter + '"'],
+                c.widthIn && c.lengthIn && ["Footprint", `${c.widthIn}" × ${c.lengthIn}"`],
                 c.heightIn     && ["Height",            c.heightIn + '"'],
                 c.cellsPerFlat && ["Cells per flat",    c.cellsPerFlat],
                 c.unitsPerCase && ["Units per case",    c.unitsPerCase],
@@ -1169,7 +1178,8 @@ function ContainerCard({ container: c, onEdit, onDelete, onDuplicate }) {
 
 // ── BULK IMPORTER ─────────────────────────────────────────────────────────────
 function downloadTemplate(filename, headers, sampleRow) {
-  const rows = [headers, sampleRow];
+  const sampleRows = Array.isArray(sampleRow[0]) ? sampleRow : [sampleRow];
+  const rows = [headers, ...sampleRows];
   const csv = rows.map(r => r.map(c => `"${c}"`).join(",")).join("\n");
   const blob = new Blob([csv], { type: "text/csv" });
   const url = URL.createObjectURL(blob);
@@ -1340,7 +1350,9 @@ function ContainerLibrary() {
   const CONTAINER_FIELDS = [
     { id: "name",         label: "Name *",        required: true,  guesses: ["name","container","pot","basket"] },
     { id: "kind",         label: "Kind",           required: false, guesses: ["kind","type","category"] },
-    { id: "diameter",     label: "Diameter (in)",  required: false, guesses: ["diam","size","diameter"] },
+    { id: "diameter",     label: "Diameter (in)",  required: false, guesses: ["diam","diameter"] },
+    { id: "widthIn",      label: "Width (in)",      required: false, guesses: ["width","wide"] },
+    { id: "lengthIn",     label: "Length (in)",      required: false, guesses: ["length","long"] },
     { id: "material",     label: "Material",       required: false, guesses: ["material","plastic","metal"] },
     { id: "cellsPerFlat", label: "Cells/Flat",     required: false, guesses: ["cell","flat","count"] },
     { id: "unitsPerCase", label: "Units/Case",     required: false, guesses: ["case","unit"] },
@@ -1470,7 +1482,7 @@ function ContainerLibrary() {
           )}
         </>)}
 
-        {view === "import" && <BulkImporter title="Import Containers" templateFilename="containers-template.csv" templateHeaders={["Name","Kind","Diameter","Material","Cells Per Flat","Units Per Case","Cost Per Unit","Supplier","SKU","Notes"]} templateSample={["6in Standard Pot","finished","6","Plastic","","50","0.18","Landmark","GP600",""]} fieldMap={CONTAINER_FIELDS} onImport={bulkImportContainers} onCancel={() => setView("list")} />}
+        {view === "import" && <BulkImporter title="Import Containers" templateFilename="containers-template.csv" templateHeaders={["Name","Kind (finished or propagation)","Diameter - pots/baskets (in)","Width - trays only (in)","Length - trays only (in)","Material","Cells Per Flat - trays only","Units Per Case","Cost Per Unit ($)","Supplier","SKU","Notes"]} templateSample={["6in Standard Pot","finished","6","","","Plastic","","50","0.18","Landmark","GP600",""],["4.5in Tray 18ct","propagation","","11","21","Plastic","18","50","1.25","Landmark","T18-45",""],["10in Basket Liner","finished","10","","","Plastic","","25","0.45","Landmark","BL-10",""],["10in Wire Hanger","finished","10","","","Wire","","25","0.55","Landmark","WH-10",""]} fieldMap={CONTAINER_FIELDS} onImport={bulkImportContainers} onCancel={() => setView("list")} />}
   {view === "add"  && <ContainerForm onSave={save} onCancel={() => setView("list")} />}
         {view === "edit" && editingId && <ContainerForm initial={containers.find(c => c.id === editingId)} onSave={save} onCancel={() => { setView("list"); setEditingId(null); }} />}
       </div>
