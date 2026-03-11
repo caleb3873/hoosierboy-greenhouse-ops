@@ -144,28 +144,14 @@ function ImportModal({ onImport, onClose, currentSeason }) {
   function handleFile(e) {
     const file = e.target.files[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const lines = ev.target.result.split("\n").filter(l => l.trim());
-      const heads = lines[0].split(",").map(h => h.trim().replace(/^"|"$/g, ""));
-      const rows  = lines.slice(1).map(l => {
-        // Handle quoted fields with commas inside
-        const result = [];
-        let cur = "", inQuote = false;
-        for (const ch of l) {
-          if (ch === '"') { inQuote = !inQuote; }
-          else if (ch === "," && !inQuote) { result.push(cur.trim()); cur = ""; }
-          else cur += ch;
-        }
-        result.push(cur.trim());
-        return result;
-      });
+    const isExcel = /\.xlsx?$/i.test(file.name);
+
+    function processRows(heads, rows) {
       setHeaders(heads);
       setRaw(rows);
-      // Auto-map
       const autoMap = { product: "", size: "", qty: "", price: "", year: "", week: "" };
       heads.forEach(h => {
-        const lh = h.toLowerCase();
+        const lh = String(h).toLowerCase();
         if (!autoMap.product && (lh.includes("product") || lh.includes("crop") || lh.includes("item") || lh.includes("name") || lh.includes("description"))) autoMap.product = h;
         if (!autoMap.size    && (lh.includes("size") || lh.includes("container") || lh.includes("pot"))) autoMap.size = h;
         if (!autoMap.qty     && (lh.includes("qty") || lh.includes("quantity") || lh.includes("units") || lh.includes("sold") || lh.includes("count"))) autoMap.qty = h;
@@ -175,8 +161,47 @@ function ImportModal({ onImport, onClose, currentSeason }) {
       });
       setMapping(autoMap);
       setStep("map");
-    };
-    reader.readAsText(file);
+    }
+
+    if (isExcel) {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        try {
+          const wb = window.XLSX.read(ev.target.result, { type: "array" });
+          const ws = wb.Sheets[wb.SheetNames[0]];
+          const allRows = window.XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+          const headerIdx = allRows.findIndex(r => r.some(c => String(c).trim()));
+          if (headerIdx < 0) return;
+          const heads = allRows[headerIdx].map(h => String(h).trim());
+          const rows  = allRows.slice(headerIdx + 1)
+            .filter(r => r.some(c => String(c).trim()))
+            .map(r => heads.map((_, i) => String(r[i] ?? "").trim()));
+          processRows(heads, rows);
+        } catch (err) {
+          alert("Could not read Excel file: " + err.message);
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    } else {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const lines = ev.target.result.split("\n").filter(l => l.trim());
+        const heads = lines[0].split(",").map(h => h.trim().replace(/^"|"$/g, ""));
+        const rows  = lines.slice(1).map(l => {
+          const result = [];
+          let cur = "", inQuote = false;
+          for (const ch of l) {
+            if (ch === '"') { inQuote = !inQuote; }
+            else if (ch === "," && !inQuote) { result.push(cur.trim()); cur = ""; }
+            else cur += ch;
+          }
+          result.push(cur.trim());
+          return result;
+        });
+        processRows(heads, rows);
+      };
+      reader.readAsText(file);
+    }
   }
 
   function buildPreview() {
@@ -315,7 +340,7 @@ function ImportModal({ onImport, onClose, currentSeason }) {
                 Export from QuickBooks, Excel, or any POS system as a CSV.<br />
                 {label.detail === "weekly" ? "Should have one row per product per week." : "Should have one row per product with season totals."}
               </div>
-              <input ref={fileRef} type="file" accept=".csv,.txt" style={{ display: "none" }} onChange={handleFile} />
+              <input ref={fileRef} type="file" accept=".csv,.txt,.xlsx,.xls" style={{ display: "none" }} onChange={handleFile} />
               <button onClick={() => fileRef.current.click()}
                 style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 12, padding: "12px 28px", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
                 Choose File
