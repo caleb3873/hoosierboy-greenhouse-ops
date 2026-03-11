@@ -243,7 +243,6 @@ function ComponentRow({ plant, index, onChange, onRemove }) {
             <div style={{paddingBottom:2}}>
               <button onClick={onRemove} style={{width:30,height:34,borderRadius:7,border:"1.5px solid #f0d0c0",background:"#fff",color:"#e07b39",fontSize:16,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
             </div>
-          </div>
           </div>{/* end manual grid */}
           {/* Role + image URL row */}
           <div style={{display:"flex",gap:8,marginTop:8,alignItems:"center",flexWrap:"wrap"}}>
