@@ -2065,11 +2065,13 @@ async function parseExcel(file) {
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
-        // SheetJS is loaded via CDN script tag — use global XLSX
         const wb = window.XLSX.read(e.target.result, { type: "array" });
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        const rows = window.XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
-        resolve(rows);
+        // Return all sheets so the wizard can let the user pick
+        const sheetData = {};
+        wb.SheetNames.forEach(name => {
+          sheetData[name] = window.XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, defval: "" });
+        });
+        resolve({ sheetNames: wb.SheetNames, sheetData });
       } catch (err) { reject(err); }
     };
     reader.onerror = reject;
@@ -2152,31 +2154,45 @@ function applyMapping(rows, mapping, headerRow) {
 // ── UPLOAD WIZARD ─────────────────────────────────────────────────────────────
 function UploadWizard({ onSave, onCancel }) {
   const [step, setStep]       = useState(1); // 1=file, 2=map, 3=confirm
-  const [rows, setRows]       = useState([]);
-  const [headers, setHeaders] = useState([]);
-  const [headerRow, setHeaderRow] = useState(0);
-  const [mapping, setMapping] = useState({});
+  const [rows, setRows]             = useState([]);
+  const [allSheets, setAllSheets]   = useState({});
+  const [sheetNames, setSheetNames] = useState([]);
+  const [selectedSheet, setSelectedSheet] = useState("");
+  const [headers, setHeaders]       = useState([]);
+  const [headerRow, setHeaderRow]   = useState(0);
+  const [mapping, setMapping]       = useState({});
   const [brokerName, setBrokerName] = useState("");
-  const [season, setSeason]   = useState("Spring 2026");
-  const [loading, setLoading] = useState(false);
-  const [error, setError]     = useState(null);
+  const [season, setSeason]         = useState("Spring 2026");
+  const [loading, setLoading]       = useState(false);
+  const [error, setError]           = useState(null);
   const fileRef = useRef();
+
+  const loadSheet = (name, sheets) => {
+    const allRows = sheets[name] || [];
+    // Search up to row 25 for a row that looks like a header (3+ non-empty, contains text)
+    let hRow = 0;
+    for (let i = 0; i < Math.min(25, allRows.length); i++) {
+      const nonEmpty = allRows[i].filter(c => c && String(c).trim());
+      if (nonEmpty.length >= 3) { hRow = i; break; }
+    }
+    setHeaderRow(hRow);
+    setHeaders(allRows[hRow]);
+    setRows(allRows);
+    setMapping(guessMapping(allRows[hRow]));
+  };
 
   const handleFile = async (file) => {
     if (!file) return;
     setLoading(true);
     setError(null);
     try {
-      const allRows = await parseExcel(file);
-      // Find header row - first row with 3+ non-empty cells
-      let hRow = 0;
-      for (let i = 0; i < Math.min(10, allRows.length); i++) {
-        if (allRows[i].filter(c => c).length >= 3) { hRow = i; break; }
-      }
-      setHeaderRow(hRow);
-      setHeaders(allRows[hRow]);
-      setRows(allRows);
-      setMapping(guessMapping(allRows[hRow]));
+      const { sheetNames: names, sheetData } = await parseExcel(file);
+      setAllSheets(sheetData);
+      setSheetNames(names);
+      // Auto-pick: prefer sheets with "order" or "price" in name, else last sheet with data
+      const best = names.find(n => /order|price|list|catalog/i.test(n)) || names[names.length - 1];
+      setSelectedSheet(best);
+      loadSheet(best, sheetData);
       setStep(2);
     } catch (e) {
       setError("Could not read file. Make sure it's a .xlsx or .xls file.");
@@ -2229,7 +2245,23 @@ function UploadWizard({ onSave, onCancel }) {
   if (step === 2) return (
     <div style={s}>
       <div style={{ fontSize: 20, fontWeight: 800, color: "#1a2a1a", marginBottom: 6 }}>Map Columns</div>
-      <div style={{ fontSize: 13, color: "#7a8c74", marginBottom: 20 }}>Tell the app what each column contains. We've made our best guess — adjust anything that's wrong.</div>
+      <div style={{ fontSize: 13, color: "#7a8c74", marginBottom: 16 }}>Tell the app what each column contains. We've made our best guess — adjust anything that's wrong.</div>
+
+      {/* Sheet selector */}
+      {sheetNames.length > 1 && (
+        <div style={{ background: "#fff8e8", border: "1.5px solid #f0d090", borderRadius: 10, padding: "10px 14px", marginBottom: 16, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 13, fontWeight: 700, color: "#a06010" }}>📄 Sheet:</span>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {sheetNames.map(name => (
+              <button key={name} onClick={() => { setSelectedSheet(name); loadSheet(name, allSheets); }}
+                style={{ padding: "5px 14px", borderRadius: 20, border: `1.5px solid ${selectedSheet === name ? "#c8791a" : "#e0c070"}`, background: selectedSheet === name ? "#fff4e8" : "#fff", color: selectedSheet === name ? "#c8791a" : "#a06010", fontWeight: selectedSheet === name ? 800 : 600, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+                {name}
+              </button>
+            ))}
+          </div>
+          <span style={{ fontSize: 11, color: "#c8791a" }}>Auto-selected: {selectedSheet}</span>
+        </div>
+      )}
 
       <div style={{ overflowX: "auto", marginBottom: 20 }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
