@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef } from "react";
 import { useCombos, useComboTags } from "./supabase";
+import { CatalogPicker } from "./Libraries";
 import { useContainers, useSoilMixes, useCropRuns } from "./supabase";
 
 // ── CONSTANTS ─────────────────────────────────────────────────────────────────
@@ -163,7 +164,42 @@ function ComponentRow({ plant, index, onChange, onRemove }) {
 
         {/* Fields grid */}
         <div style={{ flex:1, minWidth:0 }}>
-          <div style={{ display:"grid", gridTemplateColumns:"1.8fr 1fr 0.9fr 0.9fr 0.8fr 0.8fr auto", gap:8, alignItems:"end" }}>
+          {/* Catalog / Manual toggle */}
+          <div style={{ display:"flex", gap:5, marginBottom:8 }}>
+            <button onClick={()=>onChange("_useCatalog",true)}
+              style={{ padding:"3px 12px", borderRadius:20, border:`1.5px solid ${plant._useCatalog?"#7fb069":"#dde8d5"}`, background:plant._useCatalog?"#f0f8eb":"#fff", color:plant._useCatalog?"#2e5c1e":"#9aaa90", fontWeight:700, fontSize:11, cursor:"pointer", fontFamily:"inherit" }}>
+              📋 Catalog
+            </button>
+            <button onClick={()=>onChange("_useCatalog",false)}
+              style={{ padding:"3px 12px", borderRadius:20, border:`1.5px solid ${!plant._useCatalog?"#7fb069":"#dde8d5"}`, background:!plant._useCatalog?"#f0f8eb":"#fff", color:!plant._useCatalog?"#2e5c1e":"#9aaa90", fontWeight:700, fontSize:11, cursor:"pointer", fontFamily:"inherit" }}>
+              ✏️ Manual
+            </button>
+          </div>
+
+          {plant._useCatalog && (
+            <div style={{ marginBottom:8 }}>
+              <div style={{ marginBottom:6 }}>
+                <FL c="Broker" />
+                <select value={plant.broker||""} onChange={e=>onChange("broker",e.target.value)} style={{...IS(false),paddingRight:4}}>
+                  <option value="">— Broker —</option>
+                  {BROKERS.map(b=><option key={b}>{b}</option>)}
+                </select>
+              </div>
+              <CatalogPicker
+                broker={plant.broker}
+                initial={{ series: plant.cultivar, color: plant.color }}
+                onSelect={({ crop, series, color, itemNumber, perQty, sellPrice, shortCode }) => {
+                  onChange("name", [series, color].filter(Boolean).join(" "));
+                  onChange("cultivar", series);
+                  onChange("color", color);
+                  onChange("itemNumber", itemNumber || shortCode || "");
+                  if (sellPrice) onChange("costPerPlant", String(sellPrice));
+                }}
+              />
+            </div>
+          )}
+
+          <div style={{ display: plant._useCatalog ? "none" : "grid", gridTemplateColumns:"1.8fr 1fr 0.9fr 0.9fr 0.8fr 0.8fr auto", gap:8, alignItems:"end" }}>
             <div>
               <FL c="Variety" />
               <input value={plant.name||""} onChange={e=>onChange("name",e.target.value)} onFocus={()=>setFocusField("name")} onBlur={()=>setFocusField(null)} placeholder="Variety name..." style={{...IS(focusField==="name"),fontWeight:600}} />
@@ -208,6 +244,7 @@ function ComponentRow({ plant, index, onChange, onRemove }) {
               <button onClick={onRemove} style={{width:30,height:34,borderRadius:7,border:"1.5px solid #f0d0c0",background:"#fff",color:"#e07b39",fontSize:16,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
             </div>
           </div>
+          </div>{/* end manual grid */}
           {/* Role + image URL row */}
           <div style={{display:"flex",gap:8,marginTop:8,alignItems:"center",flexWrap:"wrap"}}>
             <div style={{display:"flex",gap:4}}>
