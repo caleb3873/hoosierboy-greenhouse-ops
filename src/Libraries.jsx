@@ -1370,7 +1370,15 @@ function ContainerLibrary() {
   const [typeFilter, setTypeFilter] = useState("all");
   const [search,     setSearch   ] = useState("");
 
-  async function save(c) { await upsertContainer(c); setView("list"); setEditingId(null); }
+  async function save(c) {
+    try {
+      await upsertContainer(c);
+      setView("list");
+      setEditingId(null);
+    } catch(e) {
+      alert("Save failed: " + e.message);
+    }
+  }
   async function del(id) { if (window.confirm("Remove this container?")) await removeContainerDb(id); }
   async function dup(c)  { await upsertContainer({ ...dc(c), id: uid(), name: c.name + " (Copy)" }); }
 
