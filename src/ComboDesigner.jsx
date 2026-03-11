@@ -1,4 +1,5 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
+import { useCombos, useComboTags } from "./supabase";
 import { useContainers, useSoilMixes, useCropRuns } from "./supabase";
 
 // ── CONSTANTS ─────────────────────────────────────────────────────────────────
@@ -24,6 +25,7 @@ const STATUSES = [
   { id: "draft",     label: "Draft",               color: "#7a8c74", bg: "#f0f5ee" },
   { id: "submitted", label: "Submitted for Review", color: "#2e7d9e", bg: "#e8f4f8" },
   { id: "approved",  label: "Approved",             color: "#4a7a35", bg: "#e8f5e0" },
+  { id: "revised",   label: "Revised",              color: "#7b3fa0", bg: "#f5eeff" },
   { id: "revision",  label: "Needs Revision",       color: "#c8791a", bg: "#fff4e8" },
   { id: "ordered",   label: "Ordered",              color: "#1e2d1a", bg: "#c8e6b8" },
 ];
@@ -113,26 +115,48 @@ function ComboVisual({ plants, isBasket }) {
 
 // ── COMPONENT ROW ─────────────────────────────────────────────────────────────
 function ComponentRow({ plant, index, onChange, onRemove }) {
-  const [imgErr, setImgErr] = useState(false);
-  const [dragging, setDragging] = useState(false);
+  const [imgErr,     setImgErr]     = useState(false);
+  const [dragging,   setDragging]   = useState(false);
   const [focusField, setFocusField] = useState(null);
-  const role = PLANT_ROLES.find(r=>r.id===plant.role)||PLANT_ROLES[1];
+  const role    = PLANT_ROLES.find(r=>r.id===plant.role)||PLANT_ROLES[1];
+  const fileRef = useRef(null);
 
   const handleDrop = useCallback((e) => {
     e.preventDefault(); setDragging(false);
+    // File dragged from file explorer
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      const file = e.dataTransfer.files[0];
+      if (file.type.startsWith("image/")) {
+        const reader = new FileReader();
+        reader.onload = ev => { onChange("imageUrl", ev.target.result); setImgErr(false); };
+        reader.readAsDataURL(file);
+        return;
+      }
+    }
+    // Image dragged from browser tab
     const url = e.dataTransfer.getData("text/uri-list")||e.dataTransfer.getData("text/plain")||e.dataTransfer.getData("URL");
-    if (url && url.startsWith("http")) { onChange("imageUrl",url); setImgErr(false); }
+    if (url && url.startsWith("http")) { onChange("imageUrl", url); setImgErr(false); }
+  }, [onChange]);
+
+  const handleFileInput = useCallback((e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => { onChange("imageUrl", ev.target.result); setImgErr(false); };
+    reader.readAsDataURL(file);
   }, [onChange]);
 
   return (
     <div style={{ background:"#fff", borderRadius:14, border:`1.5px solid ${role.color}22`, padding:"14px 16px", marginBottom:10, boxShadow:"0 1px 6px rgba(0,0,0,0.04)" }}>
       <div style={{ display:"flex", gap:14, alignItems:"flex-start" }}>
-        {/* Photo */}
+        {/* Photo — click to browse, drag file from desktop, or drag URL from browser */}
+        <input ref={fileRef} type="file" accept="image/*" style={{display:"none"}} onChange={handleFileInput} />
         <div onDragOver={e=>{e.preventDefault();setDragging(true);}} onDragLeave={()=>setDragging(false)} onDrop={handleDrop}
+          onClick={()=>{ if(!plant.imageUrl||imgErr) fileRef.current?.click(); }}
           style={{ width:72, height:72, borderRadius:10, flexShrink:0, border:`2px dashed ${dragging?role.color:"#c8d8c0"}`, background:dragging?role.color+"14":"#f8faf6", overflow:"hidden", cursor:"pointer", position:"relative", display:"flex", alignItems:"center", justifyContent:"center", transition:"all .15s" }}>
           {plant.imageUrl && !imgErr
-            ? <img src={plant.imageUrl} style={{width:"100%",height:"100%",objectFit:"cover"}} onError={()=>setImgErr(true)} />
-            : <div style={{textAlign:"center",padding:4}}><div style={{fontSize:20}}>🌸</div><div style={{fontSize:8,color:"#aabba0",lineHeight:1.3}}>Drop photo</div></div>
+            ? <img src={plant.imageUrl} style={{width:"100%",height:"100%",objectFit:"cover"}} onError={()=>setImgErr(true)} onClick={e=>{e.stopPropagation();onChange("imageUrl","");setImgErr(false);}} title="Click to remove" />
+            : <div style={{textAlign:"center",padding:4}}><div style={{fontSize:20}}>📷</div><div style={{fontSize:8,color:"#aabba0",lineHeight:1.3}}>Tap or drop</div></div>
           }
           <div style={{ position:"absolute",top:3,left:3,width:16,height:16,borderRadius:"50%",background:role.color,color:"#fff",fontSize:9,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center" }}>{index+1}</div>
         </div>
@@ -787,7 +811,7 @@ function LotDesigner({ initial, onSave, onCancel, containers, soilMixes, tags })
 }
 
 // ── LOT CARD ─────────────────────────────────────────────────────────────────
-function LotCard({ lot, onEdit, onDelete, onDuplicate, onApprove, onRevision, isApprover, containers, soilMixes, tags }) {
+function LotCard({ lot, onEdit, onDelete, onDuplicate, onApprove, onRevision, onMarkRevised, isApprover, containers, soilMixes, tags }) {
   const status = STATUSES.find(s=>s.id===lot.status)||STATUSES[0];
   const allPlants = (lot.combos||[]).flatMap(c=>c.plants||[]);
   const hasPhotos = allPlants.some(p=>p.imageUrl);
@@ -836,13 +860,26 @@ function LotCard({ lot, onEdit, onDelete, onDuplicate, onApprove, onRevision, is
           {brokers.length>0&&<div style={{background:"#e8f4f8",borderRadius:8,padding:"6px 12px"}}><div style={{fontSize:10,fontWeight:700,color:"#2e7d9e",marginBottom:2}}>Brokers</div><div style={{fontSize:12,color:"#1e2d1a"}}>{brokers.join(", ")}</div></div>}
         </div>
         {lot.approvalNote&&<div style={{background:"#fff8f0",border:"1px solid #f0c080",borderRadius:8,padding:"8px 12px",marginBottom:12,fontSize:12,color:"#7a5010"}}>💬 {lot.approvalNote}</div>}
+        {lot.changelog&&lot.changelog.length>0&&(
+          <div style={{background:"#f5eeff",border:"1px solid #c8a8e840",borderRadius:8,padding:"8px 12px",marginBottom:12}}>
+            <div style={{fontSize:10,fontWeight:800,color:"#7b3fa0",textTransform:"uppercase",letterSpacing:.5,marginBottom:5}}>Revision History</div>
+            {lot.changelog.map((entry,i)=>(
+              <div key={i} style={{fontSize:12,color:"#4a2a6a",padding:"3px 0",borderTop:i>0?"1px solid #e8d8f840":undefined}}>
+                <span style={{color:"#9aaa90",marginRight:6}}>{entry.date}</span>{entry.note}
+              </div>
+            ))}
+          </div>
+        )}
         <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
           <button onClick={()=>onEdit(lot)} style={{background:"#4a90d9",color:"#fff",border:"none",borderRadius:8,padding:"7px 14px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>✏️ Edit</button>
           <button onClick={()=>onDuplicate(lot)} style={{background:"none",color:"#7a8c74",border:"1px solid #c8d8c0",borderRadius:8,padding:"7px 14px",fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>Duplicate</button>
           {isApprover&&lot.status==="submitted"&&<>
             <button onClick={()=>onApprove(lot.id)} style={{background:"#4a7a35",color:"#fff",border:"none",borderRadius:8,padding:"7px 14px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>✓ Approve</button>
-            <button onClick={()=>onRevision(lot.id)} style={{background:"#c8791a",color:"#fff",border:"none",borderRadius:8,padding:"7px 14px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>↩ Revision</button>
+            <button onClick={()=>onRevision(lot.id)} style={{background:"#c8791a",color:"#fff",border:"none",borderRadius:8,padding:"7px 14px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>↩ Needs Revision</button>
           </>}
+          {(lot.status==="approved"||lot.status==="revised")&&(
+            <button onClick={()=>onMarkRevised(lot.id)} style={{background:"#7b3fa0",color:"#fff",border:"none",borderRadius:8,padding:"7px 14px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>✏️ Mark as Revised</button>
+          )}
           <button onClick={()=>onDelete(lot.id)} style={{background:"none",color:"#e07b39",border:"1px solid #f0d0c0",borderRadius:8,padding:"7px 14px",fontSize:12,cursor:"pointer",fontFamily:"inherit",marginLeft:"auto"}}>Remove</button>
         </div>
       </div>
@@ -975,20 +1012,29 @@ export default function ComboLibrary() {
   const { rows: containers } = useContainers();
   const { rows: soilMixes  } = useSoilMixes();
   const { rows: runs        } = useCropRuns();
-  const [tags] = useState(()=>{ try{return JSON.parse(localStorage.getItem("gh_tags_v1")||"[]")}catch{return[]} });
+  const { rows: tags, insert: insertTag, remove: removeTag } = useComboTags();
 
-  const [lots, setLots] = useState(()=>{ try{return JSON.parse(localStorage.getItem("gh_combos_v1")||"[]")}catch{return[]} });
+  const { rows: lots, insert: insertLot, update: updateLot, remove: removeLot } = useCombos();
   const [view, setView] = useState("list");
   const [editId, setEditId] = useState(null);
   const [statusFilter, setStatusFilter] = useState("all");
   const isApprover = true;
 
-  const persist = (u) => { setLots(u); localStorage.setItem("gh_combos_v1",JSON.stringify(u)); };
-  const save = (lot) => { persist(editId?lots.map(l=>l.id===editId?lot:l):[...lots,lot]); setView("list"); setEditId(null); };
-  const del  = (id) => { if(window.confirm("Remove this lot?")) persist(lots.filter(l=>l.id!==id)); };
-  const dup  = (lot) => persist([...lots,{...dc(lot),id:uid(),name:lot.name+" (Copy)",status:"draft"}]);
-  const approve  = (id) => persist(lots.map(l=>l.id===id?{...l,status:"approved"}:l));
-  const revision = (id) => persist(lots.map(l=>l.id===id?{...l,status:"revision"}:l));
+  const saveLot = async (lot) => {
+    if (editId) { await updateLot(editId, lot); }
+    else { await insertLot({ ...lot, id: lot.id || uid() }); }
+    setView("list"); setEditId(null);
+  };
+  const del  = async (id) => { if(window.confirm("Remove this lot?")) await removeLot(id); };
+  const dup  = async (lot) => { await insertLot({...dc(lot), id:uid(), name:lot.name+" (Copy)", status:"draft"}); };
+  const approve     = async (id) => { await updateLot(id, {status:"approved"}); };
+  const revision    = async (id) => { await updateLot(id, {status:"revision"}); };
+  const markRevised = async (id) => {
+    const note = window.prompt("What did you change? (optional — leave blank to skip)");
+    const lot = lots.find(l => l.id === id);
+    const entry = { date: new Date().toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}), note: note||"Revised by planner" };
+    await updateLot(id, { status:"revised", changelog:[...(lot?.changelog||[]), entry] });
+  };
 
   const shared = { containers, soilMixes, tags };
 
@@ -1042,7 +1088,7 @@ export default function ComboLibrary() {
   );
   if (view==="edit") {
     const lot = lots.find(l=>l.id===editId);
-    return lot ? <LotDesigner initial={lot} onSave={save} onCancel={()=>{setView("list");setEditId(null);}} {...shared} /> : null;
+    return lot ? <LotDesigner initial={lot} onSave={saveLot} onCancel={()=>{setView("list");setEditId(null);}} {...shared} /> : null;
   }
 
   const filtered = lots.filter(l=>statusFilter==="all"||l.status===statusFilter);
@@ -1083,7 +1129,7 @@ export default function ComboLibrary() {
       ):(
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(340px,1fr))",gap:16}}>
           {filtered.map(lot=>(
-            <LotCard key={lot.id} lot={lot} isApprover={isApprover} onEdit={()=>{setEditId(lot.id);setView("edit");}} onDelete={del} onDuplicate={dup} onApprove={approve} onRevision={revision} {...shared} />
+            <LotCard key={lot.id} lot={lot} isApprover={isApprover} onEdit={()=>{setEditId(lot.id);setView("edit");}} onDelete={del} onDuplicate={dup} onApprove={approve} onRevision={revision} onMarkRevised={markRevised} {...shared} />
           ))}
         </div>
       )}
