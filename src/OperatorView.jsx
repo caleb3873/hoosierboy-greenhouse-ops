@@ -418,7 +418,7 @@ function OperatorFacilities({ houses, pads, onSaveHouse, onSavePad }) {
   const [section, setSection] = useState("houses"); // houses | pads
   const [view,    setView]    = useState("list");    // list | add
 
-  const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+  const uid = () => crypto.randomUUID();
 
   async function saveHouse(h) { await onSaveHouse({ ...h, id: h.id || uid() }); setView("list"); }
   async function savePad(p)   { await onSavePad({   ...p, id: p.id || uid() }); setView("list"); }
@@ -490,7 +490,7 @@ function OperatorFacilities({ houses, pads, onSaveHouse, onSavePad }) {
 
 // Simple mobile house form (captures essentials, planner can add zones/details later)
 function SimpleHouseForm({ onSave, onCancel }) {
-  const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+  const uid = () => crypto.randomUUID();
   const LOCATIONS = ["Bluff Road", "Sprague Road", "Other"];
   const [f, setF] = useState({ name: "", location: "", indoor: true, heated: false, active: true, lighting: "", notes: "", zones: [], details: {} });
   const upd = (k, v) => setF(p => ({ ...p, [k]: v }));
@@ -524,7 +524,7 @@ function SimpleHouseForm({ onSave, onCancel }) {
 }
 
 function SimplePadForm({ onSave, onCancel }) {
-  const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+  const uid = () => crypto.randomUUID();
   const LOCATIONS = ["Bluff Road", "Sprague Road", "Other"];
   const SURFACES = ["Gravel", "Crushed limestone", "Concrete", "Asphalt", "Bare ground", "Weed fabric over gravel", "Other"];
   const [f, setF] = useState({ name: "", location: "", lengthFt: "", widthFt: "", surfaceMaterial: "", notes: "", active: true, bays: [] });
