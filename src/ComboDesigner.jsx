@@ -3,7 +3,7 @@ import { useCombos, useComboTags } from "./supabase";
 import { useContainers, useSoilMixes, useCropRuns } from "./supabase";
 
 // ── CONSTANTS ─────────────────────────────────────────────────────────────────
-const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+const uid = () => crypto.randomUUID();
 const dc  = (o) => JSON.parse(JSON.stringify(o));
 
 const FORM_TYPES = [
