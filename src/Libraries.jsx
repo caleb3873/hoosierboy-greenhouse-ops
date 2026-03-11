@@ -1376,7 +1376,13 @@ function ContainerLibrary() {
       "material","volumeVal","volumeUnit","cellsPerFlat","unitsPerCase","qtyPerPallet","costPerUnit",
       "substrateVol","substrateUnit","supplier","supplier2","sku","notes","spacing",
       "photo","stockQty","stockLocation","inventoryHistory","priceHistory"];
-    const clean = Object.fromEntries(Object.entries(c).filter(([k]) => DB_FIELDS.includes(k)));
+    const NUMERIC_FIELDS = ["diameterIn","heightIn","widthIn","lengthIn","volumeVal",
+      "cellsPerFlat","unitsPerCase","qtyPerPallet","costPerUnit","substrateVol"];
+    const clean = Object.fromEntries(
+      Object.entries(c)
+        .filter(([k]) => DB_FIELDS.includes(k))
+        .map(([k, v]) => [k, NUMERIC_FIELDS.includes(k) ? (v === "" || v === null || v === undefined ? null : Number(v)) : v])
+    );
     try {
       await upsertContainer(clean);
       setView("list");
