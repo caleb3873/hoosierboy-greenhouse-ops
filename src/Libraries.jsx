@@ -614,7 +614,7 @@ const MATERIALS = ["Plastic", "Biodegradable", "Fiber", "Terracotta", "Foam", "O
 const VOLUME_UNITS = ["qt", "gal", "cu in", "L"];
 
 // ── HELPERS ───────────────────────────────────────────────────────────────────
-const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+const uid = () => crypto.randomUUID();
 const dc  = (o) => JSON.parse(JSON.stringify(o));
 const ctc = (id) => CONTAINER_TYPES.find(c => c.id === id) || CONTAINER_TYPES[0];
 const ttc = (id) => TRAY_TYPES.find(t => t.id === id) || TRAY_TYPES[0];
@@ -2526,7 +2526,7 @@ function PriceUpdateLibrary() {
   const [histItem,   setHistItem]   = useState(null);   // item to show history for
   const [view,       setView]       = useState("update"); // update | history
 
-  const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+  const uid = () => crypto.randomUUID();
 
   // ── data for current section ──
   const sectionData = {
@@ -3639,13 +3639,13 @@ function TagsLibrary() {
   ];
   async function bulkImportTags(rows) {
     for (const r of rows) {
-      await insertTag({ ...r, id: Date.now().toString(36) + Math.random().toString(36).slice(2,5) + Math.random().toString(36).slice(2,4), tier: r.tier || "standard", type: r.type || "potstake" });
+      await insertTag({ ...r, id: crypto.randomUUID(), tier: r.tier || "standard", type: r.type || "potstake" });
     }
   }
 
   const save = async (t) => {
     if (editId) { await updateTag(editId, t); }
-    else { await insertTag({ ...t, id: t.id || (Date.now().toString(36) + Math.random().toString(36).slice(2,5)) }); }
+    else { await insertTag({ ...t, id: t.id || crypto.randomUUID() }); }
     setView("list"); setEditId(null);
   };
   const del = async (id) => {
