@@ -716,7 +716,7 @@ function ContainerForm({ initial, onSave, onCancel }) {
   const blank = {
     kind: "finished", // finished | propagation
     type: "pot", trayType: "plug",
-    name: "", diameter: "", heightIn: "", widthIn: "", lengthIn: "", material: "",
+    name: "", diameterIn: "", heightIn: "", widthIn: "", lengthIn: "", material: "",
     volumeVal: "", volumeUnit: "qt",
     cellsPerFlat: "", unitsPerCase: "", qtyPerPallet: "",
     costPerUnit: "",
@@ -780,7 +780,7 @@ function ContainerForm({ initial, onSave, onCancel }) {
               {isFinished && (<>
                 <div>
                   <FL c='Diameter (")' />
-                  <input type="number" step="0.25" style={IS(focus === "dia")} value={form.diameter} onChange={e => upd("diameter", e.target.value)} onFocus={() => setFocus("dia")} onBlur={() => setFocus(null)} placeholder='e.g. 4.5' />
+                  <input type="number" step="0.25" style={IS(focus === "dia")} value={form.diameterIn} onChange={e => upd("diameterIn", e.target.value)} onFocus={() => setFocus("dia")} onBlur={() => setFocus(null)} placeholder='e.g. 4.5' />
                 </div>
                 <div>
                   <FL c='Height (")' />
@@ -1066,7 +1066,7 @@ function ContainerCard({ container: c, onEdit, onDelete, onDuplicate }) {
             {c.material && <Badge label={c.material} color="#7a8c74" />}
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {c.diameter && <Pill label='Diameter' value={c.diameter + '"'} color={selectedType.color} />}
+            {c.diameterIn && <Pill label='Diameter' value={c.diameterIn + '"'} color={selectedType.color} />}
             {c.cellsPerFlat && <Pill label="Cells" value={c.cellsPerFlat} color={selectedType.color} />}
             {c.unitsPerCase && <Pill label="/ Case" value={c.unitsPerCase} color="#7a8c74" />}
             {c.qtyPerPallet && <Pill label="/ Pallet" value={Number(c.qtyPerPallet).toLocaleString()} color="#7a8c74" />}
@@ -1094,7 +1094,7 @@ function ContainerCard({ container: c, onEdit, onDelete, onDuplicate }) {
             <div>
               <div style={{ fontSize: 11, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .6, marginBottom: 10 }}>Details</div>
               {[
-                c.diameter     && ["Diameter",          c.diameter + '"'],
+                c.diameterIn     && ["Diameter",          c.diameterIn + '"'],
                 c.widthIn && c.lengthIn && ["Footprint", `${c.widthIn}" × ${c.lengthIn}"`],
                 c.heightIn     && ["Height",            c.heightIn + '"'],
                 c.cellsPerFlat && ["Cells per flat",    c.cellsPerFlat],
@@ -1350,7 +1350,7 @@ function ContainerLibrary() {
   const CONTAINER_FIELDS = [
     { id: "name",         label: "Name *",        required: true,  guesses: ["name","container","pot","basket"] },
     { id: "kind",         label: "Kind",           required: false, guesses: ["kind","type","category"] },
-    { id: "diameter",     label: "Diameter (in)",  required: false, guesses: ["diam","diameter"] },
+    { id: "diameterIn",     label: "Diameter (in)",  required: false, guesses: ["diam","diameter"] },
     { id: "widthIn",      label: "Width (in)",      required: false, guesses: ["width","wide"] },
     { id: "lengthIn",     label: "Length (in)",      required: false, guesses: ["length","long"] },
     { id: "material",     label: "Material",       required: false, guesses: ["material","plastic","metal"] },
@@ -1371,8 +1371,14 @@ function ContainerLibrary() {
   const [search,     setSearch   ] = useState("");
 
   async function save(c) {
+    // Only send fields that exist in the containers table
+    const DB_FIELDS = ["id","name","kind","type","trayType","diameterIn","heightIn","widthIn","lengthIn",
+      "material","volumeVal","volumeUnit","cellsPerFlat","unitsPerCase","qtyPerPallet","costPerUnit",
+      "substrateVol","substrateUnit","supplier","supplier2","sku","notes","spacing",
+      "photo","stockQty","stockLocation","inventoryHistory","priceHistory"];
+    const clean = Object.fromEntries(Object.entries(c).filter(([k]) => DB_FIELDS.includes(k)));
     try {
-      await upsertContainer(c);
+      await upsertContainer(clean);
       setView("list");
       setEditingId(null);
     } catch(e) {
