@@ -307,7 +307,12 @@ function PDFUploader({ onExtracted }) {
 
       const response = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": process.env.REACT_APP_ANTHROPIC_API_KEY || "",
+          "anthropic-version": "2023-06-01",
+          "anthropic-dangerous-direct-browser-access": "true",
+        },
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
           max_tokens: 4000,
@@ -328,6 +333,7 @@ function PDFUploader({ onExtracted }) {
       });
 
       const data = await response.json();
+      if (data.error) throw new Error(data.error.message || "API error");
       const text = data.content?.find(b => b.type === "text")?.text || "";
 
       let parsed;
@@ -1160,11 +1166,194 @@ function ContainerCard({ container: c, onEdit, onDelete, onDuplicate }) {
   );
 }
 
+
+// ── BULK IMPORTER ─────────────────────────────────────────────────────────────
+function downloadTemplate(filename, headers, sampleRow) {
+  const rows = [headers, sampleRow];
+  const csv = rows.map(r => r.map(c => `"${c}"`).join(",")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function BulkImporter({ title, templateFilename, templateHeaders, templateSample, fieldMap, onImport, onCancel }) {
+  const [step, setStep]       = useState("upload");
+  const [headers, setHeaders] = useState([]);
+  const [raw, setRaw]         = useState([]);
+  const [mapping, setMapping] = useState({});
+  const [preview, setPreview] = useState([]);
+  const [error, setError]     = useState(null);
+  const fileRef               = useRef(null);
+
+  function processFile(heads, rows) {
+    setHeaders(heads);
+    setRaw(rows);
+    const auto = {};
+    fieldMap.forEach(f => {
+      const match = heads.find(h => f.guesses.some(g => String(h).toLowerCase().includes(g)));
+      auto[f.id] = match || "";
+    });
+    setMapping(auto);
+    setStep("map");
+  }
+
+  function handleFile(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    setError(null);
+    const isExcel = /\.xlsx?$/i.test(file.name);
+    if (isExcel) {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        try {
+          const wb = window.XLSX.read(ev.target.result, { type: "array" });
+          const ws = wb.Sheets[wb.SheetNames[0]];
+          const all = window.XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+          const hi = all.findIndex(r => r.some(c => String(c).trim()));
+          if (hi < 0) { setError("No data found in file."); return; }
+          const heads = all[hi].map(h => String(h).trim());
+          const rows = all.slice(hi + 1).filter(r => r.some(c => String(c).trim())).map(r => heads.map((_, i) => String(r[i] ?? "").trim()));
+          processFile(heads, rows);
+        } catch (err) { setError("Could not read file: " + err.message); }
+      };
+      reader.readAsArrayBuffer(file);
+    } else {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const lines = ev.target.result.split("\n").filter(l => l.trim());
+        const heads = lines[0].split(",").map(h => h.trim().replace(/^"|"$/g, ""));
+        const rows = lines.slice(1).map(l => {
+          const result = []; let cur = "", inQ = false;
+          for (const ch of l) {
+            if (ch === '"') inQ = !inQ;
+            else if (ch === "," && !inQ) { result.push(cur.trim()); cur = ""; }
+            else cur += ch;
+          }
+          result.push(cur.trim()); return result;
+        });
+        processFile(heads, rows);
+      };
+      reader.readAsText(file);
+    }
+  }
+
+  function buildPreview() {
+    const get = (row, field) => {
+      const h = mapping[field]; if (!h) return "";
+      const i = headers.indexOf(h); return i >= 0 ? (row[i] || "") : "";
+    };
+    setPreview(raw.slice(0, 5).map(r => Object.fromEntries(fieldMap.map(f => [f.id, get(r, f.id)]))));
+    setStep("preview");
+  }
+
+  function doImport() {
+    const get = (row, field) => {
+      const h = mapping[field]; if (!h) return "";
+      const i = headers.indexOf(h); return i >= 0 ? (row[i] || "") : "";
+    };
+    const items = raw.map(r => Object.fromEntries(fieldMap.map(f => [f.id, get(r, f.id)]))).filter(r => fieldMap.filter(f => f.required).every(f => r[f.id]));
+    onImport(items);
+    setStep("done");
+  }
+
+  const S = { borderRadius: 14, border: "1.5px solid #e0ead8", background: "#fff", padding: "28px 32px", maxWidth: 640, margin: "0 auto" };
+  const Btn = ({ onClick, children, variant = "primary", disabled }) => (
+    <button onClick={onClick} disabled={disabled} style={{ padding: "10px 22px", borderRadius: 9, border: variant === "primary" ? "none" : "1.5px solid #c8d8c0", background: variant === "primary" ? "#7fb069" : "#fff", color: variant === "primary" ? "#fff" : "#7a8c74", fontWeight: 700, fontSize: 13, cursor: disabled ? "default" : "pointer", fontFamily: "inherit", opacity: disabled ? 0.5 : 1 }}>{children}</button>
+  );
+
+  if (step === "done") return (
+    <div style={S}>
+      <div style={{ fontSize: 32, marginBottom: 12 }}>✅</div>
+      <div style={{ fontSize: 18, fontWeight: 800, color: "#1e2d1a", marginBottom: 8 }}>Import Complete</div>
+      <div style={{ fontSize: 13, color: "#7a8c74", marginBottom: 24 }}>{raw.length} rows imported successfully.</div>
+      <Btn onClick={onCancel}>Done</Btn>
+    </div>
+  );
+
+  return (
+    <div style={S}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+        <div style={{ fontSize: 17, fontWeight: 800, color: "#1e2d1a" }}>📥 {title}</div>
+        <button onClick={onCancel} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#aabba0" }}>×</button>
+      </div>
+
+      {step === "upload" && (
+        <>
+          <div style={{ fontSize: 13, color: "#7a8c74", marginBottom: 20 }}>Upload a CSV or Excel file. Not sure of the format? Download the template first.</div>
+          <div style={{ display: "flex", gap: 10, marginBottom: 24, flexWrap: "wrap" }}>
+            <Btn variant="secondary" onClick={() => downloadTemplate(templateFilename, templateHeaders, templateSample)}>⬇ Download Template</Btn>
+            <Btn onClick={() => fileRef.current.click()}>Choose File (.csv or .xlsx)</Btn>
+          </div>
+          <input ref={fileRef} type="file" accept=".csv,.txt,.xlsx,.xls" style={{ display: "none" }} onChange={handleFile} />
+          {error && <div style={{ color: "#c03030", fontSize: 13, marginTop: 8 }}>{error}</div>}
+        </>
+      )}
+
+      {step === "map" && (
+        <>
+          <div style={{ fontSize: 13, color: "#7a8c74", marginBottom: 16 }}>Match your columns to the right fields. We have made our best guess.</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 24 }}>
+            {fieldMap.filter(f => f.show !== false).map(f => (
+              <div key={f.id} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, alignItems: "center" }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#4a5a40" }}>{f.label}{f.required && <span style={{ color: "#c03030" }}> *</span>}</div>
+                <select value={mapping[f.id] || ""} onChange={e => setMapping(m => ({ ...m, [f.id]: e.target.value }))}
+                  style={{ padding: "7px 10px", borderRadius: 7, border: "1.5px solid #c8d8c0", fontSize: 13, color: "#1a2a1a", fontFamily: "inherit" }}>
+                  <option value="">Skip</option>
+                  {headers.map(h => <option key={h} value={h}>{h}</option>)}
+                </select>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 10 }}>
+            <Btn variant="secondary" onClick={() => setStep("upload")}>Back</Btn>
+            <Btn onClick={buildPreview}>Preview</Btn>
+          </div>
+        </>
+      )}
+
+      {step === "preview" && (
+        <>
+          <div style={{ fontSize: 13, color: "#7a8c74", marginBottom: 12 }}>First 5 rows preview:</div>
+          <div style={{ overflowX: "auto", marginBottom: 20 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead><tr>{fieldMap.filter(f => f.show !== false && mapping[f.id]).map(f => <th key={f.id} style={{ padding: "6px 10px", background: "#f2f5ef", fontWeight: 700, color: "#4a5a40", textAlign: "left", borderBottom: "1.5px solid #e0ead8" }}>{f.label}</th>)}</tr></thead>
+              <tbody>{preview.map((r, i) => <tr key={i}>{fieldMap.filter(f => f.show !== false && mapping[f.id]).map(f => <td key={f.id} style={{ padding: "6px 10px", borderBottom: "1px solid #f0f4ee", color: "#1e2d1a" }}>{r[f.id]}</td>)}</tr>)}</tbody>
+            </table>
+          </div>
+          <div style={{ fontSize: 12, color: "#7a8c74", marginBottom: 16 }}>{raw.length} total rows will be imported.</div>
+          <div style={{ display: "flex", gap: 10 }}>
+            <Btn variant="secondary" onClick={() => setStep("map")}>Back</Btn>
+            <Btn onClick={doImport}>Import {raw.length} Rows</Btn>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── MAIN ──────────────────────────────────────────────────────────────────────
 function ContainerLibrary() {
   const { rows: containers, upsert: upsertContainer, remove: removeContainerDb } = useContainers();
   const [view,      setView      ] = useState("list");
   const [editingId, setEditingId ] = useState(null);
+  const CONTAINER_FIELDS = [
+    { id: "name",         label: "Name *",        required: true,  guesses: ["name","container","pot","basket"] },
+    { id: "kind",         label: "Kind",           required: false, guesses: ["kind","type","category"] },
+    { id: "diameter",     label: "Diameter (in)",  required: false, guesses: ["diam","size","diameter"] },
+    { id: "material",     label: "Material",       required: false, guesses: ["material","plastic","metal"] },
+    { id: "cellsPerFlat", label: "Cells/Flat",     required: false, guesses: ["cell","flat","count"] },
+    { id: "unitsPerCase", label: "Units/Case",     required: false, guesses: ["case","unit"] },
+    { id: "costPerUnit",  label: "Cost/Unit ($)",  required: false, guesses: ["cost","price"] },
+    { id: "supplier",     label: "Supplier",       required: false, guesses: ["supplier","vendor","source"] },
+    { id: "sku",          label: "SKU",            required: false, guesses: ["sku","item","part","number"] },
+    { id: "notes",        label: "Notes",          required: false, guesses: ["note","comment"] },
+  ];
+  async function bulkImportContainers(rows) {
+    for (const r of rows) {
+      await upsertContainer({ ...r, id: uid(), kind: r.kind || "finished" });
+    }
+  }
   const [kindFilter, setKindFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
   const [search,     setSearch   ] = useState("");
@@ -1198,7 +1387,10 @@ function ContainerLibrary() {
           <div style={{ fontSize: 11, color: "#7a9a6a", letterSpacing: 1.2, textTransform: "uppercase" }}>Container Library</div>
         </div>
         {view === "list"
-          ? <button onClick={() => { setEditingId(null); setView("add"); }} style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 8, padding: "8px 20px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>+ Add Container</button>
+          ? <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => setView("import")} style={{ background: "none", color: "#c8e6b8", border: "1px solid #4a6a3a", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>📥 Import</button>
+              <button onClick={() => { setEditingId(null); setView("add"); }} style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 8, padding: "8px 20px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>+ Add Container</button>
+            </div>
           : <button onClick={() => { setView("list"); setEditingId(null); }} style={{ background: "none", color: "#c8e6b8", border: "1px solid #4a6a3a", borderRadius: 8, padding: "8px 16px", fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>← Back</button>
         }
       </div>
@@ -1278,7 +1470,8 @@ function ContainerLibrary() {
           )}
         </>)}
 
-        {view === "add"  && <ContainerForm onSave={save} onCancel={() => setView("list")} />}
+        {view === "import" && <BulkImporter title="Import Containers" templateFilename="containers-template.csv" templateHeaders={["Name","Kind","Diameter","Material","Cells Per Flat","Units Per Case","Cost Per Unit","Supplier","SKU","Notes"]} templateSample={["6in Standard Pot","finished","6","Plastic","","50","0.18","Landmark","GP600",""]} fieldMap={CONTAINER_FIELDS} onImport={bulkImportContainers} onCancel={() => setView("list")} />}
+  {view === "add"  && <ContainerForm onSave={save} onCancel={() => setView("list")} />}
         {view === "edit" && editingId && <ContainerForm initial={containers.find(c => c.id === editingId)} onSave={save} onCancel={() => { setView("list"); setEditingId(null); }} />}
       </div>
     </div>
@@ -2264,6 +2457,283 @@ function useBrokerLookup() {
 
 
 // ── LIBRARIES TAB WRAPPER ────────────────────────────────────────────────────
+
+// ── PRICE UPDATE & HISTORY ────────────────────────────────────────────────────
+function PriceUpdateLibrary() {
+  const { rows: containers, upsert: upsertContainer } = useContainers();
+  const { rows: mixes,      upsert: upsertMix }       = useSoilMixes();
+  const { rows: tags,       upsert: upsertTag }        = useComboTags();
+
+  const [section,    setSection]    = useState("containers"); // containers | soil | tags
+  const [supplier,   setSupplier]   = useState("all");
+  const [adjType,    setAdjType]    = useState("pct");   // pct | flat
+  const [adjValue,   setAdjValue]   = useState("");
+  const [note,       setNote]       = useState("");
+  const [effectDate, setEffectDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [preview,    setPreview]    = useState(null);   // null | [{item, oldPrice, newPrice}]
+  const [histItem,   setHistItem]   = useState(null);   // item to show history for
+  const [view,       setView]       = useState("update"); // update | history
+
+  const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+
+  // ── data for current section ──
+  const sectionData = {
+    containers: { rows: containers, priceField: "costPerUnit", upsert: upsertContainer, label: "Containers", icon: "🪴" },
+    soil:       { rows: mixes,      priceField: "costPerBag",  upsert: upsertMix,       label: "Soil / Media", icon: "🪱" },
+    tags:       { rows: tags,       priceField: "costPerUnit", upsert: upsertTag,        label: "Tags & Labels", icon: "🏷️" },
+  };
+  const { rows, priceField, upsert, label } = sectionData[section];
+
+  // ── suppliers for current section ──
+  const suppliers = ["all", ...new Set(rows.map(r => r.supplier || r.vendor).filter(Boolean))];
+
+  // ── filtered rows ──
+  const filtered = rows.filter(r => {
+    if (supplier !== "all") return (r.supplier || r.vendor) === supplier;
+    return true;
+  }).filter(r => r[priceField]);
+
+  function buildPreview() {
+    const adj = parseFloat(adjValue);
+    if (!adj || isNaN(adj)) return;
+    const items = filtered.map(r => {
+      const old = parseFloat(r[priceField]) || 0;
+      const newP = adjType === "pct"
+        ? Math.round(old * (1 + adj / 100) * 10000) / 10000
+        : Math.round((old + adj) * 10000) / 10000;
+      return { item: r, oldPrice: old, newPrice: Math.max(0, newP) };
+    });
+    setPreview(items);
+  }
+
+  async function applyUpdate() {
+    if (!preview) return;
+    const dateLabel = new Date(effectDate + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+    for (const { item, oldPrice, newPrice } of preview) {
+      const entry = { id: uid(), date: dateLabel, price: oldPrice, note: note || `Updated to $${newPrice.toFixed(4)}` };
+      const history = [...(item.priceHistory || []), entry];
+      await upsert({ ...item, [priceField]: newPrice.toString(), priceHistory: history });
+    }
+    setPreview(null);
+    setAdjValue("");
+    setNote("");
+    setView("history");
+  }
+
+  const Btn = ({ onClick, children, variant = "primary", small, disabled }) => (
+    <button onClick={onClick} disabled={disabled} style={{
+      padding: small ? "7px 14px" : "10px 22px", borderRadius: 9,
+      border: variant === "primary" ? "none" : "1.5px solid #c8d8c0",
+      background: variant === "primary" ? "#7fb069" : "#fff",
+      color: variant === "primary" ? "#fff" : "#7a8c74",
+      fontWeight: 700, fontSize: small ? 12 : 13, cursor: disabled ? "default" : "pointer",
+      fontFamily: "inherit", opacity: disabled ? 0.5 : 1
+    }}>{children}</button>
+  );
+
+  const TabBtn = ({ id, ico, lbl }) => (
+    <button onClick={() => { setSection(id); setPreview(null); setSupplier("all"); }}
+      style={{ padding: "8px 16px", borderRadius: 9, border: `1.5px solid ${section === id ? "#7fb069" : "#c8d8c0"}`, background: section === id ? "#7fb069" : "#fff", color: section === id ? "#fff" : "#4a5a40", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
+      {ico} {lbl}
+    </button>
+  );
+
+  // ── HISTORY VIEW ──
+  if (histItem) {
+    const hist = [...(histItem.priceHistory || [])].reverse();
+    const currentPrice = parseFloat(histItem[priceField]) || 0;
+    return (
+      <div style={{ maxWidth: 600 }}>
+        <button onClick={() => setHistItem(null)} style={{ background: "none", border: "none", color: "#7a8c74", fontSize: 13, cursor: "pointer", fontFamily: "inherit", marginBottom: 16 }}>← Back</button>
+        <div style={{ background: "#fff", borderRadius: 14, border: "1.5px solid #e0ead8", padding: "24px 28px" }}>
+          <div style={{ fontSize: 17, fontWeight: 800, color: "#1e2d1a", marginBottom: 4 }}>{histItem.name}</div>
+          <div style={{ fontSize: 13, color: "#7a8c74", marginBottom: 20 }}>{histItem.supplier || histItem.vendor || "No supplier"}</div>
+          <div style={{ background: "#f2f5ef", borderRadius: 10, padding: "14px 18px", marginBottom: 20, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", letterSpacing: 0.6 }}>Current Price</div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: "#1e2d1a" }}>${currentPrice.toFixed(4)}</div>
+          </div>
+          {hist.length === 0 ? (
+            <div style={{ fontSize: 13, color: "#aabba0", textAlign: "center", padding: "24px 0" }}>No price history yet.</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Price History</div>
+              {hist.map((h, i) => {
+                const next = hist[i + 1];
+                const diff = next ? (h.price - parseFloat(next.price || 0)) : null;
+                return (
+                  <div key={h.id || i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", background: "#fafcf8", borderRadius: 9, border: "1px solid #e8f0e0" }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#1e2d1a" }}>${parseFloat(h.price).toFixed(4)}</div>
+                      {h.note && <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2 }}>{h.note}</div>}
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontSize: 12, color: "#7a8c74" }}>{h.date}</div>
+                      {diff !== null && (
+                        <div style={{ fontSize: 11, fontWeight: 700, color: diff > 0 ? "#c03030" : "#2e7d32", marginTop: 2 }}>
+                          {diff > 0 ? "▲" : "▼"} ${Math.abs(diff).toFixed(4)} from prior
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {/* Section tabs */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
+        <TabBtn id="containers" ico="🪴" lbl="Containers" />
+        <TabBtn id="soil"       ico="🪱" lbl="Soil / Media" />
+        <TabBtn id="tags"       ico="🏷️" lbl="Tags & Labels" />
+      </div>
+
+      {/* View toggle */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+        {[["update", "💰 Price Update"], ["history", "📋 History"]].map(([id, lbl]) => (
+          <button key={id} onClick={() => { setView(id); setPreview(null); }}
+            style={{ padding: "8px 16px", borderRadius: 9, border: `1.5px solid ${view === id ? "#4a90d9" : "#c8d8c0"}`, background: view === id ? "#e8f2ff" : "#fff", color: view === id ? "#2060b0" : "#7a8c74", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
+            {lbl}
+          </button>
+        ))}
+      </div>
+
+      {/* ── PRICE UPDATE ── */}
+      {view === "update" && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24, alignItems: "start" }}>
+          {/* Controls */}
+          <div style={{ background: "#fff", borderRadius: 14, border: "1.5px solid #e0ead8", padding: "24px 28px" }}>
+            <div style={{ fontSize: 15, fontWeight: 800, color: "#1e2d1a", marginBottom: 18 }}>Price Adjustment</div>
+
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6 }}>Supplier / Filter</div>
+              <select value={supplier} onChange={e => { setSupplier(e.target.value); setPreview(null); }}
+                style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "1.5px solid #c8d8c0", fontSize: 13, fontFamily: "inherit" }}>
+                {suppliers.map(s => <option key={s} value={s}>{s === "all" ? "All Suppliers" : s}</option>)}
+              </select>
+            </div>
+
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6 }}>Adjustment Type</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                {[["pct", "% Percentage"], ["flat", "$ Flat Amount"]].map(([id, lbl]) => (
+                  <button key={id} onClick={() => { setAdjType(id); setPreview(null); }}
+                    style={{ flex: 1, padding: "9px 0", borderRadius: 8, border: `1.5px solid ${adjType === id ? "#7fb069" : "#c8d8c0"}`, background: adjType === id ? "#f2f8ee" : "#fff", color: adjType === id ? "#4a7a30" : "#7a8c74", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+                    {lbl}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6 }}>
+                {adjType === "pct" ? "Percentage Change (use – for decrease)" : "Amount to Add / Subtract"}
+              </div>
+              <input type="number" step={adjType === "pct" ? "0.1" : "0.01"} value={adjValue}
+                onChange={e => { setAdjValue(e.target.value); setPreview(null); }}
+                placeholder={adjType === "pct" ? "e.g. 6 for +6%, -3 for -3%" : "e.g. 0.50 or -0.25"}
+                style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "1.5px solid #c8d8c0", fontSize: 13, fontFamily: "inherit", boxSizing: "border-box" }} />
+            </div>
+
+            <div style={{ marginBottom: 18 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6 }}>Effective Date</div>
+              <input type="date" value={effectDate} onChange={e => setEffectDate(e.target.value)}
+                style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "1.5px solid #c8d8c0", fontSize: 13, fontFamily: "inherit", boxSizing: "border-box" }} />
+            </div>
+
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6 }}>Note (optional)</div>
+              <input value={note} onChange={e => setNote(e.target.value)}
+                placeholder="e.g. Spring 2026 supplier price increase"
+                style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "1.5px solid #c8d8c0", fontSize: 13, fontFamily: "inherit", boxSizing: "border-box" }} />
+            </div>
+
+            <div style={{ display: "flex", gap: 8 }}>
+              <Btn onClick={buildPreview} disabled={!adjValue || filtered.length === 0}>Preview {filtered.length} Items</Btn>
+              {preview && <Btn variant="secondary" onClick={() => setPreview(null)}>Clear</Btn>}
+            </div>
+          </div>
+
+          {/* Preview */}
+          <div style={{ background: "#fff", borderRadius: 14, border: `1.5px solid ${preview ? "#7fb069" : "#e0ead8"}`, padding: "24px 28px" }}>
+            {!preview ? (
+              <div style={{ textAlign: "center", padding: "40px 0", color: "#aabba0" }}>
+                <div style={{ fontSize: 32, marginBottom: 8 }}>💰</div>
+                <div style={{ fontSize: 13 }}>Fill in the adjustment details and click Preview to see the changes before applying.</div>
+              </div>
+            ) : (
+              <>
+                <div style={{ fontSize: 15, fontWeight: 800, color: "#1e2d1a", marginBottom: 4 }}>Preview Changes</div>
+                <div style={{ fontSize: 12, color: "#7a8c74", marginBottom: 16 }}>{preview.length} items · {adjType === "pct" ? `${adjValue > 0 ? "+" : ""}${adjValue}%` : `${adjValue > 0 ? "+$" : "-$"}${Math.abs(adjValue)}`}</div>
+                <div style={{ maxHeight: 320, overflowY: "auto", marginBottom: 16, display: "flex", flexDirection: "column", gap: 6 }}>
+                  {preview.map(({ item, oldPrice, newPrice }) => {
+                    const diff = newPrice - oldPrice;
+                    return (
+                      <div key={item.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: "#fafcf8", borderRadius: 8, border: "1px solid #e8f0e0" }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: "#1e2d1a", flex: 1, marginRight: 12 }}>{item.name}</div>
+                        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                          <span style={{ fontSize: 11, color: "#aabba0", textDecoration: "line-through" }}>${oldPrice.toFixed(4)}</span>
+                          <span style={{ fontSize: 13, fontWeight: 800, color: "#1e2d1a" }}>${newPrice.toFixed(4)}</span>
+                          <span style={{ fontSize: 11, fontWeight: 700, color: diff > 0 ? "#c03030" : "#2e7d32", minWidth: 52, textAlign: "right" }}>
+                            {diff >= 0 ? "+" : ""}${diff.toFixed(4)}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <Btn onClick={applyUpdate}>Apply & Archive Old Prices</Btn>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── HISTORY ── */}
+      {view === "history" && (
+        <div>
+          <div style={{ fontSize: 13, color: "#7a8c74", marginBottom: 16 }}>Click any item to see its full price history.</div>
+          {filtered.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "40px 0", color: "#aabba0", fontSize: 13 }}>No {label} with pricing found.</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {filtered.map(item => {
+                const current = parseFloat(item[priceField]) || 0;
+                const hist = item.priceHistory || [];
+                const last = hist[hist.length - 1];
+                const prev = last ? parseFloat(last.price) : null;
+                const diff = prev !== null ? current - prev : null;
+                return (
+                  <button key={item.id} onClick={() => setHistItem(item)}
+                    style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", background: "#fff", borderRadius: 10, border: "1.5px solid #e0ead8", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#1e2d1a" }}>{item.name}</div>
+                      <div style={{ fontSize: 11, color: "#aabba0", marginTop: 2 }}>{item.supplier || item.vendor || "No supplier"} · {hist.length} update{hist.length !== 1 ? "s" : ""}</div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontSize: 15, fontWeight: 800, color: "#1e2d1a" }}>${current.toFixed(4)}</div>
+                      {diff !== null && (
+                        <div style={{ fontSize: 11, fontWeight: 700, color: diff > 0 ? "#c03030" : "#2e7d32", marginTop: 2 }}>
+                          {diff >= 0 ? "▲ +" : "▼ "}${Math.abs(diff).toFixed(4)} from last update
+                        </div>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const LIBRARY_TABS = [
   { id: "variety",   label: "Varieties",  icon: "🌿" },
   { id: "container", label: "Containers", icon: "🪴" },
@@ -2273,6 +2743,7 @@ const LIBRARY_TABS = [
   { id: "brokers",   label: "Brokers",    icon: "📊" },
   { id: "tags",      label: "Tags",       icon: "🏷️" },
   { id: "combos",    label: "Combos",     icon: "🌸" },
+  { id: "pricing",   label: "Pricing",    icon: "💰" },
 ];
 
 export default function Libraries() {
@@ -2302,6 +2773,7 @@ export default function Libraries() {
       {tab === "brokers"   && <BrokerCatalogs />}
       {tab === "tags"      && <TagsLibrary />}
       {tab === "combos"    && <ComboLibrary />}
+      {tab === "pricing"   && <PriceUpdateLibrary />}
     </div>
   );
 }
@@ -2472,6 +2944,22 @@ function SoilLibrary() {
   const [editingId, setEditId] = useState(null);
   const [catFilter, setCat]    = useState("all");
 
+  const SOIL_FIELDS = [
+    { id: "name",       label: "Product Name *", required: true,  guesses: ["name","product","mix","soil","media"] },
+    { id: "category",   label: "Category",       required: false, guesses: ["category","type","use"] },
+    { id: "vendor",     label: "Vendor",         required: false, guesses: ["vendor","supplier","brand","manufacturer"] },
+    { id: "sku",        label: "SKU",            required: false, guesses: ["sku","item","part","number"] },
+    { id: "bagSize",    label: "Bag Size",       required: false, guesses: ["bag","size","volume","qty"] },
+    { id: "bagUnit",    label: "Bag Unit",       required: false, guesses: ["unit","uom"] },
+    { id: "costPerBag", label: "Cost/Bag ($)",   required: false, guesses: ["cost","price","per bag"] },
+    { id: "notes",      label: "Notes",          required: false, guesses: ["note","comment"] },
+  ];
+  async function bulkImportSoil(rows) {
+    for (const r of rows) {
+      await upsertMix({ ...r, id: uid(), bagUnit: r.bagUnit || "cu ft", category: r.category || "annual" });
+    }
+  }
+
   const save = async (mix) => {
     await upsertMix(mix);
     setView("list"); setEditId(null);
@@ -2479,6 +2967,7 @@ function SoilLibrary() {
 
   const filtered = mixes.filter(m => catFilter === "all" || m.category === catFilter);
 
+  if (view === "import") return <BulkImporter title="Import Soil / Media" templateFilename="soil-template.csv" templateHeaders={["Product Name","Category","Vendor","SKU","Bag Size","Bag Unit","Cost Per Bag","Notes"]} templateSample={["Fafard 2 Mix","annual","Sun Gro","020902016P","3.8","cu ft","28.50",""]} fieldMap={SOIL_FIELDS} onImport={bulkImportSoil} onCancel={() => setView("list")} />;
   if (view === "add")  return <SoilForm onSave={save} onCancel={() => setView("list")} />;
   if (view === "edit" && editingId) return <SoilForm initial={mixes.find(m => m.id === editingId)} onSave={save} onCancel={() => { setView("list"); setEditId(null); }} />;
 
@@ -2486,10 +2975,10 @@ function SoilLibrary() {
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
         <div style={{ fontSize: 16, fontWeight: 800, color: "#1a2a1a" }}>Soil & Substrate Mixes</div>
-        <button onClick={() => setView("add")}
-          style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 10, padding: "9px 18px", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
-          + Add Mix
-        </button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => setView("import")} style={{ background: "none", border: "1.5px solid #c8d8c0", borderRadius: 10, padding: "9px 14px", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit", color: "#7a8c74" }}>📥 Import</button>
+          <button onClick={() => setView("add")} style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 10, padding: "9px 18px", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>+ Add Mix</button>
+        </div>
       </div>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
@@ -2838,6 +3327,24 @@ function InputsLibrary() {
   const [statusFilter, setStat] = useState("all");
   const [search, setSearch]    = useState("");
 
+  const INPUT_FIELDS = [
+    { id: "name",            label: "Product Name *",    required: true,  guesses: ["name","product","chemical","input"] },
+    { id: "category",        label: "Category",          required: false, guesses: ["category","type","class"] },
+    { id: "activeIngredient",label: "Active Ingredient", required: false, guesses: ["active","ingredient","ai"] },
+    { id: "signalWord",      label: "Signal Word",       required: false, guesses: ["signal","word","caution","warning"] },
+    { id: "appRate",         label: "App Rate",          required: false, guesses: ["rate","dose","application rate"] },
+    { id: "appRateUnit",     label: "App Rate Unit",     required: false, guesses: ["rate unit","uom","per"] },
+    { id: "rei",             label: "REI",               required: false, guesses: ["rei","reentry","restricted"] },
+    { id: "supplier",        label: "Supplier",          required: false, guesses: ["supplier","vendor","source"] },
+    { id: "costPerUnit",     label: "Cost/Unit ($)",     required: false, guesses: ["cost","price"] },
+    { id: "notes",           label: "Notes",             required: false, guesses: ["note","comment"] },
+  ];
+  async function bulkImportInputs(rows) {
+    for (const r of rows) {
+      await upsertInput({ ...r, id: uid(), category: r.category || "other", signalWord: r.signalWord || "Caution" });
+    }
+  }
+
   const save = async (input) => {
     await upsertInput(input);
     setView("list"); setEditId(null);
@@ -2854,6 +3361,7 @@ function InputsLibrary() {
     return matchCat && matchStatus && matchSearch;
   });
 
+  if (view === "import") return <BulkImporter title="Import Inputs" templateFilename="inputs-template.csv" templateHeaders={["Product Name","Category","Active Ingredient","Signal Word","App Rate","App Rate Unit","REI","Supplier","Cost Per Unit","Notes"]} templateSample={["Bonzi","pgr","Paclobutrazol","Caution","1-4 oz","oz/100 gal","12 hrs","Fine Americas","125.00",""]} fieldMap={INPUT_FIELDS} onImport={bulkImportInputs} onCancel={() => setView("list")} />;
   if (view === "add")  return <InputForm onSave={save} onCancel={() => setView("list")} />;
   if (view === "edit" && editingId) return <InputForm initial={inputs.find(i => i.id === editingId)} onSave={save} onCancel={() => { setView("list"); setEditId(null); }} />;
 
@@ -2861,10 +3369,10 @@ function InputsLibrary() {
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
         <div style={{ fontSize: 16, fontWeight: 800, color: "#1a2a1a" }}>Inputs Inventory</div>
-        <button onClick={() => setView("add")}
-          style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 10, padding: "9px 18px", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
-          + Add Product
-        </button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => setView("import")} style={{ background: "none", border: "1.5px solid #c8d8c0", borderRadius: 10, padding: "9px 14px", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit", color: "#7a8c74" }}>📥 Import</button>
+          <button onClick={() => setView("add")} style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 10, padding: "9px 18px", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>+ Add Product</button>
+        </div>
       </div>
 
       {/* Reorder alert */}
@@ -3065,6 +3573,24 @@ function TagsLibrary() {
   const [tierFilter, setTierFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
 
+  const TAG_FIELDS = [
+    { id: "name",        label: "Tag Name *",    required: true,  guesses: ["name","tag","label","description"] },
+    { id: "tier",        label: "Tier",          required: false, guesses: ["tier","level","grade","quality"] },
+    { id: "type",        label: "Type",          required: false, guesses: ["type","style","format"] },
+    { id: "widthIn",     label: "Width (in)",    required: false, guesses: ["width","wide","w"] },
+    { id: "heightIn",    label: "Height (in)",   required: false, guesses: ["height","tall","h","length"] },
+    { id: "supplier",    label: "Supplier",      required: false, guesses: ["supplier","vendor","source"] },
+    { id: "sku",         label: "SKU",           required: false, guesses: ["sku","item","part","number"] },
+    { id: "costPerUnit", label: "Cost/Unit ($)", required: false, guesses: ["cost","price"] },
+    { id: "unitsPerCase",label: "Units/Case",    required: false, guesses: ["case","units per","qty"] },
+    { id: "notes",       label: "Notes",         required: false, guesses: ["note","comment"] },
+  ];
+  async function bulkImportTags(rows) {
+    for (const r of rows) {
+      await insertTag({ ...r, id: Date.now().toString(36) + Math.random().toString(36).slice(2,5) + Math.random().toString(36).slice(2,4), tier: r.tier || "standard", type: r.type || "potstake" });
+    }
+  }
+
   const save = async (t) => {
     if (editId) { await updateTag(editId, t); }
     else { await insertTag({ ...t, id: t.id || (Date.now().toString(36) + Math.random().toString(36).slice(2,5)) }); }
@@ -3080,6 +3606,7 @@ function TagsLibrary() {
     (typeFilter === "all" || t.type === typeFilter)
   );
 
+  if (view === "import") return <BulkImporter title="Import Tags" templateFilename="tags-template.csv" templateHeaders={["Tag Name","Tier","Type","Width (in)","Height (in)","Supplier","SKU","Cost Per Unit","Units Per Case","Notes"]} templateSample={["6in Annual Standard","standard","potstake","0.75","4","Landmark","TAG-6-STD","0.08","1000",""]} fieldMap={TAG_FIELDS} onImport={bulkImportTags} onCancel={() => setView("list")} />;
   if (view === "add") return <TagForm onSave={save} onCancel={() => setView("list")} />;
   if (view === "edit") {
     const tag = tags.find(t => t.id === editId);
@@ -3090,10 +3617,10 @@ function TagsLibrary() {
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
         <div style={{ fontSize: 16, fontWeight: 800, color: "#1a2a1a" }}>Tags & Labels</div>
-        <button onClick={() => setView("add")}
-          style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 10, padding: "9px 18px", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
-          + Add Tag
-        </button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => setView("import")} style={{ background: "none", border: "1.5px solid #c8d8c0", borderRadius: 10, padding: "9px 14px", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit", color: "#7a8c74" }}>📥 Import</button>
+          <button onClick={() => setView("add")} style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 10, padding: "9px 18px", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>+ Add Tag</button>
+        </div>
       </div>
 
       {/* Filters */}
