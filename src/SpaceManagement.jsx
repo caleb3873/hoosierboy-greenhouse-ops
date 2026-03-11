@@ -1,9 +1,38 @@
 import { useState, useEffect } from "react";
-import { useHouses, usePads, useManualTasks } from "./supabase";
+import { useHouses, usePads, useManualTasks, useCropRuns } from "./supabase";
 
 
 const LOCATIONS = ["Bluff Road", "Sprague Road"];
-const BENCH_WIDTHS = [4, 6, 8];
+const BENCH_WIDTHS = [1, 4, 6, 8];
+const BENCH_TYPES = [
+  { id: "single",   label: "Single",            desc: "Single bench, one side access" },
+  { id: "double",   label: "Double (back-to-back)", desc: "Two 4' benches sharing a spine" },
+  { id: "shelf",    label: "Wall Shelf",         desc: "Wall-mounted shelf (1' wide)" },
+];
+const BENCH_MATERIALS = ["Durabench Plastic", "Wood", "Metal", "Wire", "Other"];
+const POT_SIZES = [
+  { label: "4.5\"",  dia: 4.5  },
+  { label: "6\"",    dia: 6    },
+  { label: "8\"",    dia: 8    },
+  { label: "10\"",   dia: 10   },
+  { label: "11\"",   dia: 11   },
+  { label: "12\"",   dia: 12   },
+  { label: "14\"",   dia: 14   },
+  { label: "1020 flat", dia: 10 }, // flat tray ~10" wide
+];
+// pots per sq ft at different spacings (pot-to-pot center)
+function potsPerSqFt(diaIn, spacingIn) {
+  // center-to-center spacing in inches → pots per sq ft
+  const s = spacingIn / 12; // convert to feet
+  return s > 0 ? (1 / (s * s)).toFixed(1) : 0;
+}
+function benchPotCapacity(widthFt, lengthFt, diaIn, spacingIn) {
+  if (!widthFt || !lengthFt || !diaIn) return null;
+  const s = spacingIn / 12;
+  const cols = Math.floor(widthFt / s);
+  const rows = Math.floor(lengthFt / s);
+  return cols * rows;
+}
 const LIGHTING_TYPES = ["Natural Only", "HPS Supplemental", "LED Supplemental", "HID", "Shade Cloth", "Blackout Capable"];
 const TUBE_POSITIONS = ["Left edge", "Right edge", "Center", "Left-center", "Right-center", "Custom — see notes"];
 const FLOOR_TYPES = ["Bare ground", "Gravel", "Concrete", "Weed fabric", "Pea gravel", "Poured rubber", "Other"];
@@ -21,7 +50,7 @@ const ROW_CFG = {
 };
 
 const ztc = (id) => ZONE_TYPES.find(z => z.id === id) || ZONE_TYPES[0];
-const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+const uid = () => crypto.randomUUID();
 const dc  = (o) => JSON.parse(JSON.stringify(o));
 function reIdHouse(h) { return { ...h, id: uid(), name: h.name + " (Copy)", zones: (h.zones||[]).map(z => ({ ...z, id: uid(), items: (z.items||[]).map(i => ({ ...i, id: uid(), cropId: null })) })) }; }
 function reIdPad(p)   { return { ...p, id: uid(), name: p.name + " (Copy)", bays: (p.bays||[]).map(b => ({ ...b, id: uid() })) }; }
@@ -29,7 +58,10 @@ function reIdPad(p)   { return { ...p, id: uid(), name: p.name + " (Copy)", bays
 // ── helpers: space stats ──────────────────────────────────────────────────────
 function houseStats(house) {
   const benches = house.zones.filter(z => z.type === "bench").flatMap(z => z.items || []);
-  const sqFt    = benches.reduce((s, b) => s + (b.widthFt && b.lengthFt ? Number(b.widthFt) * Number(b.lengthFt) : 0), 0);
+  const sqFt    = benches.reduce((s, b) => {
+    const w = b.benchType === "double" ? 8 : (b.widthFt || 0);
+    return s + (w && b.lengthFt ? Number(w) * Number(b.lengthFt) : 0);
+  }, 0);
   const occupied = benches.filter(b => b.cropId).length;
   const heated   = benches.filter(b => b.heated).length;
   const capsPerType = {};
@@ -99,25 +131,50 @@ function DripBlock({ item, onUpdate, fk, focus, setFocus }) {
 }
 
 // ── ITEM EDITOR ───────────────────────────────────────────────────────────────
-function ItemEditor({ item, idx, zoneType, zt, onUpdate, onRemove, onMoveUp, onMoveDown }) {
+function ItemEditor({ item, idx, totalItems, zoneType, zt, onUpdate, onRemove, onMoveUp, onMoveDown, cropRuns }) {
   const [open, setOpen] = useState(false);
   const [focus, setFocus] = useState(null);
+  const [calcPotSize, setCalcPotSize] = useState(4.5);
+  const [calcSpacing, setCalcSpacing] = useState(6);
   const rc = ROW_CFG[zoneType];
-  const sqFt = zoneType === "bench" && item.widthFt && item.lengthFt ? Number(item.widthFt) * Number(item.lengthFt) : 0;
+
+  // Bench number goes left to right
+  const benchNum = idx + 1;
+
+  const isShelf  = item.benchType === "shelf";
+  const isDouble = item.benchType === "double";
+  const effectiveWidth = isDouble ? 4 : (item.widthFt || 4); // each side of double is 4'
+  const sqFt = zoneType === "bench" && effectiveWidth && item.lengthFt
+    ? (isDouble ? effectiveWidth * 2 : effectiveWidth) * Number(item.lengthFt)
+    : 0;
+  const calcCapacity = zoneType === "bench" && effectiveWidth && item.lengthFt
+    ? benchPotCapacity(isDouble ? effectiveWidth * 2 : effectiveWidth, Number(item.lengthFt), calcPotSize, calcSpacing)
+    : null;
+
+  // Occupancy: find crop runs assigned to this bench
+  const assignedRuns = (cropRuns || []).filter(r =>
+    (r.indoorAssignments || []).some(a => a.benchId === item.id) ||
+    (r.outsideAssignments || []).some(a => a.benchId === item.id)
+  );
+
   return (
     <div style={{ background: "#fff", borderRadius: 10, border: `1px solid ${open ? zt.color : "#e0ead8"}`, overflow: "hidden" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", cursor: "pointer" }} onClick={() => setOpen(o => !o)}>
-        <div style={{ width: 24, height: 24, borderRadius: 5, background: zt.color + "18", border: `1px solid ${zt.color}44`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 800, color: zt.color, flexShrink: 0 }}>{idx + 1}</div>
+        <div style={{ width: 28, height: 24, borderRadius: 5, background: zt.color + "18", border: `1px solid ${zt.color}44`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 800, color: zt.color, flexShrink: 0 }}>
+          {isShelf ? "S" : benchNum}
+        </div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 700, fontSize: 13, color: "#1e2d1a", display: "flex", alignItems: "center", gap: 6 }}>
-            {item.label || `Item ${idx + 1}`}
-            {zoneType === "bench" && item.heated && <span style={{ fontSize: 10, background: "#fff0e0", color: "#c8791a", border: "1px solid #f0c080", borderRadius: 10, padding: "1px 7px", fontWeight: 700 }}>🔥 Heated</span>}
+          <div style={{ fontWeight: 700, fontSize: 13, color: "#1e2d1a", display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            {item.label || `Bench ${benchNum}`}
+            {item.benchType && <span style={{ fontSize: 10, background: "#f0f5ee", color: "#7a8c74", border: "1px solid #c8d8c0", borderRadius: 10, padding: "1px 7px" }}>{BENCH_TYPES.find(t => t.id === item.benchType)?.label || item.benchType}</span>}
+            {item.heated && <span style={{ fontSize: 10, background: "#fff0e0", color: "#c8791a", border: "1px solid #f0c080", borderRadius: 10, padding: "1px 7px", fontWeight: 700 }}>🔥 Heated</span>}
+            {assignedRuns.length > 0 && <span style={{ fontSize: 10, background: "#e8f4f8", color: "#2e7d9e", border: "1px solid #b0d8e8", borderRadius: 10, padding: "1px 7px", fontWeight: 700 }}>🌱 {assignedRuns.length} crop{assignedRuns.length !== 1 ? "s" : ""}</span>}
           </div>
           <div style={{ fontSize: 11, color: "#aabba0" }}>
-            {zoneType === "bench" && item.widthFt ? `${item.widthFt}'` : ""}{zoneType === "bench" && item.lengthFt ? ` × ${item.lengthFt}'` : ""}
+            {zoneType === "bench" && (isDouble ? `4'+4'` : effectiveWidth ? `${effectiveWidth}'` : "")}{zoneType === "bench" && item.lengthFt ? ` × ${item.lengthFt}'` : ""}
             {sqFt > 0 ? ` · ${sqFt.toLocaleString()} sf` : ""}
+            {item.material ? ` · ${item.material}` : ""}
             {zoneType !== "bench" && item.capacityPerRow ? ` ${item.capacityPerRow} ${rc.capLabel}` : ""}
-            {item.dripLines ? ` · ${item.dripLines} drip line${Number(item.dripLines) > 1 ? "s" : ""}` : ""}
           </div>
         </div>
         <div style={{ display: "flex", gap: 3 }}>
@@ -130,27 +187,145 @@ function ItemEditor({ item, idx, zoneType, zt, onUpdate, onRemove, onMoveUp, onM
       {open && (
         <div style={{ borderTop: "1px solid #f0f5ee", padding: 12, background: "#fafcf8" }}>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
-            <div style={{ gridColumn: "span 2" }}><FL c="Label / Name" /><input style={IS(focus === "lbl")} value={item.label || ""} onChange={e => onUpdate("label", e.target.value)} onFocus={() => setFocus("lbl")} onBlur={() => setFocus(null)} placeholder="e.g. B-1, North Line" /></div>
+            <div style={{ gridColumn: "span 2" }}><FL c="Label / Name" /><input style={IS(focus === "lbl")} value={item.label || ""} onChange={e => onUpdate("label", e.target.value)} onFocus={() => setFocus("lbl")} onBlur={() => setFocus(null)} placeholder={`e.g. Bench ${benchNum}`} /></div>
+
             {zoneType === "bench" ? (<>
-              <div><FL c="Width" /><div style={{ display: "flex", gap: 5 }}>{BENCH_WIDTHS.map(w => <button key={w} onClick={() => onUpdate("widthFt", w)} style={{ flex: 1, padding: "7px 0", borderRadius: 7, border: `1.5px solid ${item.widthFt === w ? zt.color : "#c8d8c0"}`, background: item.widthFt === w ? zt.color + "18" : "#fff", color: item.widthFt === w ? "#2e5c1e" : "#7a8c74", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>{w}'</button>)}</div></div>
-              <div><FL c="Length (ft)" /><input type="number" style={IS(focus === "len")} value={item.lengthFt || ""} onChange={e => onUpdate("lengthFt", e.target.value)} onFocus={() => setFocus("len")} onBlur={() => setFocus(null)} placeholder="e.g. 96" /></div>
-              {sqFt > 0 && <div style={{ gridColumn: "span 2", background: "#f0f8eb", borderRadius: 7, padding: "7px 11px", fontSize: 12, color: "#2e5c1e", fontWeight: 600 }}>✓ {sqFt.toLocaleString()} sq ft</div>}
+              {/* Bench type */}
+              <div style={{ gridColumn: "span 2" }}>
+                <FL c="Bench Type" />
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {BENCH_TYPES.map(t => (
+                    <button key={t.id} onClick={() => {
+                      onUpdate("benchType", t.id);
+                      if (t.id === "shelf") onUpdate("widthFt", 1);
+                      if (t.id === "double") onUpdate("widthFt", 4);
+                    }}
+                      style={{ flex: 1, padding: "8px 10px", borderRadius: 8, border: `1.5px solid ${item.benchType === t.id ? zt.color : "#c8d8c0"}`, background: item.benchType === t.id ? zt.color + "18" : "#fff", color: item.benchType === t.id ? "#2e5c1e" : "#7a8c74", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit", textAlign: "center" }}>
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+                {item.benchType && <div style={{ fontSize: 11, color: "#aabba0", marginTop: 4 }}>{BENCH_TYPES.find(t => t.id === item.benchType)?.desc}</div>}
+              </div>
+
+              {/* Width — only shown for single/shelf */}
+              {!isDouble && (
+                <div>
+                  <FL c="Width" />
+                  <div style={{ display: "flex", gap: 5 }}>
+                    {(isShelf ? [1] : [1, 4, 6, 8]).map(w => (
+                      <button key={w} onClick={() => onUpdate("widthFt", w)}
+                        style={{ flex: 1, padding: "7px 0", borderRadius: 7, border: `1.5px solid ${item.widthFt === w ? zt.color : "#c8d8c0"}`, background: item.widthFt === w ? zt.color + "18" : "#fff", color: item.widthFt === w ? "#2e5c1e" : "#7a8c74", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
+                        {w}'
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {isDouble && (
+                <div style={{ background: "#f0f8eb", borderRadius: 8, padding: "8px 12px", display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ fontSize: 18 }}>↔</span>
+                  <div><div style={{ fontSize: 13, fontWeight: 700, color: "#2e5c1e" }}>4' + 4' back-to-back</div><div style={{ fontSize: 11, color: "#7a8c74" }}>Access from both sides</div></div>
+                </div>
+              )}
+
+              <div><FL c="Length (ft)" /><input type="number" style={IS(focus === "len")} value={item.lengthFt || ""} onChange={e => onUpdate("lengthFt", e.target.value)} onFocus={() => setFocus("len")} onBlur={() => setFocus(null)} placeholder="e.g. 100" /></div>
+
+              {/* Material */}
+              <div style={{ gridColumn: "span 2" }}>
+                <FL c="Material" />
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {BENCH_MATERIALS.map(m => (
+                    <button key={m} onClick={() => onUpdate("material", m)}
+                      style={{ padding: "6px 12px", borderRadius: 7, border: `1.5px solid ${item.material === m ? zt.color : "#c8d8c0"}`, background: item.material === m ? zt.color + "18" : "#fff", color: item.material === m ? "#2e5c1e" : "#7a8c74", fontWeight: 600, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+                      {m}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {sqFt > 0 && <div style={{ gridColumn: "span 2", background: "#f0f8eb", borderRadius: 7, padding: "7px 11px", fontSize: 12, color: "#2e5c1e", fontWeight: 600 }}>✓ {sqFt.toLocaleString()} sq ft total bench space</div>}
+
+              {/* Toggles */}
+              <div style={{ gridColumn: "span 2", display: "flex", gap: 20, flexWrap: "wrap" }}>
+                <Toggle value={!!item.heated} onChange={v => onUpdate("heated", v)} label={item.heated ? "Heated bench" : "Not heated"} />
+              </div>
+
+              {/* Irrigation */}
+              <div style={{ gridColumn: "span 2" }}>
+                <FL c="Irrigation" />
+                <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+                  {["Drip", "Hand Water", "None"].map(t => (
+                    <button key={t} onClick={() => onUpdate("irrigation", t)}
+                      style={{ flex: 1, padding: "7px 0", borderRadius: 7, border: `1.5px solid ${item.irrigation === t ? zt.color : "#c8d8c0"}`, background: item.irrigation === t ? zt.color + "18" : "#fff", color: item.irrigation === t ? "#2e5c1e" : "#7a8c74", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+                      {t}
+                    </button>
+                  ))}
+                </div>
+                {item.irrigation === "Drip" && <DripBlock item={item} onUpdate={onUpdate} fk={item.id} focus={focus} setFocus={setFocus} />}
+              </div>
+
+              {/* Capacity Calculator */}
+              {sqFt > 0 && (
+                <div style={{ gridColumn: "span 2", background: "#f8f0ff", border: "1.5px solid #d4b8f0", borderRadius: 10, padding: 14 }}>
+                  <div style={{ fontSize: 11, fontWeight: 800, color: "#7a3db0", letterSpacing: .8, textTransform: "uppercase", marginBottom: 12 }}>Capacity Calculator</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
+                    <div>
+                      <FL c="Pot Size" />
+                      <select value={calcPotSize} onChange={e => setCalcPotSize(Number(e.target.value))}
+                        style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "1.5px solid #c8d8c0", fontSize: 13, fontFamily: "inherit", background: "#fff" }}>
+                        {POT_SIZES.map(p => <option key={p.label} value={p.dia}>{p.label}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <FL c="Spacing (center-to-center, inches)" />
+                      <input type="number" min="4" max="24" step="0.5" value={calcSpacing}
+                        onChange={e => setCalcSpacing(Number(e.target.value))}
+                        style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "1.5px solid #c8d8c0", fontSize: 13, fontFamily: "inherit", background: "#fff", boxSizing: "border-box" }} />
+                    </div>
+                  </div>
+                  {calcCapacity !== null && (
+                    <div style={{ display: "flex", gap: 10 }}>
+                      <div style={{ background: "#fff", borderRadius: 8, padding: "10px 14px", flex: 1, textAlign: "center" }}>
+                        <div style={{ fontSize: 22, fontWeight: 800, color: "#7a3db0" }}>{calcCapacity.toLocaleString()}</div>
+                        <div style={{ fontSize: 11, color: "#7a8c74", textTransform: "uppercase" }}>Pots at {calcSpacing}" spacing</div>
+                      </div>
+                      {isDouble && (
+                        <div style={{ background: "#fff", borderRadius: 8, padding: "10px 14px", flex: 1, textAlign: "center" }}>
+                          <div style={{ fontSize: 22, fontWeight: 800, color: "#7a3db0" }}>{Math.round(calcCapacity / 2).toLocaleString()}</div>
+                          <div style={{ fontSize: 11, color: "#7a8c74", textTransform: "uppercase" }}>Per side</div>
+                        </div>
+                      )}
+                      <div style={{ background: "#fff", borderRadius: 8, padding: "10px 14px", flex: 1, textAlign: "center" }}>
+                        <div style={{ fontSize: 22, fontWeight: 800, color: "#4a5a40" }}>{sqFt.toLocaleString()}</div>
+                        <div style={{ fontSize: 11, color: "#7a8c74", textTransform: "uppercase" }}>Sq Ft</div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Occupancy */}
+              {assignedRuns.length > 0 && (
+                <div style={{ gridColumn: "span 2", background: "#e8f4f8", border: "1.5px solid #b0d8e8", borderRadius: 10, padding: 12 }}>
+                  <div style={{ fontSize: 11, fontWeight: 800, color: "#2e7d9e", letterSpacing: .8, textTransform: "uppercase", marginBottom: 8 }}>Current Occupancy</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {assignedRuns.map(r => (
+                      <div key={r.id} style={{ background: "#fff", borderRadius: 7, padding: "7px 10px", fontSize: 12, display: "flex", justifyContent: "space-between" }}>
+                        <span style={{ fontWeight: 700, color: "#1e2d1a" }}>🌱 {r.cropName}</span>
+                        <span style={{ color: "#7a8c74" }}>Wk {r.targetWeek} / {r.targetYear}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
             </>) : (<>
               <div><FL c="Length (ft)" /><input type="number" style={IS(focus === "len")} value={item.lengthFt || ""} onChange={e => onUpdate("lengthFt", e.target.value)} onFocus={() => setFocus("len")} onBlur={() => setFocus(null)} placeholder="e.g. 100" /></div>
               <div><FL c={`${rc.capLabel} per ${rc.rowLabel}`} /><input type="number" style={IS(focus === "cap")} value={item.capacityPerRow || ""} onChange={e => onUpdate("capacityPerRow", e.target.value)} onFocus={() => setFocus("cap")} onBlur={() => setFocus(null)} placeholder="e.g. 60" /></div>
+              <DripBlock item={item} onUpdate={onUpdate} fk={item.id} focus={focus} setFocus={setFocus} />
             </>)}
           </div>
-          {zoneType === "bench" && (<>
-            <div style={{ display: "flex", gap: 20, marginBottom: 10, flexWrap: "wrap" }}>
-              <Toggle value={!!item.heated} onChange={v => onUpdate("heated", v)} label={item.heated ? "Heated bench" : "Not heated"} />
-            </div>
-            <FL c="Irrigation" />
-            <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
-              {["Drip", "Hand Water", "None"].map(t => <button key={t} onClick={() => onUpdate("irrigation", t)} style={{ flex: 1, padding: "7px 0", borderRadius: 7, border: `1.5px solid ${item.irrigation === t ? zt.color : "#c8d8c0"}`, background: item.irrigation === t ? zt.color + "18" : "#fff", color: item.irrigation === t ? "#2e5c1e" : "#7a8c74", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>{t}</button>)}
-            </div>
-            {item.irrigation === "Drip" && <DripBlock item={item} onUpdate={onUpdate} fk={item.id} focus={focus} setFocus={setFocus} />}
-          </>)}
-          {zoneType !== "bench" && <DripBlock item={item} onUpdate={onUpdate} fk={item.id} focus={focus} setFocus={setFocus} />}
         </div>
       )}
     </div>
@@ -158,16 +333,28 @@ function ItemEditor({ item, idx, zoneType, zt, onUpdate, onRemove, onMoveUp, onM
 }
 
 // ── ZONE EDITOR ───────────────────────────────────────────────────────────────
-function ZoneEditor({ zone, onChange, onDelete, onMoveUp, onMoveDown }) {
+function ZoneEditor({ zone, onChange, onDelete, onMoveUp, onMoveDown, cropRuns }) {
   const [open, setOpen] = useState(false);
   const [focus, setFocus] = useState(null);
   const zt = ztc(zone.type); const rc = ROW_CFG[zone.type];
   const upd = (f, v) => onChange({ ...zone, [f]: v });
   const updItem = (idx, f, v) => { const items = [...(zone.items || [])]; items[idx] = { ...items[idx], [f]: v }; onChange({ ...zone, items }); };
-  const addItem = () => { const label = zone.type === "bench" ? `Bench ${(zone.items || []).length + 1}` : `${rc.rowLabel} ${(zone.items || []).length + 1}`; onChange({ ...zone, items: [...(zone.items || []), { id: uid(), label, widthFt: zone.type === "bench" ? 6 : undefined, lengthFt: "", capacityPerRow: "", irrigation: "Drip", dripLines: "", tubesPerItem: "", mainTubePosition: "", heated: false, cropId: null }] }); };
+  const addItem = () => {
+    const n = (zone.items || []).length + 1;
+    const label = zone.type === "bench" ? `Bench ${n}` : `${rc.rowLabel} ${n}`;
+    onChange({ ...zone, items: [...(zone.items || []), {
+      id: uid(), label, benchType: "single", widthFt: 4, lengthFt: "",
+      material: "", irrigation: "Drip", dripLines: "", tubesPerItem: "",
+      mainTubePosition: "", heated: false, cropId: null,
+      capacityPerRow: "",
+    }]});
+  };
   const removeItem = (idx) => onChange({ ...zone, items: (zone.items || []).filter((_, i) => i !== idx) });
   const moveItem = (idx, dir) => { const items = [...(zone.items || [])]; const s = idx + dir; if (s < 0 || s >= items.length) return; [items[idx], items[s]] = [items[s], items[idx]]; onChange({ ...zone, items }); };
-  const totalSqFt = zone.type === "bench" ? (zone.items || []).reduce((s, b) => s + (b.widthFt && b.lengthFt ? Number(b.widthFt) * Number(b.lengthFt) : 0), 0) : 0;
+  const totalSqFt = zone.type === "bench" ? (zone.items || []).reduce((s, b) => {
+    const w = b.benchType === "double" ? 8 : (b.widthFt || 0);
+    return s + (w && b.lengthFt ? Number(w) * Number(b.lengthFt) : 0);
+  }, 0) : 0;
   const totalPos  = zone.type !== "bench" ? (zone.items || []).reduce((s, r) => s + (Number(r.capacityPerRow) || 0), 0) : 0;
   return (
     <div style={{ background: "#fafcf8", borderRadius: 12, border: `1.5px solid ${zt.color}44`, overflow: "hidden", marginBottom: 10 }}>
@@ -198,7 +385,7 @@ function ZoneEditor({ zone, onChange, onDelete, onMoveUp, onMoveDown }) {
           {(zone.items || []).length === 0 && <div style={{ textAlign: "center", padding: 16, color: "#aabba0", background: "#fff", borderRadius: 8, border: `1.5px dashed ${zt.color}44`, fontSize: 12, marginBottom: 6 }}>None yet</div>}
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {(zone.items || []).map((item, idx) => (
-              <ItemEditor key={item.id} item={item} idx={idx} zoneType={zone.type} zt={zt}
+              <ItemEditor key={item.id} item={item} idx={idx} totalItems={(zone.items || []).length} zoneType={zone.type} zt={zt} cropRuns={cropRuns}
                 onUpdate={(f, v) => updItem(idx, f, v)} onRemove={() => removeItem(idx)}
                 onMoveUp={() => moveItem(idx, -1)} onMoveDown={() => moveItem(idx, 1)} />
             ))}
@@ -305,7 +492,7 @@ function HouseDetailsPanel({ details, onChange }) {
 }
 
 // ── HOUSE FORM ────────────────────────────────────────────────────────────────
-function HouseForm({ initial, onSave, onCancel }) {
+function HouseForm({ initial, onSave, onCancel, cropRuns }) {
   const blank = { name: "", location: "", indoor: true, heated: false, active: true, lighting: "", notes: "", zones: [], details: {} };
   const [form, setForm] = useState(initial ? dc({ ...blank, ...initial }) : blank);
   const [tab, setTab] = useState("zones");
@@ -347,7 +534,7 @@ function HouseForm({ initial, onSave, onCancel }) {
             {ZONE_TYPES.map(zt => <button key={zt.id} onClick={() => addZone(zt.id)} style={{ display: "flex", alignItems: "center", gap: 6, background: zt.color + "14", color: zt.color, border: `1.5px solid ${zt.color}55`, borderRadius: 8, padding: "7px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{zt.icon} + {zt.label}</button>)}
           </div>
           {form.zones.length === 0 && <div style={{ textAlign: "center", padding: 28, color: "#aabba0", background: "#f8faf6", borderRadius: 12, border: "1.5px dashed #c8d8c0", fontSize: 13, marginBottom: 20 }}>No zones yet</div>}
-          {form.zones.map((zone, idx) => <ZoneEditor key={zone.id} zone={zone} onChange={z => updZone(idx, z)} onDelete={() => delZone(idx)} onMoveUp={() => moveZone(idx, -1)} onMoveDown={() => moveZone(idx, 1)} />)}
+          {form.zones.map((zone, idx) => <ZoneEditor key={zone.id} zone={zone} cropRuns={cropRuns} onChange={z => updZone(idx, z)} onDelete={() => delZone(idx)} onMoveUp={() => moveZone(idx, -1)} onMoveDown={() => moveZone(idx, 1)} />)}
           {(totalBenches > 0 || totalSqFt > 0) && <div style={{ background: "#f0f8eb", borderRadius: 10, padding: "12px 16px", marginTop: 6, fontSize: 13, color: "#2e5c1e", fontWeight: 600 }}>✓ {totalBenches} bench{totalBenches !== 1 ? "es" : ""} · {totalSqFt.toLocaleString()} sq ft</div>}
         </>)}
         {tab === "details" && <HouseDetailsPanel details={form.details || {}} onChange={det => setForm(f => ({ ...f, details: det }))} />}
@@ -1025,6 +1212,7 @@ export default function App() {
   const { rows: houses, upsert: upsertHouse, remove: removeHouseDb } = useHouses();
   const { rows: pads,   upsert: upsertPad,   remove: removePadDb   } = usePads();
   const { rows: tasks,  upsert: upsertTask,  remove: removeTaskDb  } = useManualTasks();
+  const { rows: cropRuns } = useCropRuns();
 
   const [section,   setSection  ] = useState("overview");
   const [view,      setView     ] = useState("list");
@@ -1115,8 +1303,8 @@ export default function App() {
           {filteredHouses.length === 0 && <div style={{ textAlign: "center", padding: "80px 0", color: "#aabba0" }}><div style={{ fontSize: 52, marginBottom: 14 }}>🏠</div><div style={{ fontSize: 15, fontWeight: 700, color: "#7a8c74", marginBottom: 6 }}>No houses yet</div><button onClick={() => setView("add")} style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 10, padding: "12px 28px", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit", marginTop: 16 }}>+ Add First House</button></div>}
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>{filteredHouses.map(h => <HouseCard key={h.id} house={h} onEdit={x => { setEditingId(x.id); setView("edit"); }} onDelete={deleteHouse} onDuplicate={dupHouse} onToggleActive={toggleHouseActive} />)}</div>
         </>)}
-        {section === "houses" && view === "add" && <HouseForm onSave={saveHouse} onCancel={() => setView("list")} />}
-        {section === "houses" && view === "edit" && editingId && <HouseForm initial={houses.find(h => h.id === editingId)} onSave={saveHouse} onCancel={() => { setView("list"); setEditingId(null); }} />}
+        {section === "houses" && view === "add" && <HouseForm onSave={saveHouse} onCancel={() => setView("list")} cropRuns={cropRuns} />}
+        {section === "houses" && view === "edit" && editingId && <HouseForm initial={houses.find(h => h.id === editingId)} onSave={saveHouse} onCancel={() => { setView("list"); setEditingId(null); }} cropRuns={cropRuns} />}
 
         {/* ── OUTDOOR ── */}
         {section === "outdoor" && view === "list" && (<>
