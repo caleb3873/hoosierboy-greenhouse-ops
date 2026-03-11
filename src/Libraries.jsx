@@ -416,8 +416,9 @@ function VarietyLibrary() {
 
   async function saveVariety(form) {
     if (!form.cropName) return;
-    await upsertVariety(editingId ? { ...form, id: editingId } : { ...form, id: Date.now().toString() });
-    setView("library");
+    const clean = { ...form, id: editingId || form.id || crypto.randomUUID() };
+    try { await upsertVariety(clean); setView("library"); }
+    catch(e) { alert("Save failed: " + e.message); return; }
     setEditingId(null);
   }
 
@@ -439,7 +440,7 @@ function VarietyLibrary() {
   }
 
   async function saveReviewed(form) {
-    await upsertVariety({ ...form, id: Date.now().toString() });
+    try { await upsertVariety({ ...form, id: form.id || crypto.randomUUID() }); } catch(e) { alert("Save failed: " + e.message); return; }
     if (reviewIndex < reviewQueue.length - 1) {
       setReviewIndex(i => i + 1);
     } else {
@@ -1936,7 +1937,12 @@ function SpacingLibrary() {
   const [tagFilter, setTagFilter] = useState("all");
   const [search,    setSearch   ] = useState("");
 
-  async function save(p) { await upsertProfile(p); setView("list"); setEditingId(null); }
+  async function save(p) {
+    const clean = { ...p };
+    if (!clean.id || !clean.id.includes("-")) clean.id = crypto.randomUUID();
+    try { await upsertProfile(clean); setView("list"); setEditingId(null); }
+    catch(e) { alert("Save failed: " + e.message); }
+  }
   async function del(id) { if (window.confirm("Remove this spacing profile?")) await removeProfileDb(id); }
   async function dup(p)  { await upsertProfile({ ...dc(p), id: uid(), name: p.name + " (Copy)" }); }
 
@@ -3007,14 +3013,28 @@ function SoilLibrary() {
     { id: "notes",      label: "Notes",          required: false, guesses: ["note","comment"] },
   ];
   async function bulkImportSoil(rows) {
+    const NUMERIC = ["bagSize","costPerBag"];
+    let errors = 0;
     for (const r of rows) {
-      await upsertMix({ ...r, id: uid(), bagUnit: r.bagUnit || "cu ft", category: r.category || "annual" });
+      const row = { ...r, bagUnit: r.bagUnit || "cu ft", category: r.category || "annual" };
+      const clean = Object.fromEntries(
+        Object.entries(row).map(([k,v]) => [k, NUMERIC.includes(k) ? (v===""||v==null?null:Number(v)) : v])
+      );
+      clean.id = crypto.randomUUID();
+      try { await upsertMix(clean); }
+      catch(e) { errors++; console.error("Row failed:", clean.name, e.message); }
     }
+    if (errors > 0) alert("Import complete with " + errors + " error(s).");
   }
 
   const save = async (mix) => {
-    await upsertMix(mix);
-    setView("list"); setEditId(null);
+    const NUMERIC = ["bagSize","costPerBag"];
+    const clean = Object.fromEntries(
+      Object.entries(mix).map(([k,v]) => [k, NUMERIC.includes(k) ? (v===""||v==null?null:Number(v)) : v])
+    );
+    if (!clean.id || !clean.id.includes("-")) clean.id = crypto.randomUUID();
+    try { await upsertMix(clean); setView("list"); setEditId(null); }
+    catch(e) { alert("Save failed: " + e.message); }
   };
 
   const filtered = mixes.filter(m => catFilter === "all" || m.category === catFilter);
@@ -3392,14 +3412,28 @@ function InputsLibrary() {
     { id: "notes",           label: "Notes",             required: false, guesses: ["note","comment"] },
   ];
   async function bulkImportInputs(rows) {
+    const NUMERIC = ["costPerUnit","stockQty","reorderAt","preferredOrderQty","lastOrderPrice"];
+    let errors = 0;
     for (const r of rows) {
-      await upsertInput({ ...r, id: uid(), category: r.category || "other", signalWord: r.signalWord || "Caution" });
+      const row = { ...r, category: r.category || "other", signalWord: r.signalWord || "Caution" };
+      const clean = Object.fromEntries(
+        Object.entries(row).map(([k,v]) => [k, NUMERIC.includes(k) ? (v===""||v==null?null:Number(v)) : v])
+      );
+      clean.id = crypto.randomUUID();
+      try { await upsertInput(clean); }
+      catch(e) { errors++; console.error("Row failed:", clean.name, e.message); }
     }
+    if (errors > 0) alert("Import complete with " + errors + " error(s).");
   }
 
   const save = async (input) => {
-    await upsertInput(input);
-    setView("list"); setEditId(null);
+    const NUMERIC = ["costPerUnit","stockQty","reorderAt","preferredOrderQty","lastOrderPrice"];
+    const clean = Object.fromEntries(
+      Object.entries(input).map(([k,v]) => [k, NUMERIC.includes(k) ? (v===""||v==null?null:Number(v)) : v])
+    );
+    if (!clean.id || !clean.id.includes("-")) clean.id = crypto.randomUUID();
+    try { await upsertInput(clean); setView("list"); setEditId(null); }
+    catch(e) { alert("Save failed: " + e.message); }
   };
 
   const updateStock = async (id, qty) => await upsertInput({ id, stockQty: qty });
