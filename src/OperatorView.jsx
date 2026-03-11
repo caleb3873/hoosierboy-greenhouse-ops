@@ -166,10 +166,10 @@ export default function OperatorView({ onSwitchMode }) {
             <button onClick={onSwitchMode} style={{ background: "none", border: "1px solid #4a6a3a", borderRadius: 8, padding: "5px 10px", color: "#6a8a5a", fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>Switch</button>
           </div>
         </div>
-        <div style={{ display: "flex" }}>
+        <div style={{ display: "flex", overflowX: "auto", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", msOverflowStyle: "none" }}>
           {TABS.map(t => (
             <button key={t.id} onClick={() => setTab(t.id)}
-              style={{ flex: 1, padding: "9px 4px", background: "none", border: "none", borderBottom: `3px solid ${tab === t.id ? "#7fb069" : "transparent"}`, color: tab === t.id ? "#c8e6b8" : "#6a8a5a", fontWeight: tab === t.id ? 800 : 600, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+              style={{ flexShrink: 0, padding: "9px 12px", background: "none", border: "none", borderBottom: `3px solid ${tab === t.id ? "#7fb069" : "transparent"}`, color: tab === t.id ? "#c8e6b8" : "#6a8a5a", fontWeight: tab === t.id ? 800 : 600, fontSize: 12, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
               {t.label}{t.count > 0 && <span style={{ marginLeft: 4, background: tab === t.id ? "#7fb069" : "#3a4a3a", color: tab === t.id ? "#1a2a1a" : "#6a8a5a", borderRadius: 20, padding: "1px 6px", fontSize: 10, fontWeight: 800 }}>{t.count}</span>}
             </button>
           ))}
