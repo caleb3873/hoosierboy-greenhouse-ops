@@ -14,7 +14,18 @@ import { PlannerReceiving } from "./Receiving";
 const LOGO_WHITE = "https://cdn.prod.website-files.com/63b5c78a53ecb12c888ba09a/63b5d5e281aa6766b5cb8ace_HOO-Boy%20Logo%20Reversed-White.png";
 
 // ── MODE PICKER ───────────────────────────────────────────────────────────────
+const PLANNER_PIN = "7669"; // Change this to your preferred PIN
+
 function ModePicker({ onSelect }) {
+  const [showPin, setShowPin] = useState(false);
+  const [pin, setPin]         = useState("");
+  const [pinErr, setPinErr]   = useState(false);
+
+  function tryPin() {
+    if (pin === PLANNER_PIN) { setPin(""); setPinErr(false); onSelect("planner"); }
+    else { setPinErr(true); setPin(""); setTimeout(() => setPinErr(false), 1500); }
+  }
+
   return (
     <div style={{ fontFamily: "'DM Sans','Segoe UI',sans-serif", background: "#1a2a1a", minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24 }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
@@ -22,23 +33,53 @@ function ModePicker({ onSelect }) {
       <div style={{ fontSize: 13, color: "#6a8a5a", letterSpacing: 2, textTransform: "uppercase", marginBottom: 10, fontWeight: 700 }}>Greenhouse Ops</div>
       <div style={{ fontSize: 28, color: "#e8f4d8", fontFamily: "'DM Serif Display',Georgia,serif", marginBottom: 48, textAlign: "center" }}>How are you using this today?</div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 16, width: "100%", maxWidth: 360 }}>
-        <button onClick={() => onSelect("planner")}
-          style={{ padding: "22px 24px", borderRadius: 18, border: "2px solid #4a6a3a", background: "rgba(255,255,255,.05)", cursor: "pointer", fontFamily: "inherit", textAlign: "left", transition: "all .2s" }}
-          onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,.1)"}
-          onMouseLeave={e => e.currentTarget.style.background = "rgba(255,255,255,.05)"}>
-          <div style={{ fontSize: 20, fontWeight: 800, color: "#c8e6b8", marginBottom: 4 }}>Planner</div>
-          <div style={{ fontSize: 13, color: "#6a8a5a", lineHeight: 1.5 }}>Set up crop runs, manage orders, assign space, review the full season</div>
-        </button>
+      {!showPin ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 16, width: "100%", maxWidth: 360 }}>
+          <button onClick={() => setShowPin(true)}
+            style={{ padding: "22px 24px", borderRadius: 18, border: "2px solid #4a6a3a", background: "rgba(255,255,255,.05)", cursor: "pointer", fontFamily: "inherit", textAlign: "left", transition: "all .2s" }}
+            onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,.1)"}
+            onMouseLeave={e => e.currentTarget.style.background = "rgba(255,255,255,.05)"}>
+            <div style={{ fontSize: 20, fontWeight: 800, color: "#c8e6b8", marginBottom: 4 }}>🔒 Planner</div>
+            <div style={{ fontSize: 13, color: "#6a8a5a", lineHeight: 1.5 }}>Set up crop runs, manage orders, assign space, review the full season</div>
+          </button>
 
-        <button onClick={() => onSelect("operator")}
-          style={{ padding: "22px 24px", borderRadius: 18, border: "2px solid #4a6a3a", background: "rgba(255,255,255,.05)", cursor: "pointer", fontFamily: "inherit", textAlign: "left", transition: "all .2s" }}
-          onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,.1)"}
-          onMouseLeave={e => e.currentTarget.style.background = "rgba(255,255,255,.05)"}>
-          <div style={{ fontSize: 20, fontWeight: 800, color: "#c8e6b8", marginBottom: 4 }}>Floor Operator</div>
-          <div style={{ fontSize: 13, color: "#6a8a5a", lineHeight: 1.5 }}>Today's tasks, what's ready to ship, crop status, flag a problem</div>
-        </button>
-      </div>
+          <button onClick={() => onSelect("operator")}
+            style={{ padding: "22px 24px", borderRadius: 18, border: "2px solid #4a6a3a", background: "rgba(255,255,255,.05)", cursor: "pointer", fontFamily: "inherit", textAlign: "left", transition: "all .2s" }}
+            onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,.1)"}
+            onMouseLeave={e => e.currentTarget.style.background = "rgba(255,255,255,.05)"}>
+            <div style={{ fontSize: 20, fontWeight: 800, color: "#c8e6b8", marginBottom: 4 }}>Floor Operator</div>
+            <div style={{ fontSize: 13, color: "#6a8a5a", lineHeight: 1.5 }}>Today's tasks, what's ready to ship, crop status, flag a problem</div>
+          </button>
+        </div>
+      ) : (
+        <div style={{ width: "100%", maxWidth: 320, background: "rgba(255,255,255,.06)", borderRadius: 20, border: "1.5px solid #3a5a2a", padding: "32px 28px", textAlign: "center" }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: "#c8e6b8", marginBottom: 24 }}>Enter Planner PIN</div>
+          <div style={{ display: "flex", justifyContent: "center", gap: 12, marginBottom: 24 }}>
+            {[0,1,2,3].map(i => (
+              <div key={i} style={{ width: 48, height: 56, borderRadius: 10, border: `2px solid ${pinErr ? "#c03030" : pin.length > i ? "#7fb069" : "#3a5a2a"}`, background: pin.length > i ? "rgba(127,176,105,.15)" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, color: "#c8e6b8", transition: "all .15s" }}>
+                {pin.length > i ? "●" : ""}
+              </div>
+            ))}
+          </div>
+          {pinErr && <div style={{ color: "#f08080", fontSize: 13, marginBottom: 12, fontWeight: 700 }}>Incorrect PIN</div>}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 16 }}>
+            {["1","2","3","4","5","6","7","8","9","","0","⌫"].map((k, i) => (
+              <button key={i} onClick={() => {
+                if (k === "") return;
+                if (k === "⌫") { setPin(p => p.slice(0,-1)); return; }
+                const next = pin + k;
+                setPin(next);
+                if (next.length === 4) { setTimeout(() => { if (next === PLANNER_PIN) { setPin(""); onSelect("planner"); } else { setPinErr(true); setPin(""); setTimeout(() => setPinErr(false), 1500); } }, 100); }
+              }} disabled={k === ""}
+                style={{ padding: "16px 0", borderRadius: 12, border: "1.5px solid #3a5a2a", background: k === "" ? "transparent" : "rgba(255,255,255,.05)", color: "#c8e6b8", fontSize: 20, fontWeight: 700, cursor: k === "" ? "default" : "pointer", fontFamily: "inherit", opacity: k === "" ? 0 : 1 }}>
+                {k}
+              </button>
+            ))}
+          </div>
+          <button onClick={() => { setShowPin(false); setPin(""); setPinErr(false); }}
+            style={{ background: "none", border: "none", color: "#6a8a5a", fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>← Back</button>
+        </div>
+      )}
     </div>
   );
 }
