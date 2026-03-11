@@ -2042,16 +2042,21 @@ function SpacingLibrary() {
 
 // ── COLUMN FIELD OPTIONS ──────────────────────────────────────────────────────
 const FIELD_OPTIONS = [
-  { id: "skip",        label: "— Skip —"         },
-  { id: "crop",        label: "Crop Name"         },
-  { id: "description", label: "Description / Variety" },
-  { id: "size",        label: "Size / Form Type"  },
-  { id: "itemNumber",  label: "Item / Material #" },
-  { id: "perQty",      label: "Per (qty per tray)"},
-  { id: "sellPrice",   label: "Sell Price"        },
-  { id: "unitPrice",   label: "Unit Price"        },
-  { id: "shipDate",    label: "Ship Date"         },
-  { id: "isNew",       label: "New Flag"          },
+  { id: "skip",        label: "— Skip —"              },
+  { id: "crop",        label: "Crop / Species"         },
+  { id: "series",      label: "Series / Cultivar"      },
+  { id: "varietyName", label: "Variety Name (full)"    },
+  { id: "color",       label: "Color (standalone)"     },
+  { id: "description", label: "Description (legacy)"   },
+  { id: "size",        label: "Size / Form Type"       },
+  { id: "itemNumber",  label: "Item / Material #"      },
+  { id: "shortCode",   label: "Short Code"             },
+  { id: "perQty",      label: "Per / Unit Size (URCs)" },
+  { id: "sellPrice",   label: "Sell Price"             },
+  { id: "unitPrice",   label: "Unit Price"             },
+  { id: "shipDate",    label: "Ship Date"              },
+  { id: "isNew",       label: "New / Status Flag"      },
+  { id: "assortment",  label: "Assortment / Type"      },
 ];
 
 // ── PARSE EXCEL IN BROWSER ────────────────────────────────────────────────────
@@ -2078,15 +2083,20 @@ function guessMapping(headers) {
   const h = headers.map(h => String(h).toLowerCase());
   h.forEach((col, i) => {
     if (!col) return;
-    if (col.includes("crop"))                            map[i] = "crop";
+    if (col.includes("species") || col === "crop")       map[i] = "crop";
+    else if (col === "series")                           map[i] = "series";
+    else if (col.includes("variety name") || col === "variety") map[i] = "varietyName";
+    else if (col === "color")                            map[i] = "color";
+    else if (col.includes("short code") || col === "short") map[i] = "shortCode";
     else if (col.includes("desc"))                       map[i] = "description";
     else if (col.includes("size") || col.includes("form")) map[i] = "size";
     else if (col.includes("material") || col.includes("item") || col.includes("mat no")) map[i] = "itemNumber";
-    else if (col.includes("per") && !col.includes("percent")) map[i] = "perQty";
+    else if (col.includes("per") || col.includes("unit size")) map[i] = "perQty";
     else if (col.includes("sell"))                       map[i] = "sellPrice";
     else if (col.includes("unit price") || col === "unit") map[i] = "unitPrice";
     else if (col.includes("ship"))                       map[i] = "shipDate";
-    else if (col.includes("new"))                        map[i] = "isNew";
+    else if (col.includes("new") || col.includes("status")) map[i] = "isNew";
+    else if (col.includes("assortment") || col.includes("type")) map[i] = "assortment";
   });
   return map;
 }
@@ -2106,17 +2116,34 @@ function applyMapping(rows, mapping, headerRow) {
     const desc = get("description");
     if (!crop && !desc) return;
 
+    const series     = get("series");
+    const varietyName = get("varietyName");
+    // Derive color by stripping series prefix from varietyName
+    let color = get("color");
+    if (!color && series && varietyName) {
+      const stripped = varietyName.trim();
+      const sp = series.trim();
+      color = stripped.startsWith(sp) ? stripped.slice(sp.length).trim() : stripped;
+    }
+    // Normalize crop name — use species if available, else crop field
+    const cropName = (crop || desc || "").trim();
+
     items.push({
-      id:          uid(),
-      crop:        crop,
+      id:          crypto.randomUUID(),
+      crop:        cropName,
+      series:      series || get("description") || "",
+      varietyName: varietyName || desc || "",
+      color:       color || "",
+      shortCode:   get("shortCode"),
       description: desc,
       size:        get("size"),
-      itemNumber:  get("itemNumber"),
+      itemNumber:  get("itemNumber") || get("shortCode"),
       perQty:      get("perQty"),
       sellPrice:   parseFloat(get("sellPrice")) || null,
       unitPrice:   parseFloat(get("unitPrice")) || null,
       shipDate:    get("shipDate"),
       isNew:       !!get("isNew"),
+      assortment:  get("assortment"),
     });
   });
   return items;
@@ -2510,9 +2537,167 @@ function useBrokerLookup() {
     return null;
   };
 
-  return { getBrokerNames, getCatalogForBroker, searchVarieties, lookupByItemNumber };
+  // Cascade: broker → crops → series → colors
+  const getCascadeData = (brokerName) => {
+    const cats = getCatalogForBroker(brokerName);
+    const items = cats.flatMap(c => c.items);
+    // Group: crop → series → [items]
+    const tree = {};
+    items.forEach(item => {
+      const crop   = (item.crop || item.description || "Unknown").trim();
+      const series = (item.series || item.description || "").trim();
+      const color  = (item.color || item.varietyName || item.description || "").trim();
+      if (!crop) return;
+      if (!tree[crop]) tree[crop] = {};
+      if (!tree[crop][series]) tree[crop][series] = [];
+      tree[crop][series].push(item);
+    });
+    return tree;
+  };
+
+  const getCrops = (brokerName) => {
+    const tree = getCascadeData(brokerName);
+    return Object.keys(tree).sort();
+  };
+
+  const getSeries = (brokerName, crop) => {
+    const tree = getCascadeData(brokerName);
+    return Object.keys(tree[crop] || {}).sort();
+  };
+
+  const getColors = (brokerName, crop, series) => {
+    const tree = getCascadeData(brokerName);
+    return (tree[crop]?.[series] || []).sort((a,b) => (a.color||"").localeCompare(b.color||""));
+  };
+
+  const lookupByCascade = (brokerName, crop, series, color) => {
+    const colors = getColors(brokerName, crop, series);
+    return colors.find(i => (i.color || i.varietyName || "") === color) || null;
+  };
+
+  return { getBrokerNames, getCatalogForBroker, searchVarieties, lookupByItemNumber, getCascadeData, getCrops, getSeries, getColors, lookupByCascade };
 }
 
+
+// ── CATALOG PICKER — exported for use in CropPlanning & ComboDesigner ──────────
+// Usage: <CatalogPicker broker="Ball Seed" onSelect={({crop,series,color,itemNumber,perQty,sellPrice,...}) => ...} />
+export function CatalogPicker({ broker, onSelect, initial = {} }) {
+  const { getCrops, getSeries, getColors, lookupByCascade } = useBrokerLookup();
+
+  const [crop,   setCrop]   = useState(initial.crop   || "");
+  const [series, setSeries] = useState(initial.series || "");
+  const [color,  setColor]  = useState(initial.color  || "");
+
+  const crops      = broker ? getCrops(broker)              : [];
+  const seriesList = broker && crop   ? getSeries(broker, crop)          : [];
+  const colorList  = broker && crop && series ? getColors(broker, crop, series) : [];
+
+  function pickCrop(c) {
+    setCrop(c); setSeries(""); setColor("");
+  }
+  function pickSeries(s) {
+    setSeries(s); setColor("");
+  }
+  function pickColor(c) {
+    setColor(c);
+    if (onSelect && broker && crop && series) {
+      const item = lookupByCascade(broker, crop, series, c);
+      if (item) onSelect({ crop, series, color: c, itemNumber: item.itemNumber || item.shortCode || "", perQty: item.perQty || "", sellPrice: item.sellPrice || item.unitPrice || null, varietyName: item.varietyName || "", shortCode: item.shortCode || "", item });
+    }
+  }
+
+  const SEL = (active) => ({
+    display: "inline-flex", alignItems: "center", padding: "6px 14px", borderRadius: 20,
+    border: `1.5px solid ${active ? "#7fb069" : "#c8d8c0"}`,
+    background: active ? "#f0f8eb" : "#fff",
+    color: active ? "#2e5c1e" : "#4a5a40",
+    fontWeight: active ? 800 : 600, fontSize: 13, cursor: "pointer", fontFamily: "inherit",
+    whiteSpace: "nowrap", transition: "all .1s",
+  });
+
+  const SL = { width: "100%", padding: "10px 12px", borderRadius: 10, border: "1.5px solid #c8d8c0", fontSize: 14, fontFamily: "inherit", background: "#fff", color: "#1e2d1a", cursor: "pointer" };
+
+  if (!broker) return (
+    <div style={{ padding: "14px", background: "#f8faf6", borderRadius: 10, fontSize: 13, color: "#9aaa90", textAlign: "center" }}>
+      Select a broker first to use the catalog picker.
+    </div>
+  );
+
+  if (crops.length === 0) return (
+    <div style={{ padding: "14px", background: "#fff8e8", borderRadius: 10, fontSize: 13, color: "#c8791a", border: "1.5px solid #f0d090" }}>
+      ⚠ No catalog imported for this broker yet. Import one in Library → Brokers.
+    </div>
+  );
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {/* Step 1: Crop */}
+      <div>
+        <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .7, marginBottom: 6 }}>Crop / Species</div>
+        <select value={crop} onChange={e => pickCrop(e.target.value)} style={SL}>
+          <option value="">— Select crop —</option>
+          {crops.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
+      </div>
+
+      {/* Step 2: Series */}
+      {crop && (
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .7, marginBottom: 6 }}>Series / Cultivar</div>
+          {seriesList.length <= 8
+            ? <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {seriesList.map(s => (
+                  <button key={s} onClick={() => pickSeries(s)} style={SEL(series === s)}>{s || "(No series)"}</button>
+                ))}
+              </div>
+            : <select value={series} onChange={e => pickSeries(e.target.value)} style={SL}>
+                <option value="">— Select series —</option>
+                {seriesList.map(s => <option key={s} value={s}>{s || "(No series)"}</option>)}
+              </select>
+          }
+        </div>
+      )}
+
+      {/* Step 3: Color */}
+      {series && colorList.length > 0 && (
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .7, marginBottom: 6 }}>Color</div>
+          {colorList.length <= 12
+            ? <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {colorList.map(item => {
+                  const c = item.color || item.varietyName || "";
+                  return (
+                    <button key={c} onClick={() => pickColor(c)} style={SEL(color === c)}>{c || "(No color)"}</button>
+                  );
+                })}
+              </div>
+            : <select value={color} onChange={e => pickColor(e.target.value)} style={SL}>
+                <option value="">— Select color —</option>
+                {colorList.map(item => {
+                  const c = item.color || item.varietyName || "";
+                  return <option key={c} value={c}>{c}</option>;
+                })}
+              </select>
+          }
+        </div>
+      )}
+
+      {/* Auto-fill preview */}
+      {color && broker && crop && series && (() => {
+        const item = lookupByCascade(broker, crop, series, color);
+        if (!item) return null;
+        return (
+          <div style={{ background: "#f0f8eb", borderRadius: 10, border: "1.5px solid #b8d8a0", padding: "10px 14px", display: "flex", gap: 16, flexWrap: "wrap" }}>
+            {item.itemNumber && <div style={{ fontSize: 12 }}><span style={{ color: "#7a8c74" }}>Item #</span> <strong>{item.itemNumber}</strong></div>}
+            {item.shortCode  && <div style={{ fontSize: 12 }}><span style={{ color: "#7a8c74" }}>Code</span> <strong>{item.shortCode}</strong></div>}
+            {item.perQty     && <div style={{ fontSize: 12 }}><span style={{ color: "#7a8c74" }}>Per</span> <strong>{item.perQty}</strong></div>}
+            {(item.sellPrice || item.unitPrice) && <div style={{ fontSize: 12 }}><span style={{ color: "#7a8c74" }}>Price</span> <strong>${item.sellPrice || item.unitPrice}</strong></div>}
+          </div>
+        );
+      })()}
+    </div>
+  );
+}
 
 // ── LIBRARIES TAB WRAPPER ────────────────────────────────────────────────────
 
