@@ -94,7 +94,7 @@ function VarietyForm({ initial, onSave, onCancel, title }) {
   const [form, setForm] = useState(initial || {
     cropName: "", variety: "", breeder: "", type: "Annual",
     propTraySize: "", propCellCount: "", propWeeks: "",
-    finishWeeks: "", finishTempDay: "", finishTempNight: "",
+    finishWeeks: "", finishTempDay: "", finishTempNight: "", tempGroup: "",
     lightRequirement: "", fertilizerRate: "", fertilizerType: "",
     spacing: "", pgrType: "None", pgrRate: "", pgrTiming: "",
     pinchingNotes: "", generalNotes: "", cultureGuideUrl: "",
@@ -142,6 +142,17 @@ function VarietyForm({ initial, onSave, onCancel, title }) {
         <FormField label="Day Temp (°F)"><input {...f("finishTempDay")} placeholder="e.g. 68" /></FormField>
         <FormField label="Night Temp (°F)"><input {...f("finishTempNight")} placeholder="e.g. 58" /></FormField>
       </div>
+      <FormField label="Temperature Group *" hint="Used for range compatibility — cool crops move outside weeks 12-13">
+        <div style={{ display: "flex", gap: 8 }}>
+          {[["cool","❄️ Cool","Petunias, Pansies, Calibrachoa, Snapdragons, Osteospermum"],["warm","🌡 Warm","Begonias, Vinca, Impatiens, Celosia, Coleus"]].map(([val, label, examples]) => (
+            <button key={val} type="button" onClick={() => setForm(x => ({ ...x, tempGroup: val }))}
+              style={{ flex: 1, padding: "10px 8px", borderRadius: 8, border: `2px solid ${form.tempGroup === val ? (val === "cool" ? "#4a90d9" : "#e07b39") : "#c8d8c0"}`, background: form.tempGroup === val ? (val === "cool" ? "#e8f3fc" : "#fdf3ea") : "#fff", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+              <div style={{ fontWeight: 700, fontSize: 13, color: form.tempGroup === val ? (val === "cool" ? "#1a4a7a" : "#a04010") : "#7a8c74", marginBottom: 2 }}>{label}</div>
+              <div style={{ fontSize: 10, color: "#aabba0", lineHeight: 1.3 }}>{examples}</div>
+            </button>
+          ))}
+        </div>
+      </FormField>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <FormField label="Light Requirement">
           <select style={inputStyle(false)} value={form.lightRequirement || ""} onChange={e => setForm(x => ({ ...x, lightRequirement: e.target.value }))}>
@@ -208,6 +219,7 @@ function VarietyCard({ variety, onEdit, onDelete }) {
           </div>
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: 12, color: "#aabba0" }}>
             {variety.finishWeeks && <span>🗓 {variety.finishWeeks} wks finish</span>}
+            {variety.tempGroup && <span style={{ fontWeight: 700, color: variety.tempGroup === "cool" ? "#1a4a7a" : "#a04010", background: variety.tempGroup === "cool" ? "#e8f3fc" : "#fdf3ea", borderRadius: 4, padding: "1px 6px", fontSize: 11 }}>{variety.tempGroup === "cool" ? "❄️ Cool" : "🌡 Warm"}</span>}
             {variety.finishTempDay && <span>🌡 {variety.finishTempDay}°F day</span>}
             {variety.pgrType && variety.pgrType !== "None" && <span>💊 {variety.pgrType}</span>}
             {variety.lightRequirement && <span>☀ {variety.lightRequirement}</span>}
