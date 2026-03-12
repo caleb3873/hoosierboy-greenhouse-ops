@@ -421,6 +421,13 @@ export default function Export() {
   const [done, setDone]         = useState(false);
   const [statusFilter, setStatusFilter] = useState("active"); // all | active | planned
 
+  const LAST_EXPORT_KEY = "gh_last_export_date_v1";
+  const [lastExport, setLastExport] = useState(() => {
+    try { return localStorage.getItem(LAST_EXPORT_KEY) || null; } catch { return null; }
+  });
+  const daysSinceExport = lastExport ? Math.floor((Date.now() - new Date(lastExport).getTime()) / (1000 * 60 * 60 * 24)) : null;
+  const exportOverdue = daysSinceExport === null || daysSinceExport >= 14;
+
   const toggle = (id) => setOptions(o => ({ ...o, [id]: !o[id] }));
 
   const filteredRuns = runs.filter(r => {
@@ -436,6 +443,9 @@ export default function Export() {
     setDone(false);
     try {
       await runExport({ runs: filteredRuns, containers, houses, pads, varieties, flags, options });
+      const now = new Date().toISOString();
+      localStorage.setItem(LAST_EXPORT_KEY, now);
+      setLastExport(now);
       setDone(true);
       setTimeout(() => setDone(false), 4000);
     } catch (e) {
@@ -452,6 +462,29 @@ export default function Export() {
         <div style={{ fontSize: 24, fontWeight: 900, color: "#1e2d1a", marginBottom: 4 }}>Export & Backup</div>
         <div style={{ fontSize: 14, color: "#7a8c74" }}>Download your entire season as an Excel file — always have a local copy</div>
       </div>
+
+      {/* Overdue backup warning */}
+      {exportOverdue && (
+        <div style={{ background: daysSinceExport === null ? "#fff8e8" : "#fde8e8", border: `1.5px solid ${daysSinceExport === null ? "#f0d080" : "#f0c0c0"}`, borderRadius: 12, padding: "12px 18px", marginBottom: 16, display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{ fontSize: 20 }}>{daysSinceExport === null ? "📋" : "⚠️"}</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 800, fontSize: 14, color: daysSinceExport === null ? "#7a5a10" : "#c03030" }}>
+              {daysSinceExport === null ? "No backup on record" : `Last backup was ${daysSinceExport} days ago`}
+            </div>
+            <div style={{ fontSize: 12, color: daysSinceExport === null ? "#a07830" : "#d04040", marginTop: 2 }}>
+              {daysSinceExport === null ? "Export your season data so you always have a local copy" : "It's been over 2 weeks — run an export to stay protected"}
+            </div>
+          </div>
+        </div>
+      )}
+      {!exportOverdue && lastExport && (
+        <div style={{ background: "#f0f8eb", border: "1.5px solid #b8d8a0", borderRadius: 12, padding: "10px 18px", marginBottom: 16, display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 16 }}>✓</span>
+          <div style={{ fontSize: 13, fontWeight: 600, color: "#2e5c1e" }}>
+            Last backup {daysSinceExport === 0 ? "today" : `${daysSinceExport} day${daysSinceExport === 1 ? "" : "s"} ago`} — {new Date(lastExport).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+          </div>
+        </div>
+      )}
 
       {/* Stats bar */}
       <div style={{ background: "#1e2d1a", borderRadius: 14, padding: "16px 20px", marginBottom: 20, display: "flex", gap: 24, flexWrap: "wrap" }}>
