@@ -374,11 +374,11 @@ function buildAccessoriesSheet(runs, containers) {
     const units  = cases * pack;
     if (units <= 0) continue;
 
-    // Tray
-    if (cont.hasTray && cont.trayCost) {
-      const potsPerTray = Number(cont.traysPerCase) || 1;
-      const traysNeeded = Math.ceil(units / potsPerTray);
-      addLine(cont.traySupplier || cont.supplier, cont.trayName || `Tray for ${cont.name}`, cont.traySku, Number(cont.trayCost), traysNeeded);
+    // Carrier Tray
+    if (cont.hasCarrier && cont.carrierCost) {
+      const potsPerCarrier = Number(cont.potsPerCarrier) || 1;
+      const traysNeeded = Math.ceil(units / potsPerCarrier);
+      addLine(cont.carrierSupplier || cont.supplier, cont.carrierName || `Carrier Tray for ${cont.name}`, cont.carrierSku, Number(cont.carrierCost), traysNeeded);
     }
     // Wire
     if (cont.hasWire && cont.wireCost) {
