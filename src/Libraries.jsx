@@ -725,6 +725,14 @@ function ContainerForm({ initial, onSave, onCancel }) {
     substrateVol: "", substrateUnit: "qt",
     supplier: "", supplier2: "", sku: "", notes: "",
     spacing: {},
+    // Tray pairing (pots)
+    hasTray: false, trayName: "", traySupplier: "", traySku: "", trayCost: "", traysPerCase: "",
+    // Saucer (baskets — optional)
+    hasSaucer: false, saucerName: "", saucerSupplier: "", saucerSku: "", saucerCost: "",
+    // Sleeve (baskets + planters — sized by diameter)
+    hasSleeve: false, sleeveSupplier: "", sleeveSku: "", sleeveCost: "",
+    // Hoosier Boy branded tag
+    isHBTagged: false, tagCostPerUnit: "", tagSupplier: "", tagSku: "",
   };
   const [form, setForm] = useState(initial ? dc({ ...blank, ...initial }) : blank);
   const [focus, setFocus] = useState(null);
@@ -893,6 +901,107 @@ function ContainerForm({ initial, onSave, onCancel }) {
                           <FL c="Cost per Wire ($)" />
                           <input type="number" step="0.001" style={{ ...IS(focus === "wcost"), background: "#fff" }} value={form.wireCost || ""} onChange={e => upd("wireCost", e.target.value)} onFocus={() => setFocus("wcost")} onBlur={() => setFocus(null)} placeholder="e.g. 0.18" />
                         </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+
+              {/* ── TRAY (pots only) ─────────────────────────────────── */}
+              {isFinished && form.type === "pot" && (
+                <div style={{ gridColumn: "span 2" }}>
+                  <div style={{ borderTop: "1.5px solid #e0ead8", marginBottom: 14, marginTop: 4 }} />
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#1e2d1a" }}>Tray Pairing</div>
+                      <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2 }}>Tray that ships with this pot size</div>
+                    </div>
+                    <Toggle value={!!form.hasTray} onChange={v => upd("hasTray", v)} label={form.hasTray ? "Yes" : "No"} />
+                  </div>
+                  {form.hasTray && (
+                    <div style={{ background: "#f0f5ff", border: "1.5px solid #c0d0f0", borderRadius: 10, padding: 14 }}>
+                      <div style={{ fontSize: 11, fontWeight: 800, color: "#3a4a80", letterSpacing: .8, textTransform: "uppercase", marginBottom: 12 }}>Tray Info</div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                        <div style={{ gridColumn: "span 2" }}><FL c="Tray Name / Description" /><input style={{ ...IS(focus === "tname"), background: "#fff" }} value={form.trayName || ""} onChange={e => upd("trayName", e.target.value)} onFocus={() => setFocus("tname")} onBlur={() => setFocus(null)} placeholder='e.g. 18-cell 4.5" Tray' /></div>
+                        <div><FL c="Tray Supplier" /><input style={{ ...IS(focus === "tsup"), background: "#fff" }} value={form.traySupplier || ""} onChange={e => upd("traySupplier", e.target.value)} onFocus={() => setFocus("tsup")} onBlur={() => setFocus(null)} placeholder="e.g. Landmark Plastics" /></div>
+                        <div><FL c="Tray SKU" /><input style={{ ...IS(focus === "tsku"), background: "#fff" }} value={form.traySku || ""} onChange={e => upd("traySku", e.target.value)} onFocus={() => setFocus("tsku")} onBlur={() => setFocus(null)} placeholder="e.g. T-18-45" /></div>
+                        <div><FL c="Cost per Tray ($)" /><input type="number" step="0.001" style={{ ...IS(focus === "tcost"), background: "#fff" }} value={form.trayCost || ""} onChange={e => upd("trayCost", e.target.value)} onFocus={() => setFocus("tcost")} onBlur={() => setFocus(null)} placeholder="e.g. 0.45" /></div>
+                        <div><FL c="Pots per Tray" /><input type="number" style={{ ...IS(focus === "tpc"), background: "#fff" }} value={form.traysPerCase || ""} onChange={e => upd("traysPerCase", e.target.value)} onFocus={() => setFocus("tpc")} onBlur={() => setFocus(null)} placeholder="e.g. 18, 24" /></div>
+                      </div>
+                      {form.trayCost && <div style={{ marginTop: 10, fontSize: 12, color: "#3a4a80", fontWeight: 700 }}>Cost per pot position: ${(Number(form.trayCost) / (Number(form.traysPerCase) || 1)).toFixed(4)}</div>}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ── SAUCER (baskets — optional) ───────────────────────── */}
+              {isFinished && form.type === "basket" && (
+                <div style={{ gridColumn: "span 2" }}>
+                  <div style={{ borderTop: "1.5px solid #e0ead8", marginBottom: 14, marginTop: 4 }} />
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#1e2d1a" }}>Basket Saucer</div>
+                      <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2 }}>Optional saucer for display/retail</div>
+                    </div>
+                    <Toggle value={!!form.hasSaucer} onChange={v => upd("hasSaucer", v)} label={form.hasSaucer ? "Yes" : "No"} />
+                  </div>
+                  {form.hasSaucer && (
+                    <div style={{ background: "#f5f0ff", border: "1.5px solid #c8b8f0", borderRadius: 10, padding: 14 }}>
+                      <div style={{ fontSize: 11, fontWeight: 800, color: "#5a3a90", letterSpacing: .8, textTransform: "uppercase", marginBottom: 12 }}>Saucer Info</div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                        <div style={{ gridColumn: "span 2" }}><FL c="Saucer Name / Description" /><input style={{ ...IS(focus === "sname"), background: "#fff" }} value={form.saucerName || ""} onChange={e => upd("saucerName", e.target.value)} onFocus={() => setFocus("sname")} onBlur={() => setFocus(null)} placeholder='e.g. 12" Basket Saucer' /></div>
+                        <div><FL c="Saucer Supplier" /><input style={{ ...IS(focus === "ssup"), background: "#fff" }} value={form.saucerSupplier || ""} onChange={e => upd("saucerSupplier", e.target.value)} onFocus={() => setFocus("ssup")} onBlur={() => setFocus(null)} placeholder="Same as basket supplier" /></div>
+                        <div><FL c="Saucer SKU" /><input style={{ ...IS(focus === "ssku"), background: "#fff" }} value={form.saucerSku || ""} onChange={e => upd("saucerSku", e.target.value)} onFocus={() => setFocus("ssku")} onBlur={() => setFocus(null)} placeholder="e.g. S-12-CLR" /></div>
+                        <div><FL c="Cost per Saucer ($)" /><input type="number" step="0.001" style={{ ...IS(focus === "scost"), background: "#fff" }} value={form.saucerCost || ""} onChange={e => upd("saucerCost", e.target.value)} onFocus={() => setFocus("scost")} onBlur={() => setFocus(null)} placeholder="e.g. 0.22" /></div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ── SLEEVE (baskets + planters) ───────────────────────── */}
+              {isFinished && ["basket","pot","combo"].includes(form.type) && (
+                <div style={{ gridColumn: "span 2" }}>
+                  <div style={{ borderTop: "1.5px solid #e0ead8", marginBottom: 14, marginTop: 4 }} />
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#1e2d1a" }}>Sleeve</div>
+                      <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2 }}>Protection sleeve sized to {form.diameterIn ? `${form.diameterIn}"` : "this container's"} diameter</div>
+                    </div>
+                    <Toggle value={!!form.hasSleeve} onChange={v => upd("hasSleeve", v)} label={form.hasSleeve ? "Yes" : "No"} />
+                  </div>
+                  {form.hasSleeve && (
+                    <div style={{ background: "#f0f8f0", border: "1.5px solid #a8d8a0", borderRadius: 10, padding: 14 }}>
+                      <div style={{ fontSize: 11, fontWeight: 800, color: "#2a6a20", letterSpacing: .8, textTransform: "uppercase", marginBottom: 12 }}>Sleeve Info</div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                        <div><FL c="Sleeve Supplier" /><input style={{ ...IS(focus === "slsup"), background: "#fff" }} value={form.sleeveSupplier || ""} onChange={e => upd("sleeveSupplier", e.target.value)} onFocus={() => setFocus("slsup")} onBlur={() => setFocus(null)} placeholder="e.g. Belden" /></div>
+                        <div><FL c="Sleeve SKU" /><input style={{ ...IS(focus === "slsku"), background: "#fff" }} value={form.sleeveSku || ""} onChange={e => upd("sleeveSku", e.target.value)} onFocus={() => setFocus("slsku")} onBlur={() => setFocus(null)} placeholder={`e.g. SL-${form.diameterIn||"X"}`} /></div>
+                        <div><FL c="Cost per Sleeve ($)" /><input type="number" step="0.001" style={{ ...IS(focus === "slcost"), background: "#fff" }} value={form.sleeveCost || ""} onChange={e => upd("sleeveCost", e.target.value)} onFocus={() => setFocus("slcost")} onBlur={() => setFocus(null)} placeholder="e.g. 0.12" /></div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ── HOOSIER BOY BRANDED TAG ───────────────────────────── */}
+              {isFinished && (
+                <div style={{ gridColumn: "span 2" }}>
+                  <div style={{ borderTop: "1.5px solid #e0ead8", marginBottom: 14, marginTop: 4 }} />
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#1e2d1a" }}>Hoosier Boy Branded Tag</div>
+                      <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2 }}>For hanging baskets and premium planters</div>
+                    </div>
+                    <Toggle value={!!form.isHBTagged} onChange={v => upd("isHBTagged", v)} label={form.isHBTagged ? "Yes" : "No"} />
+                  </div>
+                  {form.isHBTagged && (
+                    <div style={{ background: "#1e2d1a", border: "1.5px solid #3a5a2a", borderRadius: 10, padding: 14 }}>
+                      <div style={{ fontSize: 11, fontWeight: 800, color: "#7fb069", letterSpacing: .8, textTransform: "uppercase", marginBottom: 12 }}>HB Tag Info</div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                        <div><FL c="Tag Supplier" /><input style={{ ...IS(focus === "tagsup"), background: "#2e4a22", color: "#c8e6b8", borderColor: "#4a6a3a" }} value={form.tagSupplier || ""} onChange={e => upd("tagSupplier", e.target.value)} onFocus={() => setFocus("tagsup")} onBlur={() => setFocus(null)} placeholder="e.g. Greenhouse Growers Supply" /></div>
+                        <div><FL c="Tag SKU" /><input style={{ ...IS(focus === "tagsku"), background: "#2e4a22", color: "#c8e6b8", borderColor: "#4a6a3a" }} value={form.tagSku || ""} onChange={e => upd("tagSku", e.target.value)} onFocus={() => setFocus("tagsku")} onBlur={() => setFocus(null)} placeholder="e.g. HB-TAG-BAS" /></div>
+                        <div><FL c="Cost per Tag ($)" /><input type="number" step="0.001" style={{ ...IS(focus === "tagcost"), background: "#2e4a22", color: "#c8e6b8", borderColor: "#4a6a3a" }} value={form.tagCostPerUnit || ""} onChange={e => upd("tagCostPerUnit", e.target.value)} onFocus={() => setFocus("tagcost")} onBlur={() => setFocus(null)} placeholder="e.g. 0.08" /></div>
                       </div>
                     </div>
                   )}
@@ -1367,9 +1476,16 @@ function ContainerLibrary() {
     const DB_FIELDS = ["id","name","kind","type","trayType","diameterIn","heightIn","widthIn","lengthIn",
       "material","volumeVal","volumeUnit","cellsPerFlat","unitsPerCase","qtyPerPallet","costPerUnit",
       "substrateVol","substrateUnit","supplier","supplier2","sku","notes","spacing",
-      "photo","stockQty","stockLocation","inventoryHistory","priceHistory"];
+      "photo","stockQty","stockLocation","inventoryHistory","priceHistory",
+      "hasTray","trayName","traySupplier","traySku","trayCost","traysPerCase",
+      "hasSaucer","saucerName","saucerSupplier","saucerSku","saucerCost",
+      "hasSleeve","sleeveSupplier","sleeveSku","sleeveCost",
+      "isHBTagged","tagCostPerUnit","tagSupplier","tagSku",
+      "hasWire","wireType","wireLength","wireGauge","wireSwivel","wireSupplier","wireSku","wireCost",
+      "primaryTag","secondaryTag","tagTier"];
     const NUMERIC_FIELDS = ["diameterIn","heightIn","widthIn","lengthIn","volumeVal",
-      "cellsPerFlat","unitsPerCase","qtyPerPallet","costPerUnit","substrateVol"];
+      "cellsPerFlat","unitsPerCase","qtyPerPallet","costPerUnit","substrateVol",
+      "trayCost","traysPerCase","saucerCost","sleeveCost","tagCostPerUnit","wireCost"];
     let errors = 0;
     for (const r of rows) {
       const row = { ...r, kind: r.kind || "finished" };
@@ -1393,9 +1509,16 @@ function ContainerLibrary() {
     const DB_FIELDS = ["id","name","kind","type","trayType","diameterIn","heightIn","widthIn","lengthIn",
       "material","volumeVal","volumeUnit","cellsPerFlat","unitsPerCase","qtyPerPallet","costPerUnit",
       "substrateVol","substrateUnit","supplier","supplier2","sku","notes","spacing",
-      "photo","stockQty","stockLocation","inventoryHistory","priceHistory"];
+      "photo","stockQty","stockLocation","inventoryHistory","priceHistory",
+      "hasTray","trayName","traySupplier","traySku","trayCost","traysPerCase",
+      "hasSaucer","saucerName","saucerSupplier","saucerSku","saucerCost",
+      "hasSleeve","sleeveSupplier","sleeveSku","sleeveCost",
+      "isHBTagged","tagCostPerUnit","tagSupplier","tagSku",
+      "hasWire","wireType","wireLength","wireGauge","wireSwivel","wireSupplier","wireSku","wireCost",
+      "primaryTag","secondaryTag","tagTier"];
     const NUMERIC_FIELDS = ["diameterIn","heightIn","widthIn","lengthIn","volumeVal",
-      "cellsPerFlat","unitsPerCase","qtyPerPallet","costPerUnit","substrateVol"];
+      "cellsPerFlat","unitsPerCase","qtyPerPallet","costPerUnit","substrateVol",
+      "trayCost","traysPerCase","saucerCost","sleeveCost","tagCostPerUnit","wireCost"];
     const clean = Object.fromEntries(
       Object.entries(c)
         .filter(([k]) => DB_FIELDS.includes(k))
