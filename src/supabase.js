@@ -27,12 +27,18 @@ function toCamel(obj) {
 }
 
 // Convert camelCase app object to snake_case for DB
+// Manual overrides for keys that don't convert cleanly via regex
+const SNAKE_OVERRIDES = {
+  isHBTagged: "is_hb_tagged",
+  tagCostPerUnit: "tag_cost_per_unit",
+};
+
 function toSnake(obj) {
   if (!obj || typeof obj !== "object") return obj;
   if (Array.isArray(obj)) return obj.map(toSnake);
   return Object.fromEntries(
     Object.entries(obj).map(([k, v]) => [
-      k.replace(/([A-Z])/g, "_$1").toLowerCase(),
+      SNAKE_OVERRIDES[k] || k.replace(/([A-Z])/g, "_$1").toLowerCase(),
       // Don't recurse into jsonb fields — keep them as-is
       typeof v === "object" && v !== null && !Array.isArray(v) &&
         !["varieties","indoorAssignments","outsideAssignments","zones","sections","stages","items","spacing","details","priceHistory","inventoryHistory"].includes(k)
