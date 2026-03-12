@@ -16,6 +16,11 @@ export default function PlannerHome({ onNavigate }) {
   const { rows: runs } = useCropRuns();
   const [gcalRun, setGcalRun] = useState(null); // run whose events we're previewing
 
+  // Backup overdue check
+  const lastExport = (() => { try { return localStorage.getItem("gh_last_export_date_v1") || null; } catch { return null; } })();
+  const daysSinceExport = lastExport ? Math.floor((Date.now() - new Date(lastExport).getTime()) / (1000 * 60 * 60 * 24)) : null;
+  const exportOverdue = daysSinceExport === null || daysSinceExport >= 14;
+
   // Summary counts
   const byStatus = {};
   CROP_STATUS.forEach(s => { byStatus[s.id] = 0; });
@@ -43,6 +48,14 @@ export default function PlannerHome({ onNavigate }) {
       <div style={{ fontSize: 14, color: "#7a8c74", marginBottom: 28 }}>Week {CURRENT_WEEK} &middot; {new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}</div>
 
       {/* Alerts */}
+      {exportOverdue && (
+        <div style={{ background: daysSinceExport === null ? "#fff8e8" : "#fde8e8", border: `1.5px solid ${daysSinceExport === null ? "#f0d080" : "#f0b0a0"}`, borderRadius: 12, padding: "12px 18px", marginBottom: 14, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span style={{ fontSize: 14, color: daysSinceExport === null ? "#7a5a10" : "#c03030", fontWeight: 700 }}>
+            {daysSinceExport === null ? "📋 No backup on record" : `⚠️ Last backup was ${daysSinceExport} days ago`}
+          </span>
+          <button onClick={() => onNavigate("export")} style={{ background: daysSinceExport === null ? "#e0a820" : "#d94f3d", color: "#fff", border: "none", borderRadius: 8, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Export Now</button>
+        </div>
+      )}
       {readyCount > 0 && (
         <div style={{ background: "#e8f8e8", border: "1.5px solid #7fb069", borderRadius: 12, padding: "12px 18px", marginBottom: 14, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span style={{ fontSize: 14, color: "#1e5a1e", fontWeight: 700 }}>{readyCount} crop{readyCount !== 1 ? "s" : ""} ready to ship</span>
