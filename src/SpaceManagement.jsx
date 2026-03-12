@@ -633,7 +633,7 @@ function HouseForm({ initial, onSave, onCancel, cropRuns, containers = [] }) {
           {!form.name.trim() && (
             <div style={{ fontSize: 12, color: "#e07b39", marginBottom: 6 }}>⚠️ House name is required before saving.</div>
           )}
-          <button onClick={() => { if (!form.name.trim()) return; onSave({ ...form, id: form.id || uid() }); }} style={{ flex: 1, background: form.name.trim() ? "#7fb069" : "#c8d8c0", color: "#fff", border: "none", borderRadius: 10, padding: 12, fontWeight: 700, fontSize: 15, cursor: form.name.trim() ? "pointer" : "not-allowed", fontFamily: "inherit" }}>{initial ? "Save Changes" : "Create House"}</button>
+          <button onClick={() => { if (!form.name.trim()) return; onSave({ ...form, id: form.id || uid(), tempTier: form.tempTier || null, houseType: form.houseType || null }); }} style={{ flex: 1, background: form.name.trim() ? "#7fb069" : "#c8d8c0", color: "#fff", border: "none", borderRadius: 10, padding: 12, fontWeight: 700, fontSize: 15, cursor: form.name.trim() ? "pointer" : "not-allowed", fontFamily: "inherit" }}>{initial ? "Save Changes" : "Create House"}</button>
           {onCancel && <button onClick={onCancel} style={{ background: "none", color: "#7a8c74", border: "1.5px solid #c8d8c0", borderRadius: 10, padding: "12px 20px", fontWeight: 600, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>}
         </div>
       </div>
@@ -799,7 +799,7 @@ function PadForm({ initial, onSave, onCancel }) {
         <BayEditor bays={form.bays} onChange={bays => setForm(f => ({ ...f, bays }))} />
         {totalBaySqFt > 0 && <div style={{ background: "#fef0d8", borderRadius: 10, padding: "12px 16px", marginTop: 12, fontSize: 13, color: "#8a4a10", fontWeight: 600 }}>✓ {form.bays.length} bays · {totalBaySqFt.toLocaleString()} sq ft across bays</div>}
         <div style={{ display: "flex", gap: 10, marginTop: 22 }}>
-          <button onClick={() => form.name.trim() && onSave({ ...form, id: form.id || uid() })} style={{ flex: 1, background: "#c8791a", color: "#fff", border: "none", borderRadius: 10, padding: 12, fontWeight: 700, fontSize: 15, cursor: "pointer", fontFamily: "inherit" }}>{initial ? "Save Changes" : "Create Pad"}</button>
+          <button onClick={() => form.name.trim() && onSave({ ...form, id: form.id || uid(), tempTier: form.tempTier || null, houseType: form.houseType || null })} style={{ flex: 1, background: "#c8791a", color: "#fff", border: "none", borderRadius: 10, padding: 12, fontWeight: 700, fontSize: 15, cursor: "pointer", fontFamily: "inherit" }}>{initial ? "Save Changes" : "Create Pad"}</button>
           {onCancel && <button onClick={onCancel} style={{ background: "none", color: "#7a8c74", border: "1.5px solid #c8d8c0", borderRadius: 10, padding: "12px 20px", fontWeight: 600, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>}
         </div>
       </div>
