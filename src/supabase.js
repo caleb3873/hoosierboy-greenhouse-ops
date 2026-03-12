@@ -194,3 +194,21 @@ export const useCombos = () => useTable("combo_lots", { orderBy: "created_at", l
 export const useComboTags = () => useTable("combo_tags", { orderBy: "name", localKey: "gh_tags_v1" });
 export const useOrderMeta = () => useTable("order_meta", { orderBy: "created_at", localKey: "gh_order_meta_v1" });
 export const useReceiving = () => useTable("receiving_records", { orderBy: "week_key", localKey: "gh_receiving_v1" });
+export const useBrokerProfiles   = () => useTable("broker_profiles",   { orderBy: "name", localKey: "gh_broker_profiles_v1" });
+export const useSupplierProfiles = () => useTable("supplier_profiles", { orderBy: "name", localKey: "gh_supplier_profiles_v1" });
+export const useBreederProfiles  = () => useTable("breeder_profiles",  { orderBy: "name", localKey: "gh_breeder_profiles_v1" });
+
+// ── AUTH HELPERS ──────────────────────────────────────────────────────────────
+export async function sendPasswordReset(email) {
+  const sb = getSupabase();
+  if (!sb) return { error: { message: "No connection" } };
+  return sb.auth.resetPasswordForEmail(email, {
+    redirectTo: window.location.origin,
+  });
+}
+
+export async function updatePassword(newPassword) {
+  const sb = getSupabase();
+  if (!sb) return { error: { message: "No connection" } };
+  return sb.auth.updateUser({ password: newPassword });
+}
