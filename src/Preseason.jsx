@@ -707,6 +707,140 @@ const SEASONS = [
 ];
 
 // ── MAIN PRESEASON COMPONENT ──────────────────────────────────────────────────
+// ── BULK COPY PLAN ────────────────────────────────────────────────────────────
+function BulkCopyPlan({ runs, currentYear, onCreateCropRun, onNavigate }) {
+  const { upsert: upsertRun } = useCropRuns();
+  const years = [...new Set(runs.map(r => r.targetYear || r.year || "").filter(Boolean))].sort((a,b) => b-a).filter(y => String(y) !== String(currentYear));
+  const [srcYear, setSrcYear] = useState(years[0] || currentYear - 1);
+  const [search, setSearch] = useState("");
+  const [selected, setSelected] = useState(new Set());
+  const [copying, setCopying] = useState(false);
+  const [done, setDone] = useState(false);
+
+  const uid = () => crypto.randomUUID();
+  const srcRuns = runs.filter(r => String(r.targetYear || r.year || "") === String(srcYear));
+  const filtered = srcRuns.filter(r => !search || (r.cropName || "").toLowerCase().includes(search.toLowerCase()) || (r.varietyName || "").toLowerCase().includes(search.toLowerCase()));
+  const grouped = filtered.reduce((acc, r) => { const k = r.cropName || "Unknown"; if (!acc[k]) acc[k] = []; acc[k].push(r); return acc; }, {});
+  const allIds = filtered.map(r => r.id);
+  const allSelected = allIds.length > 0 && allIds.every(id => selected.has(id));
+  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(allIds));
+  const toggle = id => setSelected(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+  const handleCopy = async () => {
+    const toCopy = runs.filter(r => selected.has(r.id));
+    if (!toCopy.length) return;
+    setCopying(true);
+    for (const run of toCopy) {
+      const { id, unitCost, sellPrice, ...rest } = run;
+      await upsertRun({ ...rest, id: uid(), targetYear: currentYear, status: "planned", unitCost: "", sellPrice: "" });
+    }
+    setCopying(false);
+    setDone(true);
+    setSelected(new Set());
+  };
+
+  if (done) return (
+    <div style={{ textAlign: "center", padding: "60px 20px" }}>
+      <div style={{ fontSize: 52, marginBottom: 12 }}>✅</div>
+      <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontSize: 20, color: "#1e2d1a", marginBottom: 8 }}>Runs copied to {currentYear}!</div>
+      <div style={{ fontSize: 13, color: "#7a8c74", marginBottom: 24 }}>Update pricing once your broker prices come through. Space assignments carried over as starting points.</div>
+      <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+        <button onClick={() => setDone(false)} style={{ background: "none", border: "1.5px solid #c8d8c0", borderRadius: 8, padding: "10px 20px", fontSize: 13, color: "#7a8c74", cursor: "pointer", fontFamily: "inherit" }}>Copy More</button>
+        <button onClick={() => onNavigate ? onNavigate("crops") : null} style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 8, padding: "10px 24px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>→ Go to Crop Runs</button>
+      </div>
+    </div>
+  );
+
+  return (
+    <div>
+      <div style={{ background: "#fff", borderRadius: 14, border: "1.5px solid #e0ead8", overflow: "hidden" }}>
+        {/* Header */}
+        <div style={{ padding: "18px 24px", borderBottom: "1px solid #e0ead8", background: "#fafaf8" }}>
+          <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontSize: 16, color: "#1e2d1a", marginBottom: 4 }}>Copy Last Year's Production Plan</div>
+          <div style={{ fontSize: 12, color: "#7a8c74" }}>Select runs from a previous year to bring into {currentYear}. Pricing copies blank — fill it in once your broker prices come through.</div>
+        </div>
+
+        {/* Controls */}
+        <div style={{ padding: "14px 24px", borderBottom: "1px solid #f0f0ea", display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+          <div>
+            <div style={{ fontSize: 11, color: "#7a8c74", fontWeight: 700, marginBottom: 4 }}>COPY FROM</div>
+            <select value={srcYear} onChange={e => { setSrcYear(e.target.value); setSelected(new Set()); }}
+              style={{ border: "1.5px solid #c8d8c0", borderRadius: 8, padding: "7px 12px", fontSize: 13, fontFamily: "inherit", background: "#fff" }}>
+              {years.map(y => <option key={y} value={y}>{y} ({runs.filter(r => String(r.targetYear||r.year||"") === String(y)).length} runs)</option>)}
+              {!years.length && <option value={currentYear - 1}>{currentYear - 1}</option>}
+            </select>
+          </div>
+          <div style={{ flex: 1, minWidth: 200 }}>
+            <div style={{ fontSize: 11, color: "#7a8c74", fontWeight: 700, marginBottom: 4 }}>SEARCH</div>
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Filter by crop or variety..."
+              style={{ width: "100%", border: "1.5px solid #c8d8c0", borderRadius: 8, padding: "7px 12px", fontSize: 13, fontFamily: "inherit", background: "#fff", boxSizing: "border-box" }} />
+          </div>
+        </div>
+
+        {/* Select all */}
+        <div style={{ padding: "10px 24px", borderBottom: "1px solid #f0f0ea", background: "#f8faf6", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13, fontWeight: 700, color: "#1e2d1a" }}>
+            <input type="checkbox" checked={allSelected} onChange={toggleAll} style={{ width: 16, height: 16, accentColor: "#7fb069" }} />
+            Select All ({filtered.length} runs from {srcYear})
+          </label>
+          {selected.size > 0 && <div style={{ fontSize: 12, color: "#7fb069", fontWeight: 700 }}>{selected.size} selected</div>}
+        </div>
+
+        {/* List */}
+        <div style={{ maxHeight: 460, overflowY: "auto", padding: "12px 24px" }}>
+          {srcRuns.length === 0 && (
+            <div style={{ textAlign: "center", padding: 40, color: "#aabba0" }}>
+              <div style={{ fontSize: 36, marginBottom: 8 }}>🌱</div>
+              <div style={{ fontSize: 13 }}>No crop runs found for {srcYear}</div>
+            </div>
+          )}
+          {Object.entries(grouped).sort(([a],[b]) => a.localeCompare(b)).map(([cropName, cropRuns]) => (
+            <div key={cropName} style={{ marginBottom: 18 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#4a6a3a", letterSpacing: 1, textTransform: "uppercase", marginBottom: 8, paddingBottom: 6, borderBottom: "1.5px solid #e8f0e0", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <span>{cropName}</span>
+                <span style={{ color: "#aabba0", fontWeight: 600 }}>{cropRuns.length} run{cropRuns.length !== 1 ? "s" : ""}</span>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {cropRuns.map(run => {
+                  const sel = selected.has(run.id);
+                  const qty = run.quantity || run.units || "";
+                  const container = run.containerName || run.size || "";
+                  const space = (run.indoorAssignments||[]).map(a => a.houseName || "").filter(Boolean).join(", ");
+                  const readyWk = run.readyWeek || run.targetWeek || "";
+                  return (
+                    <label key={run.id} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 12px", borderRadius: 10, border: `1.5px solid ${sel ? "#7fb069" : "#e8ede4"}`, background: sel ? "#f0f8eb" : "#fff", cursor: "pointer", transition: "all .1s" }}>
+                      <input type="checkbox" checked={sel} onChange={() => toggle(run.id)} style={{ width: 16, height: 16, accentColor: "#7fb069", marginTop: 2, flexShrink: 0 }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 700, fontSize: 13, color: "#1e2d1a" }}>{run.varietyName || run.variety || "—"}</div>
+                        <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 3, display: "flex", flexWrap: "wrap", gap: 8 }}>
+                          {container && <span>📦 {container}</span>}
+                          {qty && <span>· {Number(qty).toLocaleString()} units</span>}
+                          {readyWk && <span>· Wk {readyWk}</span>}
+                          {space && <span>· 🏠 {space}</span>}
+                          <span style={{ color: "#c8a060" }}>💰 Pricing blank</span>
+                        </div>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Footer */}
+        <div style={{ padding: "16px 24px", borderTop: "1.5px solid #e0ead8", background: "#fafaf8", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ fontSize: 12, color: "#7a8c74" }}>Everything copies over except unit cost and sell price</div>
+          <button onClick={handleCopy} disabled={!selected.size || copying}
+            style={{ background: selected.size ? "#7fb069" : "#c8d8c0", color: "#fff", border: "none", borderRadius: 8, padding: "10px 28px", fontSize: 13, fontWeight: 700, cursor: selected.size ? "pointer" : "default", fontFamily: "inherit", transition: "background .15s" }}>
+            {copying ? "Copying..." : selected.size ? `Copy ${selected.size} Run${selected.size !== 1 ? "s" : ""} → ${currentYear}` : "Select runs to copy"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Preseason({ onNavigate, onCreateCropRun }) {
   const { rows: runs }       = useCropRuns();
   const { rows: containers } = useContainers();
@@ -917,6 +1051,7 @@ export default function Preseason({ onNavigate, onCreateCropRun }) {
     { id: "weather",    label: "🌤 Weather"         },
     { id: "payroll",    label: "💼 Payroll"         },
     { id: "capacity",   label: "🏡 Capacity"        },
+    { id: "copyplan",   label: "📋 Copy Plan"       },
   ];
 
   return (
@@ -1355,7 +1490,13 @@ export default function Preseason({ onNavigate, onCreateCropRun }) {
                 <div style={{ fontSize: 24, marginBottom: 8 }}>{icon}</div>
                 <FL c={label} />
                 <input type="number" value={capacity[key] || ""} onChange={e => persistCapacity({ ...capacity, [key]: e.target.value })}
-                  onFocus={() => setFocusCap(key)} onBlur={() => setFocusCap(null)}
+                  onFocus={() => setFocusCap(key)}
+
+      {/* ── COPY PLAN TAB ── */}
+      {tab === "copyplan" && (
+        <BulkCopyPlan runs={runs} currentYear={currentYear} onCreateCropRun={onCreateCropRun} onNavigate={onNavigate} />
+      )}
+ onBlur={() => setFocusCap(null)}
                   placeholder="0" style={{ ...IS(focusCap === key), fontSize: 20, fontWeight: 800, textAlign: "center", marginBottom: 4 }} />
                 <div style={{ fontSize: 11, color: "#9aaa90" }}>{sub}</div>
               </div>
