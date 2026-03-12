@@ -2162,7 +2162,10 @@ const FIELD_OPTIONS = [
   { id: "varietyName", label: "Variety Name (full)"    },
   { id: "color",       label: "Color (standalone)"     },
   { id: "description", label: "Description (legacy)"   },
+  { id: "breeder",     label: "Breeder"                },
+  { id: "supplier",    label: "Supplier / Facility"    },
   { id: "size",        label: "Size / Form Type"       },
+  { id: "linerSize",   label: "Liner Cell Size"        },
   { id: "itemNumber",  label: "Item / Material #"      },
   { id: "shortCode",   label: "Short Code"             },
   { id: "perQty",      label: "Per / Unit Size (URCs)" },
@@ -2277,7 +2280,7 @@ function UploadWizard({ onSave, onCancel }) {
   const [mapping, setMapping]       = useState({});
   const [brokerName, setBrokerName] = useState("");
   const [brokerNameNew, setBrokerNameNew] = useState("");
-  const [breederName, setBreederName] = useState("");
+  const [formType, setFormType] = useState("");
   const [supplierName, setSupplierName] = useState("");
   const [season, setSeason]         = useState("");
   const [loading, setLoading]       = useState(false);
@@ -2383,9 +2386,16 @@ function UploadWizard({ onSave, onCancel }) {
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
         <div>
-          <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .6, marginBottom: 6 }}>Breeder <span style={{color:"#c8791a",fontWeight:400,fontSize:10,textTransform:"none"}}>(who bred it)</span></div>
-          <input value={breederName} onChange={e=>setBreederName(e.target.value)} placeholder="e.g. Dummen Orange"
-            style={{width:"100%",padding:"10px 12px",borderRadius:8,border:`1.5px solid ${breederName?"#7fb069":"#c8d8c0"}`,fontSize:14,color:"#1a2a1a",fontFamily:"inherit",boxSizing:"border-box"}} />
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .6, marginBottom: 6 }}>Form Type</div>
+          <select value={formType} onChange={e=>setFormType(e.target.value)}
+            style={{width:"100%",padding:"10px 12px",borderRadius:8,border:`1.5px solid ${formType?"#7fb069":"#c8d8c0"}`,fontSize:14,color:"#1a2a1a",fontFamily:"inherit",boxSizing:"border-box",background:"#fff"}}>
+            <option value="">— Select type —</option>
+            <option value="URC">URC (Unrooted Cutting)</option>
+            <option value="Callus URC">Callus URC</option>
+            <option value="Liner">Liner</option>
+            <option value="Seed">Seed</option>
+            <option value="Bulb">Bulb</option>
+          </select>
         </div>
         <div>
           <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .6, marginBottom: 6 }}>Supplier <span style={{color:"#c8791a",fontWeight:400,fontSize:10,textTransform:"none"}}>(facility / origin)</span></div>
@@ -2545,7 +2555,7 @@ function UploadWizard({ onSave, onCancel }) {
             if (existing) { await upsertBrokerProfile({ ...existing, importTemplate: template }); }
             else { await upsertBrokerProfile({ id: crypto.randomUUID(), name: brokerName, importTemplate: template, whatTheySell: [], seasonHistory: [] }); }
           }
-          onSave({ id: crypto.randomUUID(), brokerName, breederName, supplierName, season, items, importedAt: new Date().toISOString() });
+          onSave({ id: crypto.randomUUID(), brokerName, formType, supplierName, season, items, importedAt: new Date().toISOString() });
         }} style={{ flex: 2, padding: "12px 0", borderRadius: 10, border: "none", background: "#7fb069", color: "#fff", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
           Import {items.length.toLocaleString()} Items ✓
         </button>
@@ -2575,7 +2585,7 @@ function CatalogDetail({ catalog, onBack, onDelete }) {
         <button onClick={onBack} style={{ background: "none", border: "none", color: "#7a8c74", fontSize: 20, cursor: "pointer", padding: 0 }}>←</button>
         <div>
           <div style={{ fontSize: 20, fontWeight: 800, color: "#1a2a1a" }}>{catalog.brokerName}</div>
-          {catalog.breederName && <div style={{ fontSize: 13, color: "#4a7a35", fontWeight: 700 }}>{catalog.breederName}{catalog.supplierName ? ` — ${catalog.supplierName}` : ""}</div>}
+          {(catalog.formType || catalog.supplierName) && <div style={{ fontSize: 13, color: "#4a7a35", fontWeight: 700 }}>{[catalog.formType, catalog.supplierName].filter(Boolean).join(" · ")}</div>}
           <div style={{ fontSize: 13, color: "#7a8c74" }}>{catalog.season} · {catalog.items.length.toLocaleString()} items</div>
         </div>
         <button onClick={() => { if (window.confirm("Delete this catalog?")) onDelete(catalog.id); }}
@@ -2714,7 +2724,7 @@ function BrokerCatalogs() {
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
                   <div>
                     <div style={{ fontSize: 16, fontWeight: 800, color: "#1a2a1a" }}>{cat.brokerName}</div>
-                    {cat.breederName && <div style={{ fontSize: 12, color: "#4a7a35", fontWeight: 700 }}>{cat.breederName}{cat.supplierName ? ` — ${cat.supplierName}` : ""}</div>}
+                    {(cat.formType || cat.supplierName) && <div style={{ fontSize: 12, color: "#4a7a35", fontWeight: 700 }}>{[cat.formType, cat.supplierName].filter(Boolean).join(" · ")}</div>}
                     <div style={{ fontSize: 12, color: "#7a8c74" }}>{cat.season}</div>
                   </div>
                   <span style={{ background: "#f2f5ef", color: "#4a5a40", borderRadius: 20, padding: "3px 10px", fontSize: 12, fontWeight: 700 }}>
@@ -3243,11 +3253,11 @@ const LIBRARY_TABS = [
   { id: "soil",      label: "Soil",       icon: "🪱" },
   { id: "inputs",    label: "Inputs",     icon: "🧪" },
   { id: "spacing",   label: "Spacing",    icon: "📐" },
-  { id: "brokers",   label: "Brokers",    icon: "📊" },
+  { id: "brokers",   label: "Price Lists", icon: "📊" },
   { id: "tags",      label: "Tags",       icon: "🏷️" },
   { id: "combos",    label: "Combos",     icon: "🌸" },
   { id: "pricing",   label: "Pricing",    icon: "💰" },
-  { id: "brkprofile", label: "Brokers",    icon: "🤝" },
+  { id: "brkprofile", label: "Broker Profiles", icon: "🤝" },
   { id: "suppliers",  label: "Suppliers",  icon: "🏭" },
   { id: "breeders",   label: "Breeders",   icon: "🧬" },
 ];
