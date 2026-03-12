@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useHouses, usePads, useManualTasks, useCropRuns } from "./supabase";
+import { useHouses, usePads, useManualTasks, useCropRuns, useContainers } from "./supabase";
 
 
 const LOCATIONS = ["Bluff Road", "Sprague Road"];
@@ -131,10 +131,10 @@ function DripBlock({ item, onUpdate, fk, focus, setFocus }) {
 }
 
 // ── ITEM EDITOR ───────────────────────────────────────────────────────────────
-function ItemEditor({ item, idx, totalItems, zoneType, zt, onUpdate, onRemove, onMoveUp, onMoveDown, cropRuns }) {
+function ItemEditor({ item, idx, totalItems, zoneType, zt, onUpdate, onRemove, onMoveUp, onMoveDown, cropRuns, containers = [] }) {
   const [open, setOpen] = useState(false);
   const [focus, setFocus] = useState(null);
-  const [calcPotSize, setCalcPotSize] = useState(4.5);
+  const [calcPotSize, setCalcPotSize] = useState(0);
   const [calcSpacing, setCalcSpacing] = useState(6);
   const rc = ROW_CFG[zoneType];
 
@@ -271,10 +271,13 @@ function ItemEditor({ item, idx, totalItems, zoneType, zt, onUpdate, onRemove, o
                   <div style={{ fontSize: 11, fontWeight: 800, color: "#7a3db0", letterSpacing: .8, textTransform: "uppercase", marginBottom: 12 }}>Capacity Calculator</div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
                     <div>
-                      <FL c="Pot Size" />
+                      <FL c="Container" />
                       <select value={calcPotSize} onChange={e => setCalcPotSize(Number(e.target.value))}
                         style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "1.5px solid #c8d8c0", fontSize: 13, fontFamily: "inherit", background: "#fff" }}>
-                        {POT_SIZES.map(p => <option key={p.label} value={p.dia}>{p.label}</option>)}
+                        <option value="">— Select container —</option>
+                        {containers.filter(c => c.diameterIn).sort((a,b) => a.diameterIn - b.diameterIn).map(c => (
+                          <option key={c.id} value={c.diameterIn}>{c.name} ({c.diameterIn}")</option>
+                        ))}
                       </select>
                     </div>
                     <div>
@@ -333,7 +336,7 @@ function ItemEditor({ item, idx, totalItems, zoneType, zt, onUpdate, onRemove, o
 }
 
 // ── ZONE EDITOR ───────────────────────────────────────────────────────────────
-function ZoneEditor({ zone, onChange, onDelete, onMoveUp, onMoveDown, cropRuns }) {
+function ZoneEditor({ zone, onChange, onDelete, onMoveUp, onMoveDown, cropRuns, containers = [] }) {
   const [open, setOpen] = useState(false);
   const [focus, setFocus] = useState(null);
   const zt = ztc(zone.type); const rc = ROW_CFG[zone.type];
@@ -385,7 +388,7 @@ function ZoneEditor({ zone, onChange, onDelete, onMoveUp, onMoveDown, cropRuns }
           {(zone.items || []).length === 0 && <div style={{ textAlign: "center", padding: 16, color: "#aabba0", background: "#fff", borderRadius: 8, border: `1.5px dashed ${zt.color}44`, fontSize: 12, marginBottom: 6 }}>None yet</div>}
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {(zone.items || []).map((item, idx) => (
-              <ItemEditor key={item.id} item={item} idx={idx} totalItems={(zone.items || []).length} zoneType={zone.type} zt={zt} cropRuns={cropRuns}
+              <ItemEditor key={item.id} item={item} idx={idx} totalItems={(zone.items || []).length} zoneType={zone.type} zt={zt} cropRuns={cropRuns} containers={containers}
                 onUpdate={(f, v) => updItem(idx, f, v)} onRemove={() => removeItem(idx)}
                 onMoveUp={() => moveItem(idx, -1)} onMoveDown={() => moveItem(idx, 1)} />
             ))}
@@ -492,8 +495,54 @@ function HouseDetailsPanel({ details, onChange }) {
 }
 
 // ── HOUSE FORM ────────────────────────────────────────────────────────────────
-function HouseForm({ initial, onSave, onCancel, cropRuns }) {
-  const blank = { name: "", location: "", indoor: true, heated: false, active: true, lighting: "", tempTier: "", notes: "", zones: [], details: {} };
+function HouseForm({ initial, onSave, onCancel, cropRuns, containers = [] }) {
+  const blank = { name: "", location: "", indoor: true, heated: false, active: true, lighting: "", tempTier: "", houseType: "", notes: "", zones: [], details: {} };
+
+  function buildQuonsetZones(lengthFt = 100) {
+    return [
+      {
+        id: uid(), type: "hanging", name: "Hanging Basket Lines", notes: "",
+        items: Array.from({ length: 10 }, (_, i) => ({ id: uid(), label: `Line ${i + 1}`, capacityPerRow: "", heated: false }))
+      },
+      {
+        id: uid(), type: "lowbasket", name: "Low Planter Lines", notes: "",
+        items: Array.from({ length: 4 }, (_, i) => ({ id: uid(), label: `Line ${i + 1}`, capacityPerRow: "", heated: false }))
+      },
+      {
+        id: uid(), type: "bench", name: "Wall Shelves", notes: "",
+        items: [
+          { id: uid(), label: "Wall Shelf — East", benchType: "single", widthFt: 1, lengthFt: lengthFt, heated: false },
+          { id: uid(), label: "Wall Shelf — West", benchType: "single", widthFt: 1, lengthFt: lengthFt, heated: false },
+        ]
+      },
+      {
+        id: uid(), type: "bench", name: "Wall Benches", notes: "",
+        items: [
+          { id: uid(), label: "Wall Bench — East", benchType: "single", widthFt: 4, lengthFt: lengthFt, heated: false },
+          { id: uid(), label: "Wall Bench — West", benchType: "single", widthFt: 4, lengthFt: lengthFt, heated: false },
+        ]
+      },
+      {
+        id: uid(), type: "bench", name: "Center Double Benches", notes: "",
+        items: [
+          { id: uid(), label: "Center Double — North", benchType: "double", widthFt: 4, lengthFt: lengthFt, heated: false },
+          { id: uid(), label: "Center Double — South", benchType: "double", widthFt: 4, lengthFt: lengthFt, heated: false },
+        ]
+      },
+    ];
+  }
+
+  function applyHouseType(type) {
+    if (type === "quonset" && form.zones.length === 0) {
+      setForm(f => ({ ...f, houseType: type, zones: buildQuonsetZones() }));
+    } else if (type === "quonset" && form.zones.length > 0) {
+      if (window.confirm("Apply standard quonset template? This will replace your current zones.")) {
+        setForm(f => ({ ...f, houseType: type, zones: buildQuonsetZones() }));
+      }
+    } else {
+      setForm(f => ({ ...f, houseType: type }));
+    }
+  }
   const [form, setForm] = useState(initial ? dc({ ...blank, ...initial }) : blank);
   const [tab, setTab] = useState("zones");
   const [focus, setFocus] = useState(null);
@@ -511,6 +560,39 @@ function HouseForm({ initial, onSave, onCancel, cropRuns }) {
       </div>
       <div style={{ padding: "22px 24px" }}>
         <SH c="House Details" mt={0} />
+
+        {/* House Type */}
+        {!initial && (
+          <div style={{ marginBottom: 16 }}>
+            <FL c="House Type" hint="Select a type to pre-fill a standard layout" />
+            <div style={{ display: "flex", gap: 8 }}>
+              {[["quonset","🏚 Quonset","Standard single-span, pre-fills layout"],["gutterconnect","🏗 Gutter Connect","Multi-span, build manually"],["other","🏠 Other","Custom — start blank"]].map(([val, label, hint]) => (
+                <button key={val} type="button" onClick={() => applyHouseType(val)}
+                  style={{ flex: 1, padding: "10px 8px", borderRadius: 8, border: `2px solid ${form.houseType === val ? "#7fb069" : "#c8d8c0"}`, background: form.houseType === val ? "#f0f8eb" : "#fff", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: form.houseType === val ? "#2e5c1e" : "#7a8c74" }}>{label}</div>
+                  <div style={{ fontSize: 10, color: "#aabba0", marginTop: 2 }}>{hint}</div>
+                </button>
+              ))}
+            </div>
+            {form.houseType === "quonset" && form.zones.length > 0 && (
+              <div style={{ marginTop: 8, fontSize: 12, color: "#7a8c74" }}>
+                Standard layout applied — adjust basket lines, bench lengths, or any other details below.
+              </div>
+            )}
+          </div>
+        )}
+        {initial && (
+          <div style={{ marginBottom: 14 }}>
+            <FL c="House Type" />
+            <select style={IS(false)} value={form.houseType || ""} onChange={e => setForm(f => ({ ...f, houseType: e.target.value }))}>
+              <option value="">— Select —</option>
+              <option value="quonset">🏚 Quonset</option>
+              <option value="gutterconnect">🏗 Gutter Connect</option>
+              <option value="other">🏠 Other</option>
+            </select>
+          </div>
+        )}
+
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
           <div><FL c="House Name *" /><input style={IS(focus === "name")} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} onFocus={() => setFocus("name")} onBlur={() => setFocus(null)} placeholder="e.g. Range 1, Prop House" /></div>
           <div><FL c="Location" /><select style={IS(false)} value={form.location || ""} onChange={e => setForm(f => ({ ...f, location: e.target.value }))}><option value="">— Any / Unassigned —</option>{LOCATIONS.map(l => <option key={l}>{l}</option>)}</select></div>
@@ -543,7 +625,7 @@ function HouseForm({ initial, onSave, onCancel, cropRuns }) {
             {ZONE_TYPES.map(zt => <button key={zt.id} onClick={() => addZone(zt.id)} style={{ display: "flex", alignItems: "center", gap: 6, background: zt.color + "14", color: zt.color, border: `1.5px solid ${zt.color}55`, borderRadius: 8, padding: "7px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{zt.icon} + {zt.label}</button>)}
           </div>
           {form.zones.length === 0 && <div style={{ textAlign: "center", padding: 28, color: "#aabba0", background: "#f8faf6", borderRadius: 12, border: "1.5px dashed #c8d8c0", fontSize: 13, marginBottom: 20 }}>No zones yet</div>}
-          {form.zones.map((zone, idx) => <ZoneEditor key={zone.id} zone={zone} cropRuns={cropRuns} onChange={z => updZone(idx, z)} onDelete={() => delZone(idx)} onMoveUp={() => moveZone(idx, -1)} onMoveDown={() => moveZone(idx, 1)} />)}
+          {form.zones.map((zone, idx) => <ZoneEditor key={zone.id} zone={zone} cropRuns={cropRuns} containers={containers} onChange={z => updZone(idx, z)} onDelete={() => delZone(idx)} onMoveUp={() => moveZone(idx, -1)} onMoveDown={() => moveZone(idx, 1)} />)}
           {(totalBenches > 0 || totalSqFt > 0) && <div style={{ background: "#f0f8eb", borderRadius: 10, padding: "12px 16px", marginTop: 6, fontSize: 13, color: "#2e5c1e", fontWeight: 600 }}>✓ {totalBenches} bench{totalBenches !== 1 ? "es" : ""} · {totalSqFt.toLocaleString()} sq ft</div>}
         </>)}
         {tab === "details" && <HouseDetailsPanel details={form.details || {}} onChange={det => setForm(f => ({ ...f, details: det }))} />}
@@ -571,6 +653,8 @@ function HouseCard({ house, onEdit, onDelete, onDuplicate, onToggleActive }) {
             {house.active === false && <span style={{ fontSize: 11, color: "#aabba0" }}>(Inactive)</span>}
             <Badge label={house.indoor ? "Indoor" : "Outdoor"} color={house.indoor ? "#4a90d9" : "#7fb069"} />
             <Badge label={house.heated ? "Heated" : "Unheated"} color={house.heated ? "#e07b39" : "#7a8c74"} />
+            {house.houseType === "quonset" && <Badge label="🏚 Quonset" color="#7a8c74" />}
+            {house.houseType === "gutterconnect" && <Badge label="🏗 Gutter Connect" color="#5a7a9a" />}
             {house.tempTier === "cool" && <Badge label="❄️ Cool Range" color="#4a90d9" />}
             {house.tempTier === "warm" && <Badge label="🌡 Warm Range" color="#e07b39" />}
             {house.lighting && <Badge label={house.lighting} color="#8e44ad" />}
@@ -1224,6 +1308,7 @@ export default function App() {
   const { rows: pads,   upsert: upsertPad,   remove: removePadDb   } = usePads();
   const { rows: tasks,  upsert: upsertTask,  remove: removeTaskDb  } = useManualTasks();
   const { rows: cropRuns } = useCropRuns();
+  const { rows: containers } = useContainers();
 
   const [section,   setSection  ] = useState("overview");
   const [view,      setView     ] = useState("list");
@@ -1314,8 +1399,8 @@ export default function App() {
           {filteredHouses.length === 0 && <div style={{ textAlign: "center", padding: "80px 0", color: "#aabba0" }}><div style={{ fontSize: 52, marginBottom: 14 }}>🏠</div><div style={{ fontSize: 15, fontWeight: 700, color: "#7a8c74", marginBottom: 6 }}>No houses yet</div><button onClick={() => setView("add")} style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 10, padding: "12px 28px", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit", marginTop: 16 }}>+ Add First House</button></div>}
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>{filteredHouses.map(h => <HouseCard key={h.id} house={h} onEdit={x => { setEditingId(x.id); setView("edit"); }} onDelete={deleteHouse} onDuplicate={dupHouse} onToggleActive={toggleHouseActive} />)}</div>
         </>)}
-        {section === "houses" && view === "add" && <HouseForm onSave={saveHouse} onCancel={() => setView("list")} cropRuns={cropRuns} />}
-        {section === "houses" && view === "edit" && editingId && <HouseForm initial={houses.find(h => h.id === editingId)} onSave={saveHouse} onCancel={() => { setView("list"); setEditingId(null); }} cropRuns={cropRuns} />}
+        {section === "houses" && view === "add" && <HouseForm onSave={saveHouse} onCancel={() => setView("list")} cropRuns={cropRuns} containers={containers} />}
+        {section === "houses" && view === "edit" && editingId && <HouseForm initial={houses.find(h => h.id === editingId)} onSave={saveHouse} onCancel={() => { setView("list"); setEditingId(null); }} cropRuns={cropRuns} containers={containers} />}
 
         {/* ── OUTDOOR ── */}
         {section === "outdoor" && view === "list" && (<>
