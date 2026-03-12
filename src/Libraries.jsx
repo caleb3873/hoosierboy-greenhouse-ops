@@ -2778,17 +2778,25 @@ function useBrokerLookup() {
 
 // ── CATALOG PICKER — exported for use in CropPlanning & ComboDesigner ──────────
 // Usage: <CatalogPicker broker="Ball Seed" onSelect={({crop,series,color,itemNumber,perQty,sellPrice,...}) => ...} />
-export function CatalogPicker({ broker, onSelect, initial = {} }) {
-  const { getCrops, getSeries, getColors, lookupByCascade } = useBrokerLookup();
+export function CatalogPicker({ broker: brokerProp, onSelect, initial = {} }) {
+  const { getCrops, getSeries, getColors, lookupByCascade, getBrokerNames } = useBrokerLookup();
+
+  // Allow broker to be selected internally if not passed as prop
+  const [brokerSel, setBrokerSel] = useState(initial.broker || brokerProp || "");
+  const broker = brokerProp || brokerSel;
 
   const [crop,   setCrop]   = useState(initial.crop   || "");
   const [series, setSeries] = useState(initial.series || "");
   const [color,  setColor]  = useState(initial.color  || "");
 
-  const crops      = broker ? getCrops(broker)              : [];
-  const seriesList = broker && crop   ? getSeries(broker, crop)          : [];
+  const brokerNames = getBrokerNames();
+  const crops      = broker ? getCrops(broker)                          : [];
+  const seriesList = broker && crop ? getSeries(broker, crop)           : [];
   const colorList  = broker && crop && series ? getColors(broker, crop, series) : [];
 
+  function pickBroker(b) {
+    setBrokerSel(b); setCrop(""); setSeries(""); setColor("");
+  }
   function pickCrop(c) {
     setCrop(c); setSeries(""); setColor("");
   }
@@ -2799,7 +2807,7 @@ export function CatalogPicker({ broker, onSelect, initial = {} }) {
     setColor(c);
     if (onSelect && broker && crop && series) {
       const item = lookupByCascade(broker, crop, series, c);
-      if (item) onSelect({ crop, series, color: c, itemNumber: item.itemNumber || item.shortCode || "", perQty: item.perQty || "", sellPrice: item.sellPrice || item.unitPrice || null, varietyName: item.varietyName || "", shortCode: item.shortCode || "", item });
+      if (item) onSelect({ broker, crop, series, color: c, itemNumber: item.itemNumber || item.shortCode || "", perQty: item.perQty || "", sellPrice: item.sellPrice || item.unitPrice || null, varietyName: item.varietyName || "", shortCode: item.shortCode || "", item });
     }
   }
 
@@ -2814,21 +2822,40 @@ export function CatalogPicker({ broker, onSelect, initial = {} }) {
 
   const SL = { width: "100%", padding: "10px 12px", borderRadius: 10, border: "1.5px solid #c8d8c0", fontSize: 14, fontFamily: "inherit", background: "#fff", color: "#1e2d1a", cursor: "pointer" };
 
-  if (!broker) return (
-    <div style={{ padding: "14px", background: "#f8faf6", borderRadius: 10, fontSize: 13, color: "#9aaa90", textAlign: "center" }}>
-      Select a broker first to use the catalog picker.
-    </div>
-  );
-
-  if (crops.length === 0) return (
+  if (!broker && brokerNames.length === 0) return (
     <div style={{ padding: "14px", background: "#fff8e8", borderRadius: 10, fontSize: 13, color: "#c8791a", border: "1.5px solid #f0d090" }}>
-      ⚠ No catalog imported for this broker yet. Import one in Library → Brokers.
+      ⚠ No broker catalogs imported yet. Go to Library → Brokers to import a price list.
     </div>
   );
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {/* Broker selector — only show if not passed as prop */}
+      {!brokerProp && (
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .7, marginBottom: 6 }}>Broker / Supplier</div>
+          {brokerNames.length <= 6
+            ? <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {brokerNames.map(b => (
+                  <button key={b} onClick={() => pickBroker(b)} style={SEL(brokerSel === b)}>{b}</button>
+                ))}
+              </div>
+            : <select value={brokerSel} onChange={e => pickBroker(e.target.value)} style={SL}>
+                <option value="">— Select broker —</option>
+                {brokerNames.map(b => <option key={b} value={b}>{b}</option>)}
+              </select>
+          }
+        </div>
+      )}
+
+      {broker && crops.length === 0 && (
+        <div style={{ padding: "12px 14px", background: "#fff8e8", borderRadius: 10, fontSize: 13, color: "#c8791a", border: "1.5px solid #f0d090" }}>
+          ⚠ No catalog imported for {broker} yet. Import one in Library → Brokers.
+        </div>
+      )}
+
       {/* Step 1: Crop */}
+      {broker && crops.length > 0 && (<>
       <div>
         <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .7, marginBottom: 6 }}>Crop / Species</div>
         <select value={crop} onChange={e => pickCrop(e.target.value)} style={SL}>
@@ -2892,6 +2919,7 @@ export function CatalogPicker({ broker, onSelect, initial = {} }) {
           </div>
         );
       })()}
+      </>)}
     </div>
   );
 }
