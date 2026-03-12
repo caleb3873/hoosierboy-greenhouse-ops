@@ -493,7 +493,7 @@ function HouseDetailsPanel({ details, onChange }) {
 
 // ── HOUSE FORM ────────────────────────────────────────────────────────────────
 function HouseForm({ initial, onSave, onCancel, cropRuns }) {
-  const blank = { name: "", location: "", indoor: true, heated: false, active: true, lighting: "", notes: "", zones: [], details: {} };
+  const blank = { name: "", location: "", indoor: true, heated: false, active: true, lighting: "", tempTier: "", notes: "", zones: [], details: {} };
   const [form, setForm] = useState(initial ? dc({ ...blank, ...initial }) : blank);
   const [tab, setTab] = useState("zones");
   const [focus, setFocus] = useState(null);
@@ -522,6 +522,15 @@ function HouseForm({ initial, onSave, onCancel, cropRuns }) {
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
           <div><FL c="Lighting Type" /><select style={IS(false)} value={form.lighting || ""} onChange={e => setForm(f => ({ ...f, lighting: e.target.value }))}><option value="">— Select —</option>{LIGHTING_TYPES.map(t => <option key={t}>{t}</option>)}</select></div>
+          <div>
+            <FL c="Temperature Tier" hint="Controls crop compatibility warnings" />
+            <div style={{ display: "flex", gap: 6 }}>
+              {[["","— Unset —","#7a8c74","#f8faf6"],["cool","❄️ Cool","#1a4a7a","#e8f3fc"],["warm","🌡 Warm","#a04010","#fdf3ea"]].map(([val, label, color, bg]) => (
+                <button key={val} type="button" onClick={() => setForm(f => ({ ...f, tempTier: val }))}
+                  style={{ flex: 1, padding: "7px 4px", borderRadius: 7, border: `2px solid ${form.tempTier === val ? color : "#c8d8c0"}`, background: form.tempTier === val ? bg : "#fff", color: form.tempTier === val ? color : "#7a8c74", fontWeight: 700, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>{label}</button>
+              ))}
+            </div>
+          </div>
         </div>
         <div style={{ marginBottom: 22 }}><FL c="Notes" /><textarea style={TA(focus === "notes")} value={form.notes || ""} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} onFocus={() => setFocus("notes")} onBlur={() => setFocus(null)} /></div>
         <div style={{ display: "flex", borderBottom: "1.5px solid #e0ead8", marginBottom: 20 }}>
@@ -562,6 +571,8 @@ function HouseCard({ house, onEdit, onDelete, onDuplicate, onToggleActive }) {
             {house.active === false && <span style={{ fontSize: 11, color: "#aabba0" }}>(Inactive)</span>}
             <Badge label={house.indoor ? "Indoor" : "Outdoor"} color={house.indoor ? "#4a90d9" : "#7fb069"} />
             <Badge label={house.heated ? "Heated" : "Unheated"} color={house.heated ? "#e07b39" : "#7a8c74"} />
+            {house.tempTier === "cool" && <Badge label="❄️ Cool Range" color="#4a90d9" />}
+            {house.tempTier === "warm" && <Badge label="🌡 Warm Range" color="#e07b39" />}
             {house.lighting && <Badge label={house.lighting} color="#8e44ad" />}
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
