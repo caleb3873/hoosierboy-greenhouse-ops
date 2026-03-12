@@ -362,7 +362,7 @@ function PDFUploader({ onExtracted }) {
       }
 
       setStatus(`Found ${parsed.length} variet${parsed.length === 1 ? "y" : "ies"} — review below before saving.`);
-      onExtracted(parsed.map(v => ({ ...v, id: Date.now().toString() + Math.random(), breeder: breeder || v.breeder || "" })));
+      onExtracted(parsed.map(v => ({ ...v, id: crypto.randomUUID(), breeder: breeder || v.breeder || "" })));
     } catch (err) {
       setError(err.message);
     } finally {
