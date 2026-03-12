@@ -195,47 +195,138 @@ function ScheduleTimeline({ sched, currentYear, movesOutside, sensitivity }) {
 }
 
 // ── BENCH / SPACE ASSIGNMENT PICKER ──────────────────────────────────────────
-function SpaceAssignmentPicker({ assignments, onChange, houses, pads, sched, currentYear, outsideOnly }) {
+// ── Compatibility check: returns list of conflicting runs in a given house ────
+function checkRangeCompatibility(houseId, currentRunId, currentTempGroup, allRuns, varietyLibrary) {
+  if (!houseId || !currentTempGroup) return [];
+  const others = allRuns.filter(r => r.id !== currentRunId && (r.indoorAssignments || []).some(a => a.structureId === houseId));
+  return others.filter(r => {
+    // Get tempGroup from run directly or look up from variety library
+    const tg = r.tempGroup || ((() => {
+      const lib = (varietyLibrary || []).find(v => v.cropName?.toLowerCase() === r.cropName?.toLowerCase());
+      return lib?.tempGroup || "";
+    })());
+    return tg && tg !== currentTempGroup;
+  });
+}
+
+// ── Capacity math for a house ────────────────────────────────────────────────
+function houseCapacityInfo(house, container) {
+  const benches = (house?.zones || []).filter(z => z.type === "bench").flatMap(z => z.items || []);
+  const totalSqFt = benches.reduce((s, b) => {
+    const w = b.benchType === "double" ? 8 : (Number(b.widthFt) || 0);
+    return s + w * (Number(b.lengthFt) || 0);
+  }, 0);
+  const diaIn = container?.diameterIn;
+  let potCapacity = null;
+  if (diaIn && totalSqFt) {
+    const diaFt = diaIn / 12;
+    potCapacity = Math.floor(totalSqFt / (diaFt * diaFt));
+  }
+  return { totalSqFt: Math.round(totalSqFt), potCapacity, benchCount: benches.length };
+}
+
+function SpaceAssignmentPicker({ assignments, onChange, houses, pads, sched, currentYear, outsideOnly, allRuns = [], currentRunId, currentRunTempGroup, varietyLibrary = [], form: runForm, containers = [] }) {
   const [adding, setAdding] = useState(false);
-  const [form, setForm] = useState({ type: outsideOnly ? "pad" : "house", structureId: "", zoneId: "", itemId: "" });
+  const [pickForm, setPickForm] = useState({ type: outsideOnly ? "pad" : "house", structureId: "", zoneId: "", itemId: "" });
+  const [compatOverride, setCompatOverride] = useState(false);
+  const [showOverridePrompt, setShowOverridePrompt] = useState(false);
+  const [pendingAssignment, setPendingAssignment] = useState(null);
 
-  const selectedHouse = houses.find(h => h.id === form.structureId);
-  const selectedPad   = pads.find(p => p.id === form.structureId);
+  const selectedHouse = houses.find(h => h.id === pickForm.structureId);
+  const selectedPad   = pads.find(p => p.id === pickForm.structureId);
   const benchZones    = (selectedHouse?.zones || []).filter(z => z.type === "bench");
-  const selectedZone  = benchZones.find(z => z.id === form.zoneId);
+  const selectedZone  = benchZones.find(z => z.id === pickForm.zoneId);
+  const container     = containers.find(c => c.id === runForm?.containerId);
 
-  function addAssignment() {
-    if (!form.structureId) return;
-    const house = houses.find(h => h.id === form.structureId);
-    const pad   = pads.find(p => p.id === form.structureId);
-    const zone  = house?.zones.find(z => z.id === form.zoneId);
-    const item  = zone?.items.find(i => i.id === form.itemId);
-    onChange([...assignments, {
-      id: uid(),
-      type: form.type,
-      structureId: form.structureId,
+  // Compatibility check for currently selected house
+  const conflicts = pickForm.type === "house" && pickForm.structureId
+    ? checkRangeCompatibility(pickForm.structureId, currentRunId, currentRunTempGroup, allRuns, varietyLibrary)
+    : [];
+  const hasConflict = conflicts.length > 0 && !compatOverride;
+
+  // Capacity info for selected house
+  const capInfo = pickForm.type === "house" && selectedHouse ? houseCapacityInfo(selectedHouse, container) : null;
+
+  function buildAssignment() {
+    const house = houses.find(h => h.id === pickForm.structureId);
+    const pad   = pads.find(p => p.id === pickForm.structureId);
+    const zone  = house?.zones.find(z => z.id === pickForm.zoneId);
+    const item  = zone?.items.find(i => i.id === pickForm.itemId);
+    return {
+      id: uid(), type: pickForm.type,
+      structureId: pickForm.structureId,
       structureName: house?.name || pad?.name || "",
-      zoneId: form.zoneId || null,
-      zoneName: zone?.name || null,
-      itemId: form.itemId || null,
-      itemName: item?.label || null,
-    }]);
+      zoneId: pickForm.zoneId || null, zoneName: zone?.name || null,
+      itemId: pickForm.itemId || null, itemName: item?.label || null,
+      compatOverride: compatOverride || false,
+    };
+  }
+
+  function tryAddAssignment() {
+    if (!pickForm.structureId) return;
+    if (hasConflict) {
+      setPendingAssignment(buildAssignment());
+      setShowOverridePrompt(true);
+      return;
+    }
+    onChange([...assignments, buildAssignment()]);
     setAdding(false);
-    setForm({ type: outsideOnly ? "pad" : "house", structureId: "", zoneId: "", itemId: "" });
+    setPickForm({ type: outsideOnly ? "pad" : "house", structureId: "", zoneId: "", itemId: "" });
+    setCompatOverride(false);
+  }
+
+  function confirmOverride() {
+    if (!pendingAssignment) return;
+    onChange([...assignments, { ...pendingAssignment, compatOverride: true }]);
+    setAdding(false);
+    setPickForm({ type: outsideOnly ? "pad" : "house", structureId: "", zoneId: "", itemId: "" });
+    setCompatOverride(false);
+    setShowOverridePrompt(false);
+    setPendingAssignment(null);
   }
 
   return (
     <div>
+      {/* Override approval modal */}
+      {showOverridePrompt && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ background: "#fff", borderRadius: 16, padding: 28, maxWidth: 420, width: "90%", boxShadow: "0 8px 40px rgba(0,0,0,0.2)" }}>
+            <div style={{ fontSize: 22, marginBottom: 8 }}>⚠️ Temperature Conflict</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: "#1e2d1a", marginBottom: 8 }}>
+              {pendingAssignment?.structureName} already has {currentRunTempGroup === "cool" ? "warm" : "cool"} crops assigned.
+            </div>
+            <div style={{ fontSize: 13, color: "#7a8c74", marginBottom: 16, lineHeight: 1.6 }}>
+              Mixing cool and warm crops in the same range creates problems — cool crops need to move outside weeks 12-13 at temperatures that warm crops can't tolerate.<br /><br />
+              <strong>Only proceed if you have a specific reason.</strong> This override will be logged.
+            </div>
+            <div style={{ fontSize: 12, color: "#a04010", background: "#fdf3ea", borderRadius: 8, padding: "8px 12px", marginBottom: 16 }}>
+              Conflicting runs: {conflicts.map(r => r.cropName).join(", ")}
+            </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => { setShowOverridePrompt(false); setPendingAssignment(null); }}
+                style={{ flex: 1, background: "#f0f8eb", border: "1.5px solid #c8d8c0", borderRadius: 8, padding: "10px 0", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit", color: "#2e5c1e" }}>
+                Cancel — Pick Different Range
+              </button>
+              <button onClick={confirmOverride}
+                style={{ flex: 1, background: "#e07b39", border: "none", borderRadius: 8, padding: "10px 0", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit", color: "#fff" }}>
+                Override (Caleb Approval)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {assignments.length === 0 && !adding && (
         <div style={{ fontSize: 12, color: "#aabba0", fontStyle: "italic", marginBottom: 8 }}>No space assigned yet</div>
       )}
       <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 }}>
         {assignments.map(a => (
-          <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 8, background: "#f0f8eb", border: "1px solid #c8e0b8", borderRadius: 8, padding: "7px 12px" }}>
+          <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 8, background: a.compatOverride ? "#fff8f0" : "#f0f8eb", border: `1px solid ${a.compatOverride ? "#f0c080" : "#c8e0b8"}`, borderRadius: 8, padding: "7px 12px" }}>
             <span style={{ fontSize: 13 }}>{a.type === "pad" ? "🌤" : "🏠"}</span>
             <span style={{ flex: 1, fontSize: 13, color: "#1e2d1a", fontWeight: 600 }}>
               {a.structureName}{a.zoneName ? ` › ${a.zoneName}` : ""}{a.itemName ? ` › ${a.itemName}` : ""}
             </span>
+            {a.compatOverride && <span style={{ fontSize: 10, color: "#a04010", background: "#fde8d0", borderRadius: 4, padding: "2px 6px", fontWeight: 700 }}>⚠️ Override</span>}
             <IBtn danger onClick={() => onChange(assignments.filter(x => x.id !== a.id))}>×</IBtn>
           </div>
         ))}
@@ -246,41 +337,69 @@ function SpaceAssignmentPicker({ assignments, onChange, houses, pads, sched, cur
           {!outsideOnly && (
             <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
               {[["house","🏠 Greenhouse"],["pad","🌤 Outdoor Pad"]].map(([t, l]) => (
-                <button key={t} onClick={() => setForm(f => ({ ...f, type: t, structureId: "", zoneId: "", itemId: "" }))}
-                  style={{ flex: 1, padding: "7px 0", borderRadius: 7, border: `1.5px solid ${form.type === t ? "#7fb069" : "#c8d8c0"}`, background: form.type === t ? "#f0f8eb" : "#fff", color: form.type === t ? "#2e5c1e" : "#7a8c74", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>{l}</button>
+                <button key={t} onClick={() => setPickForm(f => ({ ...f, type: t, structureId: "", zoneId: "", itemId: "" }))}
+                  style={{ flex: 1, padding: "7px 0", borderRadius: 7, border: `1.5px solid ${pickForm.type === t ? "#7fb069" : "#c8d8c0"}`, background: pickForm.type === t ? "#f0f8eb" : "#fff", color: pickForm.type === t ? "#2e5c1e" : "#7a8c74", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>{l}</button>
               ))}
             </div>
           )}
           <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 10 }}>
             <div>
-              <FL c={form.type === "pad" ? "Outdoor Pad" : "Greenhouse"} />
-              <select style={IS(false)} value={form.structureId} onChange={e => setForm(f => ({ ...f, structureId: e.target.value, zoneId: "", itemId: "" }))}>
+              <FL c={pickForm.type === "pad" ? "Outdoor Range" : "Greenhouse Range"} />
+              <select style={IS(false)} value={pickForm.structureId} onChange={e => setPickForm(f => ({ ...f, structureId: e.target.value, zoneId: "", itemId: "" }))}>
                 <option value="">— Select —</option>
-                {(form.type === "pad" ? pads : houses).filter(s => s.active !== false).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                {(pickForm.type === "pad" ? pads : houses).filter(s => s.active !== false).map(s => {
+                  const conf = pickForm.type === "house" ? checkRangeCompatibility(s.id, currentRunId, currentRunTempGroup, allRuns, varietyLibrary) : [];
+                  return <option key={s.id} value={s.id}>{conf.length > 0 ? "⚠️ " : ""}{s.name}</option>;
+                })}
               </select>
             </div>
-            {form.type === "house" && benchZones.length > 0 && (
+
+            {/* Conflict warning */}
+            {pickForm.type === "house" && conflicts.length > 0 && (
+              <div style={{ background: "#fff8f0", border: "1.5px solid #f0c080", borderRadius: 8, padding: "10px 12px", fontSize: 12 }}>
+                <div style={{ fontWeight: 700, color: "#a04010", marginBottom: 4 }}>⚠️ Temperature Conflict</div>
+                <div style={{ color: "#7a4a10" }}>This range has {currentRunTempGroup === "cool" ? "warm" : "cool"} crops: <strong>{conflicts.map(r => r.cropName).join(", ")}</strong>. Assigning here requires Caleb's approval.</div>
+              </div>
+            )}
+
+            {/* Capacity info */}
+            {capInfo && capInfo.totalSqFt > 0 && (
+              <div style={{ background: "#f0f8eb", border: "1px solid #c8e0b8", borderRadius: 8, padding: "10px 12px", fontSize: 12 }}>
+                <div style={{ fontWeight: 700, color: "#2e5c1e", marginBottom: 4 }}>📐 Range Capacity</div>
+                <div style={{ color: "#4a7a35" }}>
+                  {capInfo.totalSqFt.toLocaleString()} sq ft bench space · {capInfo.benchCount} bench{capInfo.benchCount !== 1 ? "es" : ""}
+                  {capInfo.potCapacity && container ? <span> · ~{capInfo.potCapacity.toLocaleString()} {container.diameterIn}" pots (pot-tight)</span> : ""}
+                </div>
+              </div>
+            )}
+
+            {pickForm.type === "house" && benchZones.length > 0 && (
               <div>
                 <FL c="Bench Zone (optional)" />
-                <select style={IS(false)} value={form.zoneId} onChange={e => setForm(f => ({ ...f, zoneId: e.target.value, itemId: "" }))}>
-                  <option value="">— Whole house —</option>
+                <select style={IS(false)} value={pickForm.zoneId} onChange={e => setPickForm(f => ({ ...f, zoneId: e.target.value, itemId: "" }))}>
+                  <option value="">— Whole range —</option>
                   {benchZones.map(z => <option key={z.id} value={z.id}>{z.name}</option>)}
                 </select>
               </div>
             )}
-            {form.type === "house" && selectedZone && (selectedZone.items || []).length > 0 && (
+            {pickForm.type === "house" && selectedZone && (selectedZone.items || []).length > 0 && (
               <div>
                 <FL c="Specific Bench (optional)" />
-                <select style={IS(false)} value={form.itemId} onChange={e => setForm(f => ({ ...f, itemId: e.target.value }))}>
+                <select style={IS(false)} value={pickForm.itemId} onChange={e => setPickForm(f => ({ ...f, itemId: e.target.value }))}>
                   <option value="">— Whole zone —</option>
-                  {(selectedZone.items || []).map(i => <option key={i.id} value={i.id}>{i.label}{i.widthFt && i.lengthFt ? ` (${i.widthFt}'×${i.lengthFt}')` : ""}</option>)}
+                  {(selectedZone.items || []).map(i => {
+                    const w = i.benchType === "double" ? 8 : (Number(i.widthFt) || 0);
+                    const sqFt = w && i.lengthFt ? Math.round(w * Number(i.lengthFt)) : 0;
+                    const pots = container?.diameterIn && sqFt ? Math.floor(sqFt / Math.pow(container.diameterIn/12, 2)) : null;
+                    return <option key={i.id} value={i.id}>{i.label}{sqFt ? ` — ${sqFt} sq ft` : ""}{pots ? ` (~${pots} pots)` : ""}</option>;
+                  })}
                 </select>
               </div>
             )}
-            {form.type === "pad" && selectedPad && (selectedPad.bays || []).length > 0 && (
+            {pickForm.type === "pad" && selectedPad && (selectedPad.bays || []).length > 0 && (
               <div>
                 <FL c="Bay (optional)" />
-                <select style={IS(false)} value={form.itemId} onChange={e => setForm(f => ({ ...f, itemId: e.target.value }))}>
+                <select style={IS(false)} value={pickForm.itemId} onChange={e => setPickForm(f => ({ ...f, itemId: e.target.value }))}>
                   <option value="">— Whole pad —</option>
                   {(selectedPad.bays || []).map(b => <option key={b.id} value={b.id}>{b.number}</option>)}
                 </select>
@@ -288,8 +407,11 @@ function SpaceAssignmentPicker({ assignments, onChange, houses, pads, sched, cur
             )}
           </div>
           <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-            <button onClick={addAssignment} style={{ flex: 1, background: "#7fb069", color: "#fff", border: "none", borderRadius: 8, padding: "8px 0", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>Assign</button>
-            <button onClick={() => setAdding(false)} style={{ background: "none", border: "1px solid #c8d8c0", borderRadius: 8, padding: "8px 14px", fontSize: 13, color: "#7a8c74", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+            <button onClick={tryAddAssignment}
+              style={{ flex: 1, background: hasConflict ? "#e07b39" : "#7fb069", color: "#fff", border: "none", borderRadius: 8, padding: "8px 0", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
+              {hasConflict ? "⚠️ Assign (Conflict)" : "Assign"}
+            </button>
+            <button onClick={() => { setAdding(false); setCompatOverride(false); }} style={{ background: "none", border: "1px solid #c8d8c0", borderRadius: 8, padding: "8px 14px", fontSize: 13, color: "#7a8c74", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
           </div>
         </div>
       ) : (
@@ -1031,7 +1153,7 @@ function SourcingSection({ form, upd, focus, setFocus }) {
 }
 
 // ── CROP RUN FORM ─────────────────────────────────────────────────────────────
-function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles, containers, varietyLibrary, currentYear }) {
+function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles, containers, varietyLibrary, currentYear, allRuns = [] }) {
   const blank = {
     cropName: "", groupNumber: "",
     cases: "", packSize: 10,
@@ -1042,6 +1164,8 @@ function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles,
     weeksProp: "", weeksIndoor: "", weeksOutdoor: "",
     movesOutside: false,
     sensitivity: "tender", minTempOverride: "",
+    tempGroup: "",
+    needsSpacing: false,
     indoorAssignments: [], outsideAssignments: [],
     status: "planned", notes: "",
     // Sourcing
@@ -1274,17 +1398,40 @@ function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles,
         {/* ── SPACE TAB ── */}
         {tab === "space" && (<>
           <SH c="Indoor Space Assignment" mt={0} />
+
+          {/* Temperature group for this run */}
+          <div style={{ marginBottom: 14 }}>
+            <FL c="Temperature Group *" />
+            <div style={{ display: "flex", gap: 8 }}>
+              {[["cool","❄️ Cool","Moves outside wk 12-13"],["warm","🌡 Warm","Stays inside longer"]].map(([val, label, hint]) => (
+                <button key={val} type="button" onClick={() => upd("tempGroup", val)}
+                  style={{ flex: 1, padding: "9px 8px", borderRadius: 8, border: `2px solid ${form.tempGroup === val ? (val === "cool" ? "#4a90d9" : "#e07b39") : "#c8d8c0"}`, background: form.tempGroup === val ? (val === "cool" ? "#e8f3fc" : "#fdf3ea") : "#fff", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: form.tempGroup === val ? (val === "cool" ? "#1a4a7a" : "#a04010") : "#7a8c74" }}>{label}</div>
+                  <div style={{ fontSize: 10, color: "#aabba0" }}>{hint}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Spacing flag — only for crops that need to be spaced out (4.5" Geraniums) */}
+          <div style={{ marginBottom: 14, display: "flex", alignItems: "center", gap: 10 }}>
+            <input type="checkbox" id="needsSpacing" checked={!!form.needsSpacing} onChange={e => upd("needsSpacing", e.target.checked)} style={{ width: 16, height: 16, cursor: "pointer" }} />
+            <label htmlFor="needsSpacing" style={{ fontSize: 13, color: "#1e2d1a", cursor: "pointer" }}>
+              This run needs to be spaced out mid-season <span style={{ color: "#7a8c74", fontWeight: 400 }}>(e.g. 4.5" Geraniums — starts tight, spaces to finish density)</span>
+            </label>
+          </div>
+
           <div style={{ fontSize: 12, color: "#7a8c74", marginBottom: 12 }}>
             {sched?.transplant ? <>Bench occupied from <strong>Wk {sched.transplant.week}</strong> ({formatWeekDate(sched.transplant.week, sched.transplant.year)}) until <strong>{form.movesOutside && sched.moveOut ? `Wk ${sched.moveOut.week} (move-out)` : `Wk ${form.targetWeek} (ready)`}</strong></> : "Set schedule on the Crop & Schedule tab first"}
           </div>
-          <SpaceAssignmentPicker assignments={form.indoorAssignments} onChange={v => upd("indoorAssignments", v)} houses={houses} pads={pads} sched={sched} currentYear={currentYear} outsideOnly={false} />
+          <SpaceAssignmentPicker assignments={form.indoorAssignments} onChange={v => upd("indoorAssignments", v)} houses={houses} pads={pads} sched={sched} currentYear={currentYear} outsideOnly={false} allRuns={allRuns} currentRunId={form.id} currentRunTempGroup={form.tempGroup} varietyLibrary={varietyLibrary} form={form} containers={containers} />
 
           {form.movesOutside && (<>
             <SH c="Outdoor Space Assignment" />
             <div style={{ fontSize: 12, color: "#7a8c74", marginBottom: 12 }}>
               {sched?.moveOut ? <>Pad occupied from <strong>Wk {sched.moveOut.week}</strong> ({formatWeekDate(sched.moveOut.week, sched.moveOut.year)}) until <strong>Wk {form.targetWeek} (ready)</strong></> : "Set weeks outdoors on the Crop & Schedule tab first"}
             </div>
-            <SpaceAssignmentPicker assignments={form.outsideAssignments} onChange={v => upd("outsideAssignments", v)} houses={houses} pads={pads} sched={sched} currentYear={currentYear} outsideOnly={true} />
+            <SpaceAssignmentPicker assignments={form.outsideAssignments} onChange={v => upd("outsideAssignments", v)} houses={houses} pads={pads} sched={sched} currentYear={currentYear} outsideOnly={true} allRuns={allRuns} currentRunId={form.id} currentRunTempGroup={form.tempGroup} varietyLibrary={varietyLibrary} form={form} containers={containers} />
 
             <div style={{ marginTop: 14, background: "#fff8f0", border: "1px solid #f0c080", borderRadius: 10, padding: "12px 16px", fontSize: 12, color: "#7a4a10" }}>
               <div style={{ fontWeight: 700, marginBottom: 4 }}>🌡 Cold sensitivity: {s.label}</div>
@@ -1716,8 +1863,8 @@ export default function App() {
           )}
         </>)}
 
-        {view === "add" && <CropRunForm onSave={saveRun} onCancel={() => setView("list")} houses={houses} pads={pads} containers={containers} spacingProfiles={spacingProfiles} varietyLibrary={varietyLibrary} currentYear={currentYear} />}
-        {view === "edit" && editingId && <CropRunForm initial={runs.find(r => r.id === editingId)} onSave={saveRun} onCancel={() => { setView("list"); setEditingId(null); }} houses={houses} pads={pads} containers={containers} spacingProfiles={spacingProfiles} varietyLibrary={varietyLibrary} currentYear={currentYear} />}
+        {view === "add" && <CropRunForm onSave={saveRun} onCancel={() => setView("list")} houses={houses} pads={pads} containers={containers} spacingProfiles={spacingProfiles} varietyLibrary={varietyLibrary} currentYear={currentYear} allRuns={runs} />}
+        {view === "edit" && editingId && <CropRunForm initial={runs.find(r => r.id === editingId)} onSave={saveRun} onCancel={() => { setView("list"); setEditingId(null); }} houses={houses} pads={pads} containers={containers} spacingProfiles={spacingProfiles} varietyLibrary={varietyLibrary} currentYear={currentYear} allRuns={runs} />}
       </div>
     </div>
   );
