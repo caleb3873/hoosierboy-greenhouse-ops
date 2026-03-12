@@ -90,6 +90,200 @@ Rules:
 }
 
 // ── VARIETY FORM ──────────────────────────────────────────────────────────────
+// ── Quick Grade List ─────────────────────────────────────────────────────────
+function QuickGradeList({ varieties, search, onSearchChange, filterBreeder, onFilterBreeder, breeders, onSave }) {
+  const [localGrades, setLocalGrades] = useState({});
+  const [saving, setSaving] = useState({});
+  const [saved, setSaved] = useState({});
+
+  async function handleGradeChange(variety, field, value) {
+    const updated = { ...variety, [field]: value };
+    setLocalGrades(g => ({ ...g, [variety.id]: { ...g[variety.id], [field]: value } }));
+    setSaving(s => ({ ...s, [variety.id]: true }));
+    setSaved(s => ({ ...s, [variety.id]: false }));
+    await onSave(updated);
+    setSaving(s => ({ ...s, [variety.id]: false }));
+    setSaved(s => ({ ...s, [variety.id]: true }));
+    setTimeout(() => setSaved(s => ({ ...s, [variety.id]: false })), 1500);
+  }
+
+  function getGrade(variety, field) {
+    return localGrades[variety.id]?.[field] ?? variety[field] ?? 0;
+  }
+
+  return (
+    <div>
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ fontFamily: "'Playfair Display', Georgia, serif", fontSize: 20, color: "#1e2d1a", marginBottom: 4 }}>Grade Varieties</div>
+        <div style={{ fontSize: 13, color: "#7a8c74" }}>Rate your varieties based on experience. Saves automatically as you click.</div>
+      </div>
+
+      {/* Search & filter */}
+      <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
+        <input style={{ flex: 2, minWidth: 180, padding: "9px 12px", borderRadius: 8, border: "1.5px solid #c8d8c0", fontSize: 14, fontFamily: "inherit", color: "#1a2a1a" }}
+          placeholder="Search varieties..." value={search} onChange={onSearchChange} />
+        <select style={{ flex: 1, minWidth: 140, padding: "9px 12px", borderRadius: 8, border: "1.5px solid #c8d8c0", fontSize: 14, fontFamily: "inherit", color: "#1a2a1a", background: "#fff" }}
+          value={filterBreeder} onChange={onFilterBreeder}>
+          <option value="">All Breeders</option>
+          {breeders.map(b => <option key={b}>{b}</option>)}
+        </select>
+        <select style={{ flex: 1, minWidth: 140, padding: "9px 12px", borderRadius: 8, border: "1.5px solid #c8d8c0", fontSize: 14, fontFamily: "inherit", color: "#1a2a1a", background: "#fff" }}
+          defaultValue=""
+          onChange={e => {
+            // filter by graded/ungraded handled inline
+          }}>
+          <option value="">All Varieties</option>
+          <option value="ungraded">Ungraded only</option>
+          <option value="graded">Graded only</option>
+        </select>
+      </div>
+
+      {varieties.length === 0 && (
+        <div style={{ textAlign: "center", padding: "40px 0", color: "#aabba0", fontSize: 14 }}>No varieties match your search</div>
+      )}
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+        {/* Header row */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 180px 180px 60px", gap: 12, padding: "8px 16px", fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .6, borderBottom: "1.5px solid #e0ead8", marginBottom: 4 }}>
+          <div>Variety</div>
+          <div>🌱 Grower Grade</div>
+          <div>🛒 Customer Grade</div>
+          <div></div>
+        </div>
+
+        {varieties.map(variety => {
+          const growerGrade = getGrade(variety, "growerGrade");
+          const customerGrade = getGrade(variety, "customerGrade");
+          const isSaving = saving[variety.id];
+          const isSaved = saved[variety.id];
+          const breeder = BREEDERS.find(b => b.name === variety.breeder);
+
+          return (
+            <div key={variety.id} style={{ display: "grid", gridTemplateColumns: "1fr 180px 180px 60px", gap: 12, padding: "10px 16px", alignItems: "center", borderRadius: 8, background: "#fff", border: "1px solid #f0f5ee", transition: "background 0.15s" }}
+              onMouseEnter={e => e.currentTarget.style.background = "#f8faf6"}
+              onMouseLeave={e => e.currentTarget.style.background = "#fff"}>
+
+              {/* Name */}
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 14, color: "#1e2d1a" }}>
+                  {variety.cropName}
+                  {variety.variety && <span style={{ fontWeight: 400, color: "#7a8c74", marginLeft: 6 }}>— {variety.variety}</span>}
+                </div>
+                <div style={{ display: "flex", gap: 6, marginTop: 3, flexWrap: "wrap", alignItems: "center" }}>
+                  {variety.breeder && <span style={{ fontSize: 10, fontWeight: 700, color: breeder?.color || "#7a8c74", background: `${breeder?.color || "#7a8c74"}18`, borderRadius: 4, padding: "1px 5px" }}>{variety.breeder}</span>}
+                  {variety.tempGroup && <span style={{ fontSize: 10, fontWeight: 700, color: variety.tempGroup === "cool" ? "#1a4a7a" : "#a04010", background: variety.tempGroup === "cool" ? "#e8f3fc" : "#fdf3ea", borderRadius: 4, padding: "1px 5px" }}>{variety.tempGroup === "cool" ? "❄️ Cool" : "🌡 Warm"}</span>}
+                  {variety.finishWeeks && <span style={{ fontSize: 11, color: "#aabba0" }}>{variety.finishWeeks} wks</span>}
+                </div>
+              </div>
+
+              {/* Grower grade */}
+              <div>
+                <InlineStars value={growerGrade} onChange={v => handleGradeChange({...variety, customerGrade: getGrade(variety, "customerGrade")}, "growerGrade", v)} />
+              </div>
+
+              {/* Customer grade */}
+              <div>
+                <InlineStars value={customerGrade} onChange={v => handleGradeChange({...variety, growerGrade: getGrade(variety, "growerGrade")}, "customerGrade", v)} />
+              </div>
+
+              {/* Status */}
+              <div style={{ fontSize: 12, textAlign: "center" }}>
+                {isSaving && <span style={{ color: "#c8791a" }}>saving…</span>}
+                {isSaved && <span style={{ color: "#7fb069", fontWeight: 700 }}>✓</span>}
+                {!isSaving && !isSaved && (growerGrade > 0 || customerGrade > 0) && <span style={{ color: "#c8d8c0", fontSize: 10 }}>rated</span>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// Compact inline star rater for the grade list
+function InlineStars({ value = 0, onChange }) {
+  const [hover, setHover] = useState(null);
+  const display = hover !== null ? hover : value;
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 1 }} onMouseLeave={() => setHover(null)}>
+      {[1,2,3,4,5].map(star => {
+        const full = display >= star;
+        const half = !full && display >= star - 0.5;
+        return (
+          <div key={star} style={{ position: "relative", width: 22, height: 22, cursor: "pointer", flexShrink: 0 }}>
+            <div style={{ position: "absolute", left: 0, top: 0, width: "50%", height: "100%", zIndex: 2 }}
+              onMouseEnter={() => setHover(star - 0.5)} onClick={() => onChange(star - 0.5)} />
+            <div style={{ position: "absolute", right: 0, top: 0, width: "50%", height: "100%", zIndex: 2 }}
+              onMouseEnter={() => setHover(star)} onClick={() => onChange(star)} />
+            <svg width="22" height="22" viewBox="0 0 24 24" style={{ display: "block" }}>
+              <defs>
+                <linearGradient id={`ig-${star}-${Math.random().toString(36).slice(2,6)}`} x1="0" x2="1" y1="0" y2="0">
+                  <stop offset={half ? "50%" : full ? "100%" : "0%"} stopColor="#f5a623" />
+                  <stop offset={half ? "50%" : full ? "100%" : "0%"} stopColor="#e0e0e0" />
+                </linearGradient>
+              </defs>
+              <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"
+                fill={full ? "#f5a623" : half ? "#f5a623" : "#e0e0e0"}
+                clipPath={half ? `inset(0 50% 0 0)` : undefined}
+                stroke="#d4901f" strokeWidth="0.5" />
+              {half && <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"
+                fill="#e0e0e0" clipPath="inset(0 0 0 50%)" stroke="#d4901f" strokeWidth="0.5" />}
+            </svg>
+          </div>
+        );
+      })}
+      <span style={{ marginLeft: 4, fontSize: 12, color: display > 0 ? "#d4901f" : "#c8d8c0", fontWeight: 600, minWidth: 24 }}>
+        {display > 0 ? display.toFixed(1) : "—"}
+      </span>
+    </div>
+  );
+}
+
+// ── Star Rating Component ────────────────────────────────────────────────────
+function StarRating({ value = 0, onChange, label }) {
+  const [hover, setHover] = useState(null);
+  const stars = [1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5];
+  const display = hover !== null ? hover : value;
+  return (
+    <div>
+      <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .6, marginBottom: 6 }}>{label}</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 2, position: "relative" }}>
+        {[1,2,3,4,5].map(star => {
+          const full = display >= star;
+          const half = !full && display >= star - 0.5;
+          return (
+            <div key={star} style={{ position: "relative", width: 28, height: 28, cursor: "pointer" }}
+              onMouseLeave={() => setHover(null)}>
+              {/* half star hit zone */}
+              <div style={{ position: "absolute", left: 0, top: 0, width: "50%", height: "100%", zIndex: 2 }}
+                onMouseEnter={() => setHover(star - 0.5)}
+                onClick={() => onChange(hover !== null ? hover : star - 0.5)} />
+              {/* full star hit zone */}
+              <div style={{ position: "absolute", right: 0, top: 0, width: "50%", height: "100%", zIndex: 2 }}
+                onMouseEnter={() => setHover(star)}
+                onClick={() => onChange(hover !== null ? hover : star)} />
+              <svg width="28" height="28" viewBox="0 0 24 24" style={{ display: "block" }}>
+                <defs>
+                  <linearGradient id={`grad-${label}-${star}`}>
+                    <stop offset={half ? "50%" : full ? "100%" : "0%"} stopColor="#f5a623" />
+                    <stop offset={half ? "50%" : full ? "100%" : "0%"} stopColor="#e0e0e0" />
+                  </linearGradient>
+                </defs>
+                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"
+                  fill={`url(#grad-${label}-${star})`} stroke="#d4901f" strokeWidth="0.5" />
+              </svg>
+            </div>
+          );
+        })}
+        <span style={{ marginLeft: 6, fontSize: 13, fontWeight: 700, color: display > 0 ? "#d4901f" : "#c8d8c0" }}>
+          {display > 0 ? display.toFixed(1) : "—"}
+        </span>
+        {value > 0 && <button type="button" onClick={() => onChange(0)} style={{ marginLeft: 4, fontSize: 10, color: "#aabba0", background: "none", border: "none", cursor: "pointer", padding: "0 4px" }}>✕</button>}
+      </div>
+    </div>
+  );
+}
+
 function VarietyForm({ initial, onSave, onCancel, title }) {
   const [form, setForm] = useState(initial || {
     cropName: "", variety: "", breeder: "", type: "Annual",
@@ -98,6 +292,7 @@ function VarietyForm({ initial, onSave, onCancel, title }) {
     lightRequirement: "", fertilizerRate: "", fertilizerType: "",
     spacing: "", pgrType: "None", pgrRate: "", pgrTiming: "",
     pinchingNotes: "", generalNotes: "", cultureGuideUrl: "",
+    growerGrade: 0, customerGrade: 0,
   });
   const [focus, setFocus] = useState(null);
   const f = (field) => ({ style: inputStyle(focus === field), value: form[field] || "", onChange: e => setForm(x => ({ ...x, [field]: e.target.value })), onFocus: () => setFocus(field), onBlur: () => setFocus(null) });
@@ -180,6 +375,12 @@ function VarietyForm({ initial, onSave, onCancel, title }) {
         <FormField label="Timing / Application"><input {...f("pgrTiming")} placeholder="e.g. Weeks 3-5, drench" /></FormField>
       </div>
 
+      <SectionHeader>Grades</SectionHeader>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 8 }}>
+        <StarRating value={form.growerGrade || 0} onChange={v => setForm(x => ({ ...x, growerGrade: v }))} label="Grower Grade" />
+        <StarRating value={form.customerGrade || 0} onChange={v => setForm(x => ({ ...x, customerGrade: v }))} label="Customer Grade" />
+      </div>
+
       <SectionHeader>Cultural Notes</SectionHeader>
       <FormField label="Chemical Sensitivities" hint="Products this variety is known to react poorly to">
         <textarea style={{ ...inputStyle(focus === "chemSens"), minHeight: 70, resize: "vertical" }} value={form.chemSensitivities || ""} onChange={e => setForm(x => ({ ...x, chemSensitivities: e.target.value }))} onFocus={() => setFocus("chemSens")} onBlur={() => setFocus(null)} placeholder="e.g. Sensitive to Avid — causes leaf distortion. Bonzi causes excessive stunting above 15 ppm. Avoid oil-based sprays." />
@@ -218,6 +419,12 @@ function VarietyCard({ variety, onEdit, onDelete }) {
             {variety.type && <Badge label={variety.type} color="#4a90d9" />}
           </div>
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: 12, color: "#aabba0" }}>
+            {(variety.growerGrade > 0 || variety.customerGrade > 0) && (
+              <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                {variety.growerGrade > 0 && <span title="Grower Grade">🌱 {"★".repeat(Math.floor(variety.growerGrade))}{variety.growerGrade % 1 ? "½" : ""} <span style={{ fontSize: 10, color: "#aabba0" }}>grow</span></span>}
+                {variety.customerGrade > 0 && <span title="Customer Grade">🛒 {"★".repeat(Math.floor(variety.customerGrade))}{variety.customerGrade % 1 ? "½" : ""} <span style={{ fontSize: 10, color: "#aabba0" }}>cust</span></span>}
+              </span>
+            )}
             {variety.finishWeeks && <span>🗓 {variety.finishWeeks} wks finish</span>}
             {variety.tempGroup && <span style={{ fontWeight: 700, color: variety.tempGroup === "cool" ? "#1a4a7a" : "#a04010", background: variety.tempGroup === "cool" ? "#e8f3fc" : "#fdf3ea", borderRadius: 4, padding: "1px 6px", fontSize: 11 }}>{variety.tempGroup === "cool" ? "❄️ Cool" : "🌡 Warm"}</span>}
             {variety.finishTempDay && <span>🌡 {variety.finishTempDay}°F day</span>}
@@ -497,9 +704,10 @@ function VarietyLibrary() {
           {view !== "library" && (
             <button onClick={() => { setView("library"); setEditingId(null); }} style={{ background: "none", color: "#c8e6b8", border: "1px solid #4a6a3a", borderRadius: 8, padding: "8px 16px", fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>← Library</button>
           )}
-          {view === "library" && (
+          {view === "library" && (<>
+            <button onClick={() => setView("grades")} style={{ background: "none", color: "#c8e6b8", border: "1px solid #4a6a3a", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>⭐ Grade Varieties</button>
             <button onClick={() => { setEditingId(null); setView("add"); }} style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 8, padding: "8px 18px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>+ Add Variety</button>
-          )}
+          </>)}
         </div>
       </div>
 
@@ -550,6 +758,22 @@ function VarietyLibrary() {
               ))}
             </div>
           </>
+        )}
+
+        {/* GRADES VIEW */}
+        {view === "grades" && (
+          <QuickGradeList
+            varieties={filtered}
+            search={search}
+            onSearchChange={e => setSearch(e.target.value)}
+            filterBreeder={filterBreeder}
+            onFilterBreeder={e => setFilterBreeder(e.target.value)}
+            breeders={breeders}
+            onSave={async (variety) => {
+              try { await upsertVariety(variety); }
+              catch(e) { alert("Save failed: " + e.message); }
+            }}
+          />
         )}
 
         {/* ADD VIEW */}
