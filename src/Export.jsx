@@ -354,6 +354,93 @@ function buildFlagsSheet(flags) {
 }
 
 // ── EXPORT ENGINE ─────────────────────────────────────────────────────────────
+
+function buildAccessoriesSheet(runs, containers) {
+  // Build accessory order totals grouped by supplier
+  const lines = {}; // key: "supplier|item" → {supplier, item, sku, costEach, qty, totalCost}
+
+  function addLine(supplier, item, sku, costEach, qty) {
+    if (!qty || qty <= 0) return;
+    const key = `${supplier}||${item}`;
+    if (!lines[key]) lines[key] = { supplier: supplier || "Unknown", item, sku: sku || "", costEach: costEach || 0, qty: 0 };
+    lines[key].qty += qty;
+  }
+
+  for (const run of runs) {
+    const cont = containers.find(c => c.id === run.containerId);
+    if (!cont) continue;
+    const cases  = Number(run.cases) || 0;
+    const pack   = Number(run.packSize) || 10;
+    const units  = cases * pack;
+    if (units <= 0) continue;
+
+    // Tray
+    if (cont.hasTray && cont.trayCost) {
+      const potsPerTray = Number(cont.traysPerCase) || 1;
+      const traysNeeded = Math.ceil(units / potsPerTray);
+      addLine(cont.traySupplier || cont.supplier, cont.trayName || `Tray for ${cont.name}`, cont.traySku, Number(cont.trayCost), traysNeeded);
+    }
+    // Wire
+    if (cont.hasWire && cont.wireCost) {
+      addLine(cont.wireSupplier || cont.supplier, `Wire Hanger for ${cont.name}`, cont.wireSku, Number(cont.wireCost), units);
+    }
+    // Saucer
+    if (cont.hasSaucer && cont.saucerCost) {
+      addLine(cont.saucerSupplier || cont.supplier, cont.saucerName || `Saucer for ${cont.name}`, cont.saucerSku, Number(cont.saucerCost), units);
+    }
+    // Sleeve
+    if (cont.hasSleeve && cont.sleeveCost) {
+      addLine(cont.sleeveSupplier, `${cont.diameterIn || ""}${cont.diameterIn ? '"' : ""} Sleeve`, cont.sleeveSku, Number(cont.sleeveCost), units);
+    }
+    // HB Tag
+    if (cont.isHBTagged && cont.tagCostPerUnit) {
+      addLine(cont.tagSupplier, "Hoosier Boy Branded Tag", cont.tagSku, Number(cont.tagCostPerUnit), units);
+    }
+  }
+
+  const rows = Object.values(lines).sort((a,b) => a.supplier.localeCompare(b.supplier) || a.item.localeCompare(b.item));
+
+  const headers = ["Supplier", "Item", "SKU", "Qty Needed", "Cost Each", "Total Est. Cost"];
+  const sheetRows = [headers.map(hdrCell)];
+
+  let currentSupplier = null;
+  let supplierTotal = 0;
+  const supplierStartRows = [];
+
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    if (r.supplier !== currentSupplier) {
+      if (currentSupplier !== null) {
+        sheetRows.push([cell(""), cell(""), cell(""), cell(""), cell("SUBTOTAL →"), cell(supplierTotal, "$#,##0.00")]);
+        supplierTotal = 0;
+      }
+      currentSupplier = r.supplier;
+    }
+    const lineCost = r.costEach * r.qty;
+    supplierTotal += lineCost;
+    sheetRows.push([
+      cell(r.supplier), cell(r.item), cell(r.sku),
+      cell(r.qty, "#,##0"),
+      cell(r.costEach, "$#,##0.0000"),
+      cell(lineCost, "$#,##0.00"),
+    ]);
+  }
+
+  // Final subtotal
+  if (currentSupplier) {
+    sheetRows.push([cell(""), cell(""), cell(""), cell(""), cell("SUBTOTAL →"), cell(supplierTotal, "$#,##0.00")]);
+  }
+
+  // Grand total
+  const grandTotal = Object.values(lines).reduce((s,r) => s + r.costEach * r.qty, 0);
+  sheetRows.push([cell(""), cell(""), cell(""), cell(""), cell("GRAND TOTAL →"), cell(grandTotal, "$#,##0.00")]);
+
+  const ws = window.XLSX.utils.aoa_to_sheet(sheetRows);
+  setColWidths(ws, [22, 30, 14, 12, 12, 14]);
+  ws["!freeze"] = { xSplit: 0, ySplit: 1 };
+  return ws;
+}
+
 async function runExport({ runs, containers, houses, pads, varieties, flags, options }) {
   await ensureXLSX();
   const XLSX = window.XLSX;
@@ -377,6 +464,7 @@ async function runExport({ runs, containers, houses, pads, varieties, flags, opt
   if (options.containers)  summaryData.push([cell("Containers"),    cell("Container library"),                      cell(containers.length, "#,##0")]);
   if (options.varLib)      summaryData.push([cell("Variety Library"),cell("Variety culture guide library"),        cell(varieties.length, "#,##0")]);
   if (options.flags)       summaryData.push([cell("Flags"),         cell("Floor flags log"),                       cell(flags.length, "#,##0")]);
+  if (options.accessories) summaryData.push([cell("Accessories Order"), cell("Pre-order list grouped by supplier"), cell("—")]);
 
   const summaryWs = XLSX.utils.aoa_to_sheet(summaryData);
   setColWidths(summaryWs, [20, 40, 14]);
@@ -389,7 +477,8 @@ async function runExport({ runs, containers, houses, pads, varieties, flags, opt
   if (options.space)      XLSX.utils.book_append_sheet(wb, buildSpaceSheet(houses, pads), "Space");
   if (options.containers) XLSX.utils.book_append_sheet(wb, buildContainersSheet(containers), "Containers");
   if (options.varLib)     XLSX.utils.book_append_sheet(wb, buildVarietyLibSheet(varieties), "Variety Library");
-  if (options.flags)      XLSX.utils.book_append_sheet(wb, buildFlagsSheet(flags), "Flags");
+  if (options.flags)       XLSX.utils.book_append_sheet(wb, buildFlagsSheet(flags), "Flags");
+  if (options.accessories) XLSX.utils.book_append_sheet(wb, buildAccessoriesSheet(runs, containers), "Accessories Order");
 
   const season = runs[0]?.targetYear || now.getFullYear();
   downloadXLSX(wb, `HoosierBoy_Production_Backup_${season}_${now.toISOString().slice(0,10)}.xlsx`);
@@ -405,6 +494,7 @@ const EXPORT_OPTIONS = [
   { id: "containers",  label: "Containers",       desc: "Container library with sizing and costs", icon: "🪴", default: false },
   { id: "varLib",      label: "Variety Library",  desc: "Culture guide data for all saved varieties", icon: "📚", default: false },
   { id: "flags",       label: "Floor Flags",      desc: "All flags logged from the operator side", icon: "🚩", default: false },
+  { id: "accessories", label: "Accessories Order", desc: "Pre-order list for trays, wires, saucers, sleeves, tags — grouped by supplier", icon: "📦", default: true },
 ];
 
 export default function Export() {
