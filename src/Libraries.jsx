@@ -841,6 +841,21 @@ function ContainerForm({ initial, onSave, onCancel }) {
                           <FL c='Carrier Length (")' />
                           <input type="number" step="0.5" style={{ ...IS(focus === "cl"), background: "#fff" }} value={form.carrierLengthIn || ""} onChange={e => upd("carrierLengthIn", e.target.value)} onFocus={() => setFocus("cl")} onBlur={() => setFocus(null)} placeholder='e.g. 21' />
                         </div>
+                        <div>
+                          <FL c="Carrier Supplier" />
+                          <input style={{ ...IS(focus === "csup"), background: "#fff" }} value={form.carrierSupplier || ""} onChange={e => upd("carrierSupplier", e.target.value)} onFocus={() => setFocus("csup")} onBlur={() => setFocus(null)} placeholder="e.g. Landmark Plastics" />
+                        </div>
+                        <div>
+                          <FL c="Cost per Carrier ($)" />
+                          <input type="number" step="0.001" style={{ ...IS(focus === "ccost"), background: "#fff" }} value={form.carrierCost || ""} onChange={e => upd("carrierCost", e.target.value)} onFocus={() => setFocus("ccost")} onBlur={() => setFocus(null)} placeholder="e.g. 0.45" />
+                        </div>
+                        {form.carrierCost && form.potsPerCarrier && (
+                          <div style={{ gridColumn: "span 2", background: "#e8f4ff", borderRadius: 8, border: "1px solid #b8d8f0", padding: "10px 14px" }}>
+                            <div style={{ fontSize: 12, fontWeight: 700, color: "#2e5c8a" }}>
+                              Cost per pot position: ${(Number(form.carrierCost) / Number(form.potsPerCarrier)).toFixed(4)}
+                            </div>
+                          </div>
+                        )}
                         {form.potsPerCarrier && form.carrierWidthIn && form.carrierLengthIn && (
                           <div style={{ gridColumn: "span 2", background: "#fff", borderRadius: 8, border: "1px solid #b8d8f0", padding: "10px 14px" }}>
                             <div style={{ fontSize: 11, fontWeight: 800, color: "#2e5c8a", textTransform: "uppercase", letterSpacing: .6, marginBottom: 6 }}>Carrier Footprint Preview</div>
@@ -909,32 +924,6 @@ function ContainerForm({ initial, onSave, onCancel }) {
               )}
 
 
-              {/* ── TRAY (pots only) ─────────────────────────────────── */}
-              {isFinished && form.type === "pot" && (
-                <div style={{ gridColumn: "span 2" }}>
-                  <div style={{ borderTop: "1.5px solid #e0ead8", marginBottom: 14, marginTop: 4 }} />
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-                    <div>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: "#1e2d1a" }}>Tray Pairing</div>
-                      <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2 }}>Tray that ships with this pot size</div>
-                    </div>
-                    <Toggle value={!!form.hasTray} onChange={v => upd("hasTray", v)} label={form.hasTray ? "Yes" : "No"} />
-                  </div>
-                  {form.hasTray && (
-                    <div style={{ background: "#f0f5ff", border: "1.5px solid #c0d0f0", borderRadius: 10, padding: 14 }}>
-                      <div style={{ fontSize: 11, fontWeight: 800, color: "#3a4a80", letterSpacing: .8, textTransform: "uppercase", marginBottom: 12 }}>Tray Info</div>
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                        <div style={{ gridColumn: "span 2" }}><FL c="Tray Name / Description" /><input style={{ ...IS(focus === "tname"), background: "#fff" }} value={form.trayName || ""} onChange={e => upd("trayName", e.target.value)} onFocus={() => setFocus("tname")} onBlur={() => setFocus(null)} placeholder='e.g. 18-cell 4.5" Tray' /></div>
-                        <div><FL c="Tray Supplier" /><input style={{ ...IS(focus === "tsup"), background: "#fff" }} value={form.traySupplier || ""} onChange={e => upd("traySupplier", e.target.value)} onFocus={() => setFocus("tsup")} onBlur={() => setFocus(null)} placeholder="e.g. Landmark Plastics" /></div>
-                        <div><FL c="Tray SKU" /><input style={{ ...IS(focus === "tsku"), background: "#fff" }} value={form.traySku || ""} onChange={e => upd("traySku", e.target.value)} onFocus={() => setFocus("tsku")} onBlur={() => setFocus(null)} placeholder="e.g. T-18-45" /></div>
-                        <div><FL c="Cost per Tray ($)" /><input type="number" step="0.001" style={{ ...IS(focus === "tcost"), background: "#fff" }} value={form.trayCost || ""} onChange={e => upd("trayCost", e.target.value)} onFocus={() => setFocus("tcost")} onBlur={() => setFocus(null)} placeholder="e.g. 0.45" /></div>
-                        <div><FL c="Pots per Tray" /><input type="number" style={{ ...IS(focus === "tpc"), background: "#fff" }} value={form.traysPerCase || ""} onChange={e => upd("traysPerCase", e.target.value)} onFocus={() => setFocus("tpc")} onBlur={() => setFocus(null)} placeholder="e.g. 18, 24" /></div>
-                      </div>
-                      {form.trayCost && <div style={{ marginTop: 10, fontSize: 12, color: "#3a4a80", fontWeight: 700 }}>Cost per pot position: ${(Number(form.trayCost) / (Number(form.traysPerCase) || 1)).toFixed(4)}</div>}
-                    </div>
-                  )}
-                </div>
-              )}
 
               {/* ── SAUCER (baskets — optional) ───────────────────────── */}
               {isFinished && form.type === "basket" && (
@@ -1478,7 +1467,7 @@ function ContainerLibrary() {
       "material","volumeVal","volumeUnit","cellsPerFlat","unitsPerCase","qtyPerPallet","costPerUnit",
       "substrateVol","substrateUnit","supplier","supplier2","sku","notes","spacing",
       "photo","stockQty","stockLocation","inventoryHistory","priceHistory",
-      "hasTray","trayName","traySupplier","traySku","trayCost","traysPerCase",
+      "hasCarrier","carrierName","carrierSku","carrierSupplier","carrierCost","potsPerCarrier","carrierWidthIn","carrierLengthIn",
       "hasSaucer","saucerName","saucerSupplier","saucerSku","saucerCost",
       "hasSleeve","sleeveSupplier","sleeveSku","sleeveCost",
       "isHBTagged","tagCostPerUnit","tagSupplier","tagSku",
@@ -1486,7 +1475,7 @@ function ContainerLibrary() {
       "primaryTag","secondaryTag","tagTier"];
     const NUMERIC_FIELDS = ["diameterIn","heightIn","widthIn","lengthIn","volumeVal",
       "cellsPerFlat","unitsPerCase","qtyPerPallet","costPerUnit","substrateVol",
-      "trayCost","traysPerCase","saucerCost","sleeveCost","tagCostPerUnit","wireCost"];
+      "carrierCost","potsPerCarrier","saucerCost","sleeveCost","tagCostPerUnit","wireCost"];
     let errors = 0;
     for (const r of rows) {
       const row = { ...r, kind: r.kind || "finished" };
@@ -1511,7 +1500,7 @@ function ContainerLibrary() {
       "material","volumeVal","volumeUnit","cellsPerFlat","unitsPerCase","qtyPerPallet","costPerUnit",
       "substrateVol","substrateUnit","supplier","supplier2","sku","notes","spacing",
       "photo","stockQty","stockLocation","inventoryHistory","priceHistory",
-      "hasTray","trayName","traySupplier","traySku","trayCost","traysPerCase",
+      "hasCarrier","carrierName","carrierSku","carrierSupplier","carrierCost","potsPerCarrier","carrierWidthIn","carrierLengthIn",
       "hasSaucer","saucerName","saucerSupplier","saucerSku","saucerCost",
       "hasSleeve","sleeveSupplier","sleeveSku","sleeveCost",
       "isHBTagged","tagCostPerUnit","tagSupplier","tagSku",
@@ -1519,7 +1508,7 @@ function ContainerLibrary() {
       "primaryTag","secondaryTag","tagTier"];
     const NUMERIC_FIELDS = ["diameterIn","heightIn","widthIn","lengthIn","volumeVal",
       "cellsPerFlat","unitsPerCase","qtyPerPallet","costPerUnit","substrateVol",
-      "trayCost","traysPerCase","saucerCost","sleeveCost","tagCostPerUnit","wireCost"];
+      "carrierCost","potsPerCarrier","saucerCost","sleeveCost","tagCostPerUnit","wireCost"];
     const clean = Object.fromEntries(
       Object.entries(c)
         .filter(([k]) => DB_FIELDS.includes(k))
