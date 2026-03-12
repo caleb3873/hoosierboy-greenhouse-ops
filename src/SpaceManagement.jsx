@@ -630,7 +630,10 @@ function HouseForm({ initial, onSave, onCancel, cropRuns, containers = [] }) {
         </>)}
         {tab === "details" && <HouseDetailsPanel details={form.details || {}} onChange={det => setForm(f => ({ ...f, details: det }))} />}
         <div style={{ display: "flex", gap: 10, marginTop: 22 }}>
-          <button onClick={() => form.name.trim() && onSave({ ...form, id: form.id || uid() })} style={{ flex: 1, background: "#7fb069", color: "#fff", border: "none", borderRadius: 10, padding: 12, fontWeight: 700, fontSize: 15, cursor: "pointer", fontFamily: "inherit" }}>{initial ? "Save Changes" : "Create House"}</button>
+          {!form.name.trim() && (
+            <div style={{ fontSize: 12, color: "#e07b39", marginBottom: 6 }}>⚠️ House name is required before saving.</div>
+          )}
+          <button onClick={() => { if (!form.name.trim()) return; onSave({ ...form, id: form.id || uid() }); }} style={{ flex: 1, background: form.name.trim() ? "#7fb069" : "#c8d8c0", color: "#fff", border: "none", borderRadius: 10, padding: 12, fontWeight: 700, fontSize: 15, cursor: form.name.trim() ? "pointer" : "not-allowed", fontFamily: "inherit" }}>{initial ? "Save Changes" : "Create House"}</button>
           {onCancel && <button onClick={onCancel} style={{ background: "none", color: "#7a8c74", border: "1.5px solid #c8d8c0", borderRadius: 10, padding: "12px 20px", fontWeight: 600, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>}
         </div>
       </div>
