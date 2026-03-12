@@ -719,6 +719,7 @@ function BayEditor({ bays, onChange }) {
   const upd = (idx, f, v) => onChange(bays.map((b, i) => i === idx ? { ...b, [f]: v } : b));
   const remove = (idx) => { onChange(bays.filter((_, i) => i !== idx)); if (editIdx === idx) setEditIdx(null); };
   const move = (idx, dir) => { const next = [...bays]; const s = idx + dir; if (s < 0 || s >= next.length) return; [next[idx], next[s]] = [next[s], next[idx]]; onChange(next); setEditIdx(s); };
+  const dup = (idx) => { const copy = { ...bays[idx], id: uid(), number: bays[idx].number + " (Copy)" }; const next = [...bays]; next.splice(idx + 1, 0, copy); onChange(next); setEditIdx(idx + 1); };
   const totalSqFt = bays.reduce((s, b) => s + (b.lengthFt && b.widthFt ? Number(b.lengthFt) * Number(b.widthFt) : 0), 0);
   return (
     <div>
@@ -741,7 +742,7 @@ function BayEditor({ bays, onChange }) {
                   {bay.frostCover ? <span style={{ color: "#4a90d9", marginLeft: 6 }}>❄ Frost cover</span> : ""}
                 </div>
               </div>
-              <div style={{ display: "flex", gap: 3 }}><IBtn onClick={e => { e.stopPropagation(); move(idx, -1); }}>↑</IBtn><IBtn onClick={e => { e.stopPropagation(); move(idx, 1); }}>↓</IBtn><IBtn danger onClick={e => { e.stopPropagation(); remove(idx); }}>×</IBtn></div>
+              <div style={{ display: "flex", gap: 3 }}><IBtn onClick={e => { e.stopPropagation(); move(idx, -1); }}>↑</IBtn><IBtn onClick={e => { e.stopPropagation(); move(idx, 1); }}>↓</IBtn><IBtn onClick={e => { e.stopPropagation(); dup(idx); }} title="Duplicate bay">⧉</IBtn><IBtn danger onClick={e => { e.stopPropagation(); remove(idx); }}>×</IBtn></div>
               <span style={{ color: "#aabba0", fontSize: 14, transform: editIdx === idx ? "rotate(180deg)" : "none", transition: "transform .15s" }}>⌄</span>
             </div>
             {editIdx === idx && (
