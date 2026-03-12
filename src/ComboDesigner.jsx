@@ -478,11 +478,21 @@ function ComboNameGenerator({ plants, containerType, onSelect, onClose }) {
     setLoading(true); setError(null); setNames([]); setPicked(null);
     try {
       const prompt = `You are a creative director for a premium wholesale greenhouse called Hoosier Boy in Indianapolis. Generate 6 evocative, marketable combo planter names for a ${containerType||"combo pot"} with these plants:\n\n${plantSummary||"mixed annuals"}\n\nRules:\n- Names 2-4 words, poetic and sellable to garden center customers\n- Mix styles: nature-inspired, mood/feeling, place names, bold/punchy\n- DO NOT use plant names directly — evoke the colors and feel\n- Return ONLY a JSON array of 6 strings, nothing else, no markdown\n\nExample: ["Copper Sunset","Prairie Fire","Twilight Garden","Bold & Brilliant","Summer Storm","Indigo Nights"]`;
+      const apiKey = process.env.REACT_APP_ANTHROPIC_API_KEY || "";
       const response = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "anthropic-dangerous-direct-browser-access": "true",
+        },
         body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1000, messages: [{ role: "user", content: prompt }] }),
       });
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData?.error?.message || `API error ${response.status}`);
+      }
       const data = await response.json();
       const text = data.content?.find(b => b.type === "text")?.text || "[]";
       const parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
