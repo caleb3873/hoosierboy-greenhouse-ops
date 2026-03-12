@@ -1491,12 +1491,7 @@ export default function Preseason({ onNavigate, onCreateCropRun }) {
                 <FL c={label} />
                 <input type="number" value={capacity[key] || ""} onChange={e => persistCapacity({ ...capacity, [key]: e.target.value })}
                   onFocus={() => setFocusCap(key)}
-
-      {/* ── COPY PLAN TAB ── */}
-      {tab === "copyplan" && (
-        <BulkCopyPlan runs={runs} currentYear={currentYear} onCreateCropRun={onCreateCropRun} onNavigate={onNavigate} />
-      )}
- onBlur={() => setFocusCap(null)}
+                  onBlur={() => setFocusCap(null)}
                   placeholder="0" style={{ ...IS(focusCap === key), fontSize: 20, fontWeight: 800, textAlign: "center", marginBottom: 4 }} />
                 <div style={{ fontSize: 11, color: "#9aaa90" }}>{sub}</div>
               </div>
@@ -1565,6 +1560,11 @@ export default function Preseason({ onNavigate, onCreateCropRun }) {
             </div>
           )}
         </div>
+      )}
+
+      {/* ── COPY PLAN TAB ── */}
+      {tab === "copyplan" && (
+        <BulkCopyPlan runs={runs} currentYear={currentYear} onCreateCropRun={onCreateCropRun} onNavigate={onNavigate} />
       )}
     </div>
   );
