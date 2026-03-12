@@ -278,7 +278,8 @@ function LotMaterials({ lot, onChange, containers, soilMixes, tags }) {
   // Soil cost per unit (needs substrateVol from container if available)
   const soilCpf = selSoil ? soilCostPerCuFt(selSoil) : null;
   const substrateVolCuFt = selContainer?.substrateVol
-    ? (selContainer.substrateUnit==="qt"    ? Number(selContainer.substrateVol)/25.71
+    ? (selContainer.substrateUnit==="pt"    ? Number(selContainer.substrateVol)/51.43
+     : selContainer.substrateUnit==="qt"    ? Number(selContainer.substrateVol)/25.71
      : selContainer.substrateUnit==="gal"   ? Number(selContainer.substrateVol)*0.134
      : selContainer.substrateUnit==="cu in" ? Number(selContainer.substrateVol)/1728
      : selContainer.substrateUnit==="L"     ? Number(selContainer.substrateVol)*0.0353
@@ -410,7 +411,8 @@ function CostRollup({ plants, lot, containers, soilMixes, tags }) {
 
   const soilCpf = selSoil ? soilCostPerCuFt(selSoil) : null;
   const substrateVolCuFt = selContainer?.substrateVol
-    ? (selContainer.substrateUnit==="qt"    ? Number(selContainer.substrateVol)/25.71
+    ? (selContainer.substrateUnit==="pt"    ? Number(selContainer.substrateVol)/51.43
+     : selContainer.substrateUnit==="qt"    ? Number(selContainer.substrateVol)/25.71
      : selContainer.substrateUnit==="gal"   ? Number(selContainer.substrateVol)*0.134
      : selContainer.substrateUnit==="cu in" ? Number(selContainer.substrateVol)/1728
      : selContainer.substrateUnit==="L"     ? Number(selContainer.substrateVol)*0.0353
