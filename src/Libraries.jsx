@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
-import { useVarieties, useContainers, useSpacingProfiles, useBrokerCatalogs, useSoilMixes, useInputProducts, useComboTags } from "./supabase";
+import { useVarieties, useContainers, useSpacingProfiles, useBrokerCatalogs, useSoilMixes, useInputProducts, useComboTags, useBrokerProfiles } from "./supabase";
+import { BrokerProfiles, SupplierProfiles, BreederProfiles } from "./Profiles";
 import ComboLibrary from "./ComboDesigner";
 
 // ── BREEDER CONFIG ────────────────────────────────────────────────────────────
@@ -2165,9 +2166,31 @@ function UploadWizard({ onSave, onCancel }) {
   const [season, setSeason]         = useState("Spring 2026");
   const [loading, setLoading]       = useState(false);
   const [error, setError]           = useState(null);
+  const [templateApplied, setTemplateApplied] = useState(false);
+  const [saveTemplate, setSaveTemplate] = useState(true);
   const fileRef = useRef();
+  const { rows: brokerProfiles, upsert: upsertBrokerProfile } = useBrokerProfiles();
 
-  const loadSheet = (name, sheets) => {
+  const applyBrokerTemplate = (template, sheets, sheetToLoad) => {
+    if (!template) return false;
+    const sheetName = template.sheetName || sheetToLoad;
+    const allRows = sheets[sheetName] || sheets[sheetToLoad] || [];
+    const hRow = template.headerRow ?? 0;
+    setHeaderRow(hRow);
+    setHeaders(allRows[hRow] || []);
+    setRows(allRows);
+    setMapping(template.mapping || {});
+    if (template.sheetName && sheets[template.sheetName]) setSelectedSheet(template.sheetName);
+    setTemplateApplied(true);
+    return true;
+  };
+
+  const loadSheet = (name, sheets, brokerTpl) => {
+    // Try broker template first
+    if (brokerTpl) {
+      const applied = applyBrokerTemplate(brokerTpl, sheets, name);
+      if (applied) return;
+    }
     const allRows = sheets[name] || [];
     // Search up to row 25 for a row that looks like a header (3+ non-empty, contains text)
     let hRow = 0;
@@ -2179,6 +2202,7 @@ function UploadWizard({ onSave, onCancel }) {
     setHeaders(allRows[hRow]);
     setRows(allRows);
     setMapping(guessMapping(allRows[hRow]));
+    setTemplateApplied(false);
   };
 
   const handleFile = async (file) => {
@@ -2189,10 +2213,11 @@ function UploadWizard({ onSave, onCancel }) {
       const { sheetNames: names, sheetData } = await parseExcel(file);
       setAllSheets(sheetData);
       setSheetNames(names);
-      // Auto-pick: prefer sheets with "order" or "price" in name, else last sheet with data
       const best = names.find(n => /order|price|list|catalog/i.test(n)) || names[names.length - 1];
       setSelectedSheet(best);
-      loadSheet(best, sheetData);
+      // Check for saved broker template
+      const bProfile = brokerProfiles.find(b => b.name.toLowerCase() === brokerName.toLowerCase());
+      loadSheet(best, sheetData, bProfile?.importTemplate || null);
       setStep(2);
     } catch (e) {
       setError("Could not read file. Make sure it's a .xlsx or .xls file.");
@@ -2246,6 +2271,18 @@ function UploadWizard({ onSave, onCancel }) {
     <div style={s}>
       <div style={{ fontSize: 20, fontWeight: 800, color: "#1a2a1a", marginBottom: 6 }}>Map Columns</div>
       <div style={{ fontSize: 13, color: "#7a8c74", marginBottom: 16 }}>Tell the app what each column contains. We've made our best guess — adjust anything that's wrong.</div>
+
+      {/* Template applied banner */}
+      {templateApplied && (
+        <div style={{ background: "#f0f8eb", border: "1.5px solid #b8d8a0", borderRadius: 10, padding: "10px 16px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 16 }}>✓</span>
+          <span style={{ fontSize: 13, fontWeight: 700, color: "#2e5c1e" }}>Saved template applied for <strong>{brokerName}</strong></span>
+          <button onClick={() => { loadSheet(selectedSheet, allSheets, null); setTemplateApplied(false); }}
+            style={{ marginLeft: "auto", padding: "3px 10px", borderRadius: 8, border: "1.5px solid #b8d8a0", background: "#fff", color: "#4a7a35", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+            Override
+          </button>
+        </div>
+      )}
 
       {/* Sheet selector */}
       {sheetNames.length > 1 && (
@@ -2345,10 +2382,25 @@ function UploadWizard({ onSave, onCancel }) {
         </table>
       </div>
 
+      {/* Save template option */}
+      <div style={{ background: "#f0f8eb", border: "1.5px solid #b8d8a0", borderRadius: 10, padding: "12px 16px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10 }}>
+        <input type="checkbox" id="saveTemplateChk" checked={saveTemplate} onChange={e => setSaveTemplate(e.target.checked)} style={{ width: 16, height: 16, accentColor: "#7fb069", cursor: "pointer" }} />
+        <label htmlFor="saveTemplateChk" style={{ fontSize: 13, fontWeight: 600, color: "#2e5c1e", cursor: "pointer" }}>
+          Save column mapping as import template for <strong>{brokerName || "this broker"}</strong>
+        </label>
+        <span style={{ fontSize: 12, color: "#7a8c74", marginLeft: "auto" }}>Auto-applies next time</span>
+      </div>
       <div style={{ display: "flex", gap: 10 }}>
         <button onClick={() => setStep(2)} style={{ flex: 1, padding: "12px 0", borderRadius: 10, border: "1.5px solid #c8d8c0", background: "#fff", color: "#7a8c74", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>Back</button>
-        <button onClick={() => onSave({ id: uid(), brokerName, season, items, importedAt: new Date().toISOString() })}
-          style={{ flex: 2, padding: "12px 0", borderRadius: 10, border: "none", background: "#7fb069", color: "#fff", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
+        <button onClick={async () => {
+          if (saveTemplate && brokerName.trim()) {
+            const template = { mapping, headerRow, sheetName: selectedSheet };
+            const existing = brokerProfiles.find(b => b.name.toLowerCase() === brokerName.toLowerCase());
+            if (existing) { await upsertBrokerProfile({ ...existing, importTemplate: template }); }
+            else { await upsertBrokerProfile({ id: crypto.randomUUID(), name: brokerName, importTemplate: template, whatTheySell: [], seasonHistory: [] }); }
+          }
+          onSave({ id: crypto.randomUUID(), brokerName, season, items, importedAt: new Date().toISOString() });
+        }} style={{ flex: 2, padding: "12px 0", borderRadius: 10, border: "none", background: "#7fb069", color: "#fff", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
           Import {items.length.toLocaleString()} Items ✓
         </button>
       </div>
@@ -3019,6 +3071,9 @@ const LIBRARY_TABS = [
   { id: "tags",      label: "Tags",       icon: "🏷️" },
   { id: "combos",    label: "Combos",     icon: "🌸" },
   { id: "pricing",   label: "Pricing",    icon: "💰" },
+  { id: "brkprofile", label: "Brokers",    icon: "🤝" },
+  { id: "suppliers",  label: "Suppliers",  icon: "🏭" },
+  { id: "breeders",   label: "Breeders",   icon: "🧬" },
 ];
 
 export default function Libraries() {
@@ -3049,6 +3104,9 @@ export default function Libraries() {
       {tab === "tags"      && <TagsLibrary />}
       {tab === "combos"    && <ComboLibrary />}
       {tab === "pricing"   && <PriceUpdateLibrary />}
+      {tab === "brkprofile" && <BrokerProfiles />}
+      {tab === "suppliers"  && <SupplierProfiles />}
+      {tab === "breeders"   && <BreederProfiles />}
     </div>
   );
 }
