@@ -613,7 +613,7 @@ const TRAY_TYPES = [
   { id: "trayOther", label: "Other Tray",       icon: "📋", color: "#7a8c74" },
 ];
 const MATERIALS = ["Plastic", "Biodegradable", "Fiber", "Terracotta", "Foam", "Other"];
-const VOLUME_UNITS = ["qt", "gal", "cu in", "L"];
+const VOLUME_UNITS = ["pt", "qt", "gal", "cu in", "L"];
 
 // ── HELPERS ───────────────────────────────────────────────────────────────────
 const uid = () => crypto.randomUUID();
@@ -628,6 +628,7 @@ function substrateTotal(substrateVol, substrateUnit, units) {
   const total   = perUnit * units;
   // convert to cubic feet for ordering context (1 cu ft = 25.71 qt, 1 gal = 4 qt)
   let cuFt = null;
+  if (substrateUnit === "pt")    cuFt = total / 51.43;
   if (substrateUnit === "qt")    cuFt = total / 25.71;
   if (substrateUnit === "gal")   cuFt = (total * 4) / 25.71;
   if (substrateUnit === "cu in") cuFt = total / 1728;
