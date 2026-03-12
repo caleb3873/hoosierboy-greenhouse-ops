@@ -2276,7 +2276,10 @@ function UploadWizard({ onSave, onCancel }) {
   const [headerRow, setHeaderRow]   = useState(0);
   const [mapping, setMapping]       = useState({});
   const [brokerName, setBrokerName] = useState("");
-  const [season, setSeason]         = useState("Spring 2026");
+  const [brokerNameNew, setBrokerNameNew] = useState("");
+  const [breederName, setBreederName] = useState("");
+  const [supplierName, setSupplierName] = useState("");
+  const [season, setSeason]         = useState("");
   const [loading, setLoading]       = useState(false);
   const [error, setError]           = useState(null);
   const [templateApplied, setTemplateApplied] = useState(false);
@@ -2348,16 +2351,46 @@ function UploadWizard({ onSave, onCancel }) {
       <div style={{ fontSize: 20, fontWeight: 800, color: "#1a2a1a", marginBottom: 6 }}>Upload Broker Price List</div>
       <div style={{ fontSize: 13, color: "#7a8c74", marginBottom: 24 }}>Upload an Excel file (.xlsx or .xls) from any broker. You'll map the columns in the next step.</div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
+      {/* Broker → Breeder → Supplier → Year */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 8 }}>
         <div>
-          <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .6, marginBottom: 6 }}>Broker Name</div>
-          <input value={brokerName} onChange={e => setBrokerName(e.target.value)} placeholder="e.g. Ball Seed"
-            style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1.5px solid #c8d8c0", fontSize: 14, color: "#1a2a1a", fontFamily: "inherit", boxSizing: "border-box" }} />
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .6, marginBottom: 6 }}>Broker <span style={{color:"#c8791a",fontWeight:400,fontSize:10,textTransform:"none"}}>(who you buy from)</span></div>
+          {brokerProfiles.length > 0
+            ? <>
+                <select value={brokerName === brokerNameNew && brokerNameNew ? "__new__" : brokerName} onChange={e => { if(e.target.value==="__new__"){setBrokerName("");setBrokerNameNew("");}else{setBrokerName(e.target.value);setBrokerNameNew("");} }}
+                  style={{ width:"100%", padding:"10px 12px", borderRadius:8, border:`1.5px solid ${brokerName&&brokerName!=="__new__"?"#7fb069":"#c8d8c0"}`, fontSize:14, color:"#1a2a1a", fontFamily:"inherit", boxSizing:"border-box", background:"#fff" }}>
+                  <option value="">— Select broker —</option>
+                  {brokerProfiles.map(b => <option key={b.id} value={b.name}>{b.name}</option>)}
+                  <option value="__new__">+ Add new broker…</option>
+                </select>
+                {(brokerName===""&&brokerNameNew!==""||brokerProfiles.length===0||brokerName==="") && brokerName!=brokerProfiles.find(b=>b.name===brokerName)?.name && brokerName==="" && (
+                  <input value={brokerNameNew} onChange={e=>{setBrokerNameNew(e.target.value);setBrokerName(e.target.value);}} placeholder="Type new broker name…"
+                    style={{width:"100%",marginTop:6,padding:"10px 12px",borderRadius:8,border:"1.5px solid #7fb069",fontSize:14,color:"#1a2a1a",fontFamily:"inherit",boxSizing:"border-box"}} />
+                )}
+              </>
+            : <input value={brokerName} onChange={e=>setBrokerName(e.target.value)} placeholder="e.g. Ball Seed"
+                style={{width:"100%",padding:"10px 12px",borderRadius:8,border:"1.5px solid #c8d8c0",fontSize:14,color:"#1a2a1a",fontFamily:"inherit",boxSizing:"border-box"}} />
+          }
         </div>
         <div>
-          <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .6, marginBottom: 6 }}>Season</div>
-          <input value={season} onChange={e => setSeason(e.target.value)} placeholder="e.g. Spring 2026"
-            style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1.5px solid #c8d8c0", fontSize: 14, color: "#1a2a1a", fontFamily: "inherit", boxSizing: "border-box" }} />
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .6, marginBottom: 6 }}>Year</div>
+          <select value={season} onChange={e => setSeason(e.target.value)}
+            style={{ width:"100%", padding:"10px 12px", borderRadius:8, border:`1.5px solid ${season?"#7fb069":"#c8d8c0"}`, fontSize:14, color:"#1a2a1a", fontFamily:"inherit", boxSizing:"border-box", background:"#fff" }}>
+            <option value="">— Select year —</option>
+            {["2024","2025","2026","2027"].map(y => <option key={y} value={y}>{y}</option>)}
+          </select>
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .6, marginBottom: 6 }}>Breeder <span style={{color:"#c8791a",fontWeight:400,fontSize:10,textTransform:"none"}}>(who bred it)</span></div>
+          <input value={breederName} onChange={e=>setBreederName(e.target.value)} placeholder="e.g. Dummen Orange"
+            style={{width:"100%",padding:"10px 12px",borderRadius:8,border:`1.5px solid ${breederName?"#7fb069":"#c8d8c0"}`,fontSize:14,color:"#1a2a1a",fontFamily:"inherit",boxSizing:"border-box"}} />
+        </div>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .6, marginBottom: 6 }}>Supplier <span style={{color:"#c8791a",fontWeight:400,fontSize:10,textTransform:"none"}}>(facility / origin)</span></div>
+          <input value={supplierName} onChange={e=>setSupplierName(e.target.value)} placeholder="e.g. Dummen Orange Guatemala"
+            style={{width:"100%",padding:"10px 12px",borderRadius:8,border:`1.5px solid ${supplierName?"#7fb069":"#c8d8c0"}`,fontSize:14,color:"#1a2a1a",fontFamily:"inherit",boxSizing:"border-box"}} />
         </div>
       </div>
 
@@ -2512,7 +2545,7 @@ function UploadWizard({ onSave, onCancel }) {
             if (existing) { await upsertBrokerProfile({ ...existing, importTemplate: template }); }
             else { await upsertBrokerProfile({ id: crypto.randomUUID(), name: brokerName, importTemplate: template, whatTheySell: [], seasonHistory: [] }); }
           }
-          onSave({ id: crypto.randomUUID(), brokerName, season, items, importedAt: new Date().toISOString() });
+          onSave({ id: crypto.randomUUID(), brokerName, breederName, supplierName, season, items, importedAt: new Date().toISOString() });
         }} style={{ flex: 2, padding: "12px 0", borderRadius: 10, border: "none", background: "#7fb069", color: "#fff", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
           Import {items.length.toLocaleString()} Items ✓
         </button>
@@ -2542,6 +2575,7 @@ function CatalogDetail({ catalog, onBack, onDelete }) {
         <button onClick={onBack} style={{ background: "none", border: "none", color: "#7a8c74", fontSize: 20, cursor: "pointer", padding: 0 }}>←</button>
         <div>
           <div style={{ fontSize: 20, fontWeight: 800, color: "#1a2a1a" }}>{catalog.brokerName}</div>
+          {catalog.breederName && <div style={{ fontSize: 13, color: "#4a7a35", fontWeight: 700 }}>{catalog.breederName}{catalog.supplierName ? ` — ${catalog.supplierName}` : ""}</div>}
           <div style={{ fontSize: 13, color: "#7a8c74" }}>{catalog.season} · {catalog.items.length.toLocaleString()} items</div>
         </div>
         <button onClick={() => { if (window.confirm("Delete this catalog?")) onDelete(catalog.id); }}
@@ -2680,6 +2714,7 @@ function BrokerCatalogs() {
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
                   <div>
                     <div style={{ fontSize: 16, fontWeight: 800, color: "#1a2a1a" }}>{cat.brokerName}</div>
+                    {cat.breederName && <div style={{ fontSize: 12, color: "#4a7a35", fontWeight: 700 }}>{cat.breederName}{cat.supplierName ? ` — ${cat.supplierName}` : ""}</div>}
                     <div style={{ fontSize: 12, color: "#7a8c74" }}>{cat.season}</div>
                   </div>
                   <span style={{ background: "#f2f5ef", color: "#4a5a40", borderRadius: 20, padding: "3px 10px", fontSize: 12, fontWeight: 700 }}>
