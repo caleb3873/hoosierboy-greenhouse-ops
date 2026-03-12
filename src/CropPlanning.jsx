@@ -396,13 +396,36 @@ function SpaceAssignmentPicker({ assignments, onChange, houses, pads, sched, cur
                 </select>
               </div>
             )}
-            {pickForm.type === "pad" && selectedPad && (selectedPad.bays || []).length > 0 && (
+            {pickForm.type === "pad" && selectedPad && (
               <div>
-                <FL c="Bay (optional)" />
-                <select style={IS(false)} value={pickForm.itemId} onChange={e => setPickForm(f => ({ ...f, itemId: e.target.value }))}>
-                  <option value="">— Whole pad —</option>
-                  {(selectedPad.bays || []).map(b => <option key={b.id} value={b.id}>{b.number}</option>)}
-                </select>
+                <FL c="Bay *" hint="Select which bay this crop will occupy" />
+                {(selectedPad.bays || []).length === 0 ? (
+                  <div style={{ fontSize: 12, color: "#e07b39", background: "#fff8f0", borderRadius: 8, padding: "8px 12px" }}>
+                    ⚠️ No bays configured on this pad — edit the pad to add bays first.
+                  </div>
+                ) : (
+                  <>
+                    <select style={IS(false)} value={pickForm.itemId} onChange={e => setPickForm(f => ({ ...f, itemId: e.target.value }))}>
+                      <option value="">— Select bay —</option>
+                      {(selectedPad.bays || []).map(b => {
+                        const sqFt = b.widthFt && b.lengthFt ? Math.round(Number(b.widthFt) * Number(b.lengthFt)) : 0;
+                        const pots = container?.diameterIn && sqFt ? Math.floor(sqFt / Math.pow(container.diameterIn / 12, 2)) : null;
+                        return <option key={b.id} value={b.id}>{b.number}{sqFt ? ` — ${sqFt.toLocaleString()} sq ft` : ""}{pots ? ` (~${pots.toLocaleString()} pots)` : ""}</option>;
+                      })}
+                    </select>
+                    {pickForm.itemId && (() => {
+                      const bay = (selectedPad.bays || []).find(b => b.id === pickForm.itemId);
+                      const sqFt = bay?.widthFt && bay?.lengthFt ? Math.round(Number(bay.widthFt) * Number(bay.lengthFt)) : 0;
+                      const pots = container?.diameterIn && sqFt ? Math.floor(sqFt / Math.pow(container.diameterIn / 12, 2)) : null;
+                      return sqFt > 0 ? (
+                        <div style={{ marginTop: 6, background: "#f0f8eb", border: "1px solid #c8e0b8", borderRadius: 8, padding: "8px 12px", fontSize: 12 }}>
+                          <span style={{ fontWeight: 700, color: "#2e5c1e" }}>📐 {sqFt.toLocaleString()} sq ft</span>
+                          {pots && container ? <span style={{ color: "#4a7a35", marginLeft: 8 }}>· ~{pots.toLocaleString()} {container.diameterIn}" pots</span> : ""}
+                        </div>
+                      ) : null;
+                    })()}
+                  </>
+                )}
               </div>
             )}
           </div>
