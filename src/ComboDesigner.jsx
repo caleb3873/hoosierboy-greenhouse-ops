@@ -401,6 +401,12 @@ function CostRollup({ plants, lot, containers, soilMixes, tags }) {
   const plantCost = plants.reduce((s,p)=>s+(Number(p.costPerPlant||0)*(p.qty||1)),0);
   const containerCost = selContainer?.costPerUnit ? Number(selContainer.costPerUnit) : 0;
   const tagCost = selTag?.costPerUnit ? Number(selTag.costPerUnit) : 0;
+  const trayCost   = selContainer?.hasTray    ? (Number(selContainer.trayCost)||0)       : 0;
+  const wireCost   = selContainer?.hasWire    ? (Number(selContainer.wireCost)||0)       : 0;
+  const saucerCost = selContainer?.hasSaucer  ? (Number(selContainer.saucerCost)||0)     : 0;
+  const sleeveCost = selContainer?.hasSleeve  ? (Number(selContainer.sleeveCost)||0)     : 0;
+  const hbTagCost  = selContainer?.isHBTagged ? (Number(selContainer.tagCostPerUnit)||0) : 0;
+  const accessoryCost = trayCost + wireCost + saucerCost + sleeveCost + hbTagCost;
 
   const soilCpf = selSoil ? soilCostPerCuFt(selSoil) : null;
   const substrateVolCuFt = selContainer?.substrateVol
@@ -412,15 +418,20 @@ function CostRollup({ plants, lot, containers, soilMixes, tags }) {
     : null;
   const soilCost = soilCpf && substrateVolCuFt ? soilCpf * substrateVolCuFt : 0;
 
-  const totalPerUnit = plantCost + containerCost + soilCost + tagCost;
+  const totalPerUnit = plantCost + containerCost + soilCost + tagCost + accessoryCost;
   const comboQty = Number(lot.qty) || Number(lot.totalQty) || 0;
   const totalMaterial = totalPerUnit * comboQty;
 
   const items = [
     { label:"Plants",    value: plantCost,     color:"#7fb069",  show: plantCost>0 },
     { label:"Container", value: containerCost, color:"#4a90d9",  show: containerCost>0 },
+    { label:"Tray",      value: trayCost,       color:"#2e7d9e",  show: trayCost>0 },
+    { label:"Wire",      value: wireCost,       color:"#5a5a40",  show: wireCost>0 },
+    { label:"Saucer",    value: saucerCost,     color:"#7b3fa0",  show: saucerCost>0 },
+    { label:"Sleeve",    value: sleeveCost,     color:"#2a6a20",  show: sleeveCost>0 },
     { label:"Soil",      value: soilCost,       color:"#c8791a",  show: soilCost>0 },
     { label:"Tag",       value: tagCost,        color:"#8e44ad",  show: tagCost>0 },
+    { label:"HB Tag",    value: hbTagCost,      color:"#1e2d1a",  show: hbTagCost>0 },
   ].filter(i=>i.show);
 
   if (items.length===0) return null;
@@ -690,8 +701,13 @@ function OrderSummary({ lot, onClose, onMarkOrdered, containers, soilMixes, tags
     const containerCost = selContainer?.costPerUnit ? Number(selContainer.costPerUnit) : 0;
     const tagCost = selTag?.costPerUnit ? Number(selTag.costPerUnit) : 0;
     const plantCost = (combo.plants||[]).reduce((s,p)=>s+(Number(p.costPerPlant||0)*(p.qty||1)),0);
-    const totalPerUnit = plantCost+containerCost+soilCost+tagCost;
-    return { combo, qty, selContainer, selSoil, selTag, plantCost, containerCost, soilCost, tagCost, totalPerUnit, totalCost: totalPerUnit*qty };
+    const accessoryCost2 = (selContainer?.hasTray?(Number(selContainer.trayCost)||0):0)
+                         + (selContainer?.hasWire?(Number(selContainer.wireCost)||0):0)
+                         + (selContainer?.hasSaucer?(Number(selContainer.saucerCost)||0):0)
+                         + (selContainer?.hasSleeve?(Number(selContainer.sleeveCost)||0):0)
+                         + (selContainer?.isHBTagged?(Number(selContainer.tagCostPerUnit)||0):0);
+    const totalPerUnit = plantCost+containerCost+soilCost+tagCost+accessoryCost2;
+    return { combo, qty, selContainer, selSoil, selTag, plantCost, containerCost, soilCost, tagCost, accessoryCost: accessoryCost2, totalPerUnit, totalCost: totalPerUnit*qty };
   });
 
   const grandMaterialTotal = materialRows.reduce((s,r)=>s+r.totalCost,0);
@@ -967,7 +983,8 @@ function LotCard({ lot, onEdit, onDelete, onDuplicate, onApprove, onRevision, on
     const soilCpf = selSoil?soilCostPerCuFt(selSoil):null;
     const subVol = selContainer?.substrateVol?(selContainer.substrateUnit==="qt"?Number(selContainer.substrateVol)/25.71:selContainer.substrateUnit==="gal"?Number(selContainer.substrateVol)*0.134:selContainer.substrateUnit==="cu in"?Number(selContainer.substrateVol)/1728:selContainer.substrateUnit==="L"?Number(selContainer.substrateVol)*0.0353:Number(selContainer.substrateVol)):null;
     const soilCost = soilCpf&&subVol?soilCpf*subVol:0;
-    return sum + (plantCost+containerCost+soilCost+tagCost)*qty;
+    const acc = (selContainer?.hasTray?(Number(selContainer.trayCost)||0):0)+(selContainer?.hasWire?(Number(selContainer.wireCost)||0):0)+(selContainer?.hasSaucer?(Number(selContainer.saucerCost)||0):0)+(selContainer?.hasSleeve?(Number(selContainer.sleeveCost)||0):0)+(selContainer?.isHBTagged?(Number(selContainer.tagCostPerUnit)||0):0);
+    return sum + (plantCost+containerCost+soilCost+tagCost+acc)*qty;
   },0);
 
   const brokers = [...new Set(allPlants.map(p=>p.broker).filter(Boolean))];
