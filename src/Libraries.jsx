@@ -56,13 +56,24 @@ function SectionHeader({ children }) {
 function buildParsePrompt(breeder) {
   return `You are a horticulture data extraction assistant. The user has uploaded a breeder culture guide PDF from ${breeder || "a flower breeder"}.
 
-Extract ALL variety/cultivar data found in the document. For each variety, return a JSON array of objects with these exact fields:
+Your job is to extract the SERIES-LEVEL cultural data — one entry per series or crop, NOT one per color variant.
 
+Rules:
+- If the guide covers one series (e.g. "Cabaret Calibrachoa") with many colors listed, create EXACTLY ONE entry for that series. Ignore individual color names — they are irrelevant.
+- cropName = the genus or crop type (e.g. "Calibrachoa", "Petunia", "Impatiens")
+- variety = the series name only (e.g. "Cabaret", "Wave", "Infinity")
+- If the guide covers multiple distinct series with different cultural data, create one entry per series.
+- Use the primary/smallest container crop time for finishWeeks.
+- All temperatures in °F, ranges are fine (e.g. "71-76").
+- Use null for any field not mentioned in the PDF.
+- Return ONLY a valid JSON array, no markdown, no explanation, no backticks.
+
+Return objects with these exact fields:
 {
   "cropName": "",
   "variety": "",
   "breeder": "${breeder || ""}",
-  "type": "Annual | Perennial | Biennial",
+  "type": "Annual",
   "propTraySize": "",
   "propCellCount": "",
   "propWeeks": "",
@@ -78,15 +89,7 @@ Extract ALL variety/cultivar data found in the document. For each variety, retur
   "pgrTiming": "",
   "pinchingNotes": "",
   "generalNotes": ""
-}
-
-Rules:
-- Extract every variety you can find
-- Use null for fields not mentioned
-- propWeeks and finishWeeks should be numbers or ranges like "8-10"
-- temperatures in °F
-- spacing in inches
-- Return ONLY a valid JSON array, no markdown, no explanation, no backticks`;
+}`;
 }
 
 // ── VARIETY FORM ──────────────────────────────────────────────────────────────
