@@ -501,22 +501,34 @@ function Combobox({ value, onChange, options, placeholder, focusKey, focus, setF
 }
 
 // ── VARIETY MANAGER ───────────────────────────────────────────────────────────
-function VarietyManager({ varieties, lotCases, packSize, onChange, onIncreaseLot, varietyLibrary }) {
+function VarietyManager({ varieties, lotCases, packSize, materialType, propTraySize, linerSize, onChange, onIncreaseLot, varietyLibrary }) {
   const [focus, setFocus] = useState(null);
   const [overAlert, setOverAlert] = useState(null); // { needed, current }
+
+  // Determine split increment based on material type
+  // URC: 100 units. Liner: tray size (e.g. 84). Seed: 1. Default: 100.
+  const splitIncrement = (() => {
+    if (materialType === "liner" && linerSize) {
+      const match = String(linerSize).match(/\d+/);
+      return match ? Number(match[0]) : 100;
+    }
+    if (materialType === "urc" || !materialType) return 100;
+    return 100;
+  })();
 
   const assignedCases = varieties.reduce((s, v) => s + (Number(v.cases) || 0), 0);
   const remainingCases = lotCases - assignedCases;
   const isOver = assignedCases > lotCases && lotCases > 0;
   const pct = lotCases > 0 ? Math.min(100, Math.round((assignedCases / lotCases) * 100)) : 0;
 
-  // Even-split when adding a variety
+  // Even-split when adding a variety — rounded to splitIncrement
   function addVariety() {
     const newCount = varieties.length + 1;
-    const evenCases = lotCases > 0 ? Math.floor(lotCases / newCount) : 0;
-    // redistribute existing varieties evenly too
+    const totalUnits = lotCases * (packSize || 10);
+    const unitsPerSlot = Math.floor(totalUnits / newCount / splitIncrement) * splitIncrement;
+    const evenCases = unitsPerSlot > 0 ? Math.floor(unitsPerSlot / (packSize || 10)) : 0;
     const rebalanced = varieties.map(v => ({ ...v, cases: evenCases }));
-    const remainder = lotCases > 0 ? lotCases - evenCases * newCount : 0;
+    const remainder = lotCases > 0 ? lotCases - evenCases * varieties.length : 0;
     const newVar = { id: uid(), name: "", color: "", broker: "", supplier: "", costPerUnit: "", cases: evenCases + remainder };
     onChange([...rebalanced, newVar]);
   }
@@ -543,7 +555,9 @@ function VarietyManager({ varieties, lotCases, packSize, onChange, onIncreaseLot
 
   function rebalanceEvenly() {
     if (!lotCases || varieties.length === 0) return;
-    const even = Math.floor(lotCases / varieties.length);
+    const totalUnits = lotCases * (packSize || 10);
+    const unitsPerSlot = Math.floor(totalUnits / varieties.length / splitIncrement) * splitIncrement;
+    const even = Math.floor(unitsPerSlot / (packSize || 10));
     const rem  = lotCases - even * varieties.length;
     onChange(varieties.map((v, i) => ({ ...v, cases: i === 0 ? even + rem : even })));
     setOverAlert(null);
@@ -1033,16 +1047,27 @@ function SourcingSection({ form, upd, focus, setFocus }) {
   const allSeries = form.sourcingBroker ? getSeries(form.sourcingBroker, cultivarFilter, supplierFilter) : [];
   const filteredSeries = seriesQuery ? allSeries.filter(s => s.toLowerCase().includes(seriesQuery.toLowerCase())) : allSeries;
   
-  // Add a color row for a series - splits evenly across existing rows in 100-unit increments
+  // Determine split increment based on material type
+  const splitIncrement = (() => {
+    if (form.materialType === "liner" && form.linerSize) {
+      const match = String(form.linerSize).match(/[0-9]+/);
+      return match ? Number(match[0]) : 100;
+    }
+    return 100; // URC and everything else: 100
+  })();
+
+  // Add a color row for a series - splits evenly in the right increment
   const addColorRow = (seriesName) => {
     const catalogItems = getColors(form.sourcingBroker, cultivarFilter, seriesName);
     const firstItem = catalogItems[0];
     const price = firstItem ? (firstItem.unitPrice || firstItem.sellPrice) : null;
     const costPerUnit = price && firstItem?.perQty ? (Number(price) / (Number(firstItem.perQty) || 100)).toFixed(4) : "";
     const existing = form.varieties || [];
-    const targetUnits = form.cases && form.packSize ? Number(form.cases) * Number(form.packSize) : 0;
+    const packSize = Number(form.packSize) || 10;
+    const targetUnits = form.cases ? Number(form.cases) * packSize : 0;
     const newCount = existing.length + 1;
-    const evenCases = targetUnits > 0 && form.packSize ? Math.floor(Math.round(targetUnits / newCount / 100) * 100 / Number(form.packSize)) : 0;
+    const unitsPerSlot = targetUnits > 0 ? Math.floor(targetUnits / newCount / splitIncrement) * splitIncrement : 0;
+    const evenCases = unitsPerSlot > 0 ? Math.floor(unitsPerSlot / packSize) : 0;
     const rebalanced = existing.map(v => ({ ...v, cases: evenCases }));
     const remainder = form.cases ? Math.max(0, Number(form.cases) - evenCases * existing.length) : 0;
     const newVar = {
@@ -1345,7 +1370,7 @@ function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles,
       <div style={{ padding: "22px 24px" }}>
         {/* Tabs */}
         <div style={{ display: "flex", borderBottom: "1.5px solid #e0ead8", marginBottom: 22 }}>
-          {[["main","Crop & Schedule"],["sourcing","Sourcing"],["space","Space Assignment"],["spacing","Spacing"],["detail","Varieties"]].map(([id, label]) => (
+          {[["main","Crop & Schedule"],["space","Space Assignment"],["spacing","Spacing"],["order","Order"]].map(([id, label]) => (
             <button key={id} onClick={() => setTab(id)} style={{ background: "none", border: "none", borderBottom: `3px solid ${tab === id ? "#7fb069" : "transparent"}`, padding: "10px 18px", fontSize: 13, fontWeight: tab === id ? 700 : 500, color: tab === id ? "#1e2d1a" : "#7a8c74", cursor: "pointer", fontFamily: "inherit" }}>{label}</button>
           ))}
         </div>
@@ -1539,9 +1564,7 @@ function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles,
         </>)}
 
         {/* ── SOURCING TAB ── */}
-        {tab === "sourcing" && (
-          <SourcingSection form={form} upd={upd} focus={focus} setFocus={setFocus} />
-        )}
+
 
         {/* ── SPACE TAB ── */}
         {tab === "space" && (<>
@@ -1598,16 +1621,23 @@ function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles,
           />
         )}
 
-        {/* ── VARIETIES TAB ── */}
-        {tab === "detail" && (
-          <VarietyManager
-            varieties={form.varieties || []}
-            lotCases={Number(form.cases) || 0}
-            packSize={Number(form.packSize) || 10}
-            onChange={v => upd("varieties", v)}
-            onIncreaseLot={newCases => upd("cases", String(newCases))}
-            varietyLibrary={varietyLibrary}
-          />
+        {/* ── ORDER TAB ── */}
+        {tab === "order" && (
+          <div>
+            <SourcingSection form={form} upd={upd} focus={focus} setFocus={setFocus} />
+            <div style={{ borderTop: "2px solid #e0ead8", marginTop: 8, marginBottom: 20 }} />
+            <VarietyManager
+              varieties={form.varieties || []}
+              lotCases={Number(form.cases) || 0}
+              packSize={Number(form.packSize) || 10}
+              materialType={form.materialType || "urc"}
+              propTraySize={form.propTraySize || ""}
+              linerSize={form.linerSize || ""}
+              onChange={v => upd("varieties", v)}
+              onIncreaseLot={newCases => upd("cases", String(newCases))}
+              varietyLibrary={varietyLibrary}
+            />
+          </div>
         )}
 
         <div style={{ display: "flex", gap: 10, marginTop: 24 }}>
