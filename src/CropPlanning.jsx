@@ -691,7 +691,12 @@ function VarietyManager({ varieties, lotCases, packSize, materialType, propTrayS
                           name:          color,
                           color:         color,
                           ballItemNumber: itemNumber || shortCode || "",
-                          costPerUnit:   sellPrice ? String(sellPrice) : x.costPerUnit,
+                          costPerUnit:   (() => {
+                            if (!sellPrice) return x.costPerUnit;
+                            const pqRaw = perQty;
+                            const pqNum = pqRaw ? (Number(String(pqRaw).replace(/[^0-9.]/g, "")) || 100) : null;
+                            return pqNum ? (Number(sellPrice) / pqNum).toFixed(4) : Number(sellPrice).toFixed(4);
+                          })(),
                           _useCatalog:   true,
                         });
                         onChange(next);
@@ -755,7 +760,7 @@ function VarietyManager({ varieties, lotCases, packSize, materialType, propTrayS
                           ...x,
                           color: e.target.value,
                           ballItemNumber: picked?.itemNumber || x.ballItemNumber,
-                          costPerUnit: picked?.price && picked?.perQty ? (Number(picked.price) / (Number(picked.perQty) || 100)).toFixed(4) : x.costPerUnit,
+                          costPerUnit: picked?.price ? Number(picked.price).toFixed(4) : x.costPerUnit,
                         });
                         onChange(next);
                       }}>
@@ -1061,7 +1066,11 @@ function SourcingSection({ form, upd, focus, setFocus }) {
     const catalogItems = getColors(form.sourcingBroker, cultivarFilter, seriesName);
     const firstItem = catalogItems[0];
     const price = firstItem ? (firstItem.unitPrice || firstItem.sellPrice) : null;
-    const costPerUnit = price && firstItem?.perQty ? (Number(price) / (Number(firstItem.perQty) || 100)).toFixed(4) : "";
+    // perQty may be "100", 100, "100 URCs", or absent. Parse out the number.
+    const perQtyRaw = firstItem?.perQty;
+    const perQtyNum = perQtyRaw ? (Number(String(perQtyRaw).replace(/[^0-9.]/g, "")) || 100) : 100;
+    // If unitPrice is stored as price-per-unit already (no perQty in catalog), use directly
+    const costPerUnit = price ? (perQtyRaw ? (Number(price) / perQtyNum).toFixed(4) : Number(price).toFixed(4)) : "";
     const existing = form.varieties || [];
     const packSize = Number(form.packSize) || 10;
     const targetUnits = form.cases ? Number(form.cases) * packSize : 0;
@@ -1081,7 +1090,13 @@ function SourcingSection({ form, upd, focus, setFocus }) {
       broker: form.sourcingBroker || "",
       supplier: supplierFilter || firstItem?.supplier || firstItem?.breeder || "",
       _seriesName: seriesName,
-      _catalogColors: catalogItems.map(i => ({ label: i.color || i.varietyName || "", itemNumber: i.itemNumber, price: i.unitPrice || i.sellPrice, perQty: i.perQty })).filter(c => c.label),
+      _catalogColors: catalogItems.map(i => {
+        const rawPrice = i.unitPrice || i.sellPrice;
+        const perQtyRaw = i.perQty;
+        const perQtyNum = perQtyRaw ? (Number(String(perQtyRaw).replace(/[^0-9.]/g, "")) || 100) : null;
+        const unitPrice = rawPrice ? (perQtyNum ? Number(rawPrice) / perQtyNum : Number(rawPrice)) : null;
+        return { label: i.color || i.varietyName || "", itemNumber: i.itemNumber, price: unitPrice, rawPrice, perQty: perQtyNum };
+      }).filter(c => c.label),
       tags: [],
     };
     form.varieties?.length > 0 
@@ -1468,26 +1483,39 @@ function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles,
             </button>
           </div>
 
-          {/* Cases, pack size, units */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 14 }}>
-            <div><FL c="Cases" /><input type="number" style={IS(focus === "cases")} value={form.cases} onChange={e => upd("cases", e.target.value)} onFocus={() => setFocus("cases")} onBlur={() => setFocus(null)} placeholder="e.g. 400" /></div>
-            <div>
-              <FL c="Pack Size (units/case)" />
-              <div style={{ display: "flex", gap: 5 }}>
-                {[4,6,8,10,12,18].map(n => (
-                  <button key={n} onClick={() => upd("packSize", n)} style={{ flex: 1, padding: "8px 0", borderRadius: 7, border: `1.5px solid ${form.packSize === n ? "#7fb069" : "#c8d8c0"}`, background: form.packSize === n ? "#f0f8eb" : "#fff", color: form.packSize === n ? "#2e5c1e" : "#7a8c74", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>{n}</button>
-                ))}
-              </div>
-              {form.containerId && containers.find(x => x.id === form.containerId)?.unitsPerCase && (
-                <div style={{ fontSize: 10, color: "#7fb069", marginTop: 4, fontWeight: 600 }}>
-                  ↑ Auto-filled from container library
+          {/* Cases / Pots, pack size, units */}
+          {(form.isCased ?? true) ? (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 14 }}>
+              <div><FL c="Cases" /><input type="number" style={IS(focus === "cases")} value={form.cases} onChange={e => upd("cases", e.target.value)} onFocus={() => setFocus("cases")} onBlur={() => setFocus(null)} placeholder="e.g. 400" /></div>
+              <div>
+                <FL c="Pack Size (units/case)" />
+                <div style={{ display: "flex", gap: 5 }}>
+                  {[4,6,8,10,12,18].map(n => (
+                    <button key={n} onClick={() => upd("packSize", n)} style={{ flex: 1, padding: "8px 0", borderRadius: 7, border: `1.5px solid ${form.packSize === n ? "#7fb069" : "#c8d8c0"}`, background: form.packSize === n ? "#f0f8eb" : "#fff", color: form.packSize === n ? "#2e5c1e" : "#7a8c74", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>{n}</button>
+                  ))}
                 </div>
-              )}
+                {form.containerId && containers.find(x => x.id === form.containerId)?.unitsPerCase && (
+                  <div style={{ fontSize: 10, color: "#7fb069", marginTop: 4, fontWeight: 600 }}>↑ Auto-filled from container library</div>
+                )}
+              </div>
+              <div style={{ display: "flex", alignItems: "flex-end" }}>
+                {units && <div style={{ background: "#f0f8eb", borderRadius: 8, padding: "9px 14px", fontSize: 13, color: "#2e5c1e", fontWeight: 700, width: "100%" }}>= {units.toLocaleString()} pots</div>}
+              </div>
             </div>
-            <div style={{ display: "flex", alignItems: "flex-end" }}>
-              {units && <div style={{ background: "#f0f8eb", borderRadius: 8, padding: "9px 14px", fontSize: 13, color: "#2e5c1e", fontWeight: 700, width: "100%" }}>= {units.toLocaleString()} units</div>}
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
+              <div>
+                <FL c="Pot Count" />
+                <input type="number" style={IS(focus === "cases")} value={form.cases}
+                  onChange={e => { upd("cases", e.target.value); upd("packSize", 1); }}
+                  onFocus={() => setFocus("cases")} onBlur={() => setFocus(null)} placeholder="e.g. 5000" />
+                <div style={{ fontSize: 10, color: "#aabba0", marginTop: 4 }}>Individual pots — each pot counts as 1</div>
+              </div>
+              <div style={{ display: "flex", alignItems: "flex-end" }}>
+                {form.cases && <div style={{ background: "#f0f8eb", borderRadius: 8, padding: "9px 14px", fontSize: 13, color: "#2e5c1e", fontWeight: 700, width: "100%" }}>{Number(form.cases).toLocaleString()} pots</div>}
+              </div>
             </div>
-          </div>
+          )}
 
           <SH c="Target Ready Date" />
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 6 }}>
@@ -1622,23 +1650,65 @@ function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles,
         )}
 
         {/* ── ORDER TAB ── */}
-        {tab === "order" && (
-          <div>
-            <SourcingSection form={form} upd={upd} focus={focus} setFocus={setFocus} />
-            <div style={{ borderTop: "2px solid #e0ead8", marginTop: 8, marginBottom: 20 }} />
-            <VarietyManager
-              varieties={form.varieties || []}
-              lotCases={Number(form.cases) || 0}
-              packSize={Number(form.packSize) || 10}
-              materialType={form.materialType || "urc"}
-              propTraySize={form.propTraySize || ""}
-              linerSize={form.linerSize || ""}
-              onChange={v => upd("varieties", v)}
-              onIncreaseLot={newCases => upd("cases", String(newCases))}
-              varietyLibrary={varietyLibrary}
-            />
-          </div>
-        )}
+        {tab === "order" && (() => {
+          const isCased = form.isCased ?? true;
+          const pSize = isCased ? (Number(form.packSize) || 10) : 1;
+          const totalPots = Number(form.cases) * pSize || 0;
+          const varieties = form.varieties || [];
+          const varTotalCost = varieties.reduce((s, v) => {
+            const potCount = (Number(v.cases) || 0) * pSize;
+            return s + (v.costPerUnit && potCount ? Number(v.costPerUnit) * potCount : 0);
+          }, 0);
+          const allHaveCost = varieties.length > 0 && varieties.every(v => v.costPerUnit);
+          const assignedPots = varieties.reduce((s, v) => s + (Number(v.cases) || 0) * pSize, 0);
+
+          return (
+            <div>
+              <SourcingSection form={form} upd={upd} focus={focus} setFocus={setFocus} />
+              <div style={{ borderTop: "2px solid #e0ead8", marginTop: 8, marginBottom: 16 }} />
+
+              {/* Cost summary bar */}
+              {varieties.length > 0 && (
+                <div style={{ background: varTotalCost > 0 ? "#f0f8eb" : "#f8faf6", border: `1.5px solid ${varTotalCost > 0 ? "#c8e0b8" : "#e0ead8"}`, borderRadius: 12, padding: "12px 16px", marginBottom: 16, display: "flex", gap: 20, flexWrap: "wrap", alignItems: "center" }}>
+                  <div>
+                    <div style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5 }}>Total Pots</div>
+                    <div style={{ fontSize: 18, fontWeight: 800, color: "#1e2d1a" }}>{totalPots > 0 ? totalPots.toLocaleString() : "—"}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5 }}>Assigned</div>
+                    <div style={{ fontSize: 18, fontWeight: 800, color: assignedPots === totalPots && totalPots > 0 ? "#2e5c1e" : "#d94f3d" }}>{assignedPots.toLocaleString()}</div>
+                  </div>
+                  {varTotalCost > 0 && <>
+                    <div>
+                      <div style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5 }}>Est. Plant Cost</div>
+                      <div style={{ fontSize: 18, fontWeight: 800, color: "#2e5c1e" }}>${varTotalCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5 }}>Per Pot</div>
+                      <div style={{ fontSize: 18, fontWeight: 800, color: "#8e44ad" }}>${(varTotalCost / (assignedPots || 1)).toFixed(4)}</div>
+                    </div>
+                  </>}
+                  {!allHaveCost && varieties.some(v => v.costPerUnit) && (
+                    <div style={{ fontSize: 11, color: "#e07b39", fontWeight: 600 }}>⚠ Some varieties missing cost — add from catalog or enter manually</div>
+                  )}
+                </div>
+              )}
+
+              <VarietyManager
+                varieties={form.varieties || []}
+                lotCases={Number(form.cases) || 0}
+                packSize={pSize}
+                materialType={form.materialType || "urc"}
+                propTraySize={form.propTraySize || ""}
+                linerSize={form.linerSize || ""}
+                isCased={isCased}
+                onChange={v => upd("varieties", v)}
+                onIncreaseLot={newCases => upd("cases", String(newCases))}
+                varietyLibrary={varietyLibrary}
+              />
+            </div>
+          );
+        })()}
 
         <div style={{ display: "flex", gap: 10, marginTop: 24 }}>
           <button onClick={() => form.cropName.trim() && onSave({ ...form, id: form.id || uid() })} style={{ flex: 1, background: "#7fb069", color: "#fff", border: "none", borderRadius: 10, padding: 12, fontWeight: 700, fontSize: 15, cursor: "pointer", fontFamily: "inherit" }}>{initial ? "Save Changes" : "Create Crop Run"}</button>
