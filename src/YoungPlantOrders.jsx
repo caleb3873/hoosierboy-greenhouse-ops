@@ -629,12 +629,9 @@ export default function YoungPlantOrders() {
         const tagRuns = runs.filter(r => r.needsTags && r.cropName);
         if (tagRuns.length === 0) return null;
 
-        const isCased = r => r.isCased ?? true;
-        const pSize = r => isCased(r) ? (Number(r.packSize) || 10) : 1;
         const tagLines = tagRuns.map(r => {
-          const totalPots = (Number(r.cases) || 0) * pSize(r);
-          const buffered = Math.ceil(totalPots * (1 + (Number(r.bufferPct) || 0) / 100));
-          const qty = Number(r.tagOrderQty) || buffered;
+          const totalPots = (Number(r.cases) || 0) * 10;
+          const qty = Number(r.tagOrderQty) || totalPots;
           const costEach = Number(r.tagCostPerTag) || 0;
           return {
             id: r.id,
