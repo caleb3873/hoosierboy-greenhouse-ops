@@ -501,7 +501,7 @@ function Combobox({ value, onChange, options, placeholder, focusKey, focus, setF
 }
 
 // ── VARIETY MANAGER ───────────────────────────────────────────────────────────
-function VarietyManager({ varieties, lotCases, packSize, materialType, propTraySize, linerSize, onChange, onIncreaseLot, varietyLibrary }) {
+function VarietyManager({ varieties, lotCases, packSize, materialType, propTraySize, linerSize, isCased, onChange, onIncreaseLot, varietyLibrary }) {
   const [focus, setFocus] = useState(null);
   const [overAlert, setOverAlert] = useState(null); // { needed, current }
 
@@ -579,7 +579,7 @@ function VarietyManager({ varieties, lotCases, packSize, materialType, propTrayS
             <div style={{ fontSize: 11, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .6 }}>Lot Allocation</div>
             <div style={{ fontSize: 13, color: "#1e2d1a", marginTop: 3 }}>
               <span style={{ fontWeight: 800, color: isOver ? "#d94f3d" : "#1e2d1a" }}>{assignedCases.toLocaleString()}</span>
-              <span style={{ color: "#7a8c74" }}> / {lotCases > 0 ? lotCases.toLocaleString() : "—"} cases assigned</span>
+              <span style={{ color: "#7a8c74" }}> / {lotCases > 0 ? lotCases.toLocaleString() : "—"} {isCased ? "cases" : "pots"} assigned</span>
               {lotCases > 0 && !isOver && remainingCases > 0 && <span style={{ color: "#7a8c74", marginLeft: 8 }}>({remainingCases} unassigned)</span>}
             </div>
           </div>
@@ -775,7 +775,7 @@ function VarietyManager({ varieties, lotCases, packSize, materialType, propTrayS
                 {/* Quantity + cost row */}
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10, marginBottom: 12 }}>
                   <div>
-                    <FL c="Cases" />
+                    <FL c={isCased ? "Cases" : "Pots"} />
                     <input type="number" style={IS(focus === v.id + "c")} value={v.cases} onChange={e => updVar(idx, "cases", e.target.value)} onFocus={() => setFocus(v.id + "c")} onBlur={() => setFocus(null)} placeholder="0" />
                   </div>
                   <div style={{ display: "flex", alignItems: "flex-end" }}>
@@ -839,7 +839,7 @@ function VarietyManager({ varieties, lotCases, packSize, materialType, propTrayS
       </div>
 
       <button onClick={addVariety} style={{ width: "100%", background: "none", border: "1.5px dashed #7fb069", borderRadius: 10, padding: "11px 0", fontSize: 13, fontWeight: 700, color: "#7fb069", cursor: "pointer", fontFamily: "inherit" }}>
-        + Add Variety {lotCases > 0 && varieties.length > 0 ? `(will split ${lotCases} cases evenly)` : ""}
+        + Add Variety {lotCases > 0 && varieties.length > 0 ? `(will split ${lotCases} ${isCased ? "cases" : "pots"} evenly)` : ""}
       </button>
     </div>
   );
@@ -1201,7 +1201,12 @@ function SourcingSection({ form, upd, focus, setFocus }) {
         <div>
           <FL c="Supplier" />
           {suppliers.length > 0 ? (
-            <select style={IS(false)} value={supplierFilter} onChange={e => { setSupplierFilter(e.target.value); setSeriesQuery(""); setSelectedSeries(new Set()); }}>
+            <select style={IS(false)} value={supplierFilter || form.sourcingSupplier || ""} onChange={e => {
+              setSupplierFilter(e.target.value);
+              upd("sourcingSupplier", e.target.value);
+              setSeriesQuery("");
+              setSelectedSeries(new Set());
+            }}>
               <option value="">— All suppliers —</option>
               {suppliers.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
@@ -1426,9 +1431,11 @@ function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles,
                   if (!form.spacingOverride) upd("spacingProfileId", null);
                   // Auto-fill pack size from container's unitsPerCase
                   const c = containers.find(x => x.id === id);
-                  if (c?.unitsPerCase) upd("packSize", Number(c.unitsPerCase));
-                  // Auto-set isCased based on container kind
-                  if (c) upd("isCased", c.kind === "finished" && !!c.unitsPerCase);
+                  if (c) {
+                    const hasCaseInfo = !!c.unitsPerCase && Number(c.unitsPerCase) > 1;
+                    upd("isCased", hasCaseInfo);
+                    upd("packSize", hasCaseInfo ? Number(c.unitsPerCase) : 1);
+                  }
                 }}>
                 <option value="">— Select container —</option>
                 <optgroup label="── Finished Product">
@@ -1459,6 +1466,11 @@ function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles,
                   {c.cellsPerFlat && <span style={{ background: "#f0f8eb", border: "1px solid #c8e0b8", borderRadius: 6, padding: "3px 10px", fontSize: 11, color: "#2e5c1e", fontWeight: 600 }}>{c.cellsPerFlat} cells</span>}
                   {c.material    && <span style={{ background: "#f8faf6", border: "1px solid #e0ead8", borderRadius: 6, padding: "3px 10px", fontSize: 11, color: "#7a8c74" }}>{c.material}</span>}
                   {c.supplier    && <span style={{ background: "#f8faf6", border: "1px solid #e0ead8", borderRadius: 6, padding: "3px 10px", fontSize: 11, color: "#7a8c74" }}>{c.supplier}</span>}
+                  {/* Auto-detect badge */}
+                  {c.unitsPerCase && Number(c.unitsPerCase) > 1
+                    ? <span style={{ background: "#e8f3fc", border: "1px solid #a0c4e8", borderRadius: 6, padding: "3px 10px", fontSize: 11, color: "#1a4a7a", fontWeight: 700 }}>📦 {c.unitsPerCase}/case → Cased</span>
+                    : <span style={{ background: "#fdf3ea", border: "1px solid #e8c090", borderRadius: 6, padding: "3px 10px", fontSize: 11, color: "#a04010", fontWeight: 700 }}>🪴 Individual pots</span>
+                  }
                 </div>
               );
             })()}
@@ -1653,11 +1665,13 @@ function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles,
         {tab === "order" && (() => {
           const isCased = form.isCased ?? true;
           const pSize = isCased ? (Number(form.packSize) || 10) : 1;
-          const totalPots = Number(form.cases) * pSize || 0;
+          // totalPots = total finished plants (cases × packSize, or just pot count if uncased)
+          const totalPots = (Number(form.cases) || 0) * pSize;
           const varieties = form.varieties || [];
+          // variety rows store case counts; multiply by pSize to get plants
           const varTotalCost = varieties.reduce((s, v) => {
-            const potCount = (Number(v.cases) || 0) * pSize;
-            return s + (v.costPerUnit && potCount ? Number(v.costPerUnit) * potCount : 0);
+            const plantCount = (Number(v.cases) || 0) * pSize;
+            return s + (v.costPerUnit && plantCount ? Number(v.costPerUnit) * plantCount : 0);
           }, 0);
           const allHaveCost = varieties.length > 0 && varieties.every(v => v.costPerUnit);
           const assignedPots = varieties.reduce((s, v) => s + (Number(v.cases) || 0) * pSize, 0);
