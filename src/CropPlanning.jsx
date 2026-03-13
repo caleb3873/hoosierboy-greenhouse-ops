@@ -408,9 +408,14 @@ function SpaceAssignmentPicker({ assignments, onChange, houses, pads, sched, cur
                     if (!myTransplantWk || !myReadyWk) return false;
                     const rs = computeSchedule(r);
                     const rStart = rs?.transplant ? rs.transplant.week + rs.transplant.year * 53 : null;
-                    const rEnd = r.targetWeek ? r.targetWeek + (r.targetYear||2026) * 53 : null;
-                    if (!rStart || !rEnd) return false;
-                    return rStart <= myReadyWk && rEnd >= myTransplantWk;
+                    // Bench clears when crop moves outside (moveOut week), not at ready week
+                    // If no moveOut, bench holds until ready week
+                    const rBenchEnd = rs?.moveOut
+                      ? rs.moveOut.week + rs.moveOut.year * 53
+                      : r.targetWeek ? r.targetWeek + (r.targetYear||2026) * 53 : null;
+                    if (!rStart || !rBenchEnd) return false;
+                    // Exclusive on both ends: moving out week 14 frees bench for transplant week 14
+                    return rStart < myReadyWk && rBenchEnd > myTransplantWk;
                   });
                   const allInRange = thisRangeRuns;
 
@@ -481,7 +486,7 @@ function SpaceAssignmentPicker({ assignments, onChange, houses, pads, sched, cur
                                 </span>
                                 <span style={{ fontSize: 12, fontWeight: 600, color: "#1e2d1a" }}>{r.cropName}</span>
                                 <span style={{ fontSize: 11, color: "#7a8c74" }}>
-                                  Wk {rs?.transplant?.week || "?"} → Wk {r.targetWeek || "?"}
+                                  Wk {rs?.transplant?.week || "?"} → Wk {rs?.moveOut?.week ? `${rs.moveOut.week} (moves out)` : (r.targetWeek || "?")}
                                 </span>
                               </div>
                             );
