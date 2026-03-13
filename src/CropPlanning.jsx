@@ -1205,7 +1205,99 @@ function useBrokerLookup() {
   return { getBrokerNames, getCultivars, getSuppliers, getVarieties, getSeries, getColors };
 }
 
-function SourcingSection({ form, upd, focus, setFocus }) {
+// ── PROP TRAY PICKER ──────────────────────────────────────────────────────────
+// Shows propagation trays from the container library. Selecting one stores
+// both the cell size (propTraySize) and the container id (propTrayContainerId)
+// so cost per plant can be calculated in the order tab.
+function PropTrayPicker({ form, upd, focus, setFocus, containers, accentColor, accentBg }) {
+  const propTrays = containers.filter(c => c.kind === "propagation" && c.cellsPerFlat);
+  const sorted = [...propTrays].sort((a, b) => Number(a.cellsPerFlat) - Number(b.cellsPerFlat));
+
+  // Plants ordered for this run (105-cell = 100)
+  const isCased = form.isCased ?? true;
+  const pSize = isCased ? (Number(form.packSize) || 10) : 1;
+  const cases = Number(form.cases) || 0;
+  const rawPlants = cases * pSize;
+  const effectivePlants = pSize === 105 ? cases * 100 : rawPlants;
+
+  function selectTray(tray) {
+    const cells = String(tray.cellsPerFlat);
+    upd("propTraySize", cells);
+    upd("propTrayContainerId", tray.id);
+  }
+
+  function clearTray() {
+    upd("propTraySize", "");
+    upd("propTrayContainerId", "");
+  }
+
+  const selectedId = form.propTrayContainerId;
+  const selectedTray = containers.find(c => c.id === selectedId)
+    || (form.propTraySize ? sorted.find(c => String(c.cellsPerFlat) === String(form.propTraySize)) : null);
+
+  const traysNeeded = selectedTray && effectivePlants
+    ? Math.ceil(effectivePlants / Number(selectedTray.cellsPerFlat))
+    : null;
+  const costPerTray = selectedTray?.costPerUnit ? Number(selectedTray.costPerUnit) : null;
+  const totalTrayCost = traysNeeded && costPerTray ? traysNeeded * costPerTray : null;
+  const trayPlantsPerPot = Number(form.plantsPerPot) || 1;
+  const costPerPlant = costPerTray && selectedTray?.cellsPerFlat
+    ? costPerTray / Number(selectedTray.cellsPerFlat)
+    : null;
+  const trayCostPerPot = costPerPlant ? costPerPlant * trayPlantsPerPot : null;
+
+  return (
+    <div style={{ marginBottom: 16 }}>
+      {sorted.length === 0 ? (
+        <div style={{ background: "#fff8f0", border: "1px solid #f0c080", borderRadius: 8, padding: "10px 12px", fontSize: 12, color: "#a04010" }}>
+          ⚠️ No propagation trays in your Container Library yet. Add trays with a <strong>Cells Per Flat</strong> value to use this picker.
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))", gap: 8 }}>
+          {sorted.map(tray => {
+            const cells = Number(tray.cellsPerFlat);
+            const isSelected = selectedTray?.id === tray.id;
+            const traysForThis = effectivePlants ? Math.ceil(effectivePlants / cells) : null;
+            const cost = tray.costPerUnit ? Number(tray.costPerUnit) : null;
+            return (
+              <div key={tray.id} onClick={() => isSelected ? clearTray() : selectTray(tray)}
+                style={{ border: `2px solid ${isSelected ? accentColor : "#e0ead8"}`, borderRadius: 10, padding: "10px 12px", cursor: "pointer", background: isSelected ? accentBg : "#fff", transition: "all .15s" }}>
+                <div style={{ fontWeight: 800, fontSize: 18, color: isSelected ? accentColor : "#1e2d1a" }}>{cells}<span style={{ fontSize: 10, fontWeight: 500, marginLeft: 2 }}>cell</span></div>
+                <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2, lineHeight: 1.3 }}>{tray.name}</div>
+                {tray.supplier && <div style={{ fontSize: 10, color: "#aabba0" }}>{tray.supplier}</div>}
+                {cost && <div style={{ fontSize: 11, fontWeight: 700, color: accentColor, marginTop: 4 }}>${cost.toFixed(4)}/tray</div>}
+                {traysForThis && <div style={{ fontSize: 10, color: "#7a8c74", marginTop: 2 }}>{traysForThis} tray{traysForThis !== 1 ? "s" : ""} needed</div>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Selected tray summary */}
+      {selectedTray && (
+        <div style={{ marginTop: 10, background: "#fafcf8", border: `1.5px solid ${accentColor}40`, borderRadius: 10, padding: "10px 14px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 8 }}>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 13, color: "#1e2d1a" }}>
+                {selectedTray.cellsPerFlat}-cell · {selectedTray.name}
+                {pSize === 105 && <span style={{ fontSize: 10, color: "#a04010", marginLeft: 8, background: "#fdf3ea", padding: "1px 6px", borderRadius: 4 }}>105-cell = 100 plants ordered</span>}
+              </div>
+              {selectedTray.supplier && <div style={{ fontSize: 11, color: "#7a8c74" }}>{selectedTray.supplier}{selectedTray.sku ? ` · ${selectedTray.sku}` : ""}</div>}
+            </div>
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+              {traysNeeded && <div style={{ textAlign: "right" }}><div style={{ fontSize: 10, color: "#7a8c74", fontWeight: 700 }}>TRAYS NEEDED</div><div style={{ fontSize: 16, fontWeight: 800, color: accentColor }}>{traysNeeded}</div></div>}
+              {totalTrayCost && <div style={{ textAlign: "right" }}><div style={{ fontSize: 10, color: "#7a8c74", fontWeight: 700 }}>TRAY COST</div><div style={{ fontSize: 16, fontWeight: 800, color: "#2e5c1e" }}>${totalTrayCost.toFixed(2)}</div></div>}
+              {trayCostPerPot && <div style={{ textAlign: "right" }}><div style={{ fontSize: 10, color: "#7a8c74", fontWeight: 700 }}>PER POT</div><div style={{ fontSize: 16, fontWeight: 800, color: "#4a7a35" }}>${trayCostPerPot.toFixed(4)}</div></div>}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+function SourcingSection({ form, upd, focus, setFocus, containers = [] }) {
   const mt = MATERIAL_TYPES.find(m => m.id === form.materialType) || MATERIAL_TYPES[0];
   const units = form.cases && form.packSize ? Number(form.cases) * Number(form.packSize) : 0;
   const buffered = units > 0 ? Math.ceil(units * (1 + (Number(form.bufferPct) || 0) / 100)) : 0;
@@ -1290,23 +1382,8 @@ function SourcingSection({ form, upd, focus, setFocus }) {
 
       {/* URC fields */}
       {form.materialType === "urc" && (<>
-        <SH c="Prop Tray Size" />
-        <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-          {URC_TRAY_SIZES.map(sz => (
-            <button key={sz} onClick={() => upd("propTraySize", sz)}
-              style={{ flex: 1, padding: "10px 0", borderRadius: 9, border: `1.5px solid ${form.propTraySize === sz ? "#8e44ad" : "#c8d8c0"}`, background: form.propTraySize === sz ? "#f5f0ff" : "#fff", color: form.propTraySize === sz ? "#8e44ad" : "#7a8c74", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
-              {sz}
-              <div style={{ fontSize: 9, fontWeight: 500, marginTop: 2 }}>cell</div>
-            </button>
-          ))}
-          <div style={{ flex: 1 }}>
-            <input style={{ ...IS(focus === "propTrayCustom"), textAlign: "center" }}
-              value={URC_TRAY_SIZES.includes(form.propTraySize) ? "" : (form.propTraySize || "")}
-              onChange={e => upd("propTraySize", e.target.value)}
-              onFocus={() => setFocus("propTrayCustom")} onBlur={() => setFocus(null)}
-              placeholder="Other" />
-          </div>
-        </div>
+        <SH c="Prop Tray" />
+        <PropTrayPicker form={form} upd={upd} focus={focus} setFocus={setFocus} containers={containers} accentColor="#8e44ad" accentBg="#f5f0ff" />
       </>)}
 
       {/* Seed fields */}
@@ -1320,22 +1397,8 @@ function SourcingSection({ form, upd, focus, setFocus }) {
             </button>
           ))}
         </div>
-        <SH c="Prop Tray Size" />
-        <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-          {URC_TRAY_SIZES.map(sz => (
-            <button key={sz} onClick={() => upd("propTraySize", sz)}
-              style={{ flex: 1, padding: "10px 0", borderRadius: 9, border: `1.5px solid ${form.propTraySize === sz ? "#c8791a" : "#c8d8c0"}`, background: form.propTraySize === sz ? "#fff4e8" : "#fff", color: form.propTraySize === sz ? "#c8791a" : "#7a8c74", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
-              {sz}<div style={{ fontSize: 9, fontWeight: 500, marginTop: 2 }}>cell</div>
-            </button>
-          ))}
-          <div style={{ flex: 1 }}>
-            <input style={{ ...IS(focus === "propTrayCustom"), textAlign: "center" }}
-              value={URC_TRAY_SIZES.includes(form.propTraySize) ? "" : (form.propTraySize || "")}
-              onChange={e => upd("propTraySize", e.target.value)}
-              onFocus={() => setFocus("propTrayCustom")} onBlur={() => setFocus(null)}
-              placeholder="Other" />
-          </div>
-        </div>
+        <SH c="Prop Tray" />
+        <PropTrayPicker form={form} upd={upd} focus={focus} setFocus={setFocus} containers={containers} accentColor="#c8791a" accentBg="#fff4e8" />
       </>)}
 
       {/* Liner fields */}
@@ -2211,25 +2274,36 @@ function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles,
           const accessoryPerPot = trayCost + wireCost + saucerCost + sleeveCost + hbTagCost;
           const containerPerPot = potCost + accessoryPerPot;
 
-          const totalPerPot  = plantCostPerUnit + containerPerPot;
+          // Prop tray cost per pot
+          // Cost per tray ÷ cells per tray = cost per plant cell
+          // × plantsPerPot to get the tray cost allocated to each finished pot
+          const propTrayC = containers.find(c => c.id === form.propTrayContainerId)
+            || (form.propTraySize ? containers.find(c => c.kind === "propagation" && String(c.cellsPerFlat) === String(form.propTraySize)) : null);
+          const plantsPerPot = Number(form.plantsPerPot) || 1;
+          const propTrayCostPerPot = propTrayC?.costPerUnit && propTrayC?.cellsPerFlat
+            ? (Number(propTrayC.costPerUnit) / Number(propTrayC.cellsPerFlat)) * plantsPerPot
+            : 0;
+
+          const totalPerPot  = plantCostPerUnit + containerPerPot + propTrayCostPerPot;
           const grandTotal   = totalPerPot * (assignedPots || 0);
           const allHaveCost  = varieties.length > 0 && varieties.every(v => v.costPerUnit);
-          const hasAnyCost   = plantCostPerUnit > 0 || containerPerPot > 0;
+          const hasAnyCost   = plantCostPerUnit > 0 || containerPerPot > 0 || propTrayCostPerPot > 0;
 
           // Cost line items for breakdown
           const costLines = [
-            plantCostPerUnit > 0  && { label: "Plant / URC",   value: plantCostPerUnit,   color: "#2e7a2e" },
-            potCost > 0           && { label: "Pot",           value: potCost,            color: "#4a90d9" },
-            trayCost > 0          && { label: "Tray / Carrier", value: trayCost,          color: "#7a5a9a" },
-            saucerCost > 0        && { label: "Saucer",        value: saucerCost,         color: "#7a5a9a" },
-            sleeveCost > 0        && { label: "Sleeve",        value: sleeveCost,         color: "#7a5a9a" },
-            wireCost > 0          && { label: "Wire",          value: wireCost,           color: "#7a5a9a" },
-            hbTagCost > 0         && { label: "HB Tag",        value: hbTagCost,          color: "#e07b39" },
+            plantCostPerUnit > 0    && { label: "Plant / URC",    value: plantCostPerUnit,    color: "#2e7a2e" },
+            propTrayCostPerPot > 0  && { label: `Prop Tray (${propTrayC?.cellsPerFlat}-cell)`, value: propTrayCostPerPot, color: "#8e44ad" },
+            potCost > 0             && { label: "Pot",            value: potCost,             color: "#4a90d9" },
+            trayCost > 0            && { label: "Tray / Carrier", value: trayCost,            color: "#7a5a9a" },
+            saucerCost > 0          && { label: "Saucer",         value: saucerCost,          color: "#7a5a9a" },
+            sleeveCost > 0          && { label: "Sleeve",         value: sleeveCost,          color: "#7a5a9a" },
+            wireCost > 0            && { label: "Wire",           value: wireCost,            color: "#7a5a9a" },
+            hbTagCost > 0           && { label: "HB Tag",         value: hbTagCost,           color: "#e07b39" },
           ].filter(Boolean);
 
           return (
             <div>
-              <SourcingSection form={form} upd={upd} focus={focus} setFocus={setFocus} />
+              <SourcingSection form={form} upd={upd} focus={focus} setFocus={setFocus} containers={containers} />
               <div style={{ borderTop: "2px solid #e0ead8", marginTop: 8, marginBottom: 16 }} />
 
               {/* Cost summary */}
