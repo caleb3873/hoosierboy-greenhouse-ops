@@ -529,7 +529,22 @@ function VarietyManager({ varieties, lotCases, packSize, materialType, propTrayS
     const evenCases = unitsPerSlot > 0 ? Math.floor(unitsPerSlot / (packSize || 10)) : 0;
     const rebalanced = varieties.map(v => ({ ...v, cases: evenCases }));
     const remainder = lotCases > 0 ? lotCases - evenCases * newCount : 0;
-    const newVar = { id: uid(), name: "", color: "", broker: "", supplier: "", costPerUnit: "", cases: evenCases + remainder };
+    // Duplicate species/variety/broker/supplier from last row — only color needs to be selected
+    const last = varieties[varieties.length - 1];
+    const newVar = {
+      id: uid(),
+      cultivar: last?.cultivar || "",
+      name: last?.name || "",
+      color: "",  // color is the only thing to pick
+      broker: last?.broker || "",
+      supplier: last?.supplier || "",
+      ballItemNumber: "",
+      costPerUnit: "",
+      cases: evenCases + remainder,
+      _seriesName: last?._seriesName || "",
+      _catalogColors: last?._catalogColors || [],
+      tags: [],
+    };
     onChange([...rebalanced, newVar]);
   }
 
@@ -666,90 +681,21 @@ function VarietyManager({ varieties, lotCases, packSize, materialType, propTrayS
               </div>
 
               <div style={{ padding: "12px 14px" }}>
-                {/* Identity row: toggle between catalog picker and manual entry */}
-                {/* Catalog mode toggle */}
-                <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
-                  <button onClick={() => { const next = varieties.map((x,i) => i!==idx?x:{...x,_useCatalog:!v._useCatalog}); onChange(next); }}
-                    style={{ padding: "5px 14px", borderRadius: 20, border: `1.5px solid ${v._useCatalog ? "#7fb069" : "#c8d8c0"}`, background: v._useCatalog ? "#f0f8eb" : "#fff", color: v._useCatalog ? "#2e5c1e" : "#7a8c74", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
-                    📋 From Catalog
-                  </button>
-                  <button onClick={() => { const next = varieties.map((x,i) => i!==idx?x:{...x,_useCatalog:false}); onChange(next); }}
-                    style={{ padding: "5px 14px", borderRadius: 20, border: `1.5px solid ${!v._useCatalog ? "#7fb069" : "#c8d8c0"}`, background: !v._useCatalog ? "#f0f8eb" : "#fff", color: !v._useCatalog ? "#2e5c1e" : "#7a8c74", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
-                    ✏️ Manual
-                  </button>
-                </div>
-
-                {v._useCatalog && (
-                  <div style={{ marginBottom: 12 }}>
-                    <CatalogPicker
-                      broker={form.sourcingBroker}
-                      initial={{ crop: v.cultivar, series: v.cultivar, color: v.color }}
-                      onSelect={({ crop, series, color, itemNumber, perQty, sellPrice, shortCode }) => {
-                        const next = varieties.map((x,i) => i!==idx ? x : {
-                          ...x,
-                          cultivar:      series,
-                          name:          color,
-                          color:         color,
-                          ballItemNumber: itemNumber || shortCode || "",
-                          costPerUnit:   (() => {
-                            if (!sellPrice) return x.costPerUnit;
-                            const pqRaw = perQty;
-                            const pqNum = pqRaw ? (Number(String(pqRaw).replace(/[^0-9.]/g, "")) || 100) : null;
-                            return pqNum ? (Number(sellPrice) / pqNum).toFixed(4) : Number(sellPrice).toFixed(4);
-                          })(),
-                          _useCatalog:   true,
-                        });
-                        onChange(next);
-                      }}
-                    />
-                  </div>
-                )}
-
-              {/* Identity row: Ball item# | Crop/Species | Variety | Color */}
-                <div style={{ display: v._useCatalog ? "none" : "grid", gridTemplateColumns: "140px 1fr 1fr 140px", gap: 10, marginBottom: 12 }}>
-                  <div>
-                    <FL c="Ball Item #" />
-                    <input
-                      style={IS(focus === v.id + "ball")}
-                      value={v.ballItemNumber || ""}
-                      onChange={e => updVar(idx, "ballItemNumber", e.target.value)}
-                      onFocus={() => setFocus(v.id + "ball")}
-                      onBlur={() => setFocus(null)}
-                      placeholder="e.g. 12345"
-                    />
-                  </div>
+                {/* Identity row: Crop/Species | Variety | Color */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 12 }}>
                   <div>
                     <FL c="Crop / Species" />
-                    <Combobox
-                      value={v.cultivar || ""}
-                      onChange={val => {
-                        const next = varieties.map((x, i) => i !== idx ? x : { ...x, cultivar: val, name: "" });
-                        onChange(next);
-                      }}
-                      options={cultivarOptions}
-                      placeholder="e.g. Supertunia"
-                      focusKey={v.id + "cult"}
-                      focus={focus}
-                      setFocus={setFocus}
-                    />
+                    <input style={IS(focus === v.id + "cult")} value={v.cultivar || ""}
+                      onChange={e => updVar(idx, "cultivar", e.target.value)}
+                      onFocus={() => setFocus(v.id + "cult")} onBlur={() => setFocus(null)}
+                      placeholder="e.g. Petunia" />
                   </div>
                   <div>
-                    <FL c="Variety" />
-                    <Combobox
-                      value={v.name || ""}
-                      onChange={val => {
-                        selectLibraryVariety(v.cultivar, val);
-                        if (!libEntries.find(e => e.cropName === v.cultivar && e.variety === val)) {
-                          updVar(idx, "name", val);
-                        }
-                      }}
-                      options={varietyOptions}
-                      placeholder="e.g. Vista Bubblegum"
-                      focusKey={v.id + "var"}
-                      focus={focus}
-                      setFocus={setFocus}
-                      disabled={false}
-                    />
+                    <FL c="Variety / Series" />
+                    <input style={IS(focus === v.id + "var")} value={v.name || ""}
+                      onChange={e => updVar(idx, "name", e.target.value)}
+                      onFocus={() => setFocus(v.id + "var")} onBlur={() => setFocus(null)}
+                      placeholder="e.g. Vista Bubblegum" />
                   </div>
                   <div>
                     <FL c="Color" />
@@ -1225,6 +1171,7 @@ function SourcingSection({ form, upd, focus, setFocus }) {
         </div>
         <div>
           <FL c="Supplier" />
+          {/* Always show dropdown if catalog has suppliers for this broker+species, else text input */}
           {suppliers.length > 0 ? (
             <select style={IS(false)} value={supplierFilter || form.sourcingSupplier || ""} onChange={e => {
               setSupplierFilter(e.target.value);
@@ -1236,7 +1183,7 @@ function SourcingSection({ form, upd, focus, setFocus }) {
               {suppliers.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           ) : (
-            <input style={IS(focus === "sSupplier")} value={form.sourcingSupplier || ""} onChange={e => upd("sourcingSupplier", e.target.value)}
+            <input style={IS(focus === "sSupplier")} value={form.sourcingSupplier || ""} onChange={e => { upd("sourcingSupplier", e.target.value); setSupplierFilter(e.target.value); }}
               onFocus={() => setFocus("sSupplier")} onBlur={() => setFocus(null)} placeholder="e.g. Dümmen Orange" />
           )}
         </div>
@@ -1370,6 +1317,187 @@ function SourcingSection({ form, upd, focus, setFocus }) {
   );
 }
 
+// ── ORDER REVIEW MODAL ────────────────────────────────────────────────────────
+function OrderReviewModal({ form, containers, onClose, onSave }) {
+  const isCased = form.isCased ?? true;
+  const pSize = isCased ? (Number(form.packSize) || 10) : 1;
+  const selC = containers.find(c => c.id === form.containerId);
+  const varieties = form.varieties || [];
+  const plantsPerPot = Number(form.plantsPerPot) || 1;
+
+  // Group by broker + supplier
+  const brokerMap = {};
+  varieties.forEach(v => {
+    const key = [v.broker || "Unassigned", v.supplier || "—"].join(" | ");
+    if (!brokerMap[key]) brokerMap[key] = { broker: v.broker || "Unassigned", supplier: v.supplier || "—", lines: [] };
+    brokerMap[key].lines.push(v);
+  });
+  const groups = Object.values(brokerMap);
+
+  async function downloadXLSX() {
+    const XLSX = await new Promise((res, rej) => {
+      if (window.XLSX) { res(window.XLSX); return; }
+      const s = document.createElement("script");
+      s.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+      s.onload = () => res(window.XLSX); s.onerror = rej;
+      document.head.appendChild(s);
+    });
+
+    const wb = XLSX.utils.book_new();
+
+    groups.forEach(({ broker, supplier, lines }) => {
+      const rows = [
+        ["Crop Run Order", form.cropName, "", "", ""],
+        ["Broker", broker, "Supplier", supplier, ""],
+        ["Target Week", form.targetWeek ? `Wk ${form.targetWeek} ${form.targetYear}` : "—", "", "", ""],
+        [],
+        ["Crop", "Series / Variety", "Color", "Item #", "Plants to Order", "Cases", "Cost/Plant", "Line Cost"],
+        ...lines.map(v => {
+          const plants = (Number(v.cases) || 0) * pSize * plantsPerPot;
+          const lineCost = v.costPerUnit && plants ? (Number(v.costPerUnit) * plants).toFixed(2) : "";
+          return [
+            v.cultivar || form.cropName,
+            v.name || "",
+            v.color || "",
+            v.ballItemNumber || "",
+            plants,
+            v.cases || "",
+            v.costPerUnit ? Number(v.costPerUnit).toFixed(4) : "",
+            lineCost,
+          ];
+        }),
+        [],
+        ["TOTALS", "", "", "",
+          lines.reduce((s, v) => s + (Number(v.cases)||0) * pSize * plantsPerPot, 0),
+          lines.reduce((s, v) => s + (Number(v.cases)||0), 0),
+          "",
+          lines.reduce((s, v) => { const p = (Number(v.cases)||0)*pSize*plantsPerPot; return s + (v.costPerUnit && p ? Number(v.costPerUnit)*p : 0); }, 0).toFixed(2),
+        ],
+      ];
+      // Add tag row if needed
+      if (form.needsTags) {
+        const tagQty = Number(form.tagOrderQty) || Math.ceil((Number(form.cases)||0) * pSize * (1 + (Number(form.bufferPct)||0)/100));
+        rows.push([]);
+        rows.push(["TAG ORDER", form.tagDescription || "", form.tagSupplier || "", form.tagPrintInHouse ? "Print in-house" : "Order", tagQty, "", form.tagCostPerTag || "", form.tagCostPerTag ? (tagQty * Number(form.tagCostPerTag)).toFixed(2) : ""]);
+      }
+      const ws = XLSX.utils.aoa_to_sheet(rows);
+      ws["!cols"] = [20,25,20,15,15,10,12,12].map(w => ({ wch: w }));
+      const sheetName = (broker + " - " + supplier).replace(/[\/\\:*?[\]]/g, "").slice(0, 31);
+      XLSX.utils.book_append_sheet(wb, ws, sheetName);
+    });
+
+    const filename = ("Order_" + form.cropName + "_" + groups.map(g => g.broker).filter((v,i,a)=>a.indexOf(v)===i).join("-") + "_Wk" + (form.targetWeek||"TBD") + ".xlsx").replace(/[^a-zA-Z0-9_.-]/g, "_");
+    const wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+    const blob = new Blob([wbout], { type: "application/octet-stream" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 1000, display: "flex", alignItems: "flex-start", justifyContent: "center", overflowY: "auto", padding: "24px 16px" }}>
+      <div style={{ background: "#fff", borderRadius: 18, width: "100%", maxWidth: 700, boxShadow: "0 8px 40px rgba(0,0,0,0.2)" }}>
+        {/* Header */}
+        <div style={{ background: "#1e2d1a", borderRadius: "18px 18px 0 0", padding: "20px 28px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontSize: 20, color: "#c8e6b8" }}>🌱 Plant Order Review</div>
+            <div style={{ fontSize: 13, color: "#7a9a6a", marginTop: 4 }}>{form.cropName}{form.targetWeek ? ` · Wk ${form.targetWeek} ${form.targetYear}` : ""}</div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "#7a9a6a", fontSize: 24, cursor: "pointer" }}>×</button>
+        </div>
+
+        <div style={{ padding: "24px 28px" }}>
+          {/* Summary strip */}
+          <div style={{ display: "flex", gap: 16, marginBottom: 24, flexWrap: "wrap" }}>
+            {[
+              { label: "Container", value: selC?.name || "—" },
+              { label: "Total Pots", value: ((Number(form.cases)||0) * pSize).toLocaleString() },
+              { label: "Plants/Pot", value: plantsPerPot },
+              { label: "Varieties", value: varieties.length },
+              { label: "Brokers", value: groups.length },
+            ].map(s => (
+              <div key={s.label} style={{ background: "#f8faf6", borderRadius: 10, padding: "10px 16px", minWidth: 90 }}>
+                <div style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>{s.label}</div>
+                <div style={{ fontSize: 16, fontWeight: 800, color: "#1e2d1a" }}>{s.value}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Order lines by broker/supplier */}
+          {groups.map(({ broker, supplier, lines }) => {
+            const groupPlants = lines.reduce((s,v) => s + (Number(v.cases)||0)*pSize*plantsPerPot, 0);
+            const groupCost = lines.reduce((s,v) => { const p=(Number(v.cases)||0)*pSize*plantsPerPot; return s+(v.costPerUnit&&p?Number(v.costPerUnit)*p:0); }, 0);
+            return (
+              <div key={broker+supplier} style={{ marginBottom: 20, border: "1.5px solid #e0ead8", borderRadius: 12, overflow: "hidden" }}>
+                <div style={{ background: "#f0f8eb", padding: "10px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div>
+                    <div style={{ fontWeight: 800, fontSize: 14, color: "#1e2d1a" }}>{broker}</div>
+                    <div style={{ fontSize: 12, color: "#7a8c74" }}>Supplier: {supplier}</div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "#2e5c1e" }}>{groupPlants.toLocaleString()} plants</div>
+                    {groupCost > 0 && <div style={{ fontSize: 12, color: "#8e44ad" }}>${groupCost.toFixed(2)}</div>}
+                  </div>
+                </div>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ borderBottom: "1px solid #e0ead8", background: "#fafcf8" }}>
+                      {["Series", "Color", "Item #", "Plants", "$/plant"].map(h => (
+                        <th key={h} style={{ padding: "7px 12px", textAlign: "left", fontWeight: 700, fontSize: 10, color: "#7a8c74", textTransform: "uppercase" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lines.map((v, i) => {
+                      const plants = (Number(v.cases)||0) * pSize * plantsPerPot;
+                      return (
+                        <tr key={i} style={{ borderBottom: "1px solid #f0f5ee", background: i%2===0?"#fff":"#fafcf8" }}>
+                          <td style={{ padding: "8px 12px", fontWeight: 600 }}>{v.name || v.cultivar || "—"}</td>
+                          <td style={{ padding: "8px 12px", color: "#4a5a40" }}>{v.color || "—"}</td>
+                          <td style={{ padding: "8px 12px", color: "#7a8c74", fontFamily: "monospace", fontSize: 11 }}>{v.ballItemNumber || "—"}</td>
+                          <td style={{ padding: "8px 12px", fontWeight: 700 }}>{plants.toLocaleString()}</td>
+                          <td style={{ padding: "8px 12px", color: "#8e44ad" }}>{v.costPerUnit ? `$${Number(v.costPerUnit).toFixed(4)}` : "—"}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            );
+          })}
+
+          {/* Tag summary */}
+          {form.needsTags && (
+            <div style={{ background: "#fdf8ff", border: "1.5px solid #d0a8e8", borderRadius: 12, padding: "14px 16px", marginBottom: 20 }}>
+              <div style={{ fontWeight: 800, fontSize: 13, color: "#6a2a9a", marginBottom: 6 }}>🏷 Tag Order</div>
+              <div style={{ fontSize: 13, color: "#1e2d1a" }}>
+                {form.tagDescription || form.cropName + " tags"} · {form.tagOrderQty || Math.ceil((Number(form.cases)||0)*pSize*(1+(Number(form.bufferPct)||0)/100))} tags · {form.tagPrintInHouse ? "🖨 Print in-house" : `📦 ${form.tagSupplier || "order from supplier"}`}
+              </div>
+            </div>
+          )}
+
+          {/* Actions */}
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={downloadXLSX}
+              style={{ flex: 1, background: "#2e5c1e", color: "#fff", border: "none", borderRadius: 10, padding: "13px 20px", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
+              📥 Download Order (.xlsx)
+            </button>
+            <button onClick={() => { onSave(); onClose(); }}
+              style={{ flex: 1, background: "#7fb069", color: "#fff", border: "none", borderRadius: 10, padding: "13px 20px", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
+              ✅ Confirm Order
+            </button>
+            <button onClick={onClose}
+              style={{ background: "none", color: "#7a8c74", border: "1.5px solid #c8d8c0", borderRadius: 10, padding: "13px 16px", fontWeight: 600, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 // ── CROP RUN FORM ─────────────────────────────────────────────────────────────
 
 // ── CROP RUN TEMPLATES ────────────────────────────────────────────────────────
@@ -1441,6 +1569,9 @@ function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles,
   const [showTemplates, setShowTemplates] = useState(false);
   const [saveTemplateName, setSaveTemplateName] = useState("");
   const [templateSaved, setTemplateSaved] = useState(false);
+  const [showOrderReview, setShowOrderReview] = useState(false);
+  const [showTagReview, setShowTagReview] = useState(false);
+  const [runSaved, setRunSaved] = useState(!!initial);
   const { templates, save: saveTemplate, remove: removeTemplate } = useCropRunTemplates();
 
   const upd = (f, v) => setForm(x => ({ ...x, [f]: v }));
@@ -2037,13 +2168,10 @@ function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles,
             Saves everything except quantity, target week, and space assignments — reuse for repeat crops
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            <input
-              value={saveTemplateName}
-              onChange={e => setSaveTemplateName(e.target.value)}
+            <input value={saveTemplateName} onChange={e => setSaveTemplateName(e.target.value)}
               onKeyDown={e => e.key === "Enter" && handleSaveTemplate()}
               placeholder={form.cropName ? `e.g. ${form.cropName} standard` : "Template name..."}
-              style={{ flex: 1, border: "1.5px solid #c8d8c0", borderRadius: 8, padding: "8px 12px", fontSize: 13, fontFamily: "inherit", background: "#fff" }}
-            />
+              style={{ flex: 1, border: "1.5px solid #c8d8c0", borderRadius: 8, padding: "8px 12px", fontSize: 13, fontFamily: "inherit", background: "#fff" }} />
             <button onClick={handleSaveTemplate} disabled={!saveTemplateName.trim()}
               style={{ background: saveTemplateName.trim() ? "#4a7a3a" : "#c8d8c0", color: "#fff", border: "none", borderRadius: 8, padding: "8px 18px", fontSize: 13, fontWeight: 700, cursor: saveTemplateName.trim() ? "pointer" : "default", fontFamily: "inherit", whiteSpace: "nowrap" }}>
               {templateSaved ? "✓ Saved!" : "Save Template"}
@@ -2051,10 +2179,137 @@ function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles,
           </div>
         </div>
 
+        {/* ── TAB-SPECIFIC ACTION BUTTONS ── */}
         <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
-          <button onClick={() => form.cropName.trim() && onSave({ ...form, id: form.id || uid() })} style={{ flex: 1, background: "#7fb069", color: "#fff", border: "none", borderRadius: 10, padding: 12, fontWeight: 700, fontSize: 15, cursor: "pointer", fontFamily: "inherit" }}>{initial ? "Save Changes" : "Create Crop Run"}</button>
-          {onCancel && <button onClick={onCancel} style={{ background: "none", color: "#7a8c74", border: "1.5px solid #c8d8c0", borderRadius: 10, padding: "12px 20px", fontWeight: 600, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>}
+          {/* MAIN TAB: Create Crop Run */}
+          {tab === "main" && (<>
+            <button onClick={() => {
+              if (!form.cropName.trim()) return;
+              const saved = { ...form, id: form.id || uid() };
+              onSave(saved);
+              setRunSaved(true);
+              if ((form.varieties || []).length > 0) setShowOrderReview("prompt");
+              else setTab("space");
+            }} style={{ flex: 1, background: "#7fb069", color: "#fff", border: "none", borderRadius: 10, padding: 12, fontWeight: 700, fontSize: 15, cursor: form.cropName.trim() ? "pointer" : "default", opacity: form.cropName.trim() ? 1 : 0.5, fontFamily: "inherit" }}>
+              {initial ? "💾 Save Changes" : "✅ Create Crop Run"}
+            </button>
+            {onCancel && <button onClick={onCancel} style={{ background: "none", color: "#7a8c74", border: "1.5px solid #c8d8c0", borderRadius: 10, padding: "12px 20px", fontWeight: 600, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>}
+          </>)}
+
+          {/* SPACE TAB: Save Space Assignment */}
+          {tab === "space" && (<>
+            <button onClick={() => { onSave({ ...form, id: form.id || uid() }); setTab("spacing"); }}
+              style={{ flex: 1, background: "#4a90d9", color: "#fff", border: "none", borderRadius: 10, padding: 12, fontWeight: 700, fontSize: 15, cursor: "pointer", fontFamily: "inherit" }}>
+              🗂 Save Space Assignment
+            </button>
+            {onCancel && <button onClick={onCancel} style={{ background: "none", color: "#7a8c74", border: "1.5px solid #c8d8c0", borderRadius: 10, padding: "12px 20px", fontWeight: 600, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>}
+          </>)}
+
+          {/* SPACING TAB: Save Spacing */}
+          {tab === "spacing" && (<>
+            <button onClick={() => { onSave({ ...form, id: form.id || uid() }); }}
+              style={{ flex: 1, background: "#7a5a9a", color: "#fff", border: "none", borderRadius: 10, padding: 12, fontWeight: 700, fontSize: 15, cursor: "pointer", fontFamily: "inherit" }}>
+              📐 {form.spacingOverride ? "Save Spacing Configuration" : "Confirm — Spacing set to Tight"}
+            </button>
+            {onCancel && <button onClick={onCancel} style={{ background: "none", color: "#7a8c74", border: "1.5px solid #c8d8c0", borderRadius: 10, padding: "12px 20px", fontWeight: 600, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>}
+          </>)}
+
+          {/* ORDER TAB: Create Plant Order */}
+          {tab === "order" && (<>
+            <button onClick={() => {
+              if ((form.varieties || []).length === 0) return;
+              if (form.needsTags !== false) { setShowTagReview(true); return; }
+              setShowOrderReview("review");
+            }}
+              style={{ flex: 1, background: "#e07b39", color: "#fff", border: "none", borderRadius: 10, padding: 12, fontWeight: 700, fontSize: 15, cursor: (form.varieties || []).length > 0 ? "pointer" : "default", opacity: (form.varieties || []).length > 0 ? 1 : 0.5, fontFamily: "inherit" }}>
+              🌱 Create Plant Order
+            </button>
+            {onCancel && <button onClick={onCancel} style={{ background: "none", color: "#7a8c74", border: "1.5px solid #c8d8c0", borderRadius: 10, padding: "12px 20px", fontWeight: 600, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>}
+          </>)}
+
+          {/* TAGS TAB: goes to order */}
+          {tab === "tags" && (<>
+            <button onClick={() => setTab("order")}
+              style={{ flex: 1, background: "#7fb069", color: "#fff", border: "none", borderRadius: 10, padding: 12, fontWeight: 700, fontSize: 15, cursor: "pointer", fontFamily: "inherit" }}>
+              → Continue to Plant Order
+            </button>
+          </>)}
         </div>
+
+        {/* ── ORDER PROMPT (after Create Crop Run on main tab) ── */}
+        {showOrderReview === "prompt" && (
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div style={{ background: "#fff", borderRadius: 18, padding: "32px 36px", maxWidth: 460, width: "90%", boxShadow: "0 8px 40px rgba(0,0,0,0.18)" }}>
+              <div style={{ fontSize: 32, marginBottom: 12, textAlign: "center" }}>🌱</div>
+              <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontSize: 20, color: "#1e2d1a", marginBottom: 8, textAlign: "center" }}>Crop run saved!</div>
+              <div style={{ fontSize: 14, color: "#7a8c74", textAlign: "center", marginBottom: 24, lineHeight: 1.6 }}>
+                You have <strong>{(form.varieties || []).length} variet{(form.varieties || []).length !== 1 ? "ies" : "y"}</strong> ready to order.
+                {(form.varieties || []).length > 0 && ` (${(form.varieties || []).reduce((s,v) => s + (Number(v.cases)||0), 0) * (Number(form.packSize)||1)} plants)`}
+                {" "}Would you like to place your order now?
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <button onClick={() => { setShowOrderReview(null); setTab("order"); }}
+                  style={{ background: "#e07b39", color: "#fff", border: "none", borderRadius: 10, padding: "12px 20px", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
+                  📋 Review Order
+                </button>
+                <button onClick={() => { setShowOrderReview(null); setTab("order"); }}
+                  style={{ background: "#fff", color: "#7a8c74", border: "1.5px solid #c8d8c0", borderRadius: 10, padding: "12px 20px", fontWeight: 600, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
+                  ✏️ Change Order
+                </button>
+                <button onClick={() => { setShowOrderReview(null); setTab("space"); }}
+                  style={{ background: "#fff", color: "#7a8c74", border: "1.5px solid #c8d8c0", borderRadius: 10, padding: "12px 20px", fontWeight: 600, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
+                  Skip for now → Space Assignment
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── TAG REVIEW PROMPT (before order) ── */}
+        {showTagReview && (
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div style={{ background: "#fff", borderRadius: 18, padding: "32px 36px", maxWidth: 480, width: "90%", boxShadow: "0 8px 40px rgba(0,0,0,0.18)" }}>
+              <div style={{ fontSize: 32, marginBottom: 12, textAlign: "center" }}>🏷</div>
+              <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontSize: 20, color: "#1e2d1a", marginBottom: 8, textAlign: "center" }}>Review Tag Order</div>
+              <div style={{ background: "#f8faf6", borderRadius: 12, padding: "14px 16px", marginBottom: 20 }}>
+                {form.needsTags ? (<>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "#1e2d1a", marginBottom: 4 }}>{form.tagDescription || form.cropName + " tags"}</div>
+                  <div style={{ fontSize: 12, color: "#7a8c74" }}>
+                    Qty: {form.tagOrderQty || Math.ceil(((Number(form.cases)||0)*(Number(form.packSize)||1)) * (1+(Number(form.bufferPct)||0)/100))} tags
+                    {form.tagSupplier && ` · ${form.tagSupplier}`}
+                    {` · ${form.tagPrintInHouse ? "🖨 Print in-house" : "📦 Order from supplier"}`}
+                  </div>
+                </>) : (
+                  <div style={{ fontSize: 13, color: "#7a8c74" }}>No tags set for this crop run — go to Tags tab to configure.</div>
+                )}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <button onClick={() => { setShowTagReview(false); setShowOrderReview("review"); }}
+                  style={{ background: "#e07b39", color: "#fff", border: "none", borderRadius: 10, padding: "12px 20px", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
+                  ✅ Tags look good — Continue to Plant Order
+                </button>
+                <button onClick={() => { setShowTagReview(false); setTab("tags"); }}
+                  style={{ background: "#fff", color: "#4a90d9", border: "1.5px solid #4a90d9", borderRadius: 10, padding: "12px 20px", fontWeight: 600, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
+                  ✏️ Edit Tag Order First
+                </button>
+                <button onClick={() => setShowTagReview(false)}
+                  style={{ background: "none", color: "#aabba0", border: "none", padding: "8px", fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── ORDER REVIEW MODAL ── */}
+        {showOrderReview === "review" && (
+          <OrderReviewModal
+            form={form}
+            containers={containers}
+            onClose={() => setShowOrderReview(null)}
+            onSave={() => { onSave({ ...form, id: form.id || uid() }); setShowOrderReview(null); }}
+          />
+        )}
       </div>
     </div>
   );
