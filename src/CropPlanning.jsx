@@ -1947,7 +1947,7 @@ function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles,
                     <input style={IS(focus === "tagDesc")} value={form.tagDescription || ""}
                       onChange={e => upd("tagDescription", e.target.value)}
                       onFocus={() => setFocus("tagDesc")} onBlur={() => setFocus(null)}
-                      placeholder={form.cropName ? `e.g. ${form.cropName} 4" tag` : "e.g. Petunia Vista 4" tag"} />
+                      placeholder={form.cropName ? `e.g. ${form.cropName} 4in tag` : "e.g. Petunia Vista 4in tag"} />
                   </div>
                   <div>
                     <FL c="Tag Supplier" />
