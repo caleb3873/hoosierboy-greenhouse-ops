@@ -1432,9 +1432,12 @@ function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles,
                   // Auto-fill pack size from container's unitsPerCase
                   const c = containers.find(x => x.id === id);
                   if (c) {
-                    const hasCaseInfo = !!c.unitsPerCase && Number(c.unitsPerCase) > 1;
-                    upd("isCased", hasCaseInfo);
-                    upd("packSize", hasCaseInfo ? Number(c.unitsPerCase) : 1);
+                    // Use unitsPerCase first, fall back to potsPerCarrier
+                    const caseQty = Number(c.unitsPerCase) || 0;
+                    const carrierQty = Number(c.potsPerCarrier) || 0;
+                    const packQty = caseQty > 1 ? caseQty : carrierQty > 1 ? carrierQty : 0;
+                    upd("isCased", packQty > 1);
+                    upd("packSize", packQty > 1 ? packQty : 1);
                   }
                 }}>
                 <option value="">— Select container —</option>
@@ -1467,10 +1470,15 @@ function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles,
                   {c.material    && <span style={{ background: "#f8faf6", border: "1px solid #e0ead8", borderRadius: 6, padding: "3px 10px", fontSize: 11, color: "#7a8c74" }}>{c.material}</span>}
                   {c.supplier    && <span style={{ background: "#f8faf6", border: "1px solid #e0ead8", borderRadius: 6, padding: "3px 10px", fontSize: 11, color: "#7a8c74" }}>{c.supplier}</span>}
                   {/* Auto-detect badge */}
-                  {c.unitsPerCase && Number(c.unitsPerCase) > 1
-                    ? <span style={{ background: "#e8f3fc", border: "1px solid #a0c4e8", borderRadius: 6, padding: "3px 10px", fontSize: 11, color: "#1a4a7a", fontWeight: 700 }}>📦 {c.unitsPerCase}/case → Cased</span>
-                    : <span style={{ background: "#fdf3ea", border: "1px solid #e8c090", borderRadius: 6, padding: "3px 10px", fontSize: 11, color: "#a04010", fontWeight: 700 }}>🪴 Individual pots</span>
-                  }
+                  {(() => {
+                    const cQty = Number(c.unitsPerCase) || 0;
+                    const pQty = Number(c.potsPerCarrier) || 0;
+                    const qty = cQty > 1 ? cQty : pQty > 1 ? pQty : 0;
+                    const label = cQty > 1 ? `${cQty}/case` : pQty > 1 ? `${pQty}/carrier` : null;
+                    return qty > 1
+                      ? <span style={{ background: "#e8f3fc", border: "1px solid #a0c4e8", borderRadius: 6, padding: "3px 10px", fontSize: 11, color: "#1a4a7a", fontWeight: 700 }}>📦 {label} → {qty} per pack</span>
+                      : <span style={{ background: "#fdf3ea", border: "1px solid #e8c090", borderRadius: 6, padding: "3px 10px", fontSize: 11, color: "#a04010", fontWeight: 700 }}>🪴 Individual pots</span>;
+                  })()}
                 </div>
               );
             })()}
