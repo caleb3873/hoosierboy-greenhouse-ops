@@ -1,6 +1,5 @@
 import { useState, useCallback, useRef } from "react";
-import { useCombos, useComboTags } from "./supabase";
-import { CatalogPicker } from "./Libraries";
+import { useCombos, useComboTags, useBrokerCatalogs } from "./supabase";
 import { useContainers, useSoilMixes, useCropRuns } from "./supabase";
 
 // ── CONSTANTS ─────────────────────────────────────────────────────────────────
@@ -31,10 +30,35 @@ const STATUSES = [
   { id: "ordered",   label: "Ordered",              color: "#1e2d1a", bg: "#c8e6b8" },
 ];
 
-const BROKERS = [
-  "Ball Seed", "Proven Winners", "Syngenta / Goldsmith",
-  "PanAmerican Seed", "Dümmen Orange", "Selecta", "Other",
-];
+// ── BROKER LOOKUP HOOK (mirrors CropPlanning) ────────────────────────────────
+function useBrokerLookup() {
+  const { rows: catalogs } = useBrokerCatalogs ? useBrokerCatalogs() : { rows: [] };
+  const getBrokerNames = () => [...new Set(catalogs.map(c => c.brokerName).filter(Boolean))].sort();
+  const getCultivars   = (broker) => {
+    const items = catalogs.filter(c => c.brokerName === broker).flatMap(c => c.items || []);
+    return [...new Set(items.map(i => i.crop).filter(Boolean))].sort();
+  };
+  const getSuppliers = (broker, cultivar) => {
+    const items = catalogs.filter(c => c.brokerName === broker).flatMap(c => c.items || []);
+    const f = cultivar ? items.filter(i => i.crop === cultivar) : items;
+    return [...new Set(f.map(i => i.supplier || i.breeder).filter(Boolean))].sort();
+  };
+  const getSeries = (broker, cultivar, supplier) => {
+    const items = catalogs.filter(c => c.brokerName === broker).flatMap(c => c.items || []);
+    return [...new Set(items.filter(i =>
+      (!cultivar || i.crop === cultivar) &&
+      (!supplier || i.supplier === supplier || i.breeder === supplier)
+    ).map(i => i.varietyName || i.series).filter(Boolean))].sort();
+  };
+  const getColors = (broker, cultivar, seriesName) => {
+    const items = catalogs.filter(c => c.brokerName === broker).flatMap(c => c.items || []);
+    return items.filter(i =>
+      (!cultivar || i.crop === cultivar) &&
+      (i.varietyName === seriesName || i.series === seriesName)
+    );
+  };
+  return { getBrokerNames, getCultivars, getSuppliers, getSeries, getColors };
+}
 
 // ── SOIL COST HELPER ──────────────────────────────────────────────────────────
 function soilCostPerCuFt(mix) {
@@ -115,6 +139,153 @@ function ComboVisual({ plants, isBasket }) {
 }
 
 // ── COMPONENT ROW ─────────────────────────────────────────────────────────────
+
+// ── MANUAL BROKER SELECT ──────────────────────────────────────────────────────
+function ManualBrokerSelect({ value, onChange }) {
+  const { getBrokerNames } = useBrokerLookup();
+  const brokerNames = getBrokerNames();
+  const IS = (active) => ({ width:"100%", padding:"7px 10px", borderRadius:8, border:`1.5px solid ${active?"#7fb069":"#c8d8c0"}`, fontSize:13, fontFamily:"inherit", background:"#fff", boxSizing:"border-box" });
+  if (brokerNames.length > 0) return (
+    <select value={value} onChange={e=>onChange(e.target.value)} style={IS(false)}>
+      <option value="">— Broker —</option>
+      {brokerNames.map(b=><option key={b}>{b}</option>)}
+    </select>
+  );
+  return <input value={value} onChange={e=>onChange(e.target.value)} placeholder="e.g. Ball Seed" style={IS(false)} />;
+}
+
+// ── PLANT CATALOG PICKER (Broker → Supplier → Species → Series → Color) ───────
+function PlantCatalogPicker({ plant, onChange }) {
+  const { getBrokerNames, getCultivars, getSuppliers, getSeries, getColors } = useBrokerLookup();
+  const IS = (active) => ({ width:"100%", padding:"7px 10px", borderRadius:8, border:`1.5px solid ${active?"#7fb069":"#c8d8c0"}`, fontSize:13, fontFamily:"inherit", background:"#fff", boxSizing:"border-box" });
+  const FL = ({ c }) => <div style={{ fontSize:10, fontWeight:700, color:"#7a8c74", textTransform:"uppercase", letterSpacing:.5, marginBottom:3 }}>{c}</div>;
+
+  const brokerNames = getBrokerNames();
+  const [supplierFilter, setSupplierFilter] = useState(plant._supplierFilter || "");
+  const [speciesFilter, setSpeciesFilter]   = useState(plant._speciesFilter  || "");
+  const [seriesQuery, setSeriesQuery]        = useState("");
+
+  const cultivars = plant.broker ? getCultivars(plant.broker) : [];
+  const suppliers = plant.broker ? getSuppliers(plant.broker, speciesFilter) : [];
+  const allSeries = plant.broker ? getSeries(plant.broker, speciesFilter, supplierFilter) : [];
+  const filteredSeries = seriesQuery ? allSeries.filter(s => s.toLowerCase().includes(seriesQuery.toLowerCase())) : allSeries;
+
+  const selectedSeries = plant._seriesName || "";
+  const catalogColors  = plant._catalogColors || [];
+
+  return (
+    <div>
+      {/* Row 1: Broker · Supplier · Species */}
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, marginBottom:8 }}>
+        <div>
+          <FL c="Broker" />
+          {brokerNames.length > 0 ? (
+            <select value={plant.broker||""} onChange={e=>{ onChange("broker",e.target.value); setSupplierFilter(""); setSpeciesFilter(""); setSeriesQuery(""); onChange("_seriesName",""); onChange("_catalogColors",[]); }} style={IS(false)}>
+              <option value="">— Select —</option>
+              {brokerNames.map(b=><option key={b}>{b}</option>)}
+            </select>
+          ) : (
+            <input value={plant.broker||""} onChange={e=>onChange("broker",e.target.value)} placeholder="e.g. Ball Seed" style={IS(false)} />
+          )}
+        </div>
+        <div>
+          <FL c="Supplier" />
+          {suppliers.length > 0 ? (
+            <select value={supplierFilter} onChange={e=>{ setSupplierFilter(e.target.value); setSeriesQuery(""); }} style={IS(false)}>
+              <option value="">— All —</option>
+              {suppliers.map(s=><option key={s}>{s}</option>)}
+            </select>
+          ) : (
+            <input value={supplierFilter} onChange={e=>setSupplierFilter(e.target.value)} placeholder="e.g. Dümmen" style={IS(false)} />
+          )}
+        </div>
+        <div>
+          <FL c="Crop Species" />
+          {cultivars.length > 0 ? (
+            <select value={speciesFilter} onChange={e=>{ setSpeciesFilter(e.target.value); setSupplierFilter(""); setSeriesQuery(""); }} style={IS(false)}>
+              <option value="">— All —</option>
+              {cultivars.map(c=><option key={c}>{c}</option>)}
+            </select>
+          ) : (
+            <input value={speciesFilter} onChange={e=>setSpeciesFilter(e.target.value)} placeholder="e.g. Petunia" style={IS(false)} />
+          )}
+        </div>
+      </div>
+
+      {/* Series picker */}
+      {plant.broker && !selectedSeries && (
+        <div style={{ border:"1.5px solid #e0ead8", borderRadius:10, overflow:"hidden", marginBottom:8 }}>
+          <div style={{ padding:"7px 10px", borderBottom:"1px solid #f0f0ea", background:"#fafaf8" }}>
+            <input value={seriesQuery} onChange={e=>setSeriesQuery(e.target.value)} placeholder="Search varieties..."
+              style={{ width:"100%", border:"1.5px solid #c8d8c0", borderRadius:7, padding:"5px 9px", fontSize:12, fontFamily:"inherit", background:"#fff", boxSizing:"border-box" }} />
+          </div>
+          {filteredSeries.length === 0 ? (
+            <div style={{ padding:"14px", textAlign:"center", color:"#aabba0", fontSize:12 }}>No varieties found</div>
+          ) : (
+            <div style={{ maxHeight:160, overflowY:"auto" }}>
+              {filteredSeries.map(s => {
+                const colors = getColors(plant.broker, speciesFilter, s);
+                const price = colors[0] ? (colors[0].unitPrice || colors[0].sellPrice) : null;
+                return (
+                  <div key={s} onClick={() => {
+                    const catalogItems = colors;
+                    onChange("_seriesName", s);
+                    onChange("cultivar", speciesFilter || catalogItems[0]?.crop || "");
+                    onChange("name", s);
+                    onChange("_catalogColors", catalogItems.map(i => ({ label: i.color || i.varietyName || "", itemNumber: i.itemNumber, price: i.unitPrice || i.sellPrice, perQty: i.perQty })).filter(c => c.label));
+                    onChange("color", "");
+                    if (catalogItems[0]) {
+                      const p = catalogItems[0].unitPrice || catalogItems[0].sellPrice;
+                      if (p) onChange("costPerPlant", String(p));
+                    }
+                  }}
+                  style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"7px 12px", borderBottom:"1px solid #f5f5f0", cursor:"pointer", background:"#fff" }}
+                  onMouseEnter={e=>e.currentTarget.style.background="#f0f8eb"}
+                  onMouseLeave={e=>e.currentTarget.style.background="#fff"}>
+                    <div>
+                      <div style={{ fontSize:12, fontWeight:600, color:"#1a2a1a" }}>{s}</div>
+                      <div style={{ fontSize:10, color:"#aabba0" }}>{colors.length} color{colors.length!==1?"s":""}{speciesFilter?` · ${speciesFilter}`:""}</div>
+                    </div>
+                    <div style={{ fontSize:11, color:"#2e7a2e", fontWeight:700 }}>{price?`$${Number(price).toFixed(4)}`:"—"}</div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Selected series + color dropdown */}
+      {selectedSeries && (
+        <div style={{ background:"#f0f8eb", border:"1.5px solid #c8e0b8", borderRadius:10, padding:"10px 12px", marginBottom:8 }}>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8 }}>
+            <div style={{ fontWeight:700, fontSize:13, color:"#1e2d1a" }}>{selectedSeries}</div>
+            <button onClick={()=>{ onChange("_seriesName",""); onChange("_catalogColors",[]); onChange("color",""); onChange("name",""); }}
+              style={{ background:"none", border:"none", color:"#7a8c74", fontSize:12, cursor:"pointer", fontFamily:"inherit" }}>
+              ← Change variety
+            </button>
+          </div>
+          <FL c="Color" />
+          {catalogColors.length > 0 ? (
+            <select value={plant.color||""} onChange={e=>{
+              const picked = catalogColors.find(c=>c.label===e.target.value);
+              onChange("color", e.target.value);
+              onChange("name", [selectedSeries, e.target.value].filter(Boolean).join(" "));
+              if (picked?.itemNumber) onChange("itemNumber", picked.itemNumber);
+              if (picked?.price) onChange("costPerPlant", String(picked.price));
+            }} style={IS(false)}>
+              <option value="">— Select color —</option>
+              {catalogColors.map(c=><option key={c.label} value={c.label}>{c.label}{c.price?` · $${Number(c.price).toFixed(4)}`:""}</option>)}
+            </select>
+          ) : (
+            <input value={plant.color||""} onChange={e=>onChange("color",e.target.value)} placeholder="Color" style={IS(false)} />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ComponentRow({ plant, index, onChange, onRemove }) {
   const [imgErr,     setImgErr]     = useState(false);
   const [dragging,   setDragging]   = useState(false);
@@ -177,26 +348,10 @@ function ComponentRow({ plant, index, onChange, onRemove }) {
           </div>
 
           {plant._useCatalog && (
-            <div style={{ marginBottom:8 }}>
-              <div style={{ marginBottom:6 }}>
-                <FL c="Broker" />
-                <select value={plant.broker||""} onChange={e=>onChange("broker",e.target.value)} style={{...IS(false),paddingRight:4}}>
-                  <option value="">— Broker —</option>
-                  {BROKERS.map(b=><option key={b}>{b}</option>)}
-                </select>
-              </div>
-              <CatalogPicker
-                broker={plant.broker}
-                initial={{ series: plant.cultivar, color: plant.color }}
-                onSelect={({ crop, series, color, itemNumber, perQty, sellPrice, shortCode }) => {
-                  onChange("name", [series, color].filter(Boolean).join(" "));
-                  onChange("cultivar", series);
-                  onChange("color", color);
-                  onChange("itemNumber", itemNumber || shortCode || "");
-                  if (sellPrice) onChange("costPerPlant", String(sellPrice));
-                }}
-              />
-            </div>
+            <PlantCatalogPicker
+              plant={plant}
+              onChange={onChange}
+            />
           )}
 
           <div style={{ display: plant._useCatalog ? "none" : "grid", gridTemplateColumns:"1.8fr 1fr 0.9fr 0.9fr 0.8fr 0.8fr auto", gap:8, alignItems:"end" }}>
@@ -206,10 +361,7 @@ function ComponentRow({ plant, index, onChange, onRemove }) {
             </div>
             <div>
               <FL c="Broker" />
-              <select value={plant.broker||""} onChange={e=>onChange("broker",e.target.value)} style={{...IS(false),paddingRight:4}}>
-                <option value="">— Broker —</option>
-                {BROKERS.map(b=><option key={b}>{b}</option>)}
-              </select>
+              <ManualBrokerSelect value={plant.broker||""} onChange={v=>onChange("broker",v)} />
             </div>
             <div>
               <FL c="Form" />
