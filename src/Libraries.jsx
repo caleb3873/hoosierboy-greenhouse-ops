@@ -2757,22 +2757,24 @@ function UploadWizard({ onSave, onCancel, brokerProfiles = [], initialBrokerId =
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
           <thead>
             <tr style={{ background: "#f2f5ef" }}>
-              {["Crop","Description","Size","Item #","Per","Sell Price"].map(h => (
+              {["Crop","Variety","Color","Form","Price"].map(h => (
                 <th key={h} style={{ padding: "7px 10px", textAlign: "left", fontWeight: 700, color: "#4a5a40", borderBottom: "1.5px solid #e0ead8", whiteSpace: "nowrap" }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {items.slice(0, 8).map(item => (
-              <tr key={item.id} style={{ borderBottom: "1px solid #f0f5ee" }}>
-                <td style={{ padding: "6px 10px", color: "#1a2a1a", fontWeight: 600 }}>{item.crop}</td>
-                <td style={{ padding: "6px 10px", color: "#4a5a40", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.description}</td>
-                <td style={{ padding: "6px 10px", color: "#7a8c74" }}>{item.size}</td>
-                <td style={{ padding: "6px 10px", color: "#7a8c74" }}>{item.itemNumber}</td>
-                <td style={{ padding: "6px 10px", color: "#7a8c74" }}>{item.perQty}</td>
-                <td style={{ padding: "6px 10px", color: "#2e7a2e", fontWeight: 700 }}>{item.sellPrice ? `$${item.sellPrice.toFixed(4)}` : "—"}</td>
-              </tr>
-            ))}
+            {items.slice(0, 8).map(item => {
+              const price = item.unitPrice || item.sellPrice;
+              return (
+                <tr key={item.id} style={{ borderBottom: "1px solid #f0f5ee" }}>
+                  <td style={{ padding: "6px 10px", color: "#1a2a1a", fontWeight: 600 }}>{item.crop}</td>
+                  <td style={{ padding: "6px 10px", color: "#4a5a40", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.varietyName || item.series || item.description || "—"}</td>
+                  <td style={{ padding: "6px 10px", color: "#7a8c74" }}>{item.color || "—"}</td>
+                  <td style={{ padding: "6px 10px", color: "#7a8c74" }}>{item.size || "—"}</td>
+                  <td style={{ padding: "6px 10px", color: "#2e7a2e", fontWeight: 700 }}>{price ? `$${Number(price).toFixed(4)}` : "—"}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
