@@ -1096,12 +1096,13 @@ function SourcingSection({ form, upd, focus, setFocus }) {
               <div key={item.id}
                 onClick={() => {
                   const brokerDisplay = form.sourcingBroker;
-                  upd("unitCost", item.sellPrice ? (item.sellPrice / (Number(item.perQty) || 100)).toFixed(4) : form.unitCost);
-                  const varName = item.description?.replace(/#$/, "").trim();
+                  const price = item.unitPrice || item.sellPrice;
+                  const varName = item.varietyName || item.series || item.description?.replace(/#$/, "").trim() || "";
+                  const colorVal = item.color || "";
+                  upd("unitCost", price ? (Number(price) / (Number(item.perQty) || 100)).toFixed(4) : form.unitCost);
                   const existing = form.varieties || [];
                   if (!existing.find(v => v.ballItemNumber === item.itemNumber)) {
-                    const newVar = { id: dc({}), ballItemNumber: item.itemNumber, cultivar: varName, name: varName, color: "", cases: 0, costPerUnit: item.sellPrice ? (item.sellPrice / (Number(item.perQty)||100)).toFixed(4) : "", broker: brokerDisplay, supplier: item.size, tags: [] };
-                    newVar.id = crypto.randomUUID();
+                    const newVar = { id: crypto.randomUUID(), ballItemNumber: item.itemNumber, cultivar: varName, name: varName, color: colorVal, cases: 0, costPerUnit: price ? (Number(price) / (Number(item.perQty)||100)).toFixed(4) : "", broker: brokerDisplay, supplier: item.size, tags: [] };
                     upd("varieties", [...existing, newVar]);
                   }
                 }}
@@ -1111,12 +1112,18 @@ function SourcingSection({ form, upd, focus, setFocus }) {
                 <div>
                   <div style={{ fontSize: 13, fontWeight: 600, color: "#1a2a1a" }}>
                     {item.isNew && <span style={{ background: "#8e44ad", color: "#fff", borderRadius: 4, padding: "1px 5px", fontSize: 9, fontWeight: 800, marginRight: 6 }}>NEW</span>}
-                    {item.description?.replace(/#$/, "").trim()}
+                    {item.varietyName || item.series || item.description?.replace(/#$/, "").trim() || "—"}
+                    {item.color && item.color !== (item.varietyName || item.series) && <span style={{ color: "#7a8c74", fontWeight: 400, marginLeft: 6 }}>· {item.color}</span>}
                   </div>
-                  <div style={{ fontSize: 11, color: "#7a8c74" }}>{item.size} · #{item.itemNumber} · {item.perQty}/tray</div>
+                  <div style={{ fontSize: 11, color: "#7a8c74" }}>
+                    {item.size && <span>{item.size}</span>}
+                    {item.itemNumber && <span> · #{item.itemNumber}</span>}
+                    {item.perQty && <span> · {item.perQty}/tray</span>}
+                    {item.breeder && <span> · {item.breeder}</span>}
+                  </div>
                 </div>
                 <div style={{ fontSize: 13, fontWeight: 700, color: "#2e7a2e", flexShrink: 0, marginLeft: 12 }}>
-                  {item.sellPrice ? `$${item.sellPrice.toFixed(2)}/${item.perQty}` : "—"}
+                  {(item.unitPrice || item.sellPrice) ? `$${Number(item.unitPrice || item.sellPrice).toFixed(4)}` : "—"}
                 </div>
               </div>
             ))}
