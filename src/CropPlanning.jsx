@@ -225,6 +225,48 @@ function houseCapacityInfo(house, container) {
   return { totalSqFt: Math.round(totalSqFt), potCapacity, benchCount: benches.length };
 }
 
+// Returns total sq ft and pot capacity across all assignments for a crop run
+function assignmentCapacitySummary(assignments, houses, pads, container) {
+  let totalSqFt = 0;
+  let totalPots = null;
+  const diaIn = container?.diameterIn;
+  (assignments || []).forEach(a => {
+    const house = houses.find(h => h.id === a.structureId);
+    const pad   = pads.find(p => p.id === a.structureId);
+    if (house) {
+      // If a specific bench is assigned, use just that bench; else whole house
+      const zone = house.zones?.find(z => z.id === a.zoneId);
+      const item = zone?.items?.find(i => i.id === a.itemId);
+      if (item) {
+        const w = item.benchType === "double" ? 8 : (Number(item.widthFt) || 0);
+        const sqFt = w * (Number(item.lengthFt) || 0);
+        totalSqFt += sqFt;
+      } else if (zone) {
+        const zoneSqFt = (zone.items || []).reduce((s, i) => {
+          const w = i.benchType === "double" ? 8 : (Number(i.widthFt) || 0);
+          return s + w * (Number(i.lengthFt) || 0);
+        }, 0);
+        totalSqFt += zoneSqFt;
+      } else {
+        const info = houseCapacityInfo(house, container);
+        totalSqFt += info.totalSqFt;
+      }
+    } else if (pad) {
+      const bay = (pad.bays || []).find(b => b.id === a.itemId);
+      if (bay) {
+        totalSqFt += (Number(bay.widthFt)||0) * (Number(bay.lengthFt)||0);
+      } else {
+        totalSqFt += (pad.bays || []).reduce((s, b) => s + (Number(b.widthFt)||0)*(Number(b.lengthFt)||0), 0);
+      }
+    }
+  });
+  if (diaIn && totalSqFt) {
+    const diaFt = diaIn / 12;
+    totalPots = Math.floor(totalSqFt / (diaFt * diaFt));
+  }
+  return { totalSqFt: Math.round(totalSqFt), totalPots };
+}
+
 function SpaceAssignmentPicker({ assignments, onChange, houses, pads, sched, currentYear, outsideOnly, allRuns = [], currentRunId, currentRunTempGroup, varietyLibrary = [], form: runForm, containers = [] }) {
   const [adding, setAdding] = useState(false);
   const [pickForm, setPickForm] = useState({ type: outsideOnly ? "pad" : "house", structureId: "", zoneId: "", itemId: "" });
@@ -343,33 +385,128 @@ function SpaceAssignmentPicker({ assignments, onChange, houses, pads, sched, cur
             </div>
           )}
           <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 10 }}>
+            {/* ── RANGE BROWSER CARDS ── */}
             <div>
               <FL c={pickForm.type === "pad" ? "Outdoor Range" : "Greenhouse Range"} />
-              <select style={IS(false)} value={pickForm.structureId} onChange={e => setPickForm(f => ({ ...f, structureId: e.target.value, zoneId: "", itemId: "" }))}>
-                <option value="">— Select —</option>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 4, maxHeight: 340, overflowY: "auto" }}>
                 {(pickForm.type === "pad" ? pads : houses).filter(s => s.active !== false).map(s => {
+                  const isSelected = pickForm.structureId === s.id;
                   const conf = pickForm.type === "house" ? checkRangeCompatibility(s.id, currentRunId, currentRunTempGroup, allRuns, varietyLibrary) : [];
-                  return <option key={s.id} value={s.id}>{conf.length > 0 ? "⚠️ " : ""}{s.name}</option>;
+                  const hasTempConflict = conf.length > 0;
+
+                  // Runs currently in this range that overlap in time with our bench window
+                  const thisRangeRuns = allRuns.filter(r =>
+                    r.id !== currentRunId &&
+                    (r.indoorAssignments || []).some(a => a.structureId === s.id)
+                  );
+                  // Compute bench window for current run and each other run
+                  const mySched = runForm ? computeSchedule(runForm) : null;
+                  const myTransplantWk = mySched?.transplant ? mySched.transplant.week + mySched.transplant.year * 53 : null;
+                  const myReadyWk = runForm?.targetWeek ? runForm.targetWeek + (runForm.targetYear||2026) * 53 : null;
+
+                  const overlappingRuns = thisRangeRuns.filter(r => {
+                    if (!myTransplantWk || !myReadyWk) return false;
+                    const rs = computeSchedule(r);
+                    const rStart = rs?.transplant ? rs.transplant.week + rs.transplant.year * 53 : null;
+                    const rEnd = r.targetWeek ? r.targetWeek + (r.targetYear||2026) * 53 : null;
+                    if (!rStart || !rEnd) return false;
+                    return rStart <= myReadyWk && rEnd >= myTransplantWk;
+                  });
+                  const allInRange = thisRangeRuns;
+
+                  // Capacity for this range
+                  const capI = pickForm.type === "house" ? houseCapacityInfo(s, container) : null;
+                  const myPots = runForm ? (Number(runForm.cases)||0) * (runForm.isCased !== false ? (Number(runForm.packSize)||10) : 1) : 0;
+                  const fits = capI?.potCapacity ? myPots <= capI.potCapacity : null;
+
+                  // Temp group of runs already in this range
+                  const rangeGroups = [...new Set(allInRange.map(r => r.tempGroup).filter(Boolean))];
+                  const rangeTempLabel = rangeGroups.length === 1 ? rangeGroups[0] : rangeGroups.length > 1 ? "mixed" : null;
+
+                  return (
+                    <div key={s.id}
+                      onClick={() => setPickForm(f => ({ ...f, structureId: s.id, zoneId: "", itemId: "" }))}
+                      style={{
+                        border: `2px solid ${isSelected ? "#7fb069" : hasTempConflict ? "#f0c080" : "#e0ead8"}`,
+                        borderRadius: 10, padding: "10px 14px", cursor: "pointer",
+                        background: isSelected ? "#f0f8eb" : hasTempConflict ? "#fffbf0" : "#fff",
+                        transition: "border-color .15s, background .15s",
+                      }}>
+                      {/* Range header row */}
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: overlappingRuns.length > 0 || capI ? 6 : 0 }}>
+                        <span style={{ fontSize: 15 }}>{pickForm.type === "pad" ? "🌤" : "🏠"}</span>
+                        <span style={{ fontWeight: 700, fontSize: 13, color: "#1e2d1a", flex: 1 }}>{s.name}</span>
+                        {/* Temp badge */}
+                        {rangeTempLabel && (
+                          <span style={{ fontSize: 10, fontWeight: 800, padding: "2px 8px", borderRadius: 10, background: rangeTempLabel === "cool" ? "#e8f3fc" : rangeTempLabel === "warm" ? "#fdf3ea" : "#f8f0fc", color: rangeTempLabel === "cool" ? "#1a4a7a" : rangeTempLabel === "warm" ? "#a04010" : "#6a2a9a", border: `1px solid ${rangeTempLabel === "cool" ? "#a0c4e8" : rangeTempLabel === "warm" ? "#f0c090" : "#d0a0e0"}` }}>
+                            {rangeTempLabel === "cool" ? "❄️ Cool range" : rangeTempLabel === "warm" ? "🌡 Warm range" : "⚠️ Mixed"}
+                          </span>
+                        )}
+                        {/* Temp conflict badge */}
+                        {hasTempConflict && (
+                          <span style={{ fontSize: 10, fontWeight: 800, padding: "2px 8px", borderRadius: 10, background: "#fde8d0", color: "#a04010", border: "1px solid #f0c090" }}>
+                            ⚠️ Temp conflict
+                          </span>
+                        )}
+                        {/* Capacity badge */}
+                        {capI?.potCapacity && myPots > 0 && (
+                          <span style={{ fontSize: 10, fontWeight: 800, padding: "2px 8px", borderRadius: 10, background: fits ? "#f0f8eb" : "#fff0f0", color: fits ? "#2e5c1e" : "#b03020", border: `1px solid ${fits ? "#c8e0b8" : "#f0b0a0"}` }}>
+                            {fits ? "✅ Fits" : "⚠️ Too small"}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Capacity line */}
+                      {capI && capI.totalSqFt > 0 && (
+                        <div style={{ fontSize: 11, color: "#7a8c74", marginBottom: overlappingRuns.length > 0 ? 6 : 0, display: "flex", gap: 12 }}>
+                          <span>📐 {capI.totalSqFt.toLocaleString()} sq ft</span>
+                          {capI.potCapacity && container && <span>~{capI.potCapacity.toLocaleString()} {container.diameterIn}" pots capacity</span>}
+                          {capI.benchCount > 0 && <span>{capI.benchCount} bench{capI.benchCount !== 1 ? "es" : ""}</span>}
+                        </div>
+                      )}
+
+                      {/* Overlapping runs — same bench window */}
+                      {overlappingRuns.length > 0 && (
+                        <div style={{ borderTop: "1px solid #e8ede4", marginTop: 4, paddingTop: 6 }}>
+                          <div style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .4, marginBottom: 4 }}>
+                            Same bench window ({overlappingRuns.length} crop{overlappingRuns.length !== 1 ? "s" : ""})
+                          </div>
+                          {overlappingRuns.map(r => {
+                            const rs = computeSchedule(r);
+                            const sameTemp = !r.tempGroup || !currentRunTempGroup || r.tempGroup === currentRunTempGroup;
+                            return (
+                              <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
+                                <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 6, background: sameTemp ? "#f0f8eb" : "#fff0e8", color: sameTemp ? "#2e5c1e" : "#a04010", border: `1px solid ${sameTemp ? "#c8e0b8" : "#f0c090"}` }}>
+                                  {r.tempGroup === "cool" ? "❄️" : r.tempGroup === "warm" ? "🌡" : "·"} {sameTemp ? "Same" : "Diff"} temp
+                                </span>
+                                <span style={{ fontSize: 12, fontWeight: 600, color: "#1e2d1a" }}>{r.cropName}</span>
+                                <span style={{ fontSize: 11, color: "#7a8c74" }}>
+                                  Wk {rs?.transplant?.week || "?"} → Wk {r.targetWeek || "?"}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {/* Empty range callout */}
+                      {overlappingRuns.length === 0 && allInRange.length === 0 && (
+                        <div style={{ fontSize: 11, color: "#7fb069", fontWeight: 600 }}>✨ Empty — no other crops assigned</div>
+                      )}
+                      {overlappingRuns.length === 0 && allInRange.length > 0 && (
+                        <div style={{ fontSize: 11, color: "#7a8c74" }}>No date conflicts — other crops are on different weeks</div>
+                      )}
+                    </div>
+                  );
                 })}
-              </select>
+              </div>
             </div>
 
-            {/* Conflict warning */}
+            {/* Conflict warning (kept for explicitness when range is selected) */}
             {pickForm.type === "house" && conflicts.length > 0 && (
               <div style={{ background: "#fff8f0", border: "1.5px solid #f0c080", borderRadius: 8, padding: "10px 12px", fontSize: 12 }}>
                 <div style={{ fontWeight: 700, color: "#a04010", marginBottom: 4 }}>⚠️ Temperature Conflict</div>
                 <div style={{ color: "#7a4a10" }}>This range has {currentRunTempGroup === "cool" ? "warm" : "cool"} crops: <strong>{conflicts.map(r => r.cropName).join(", ")}</strong>. Assigning here requires Caleb's approval.</div>
-              </div>
-            )}
-
-            {/* Capacity info */}
-            {capInfo && capInfo.totalSqFt > 0 && (
-              <div style={{ background: "#f0f8eb", border: "1px solid #c8e0b8", borderRadius: 8, padding: "10px 12px", fontSize: 12 }}>
-                <div style={{ fontWeight: 700, color: "#2e5c1e", marginBottom: 4 }}>📐 Range Capacity</div>
-                <div style={{ color: "#4a7a35" }}>
-                  {capInfo.totalSqFt.toLocaleString()} sq ft bench space · {capInfo.benchCount} bench{capInfo.benchCount !== 1 ? "es" : ""}
-                  {capInfo.potCapacity && container ? <span> · ~{capInfo.potCapacity.toLocaleString()} {container.diameterIn}" pots (pot-tight)</span> : ""}
-                </div>
               </div>
             )}
 
@@ -504,6 +641,7 @@ function Combobox({ value, onChange, options, placeholder, focusKey, focus, setF
 function VarietyManager({ varieties, lotCases, packSize, materialType, propTraySize, linerSize, isCased, onChange, onIncreaseLot, varietyLibrary }) {
   const [focus, setFocus] = useState(null);
   const [overAlert, setOverAlert] = useState(null); // { needed, current }
+  const { getSuppliers, getColors } = useBrokerLookup();
 
   // Determine split increment based on material type
   // URC: 100 units. Liner: tray size (e.g. 84). Seed: 1. Default: 100.
@@ -744,16 +882,35 @@ function VarietyManager({ varieties, lotCases, packSize, materialType, propTrayS
                 )}
 
                 {/* Broker / Supplier */}
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                  <div>
-                    <FL c="Broker" />
-                    <input style={IS(focus === v.id + "brk")} value={v.broker || ""} onChange={e => updVar(idx, "broker", e.target.value)} onFocus={() => setFocus(v.id + "brk")} onBlur={() => setFocus(null)} placeholder="e.g. Ball Seed" />
-                  </div>
-                  <div>
-                    <FL c="Supplier" />
-                    <input style={IS(focus === v.id + "sup")} value={v.supplier || ""} onChange={e => updVar(idx, "supplier", e.target.value)} onFocus={() => setFocus(v.id + "sup")} onBlur={() => setFocus(null)} placeholder="e.g. Dümmen" />
-                  </div>
-                </div>
+                {(() => {
+                  const rowSuppliers = v.broker && v.cultivar ? getSuppliers(v.broker, v.cultivar) : [];
+                  return (
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                      <div>
+                        <FL c="Broker" />
+                        <input style={IS(focus === v.id + "brk")} value={v.broker || ""} onChange={e => updVar(idx, "broker", e.target.value)} onFocus={() => setFocus(v.id + "brk")} onBlur={() => setFocus(null)} placeholder="e.g. Ball Seed" />
+                      </div>
+                      <div>
+                        <FL c="Supplier" />
+                        {rowSuppliers.length > 0 ? (
+                          <select style={IS(false)} value={v.supplier || ""} onChange={e => {
+                            const next = varieties.map((x, i) => i !== idx ? x : { ...x, supplier: e.target.value });
+                            // Also update _catalogColors based on new supplier selection
+                            const colors = getColors(v.broker, v.cultivar, v._seriesName);
+                            const filtered = colors.filter(c => !e.target.value || c.supplier === e.target.value || c.breeder === e.target.value);
+                            next[idx]._catalogColors = filtered.map(c => ({ label: c.color || c.varietyName, itemNumber: c.itemNumber, price: c.unitPrice || c.sellPrice }));
+                            onChange(next);
+                          }}>
+                            <option value="">— Select supplier —</option>
+                            {rowSuppliers.map(s => <option key={s} value={s}>{s}</option>)}
+                          </select>
+                        ) : (
+                          <input style={IS(focus === v.id + "sup")} value={v.supplier || ""} onChange={e => updVar(idx, "supplier", e.target.value)} onFocus={() => setFocus(v.id + "sup")} onBlur={() => setFocus(null)} placeholder="e.g. Dümmen" />
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* Attribute tag chips */}
                 <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -1376,7 +1533,7 @@ function OrderReviewModal({ form, containers, onClose, onSave }) {
       ];
       // Add tag row if needed
       if (form.needsTags) {
-        const tagQty = Number(form.tagOrderQty) || Math.ceil((Number(form.cases)||0) * pSize * (1 + (Number(form.bufferPct)||0)/100));
+        const tagQty = Number(form.tagOrderQty) || ((Number(form.cases)||0) * 10);
         rows.push([]);
         rows.push(["TAG ORDER", form.tagDescription || "", form.tagSupplier || "", form.tagPrintInHouse ? "Print in-house" : "Order", tagQty, "", form.tagCostPerTag || "", form.tagCostPerTag ? (tagQty * Number(form.tagCostPerTag)).toFixed(2) : ""]);
       }
@@ -1471,7 +1628,7 @@ function OrderReviewModal({ form, containers, onClose, onSave }) {
             <div style={{ background: "#fdf8ff", border: "1.5px solid #d0a8e8", borderRadius: 12, padding: "14px 16px", marginBottom: 20 }}>
               <div style={{ fontWeight: 800, fontSize: 13, color: "#6a2a9a", marginBottom: 6 }}>🏷 Tag Order</div>
               <div style={{ fontSize: 13, color: "#1e2d1a" }}>
-                {form.tagDescription || form.cropName + " tags"} · {form.tagOrderQty || Math.ceil((Number(form.cases)||0)*pSize*(1+(Number(form.bufferPct)||0)/100))} tags · {form.tagPrintInHouse ? "🖨 Print in-house" : `📦 ${form.tagSupplier || "order from supplier"}`}
+                {form.tagDescription || form.cropName + " tags"} · {form.tagOrderQty || ((Number(form.cases)||0)*10)} tags · {form.tagPrintInHouse ? "🖨 Print in-house" : `📦 ${form.tagSupplier || "order from supplier"}`}
               </div>
             </div>
           )}
@@ -1894,6 +2051,52 @@ function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles,
           </div>
           <SpaceAssignmentPicker assignments={form.indoorAssignments} onChange={v => upd("indoorAssignments", v)} houses={houses} pads={pads} sched={sched} currentYear={currentYear} outsideOnly={false} allRuns={allRuns} currentRunId={form.id} currentRunTempGroup={form.tempGroup} varietyLibrary={varietyLibrary} form={form} containers={containers} />
 
+          {/* ── INDOOR CAPACITY CHECK ── */}
+          {form.indoorAssignments?.length > 0 && (() => {
+            const selC = containers.find(c => c.id === form.containerId);
+            const isCased = form.isCased ?? true;
+            const pSize = isCased ? (Number(form.packSize) || 10) : 1;
+            const totalPots = (Number(form.cases) || 0) * pSize;
+            const cap = assignmentCapacitySummary(form.indoorAssignments, houses, pads, selC);
+            const fits = cap.totalPots == null || totalPots === 0 || cap.totalPots >= totalPots;
+            const overBy = cap.totalPots != null && totalPots > 0 ? totalPots - cap.totalPots : 0;
+            const pct = cap.totalPots && totalPots ? Math.round((totalPots / cap.totalPots) * 100) : null;
+            return (
+              <div style={{ marginTop: 10, borderRadius: 10, border: `1.5px solid ${fits ? "#c8e0b8" : "#f0b0a0"}`, background: fits ? "#f0f8eb" : "#fff5f5", padding: "12px 16px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <div style={{ fontWeight: 800, fontSize: 12, color: fits ? "#2e5c1e" : "#b03020" }}>
+                    {fits ? "✅ Fits in assigned space" : "⚠️ Won't fit — need more space"}
+                  </div>
+                  <div style={{ fontSize: 11, color: "#7a8c74" }}>
+                    {totalPots > 0 && cap.totalPots ? `${totalPots.toLocaleString()} pots needed · ${cap.totalPots.toLocaleString()} capacity` : ""}
+                  </div>
+                </div>
+                {/* Capacity bar */}
+                {pct != null && (
+                  <div style={{ background: "#e0ead8", borderRadius: 4, height: 8, overflow: "hidden", marginBottom: 8 }}>
+                    <div style={{ width: `${Math.min(100, pct)}%`, height: "100%", background: fits ? "#7fb069" : "#e05030", borderRadius: 4, transition: "width .3s" }} />
+                  </div>
+                )}
+                <div style={{ display: "flex", gap: 16, fontSize: 12, flexWrap: "wrap" }}>
+                  {cap.totalSqFt > 0 && <span style={{ color: "#4a7a35" }}>📐 {cap.totalSqFt.toLocaleString()} sq ft assigned</span>}
+                  {totalPots > 0 && <span style={{ color: "#1e2d1a", fontWeight: 600 }}>🪴 {totalPots.toLocaleString()} pots this run</span>}
+                  {cap.totalPots && <span style={{ color: "#7a8c74" }}>Capacity: ~{cap.totalPots.toLocaleString()} pots (pot-tight)</span>}
+                  {!fits && overBy > 0 && <span style={{ color: "#b03020", fontWeight: 700 }}>Need {overBy.toLocaleString()} more pot spaces</span>}
+                </div>
+                {!fits && (
+                  <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
+                    <div style={{ fontSize: 12, color: "#b03020", fontStyle: "italic", flex: 1 }}>
+                      Add another space below to accommodate the overflow, or reduce your case count.
+                    </div>
+                  </div>
+                )}
+                {!selC?.diameterIn && totalPots > 0 && (
+                  <div style={{ fontSize: 11, color: "#aabba0", marginTop: 6 }}>Set a container with a diameter to calculate pot capacity</div>
+                )}
+              </div>
+            );
+          })()}
+
           {form.movesOutside && (<>
             <SH c="Outdoor Space Assignment" />
             <div style={{ fontSize: 12, color: "#7a8c74", marginBottom: 12 }}>
@@ -2043,12 +2246,10 @@ function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles,
 
         {/* ── TAGS TAB ── */}
         {tab === "tags" && (() => {
-          const isCased = form.isCased ?? true;
-          const pSize = isCased ? (Number(form.packSize) || 10) : 1;
-          const totalPots = (Number(form.cases) || 0) * pSize;
+          // Tags per pot = cases × 10 (always 10 pots per case)
+          const totalPots = (Number(form.cases) || 0) * 10;
           const selC = containers.find(c => c.id === form.containerId);
-          // Tags are per pot, never per plant
-          const autoTagQty = totalPots > 0 ? Math.ceil(totalPots * (1 + (Number(form.bufferPct) || 0) / 100)) : 0;
+          const autoTagQty = totalPots > 0 ? totalPots : 0;
           const tagQty = Number(form.tagOrderQty) || autoTagQty;
           const tagCostEach = Number(form.tagCostPerTag) || (selC?.isHBTagged ? Number(selC.tagCostPerUnit) || 0 : 0);
           const tagTotalCost = tagQty && tagCostEach ? tagQty * tagCostEach : 0;
@@ -2111,7 +2312,7 @@ function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles,
                       onFocus={() => setFocus("tagQty")} onBlur={() => setFocus(null)}
                       placeholder={autoTagQty > 0 ? String(autoTagQty) : "auto"} />
                     {autoTagQty > 0 && !form.tagOrderQty && (
-                      <div style={{ fontSize: 10, color: "#7fb069", marginTop: 4, fontWeight: 600 }}>↑ Auto: {totalPots.toLocaleString()} pots + {form.bufferPct || 10}% buffer</div>
+                      <div style={{ fontSize: 10, color: "#7fb069", marginTop: 4, fontWeight: 600 }}>↑ Auto: {(Number(form.cases)||0).toLocaleString()} cases × 10 pots = {totalPots.toLocaleString()} tags</div>
                     )}
                   </div>
                   <div>
@@ -2275,7 +2476,7 @@ function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles,
                 {form.needsTags ? (<>
                   <div style={{ fontSize: 13, fontWeight: 700, color: "#1e2d1a", marginBottom: 4 }}>{form.tagDescription || form.cropName + " tags"}</div>
                   <div style={{ fontSize: 12, color: "#7a8c74" }}>
-                    Qty: {form.tagOrderQty || Math.ceil(((Number(form.cases)||0)*(Number(form.packSize)||1)) * (1+(Number(form.bufferPct)||0)/100))} tags
+                    Qty: {form.tagOrderQty || ((Number(form.cases)||0)*10)} tags
                     {form.tagSupplier && ` · ${form.tagSupplier}`}
                     {` · ${form.tagPrintInHouse ? "🖨 Print in-house" : "📦 Order from supplier"}`}
                   </div>
