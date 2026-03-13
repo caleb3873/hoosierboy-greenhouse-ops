@@ -1821,7 +1821,7 @@ function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles,
     isCased: true,
     containerId: "", spacingProfileId: "", spacingOverride: false,
     varieties: [],
-    targetWeek: "", targetYear: currentYear,
+    targetWeek: "", targetYear: "",
     weeksProp: "", weeksIndoor: "", weeksOutdoor: "",
     movesOutside: false,
     sensitivity: "tender", minTempOverride: "",
@@ -1840,14 +1840,18 @@ function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles,
     bufferPct: 10,
     // Planting density
     plantsPerPot: 1,
-    // Tags
+    // Tags — per-color rows
     needsTags: true,
+    colorTags: [],     // [{ id, cropName, color, tagType, supplier, qty, costPerTag, notes }]
+    tagNotes: "",
+    tagSupplier: "",   // default supplier carried to new rows
+    // Legacy fields kept for backwards compat
     tagDescription: "",
     tagPrintInHouse: false,
-    tagSupplier: "",
-    tagOrderQty: "",   // auto-calculated but overridable
+    tagOrderQty: "",
     tagCostPerTag: "",
-    tagNotes: "",
+    // Prop tray
+    propTrayContainerId: "",
   };
   const [form, setForm] = useState(initial ? dc({ ...blank, ...initial }) : blank);
   const [focus, setFocus] = useState(null);
@@ -2077,15 +2081,25 @@ function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles,
             <div>
               <FL c="Target Week" />
               <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                <input type="number" min="1" max="52" style={{ ...IS(focus === "tw"), width: 80, flexShrink: 0 }} value={form.targetWeek} onChange={e => upd("targetWeek", e.target.value)} onFocus={() => setFocus("tw")} onBlur={() => setFocus(null)} placeholder="18" />
+                <select style={{ ...IS(false), width: 90, flexShrink: 0 }} value={form.targetWeek || ""} onChange={e => upd("targetWeek", e.target.value ? Number(e.target.value) : "")}>
+                  <option value="">— Wk —</option>
+                  {Array.from({ length: 52 }, (_, i) => i + 1).map(w => (
+                    <option key={w} value={w}>Week {w}</option>
+                  ))}
+                </select>
                 <span style={{ fontSize: 13, color: "#7a8c74" }}>of</span>
-                <input type="number" min="2024" max="2035" style={{ ...IS(focus === "ty"), width: 90, flexShrink: 0 }} value={form.targetYear} onChange={e => upd("targetYear", Number(e.target.value))} onFocus={() => setFocus("ty")} onBlur={() => setFocus(null)} />
+                <select style={{ ...IS(false), width: 90, flexShrink: 0 }} value={form.targetYear || ""} onChange={e => upd("targetYear", e.target.value ? Number(e.target.value) : "")}>
+                  <option value="">— Year —</option>
+                  {[currentYear - 1, currentYear, currentYear + 1, currentYear + 2].map(y => (
+                    <option key={y} value={y}>{y}</option>
+                  ))}
+                </select>
               </div>
             </div>
             {form.targetWeek && form.targetYear && (
               <div style={{ display: "flex", alignItems: "flex-end" }}>
                 <div style={{ background: "#f0f8eb", borderRadius: 8, padding: "9px 14px", fontSize: 13, color: "#2e5c1e", fontWeight: 700, width: "100%" }}>
-                  Week {form.targetWeek} starts {formatWeekDate(Number(form.targetWeek), Number(form.targetYear))}
+                  Week {form.targetWeek}{form.targetYear ? " " + form.targetYear : ""} starts {form.targetYear ? formatWeekDate(Number(form.targetWeek), Number(form.targetYear)) : "(set year)"}
                 </div>
               </div>
             )}
@@ -2386,13 +2400,67 @@ function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles,
 
         {/* ── TAGS TAB ── */}
         {tab === "tags" && (() => {
-          // Tags per pot = cases × 10 (always 10 pots per case)
-          const totalPots = (Number(form.cases) || 0) * 10;
-          const selC = containers.find(c => c.id === form.containerId);
-          const autoTagQty = totalPots > 0 ? totalPots : 0;
-          const tagQty = Number(form.tagOrderQty) || autoTagQty;
-          const tagCostEach = Number(form.tagCostPerTag) || (selC?.isHBTagged ? Number(selC.tagCostPerUnit) || 0 : 0);
-          const tagTotalCost = tagQty && tagCostEach ? tagQty * tagCostEach : 0;
+          // Tags per pot = cases × 10
+          const isCased = form.isCased ?? true;
+          const pSize = isCased ? (Number(form.packSize) || 10) : 1;
+          const totalPots = (Number(form.cases) || 0) * pSize;
+          const varieties = form.varieties || [];
+
+          // TAG TYPES:
+          // "ordered"   = physical decorative tag ordered from supplier (e.g. Emerald Prints)
+          // "sticker"   = decorative tag from supplier + we print label stickers ourselves
+          // "inhouse"   = we print the entire tag ourselves on our printer
+
+          // Per-color tag rows: one per variety color
+          // Stored as form.colorTags = [{ id, cropName, color, tagType, supplier, qty, costPerTag, notes }]
+          const colorTags = form.colorTags || [];
+
+          function updColorTag(id, field, val) {
+            const next = colorTags.map(t => t.id === id ? { ...t, [field]: val } : t);
+            upd("colorTags", next);
+          }
+          function removeColorTag(id) { upd("colorTags", colorTags.filter(t => t.id !== id)); }
+          function addColorTag(variety) {
+            const potCount = (Number(variety.cases) || 0) * pSize;
+            upd("colorTags", [...colorTags, {
+              id: crypto.randomUUID(),
+              cropName: variety.cultivar || form.cropName || "",
+              color: variety.color || variety.name || "",
+              tagType: "ordered",
+              supplier: form.tagSupplier || "",
+              qty: potCount || totalPots,
+              costPerTag: "",
+              notes: "",
+            }]);
+          }
+          function autoPopulate() {
+            const rows = varieties.map(v => ({
+              id: crypto.randomUUID(),
+              cropName: v.cultivar || form.cropName || "",
+              color: v.color || v.name || "",
+              tagType: "ordered",
+              supplier: "",
+              qty: (Number(v.cases) || 0) * pSize || totalPots,
+              costPerTag: "",
+              notes: "",
+            }));
+            upd("colorTags", rows);
+          }
+
+          // Summaries by type
+          const byType = { ordered: [], sticker: [], inhouse: [] };
+          colorTags.forEach(t => { if (byType[t.tagType]) byType[t.tagType].push(t); });
+          const totalOrdered   = byType.ordered.reduce((s,t)  => s+(Number(t.qty)||0), 0);
+          const totalSticker   = byType.sticker.reduce((s,t)  => s+(Number(t.qty)||0), 0);
+          const totalInhouse   = byType.inhouse.reduce((s,t)  => s+(Number(t.qty)||0), 0);
+          const grandTagTotal  = totalOrdered + totalSticker + totalInhouse;
+          const totalTagCost   = colorTags.reduce((s,t) => s + (Number(t.qty)||0)*(Number(t.costPerTag)||0), 0);
+
+          const TAG_TYPES = [
+            { id: "ordered",  label: "📦 Order from supplier",         desc: "Physical decorative tag — ordered",  color: "#2e5c1e",  bg: "#f0f8eb" },
+            { id: "sticker",  label: "🏷 Decorative + print sticker",  desc: "Order tag body, print label ourselves", color: "#1a4a7a", bg: "#e8f3fc" },
+            { id: "inhouse",  label: "🖨 Print in-house",              desc: "We print the entire tag ourselves",   color: "#7a2a9a", bg: "#f5f0ff" },
+          ];
 
           return (
             <div>
@@ -2407,100 +2475,157 @@ function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles,
                   </div>
                   <div>
                     <div style={{ fontSize: 13, fontWeight: 700, color: form.needsTags ? "#2e5c1e" : "#7a8c74" }}>{form.needsTags ? "Tags required for this crop" : "No tags needed"}</div>
-                    <div style={{ fontSize: 11, color: "#aabba0" }}>Tags are always ordered per pot, never per plant</div>
+                    <div style={{ fontSize: 11, color: "#aabba0" }}>Tags are ordered per pot, per color</div>
                   </div>
                 </button>
               </div>
 
               {form.needsTags && (<>
-                <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12, marginBottom: 12 }}>
-                  <div>
-                    <FL c="Tag Description / Name" />
-                    <input style={IS(focus === "tagDesc")} value={form.tagDescription || ""}
-                      onChange={e => upd("tagDescription", e.target.value)}
-                      onFocus={() => setFocus("tagDesc")} onBlur={() => setFocus(null)}
-                      placeholder={form.cropName ? `e.g. ${form.cropName} 4in tag` : "e.g. Petunia Vista 4in tag"} />
-                  </div>
-                  <div>
-                    <FL c="Tag Supplier" />
-                    <input style={IS(focus === "tagSupp")} value={form.tagSupplier || ""}
-                      onChange={e => upd("tagSupplier", e.target.value)}
-                      onFocus={() => setFocus("tagSupp")} onBlur={() => setFocus(null)}
-                      placeholder="e.g. Emerald Prints" />
-                  </div>
-                </div>
-
-                {/* Print in house vs order */}
-                <div style={{ marginBottom: 14 }}>
-                  <FL c="Tag Source" />
-                  <div style={{ display: "flex", gap: 8 }}>
-                    {[["false","📦 Order from supplier"],["true","🖨 Print in-house"]].map(([val, label]) => (
-                      <button key={val} onClick={() => upd("tagPrintInHouse", val === "true")}
-                        style={{ flex: 1, padding: "10px 8px", borderRadius: 9, border: `2px solid ${String(form.tagPrintInHouse) === val ? "#7fb069" : "#c8d8c0"}`, background: String(form.tagPrintInHouse) === val ? "#f0f8eb" : "#fff", color: String(form.tagPrintInHouse) === val ? "#2e5c1e" : "#7a8c74", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
-                        {label}
-                      </button>
+                {/* Summary tiles */}
+                {grandTagTotal > 0 && (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px,1fr))", gap: 8, marginBottom: 16 }}>
+                    {[
+                      { label: "Total Tags",     value: grandTagTotal.toLocaleString(),  color: "#1e2d1a" },
+                      { label: "📦 Order",        value: totalOrdered.toLocaleString(),   color: "#2e5c1e" },
+                      { label: "🏷 Sticker",      value: totalSticker.toLocaleString(),   color: "#1a4a7a" },
+                      { label: "🖨 Print",         value: totalInhouse.toLocaleString(),   color: "#7a2a9a" },
+                      ...(totalTagCost > 0 ? [{ label: "Est. Cost", value: "$" + totalTagCost.toFixed(2), color: "#2e5c1e" }] : []),
+                    ].map(s => (
+                      <div key={s.label} style={{ background: "#f8faf6", border: "1.5px solid #e0ead8", borderRadius: 10, padding: "10px 14px" }}>
+                        <div style={{ fontSize: 9, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5 }}>{s.label}</div>
+                        <div style={{ fontSize: 18, fontWeight: 900, color: s.color }}>{s.value}</div>
+                      </div>
                     ))}
                   </div>
-                </div>
+                )}
 
-                {/* Quantity + cost */}
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 14 }}>
-                  <div>
-                    <FL c="Tags to Order" />
-                    <input type="number" style={IS(focus === "tagQty")} value={form.tagOrderQty || ""}
-                      onChange={e => upd("tagOrderQty", e.target.value)}
-                      onFocus={() => setFocus("tagQty")} onBlur={() => setFocus(null)}
-                      placeholder={autoTagQty > 0 ? String(autoTagQty) : "auto"} />
-                    {autoTagQty > 0 && !form.tagOrderQty && (
-                      <div style={{ fontSize: 10, color: "#7fb069", marginTop: 4, fontWeight: 600 }}>↑ Auto: {(Number(form.cases)||0).toLocaleString()} cases × 10 pots = {totalPots.toLocaleString()} tags</div>
-                    )}
-                  </div>
-                  <div>
-                    <FL c="Cost per Tag ($)" />
-                    <input type="number" step="0.001" style={IS(focus === "tagCost")} value={form.tagCostPerTag || ""}
-                      onChange={e => upd("tagCostPerTag", e.target.value)}
-                      onFocus={() => setFocus("tagCost")} onBlur={() => setFocus(null)}
-                      placeholder={selC?.isHBTagged && selC?.tagCostPerUnit ? String(selC.tagCostPerUnit) : "0.00"} />
-                    {selC?.isHBTagged && selC?.tagCostPerUnit && !form.tagCostPerTag && (
-                      <div style={{ fontSize: 10, color: "#7fb069", marginTop: 4, fontWeight: 600 }}>↑ From container library</div>
-                    )}
-                  </div>
-                  <div style={{ display: "flex", alignItems: "flex-end" }}>
-                    {tagTotalCost > 0 && (
-                      <div style={{ background: "#f0f8eb", border: "1.5px solid #c8e0b8", borderRadius: 8, padding: "9px 14px", width: "100%" }}>
-                        <div style={{ fontSize: 10, color: "#7a8c74", fontWeight: 700 }}>EST. TAG COST</div>
-                        <div style={{ fontSize: 18, fontWeight: 800, color: "#2e5c1e" }}>${tagTotalCost.toFixed(2)}</div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <div>
-                  <FL c="Tag Notes" />
-                  <textarea style={{ ...IS(focus === "tagNotes"), height: 70, resize: "vertical" }} value={form.tagNotes || ""}
-                    onChange={e => upd("tagNotes", e.target.value)}
-                    onFocus={() => setFocus("tagNotes")} onBlur={() => setFocus(null)}
-                    placeholder="e.g. 4-color process, double-sided, needs barcode, artwork due week 6..." />
-                </div>
-
-                {/* Summary card */}
-                {(tagQty > 0 || form.tagDescription) && (
-                  <div style={{ background: "#fafcf8", border: "1.5px solid #c8e0b8", borderRadius: 12, padding: "14px 16px", marginTop: 16 }}>
-                    <div style={{ fontSize: 11, fontWeight: 800, color: "#4a7a3a", textTransform: "uppercase", letterSpacing: .5, marginBottom: 10 }}>🏷 Tag Order Summary</div>
-                    <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-                      {form.tagDescription && <div><div style={{ fontSize: 10, color: "#7a8c74", fontWeight: 700 }}>TAG</div><div style={{ fontSize: 13, fontWeight: 700, color: "#1e2d1a" }}>{form.tagDescription}</div></div>}
-                      <div><div style={{ fontSize: 10, color: "#7a8c74", fontWeight: 700 }}>QTY</div><div style={{ fontSize: 13, fontWeight: 700, color: "#1e2d1a" }}>{tagQty.toLocaleString()}</div></div>
-                      <div><div style={{ fontSize: 10, color: "#7a8c74", fontWeight: 700 }}>SOURCE</div><div style={{ fontSize: 13, fontWeight: 700, color: form.tagPrintInHouse ? "#4a90d9" : "#2e5c1e" }}>{form.tagPrintInHouse ? "🖨 Print in-house" : "📦 Order"}</div></div>
-                      {form.tagSupplier && <div><div style={{ fontSize: 10, color: "#7a8c74", fontWeight: 700 }}>SUPPLIER</div><div style={{ fontSize: 13, fontWeight: 700, color: "#1e2d1a" }}>{form.tagSupplier}</div></div>}
-                      {tagTotalCost > 0 && <div><div style={{ fontSize: 10, color: "#7a8c74", fontWeight: 700 }}>COST</div><div style={{ fontSize: 13, fontWeight: 700, color: "#2e5c1e" }}>${tagTotalCost.toFixed(2)}</div></div>}
+                {/* Auto-populate from varieties */}
+                {varieties.length > 0 && colorTags.length === 0 && (
+                  <div style={{ background: "#f0f8eb", border: "1.5px solid #c8e0b8", borderRadius: 10, padding: "12px 16px", marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                    <div style={{ fontSize: 13, color: "#2e5c1e" }}>
+                      Auto-populate from your <strong>{varieties.length} variet{varieties.length !== 1 ? "ies" : "y"}</strong> — one tag row per color
                     </div>
-                    {form.tagNotes && <div style={{ fontSize: 12, color: "#7a8c74", marginTop: 10, fontStyle: "italic" }}>{form.tagNotes}</div>}
+                    <button onClick={autoPopulate}
+                      style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 8, padding: "8px 18px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                      Auto-populate
+                    </button>
                   </div>
                 )}
+
+                {/* Color tag rows */}
+                {colorTags.length > 0 && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 14 }}>
+                    {colorTags.map((t, idx) => {
+                      const tt = TAG_TYPES.find(x => x.id === t.tagType) || TAG_TYPES[0];
+                      return (
+                        <div key={t.id} style={{ background: "#fff", border: `1.5px solid ${tt.color}40`, borderRadius: 12, overflow: "hidden" }}>
+                          {/* Row header */}
+                          <div style={{ background: tt.bg, padding: "8px 14px", display: "flex", alignItems: "center", gap: 10 }}>
+                            <div style={{ flex: 1 }}>
+                              <span style={{ fontWeight: 700, fontSize: 13, color: tt.color }}>{t.cropName}</span>
+                              {t.color && <span style={{ fontSize: 12, color: "#7a8c74", marginLeft: 8 }}>· {t.color}</span>}
+                            </div>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: tt.color }}>{tt.label.split(" ").slice(0,1)}</div>
+                            <button onClick={() => removeColorTag(t.id)} style={{ background: "none", border: "none", color: "#aabba0", fontSize: 16, cursor: "pointer", lineHeight: 1 }}>×</button>
+                          </div>
+                          <div style={{ padding: "12px 14px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                            {/* Crop / Color */}
+                            <div>
+                              <FL c="Crop / Species" />
+                              <input style={IS(focus === t.id+"crop")} value={t.cropName}
+                                onChange={e => updColorTag(t.id, "cropName", e.target.value)}
+                                onFocus={() => setFocus(t.id+"crop")} onBlur={() => setFocus(null)} />
+                            </div>
+                            <div>
+                              <FL c="Color / Variety" />
+                              <input style={IS(focus === t.id+"col")} value={t.color}
+                                onChange={e => updColorTag(t.id, "color", e.target.value)}
+                                onFocus={() => setFocus(t.id+"col")} onBlur={() => setFocus(null)} placeholder="e.g. Bubblegum" />
+                            </div>
+                            {/* Tag type */}
+                            <div style={{ gridColumn: "1 / -1" }}>
+                              <FL c="Tag Type" />
+                              <div style={{ display: "flex", gap: 6 }}>
+                                {TAG_TYPES.map(type => (
+                                  <button key={type.id} onClick={() => updColorTag(t.id, "tagType", type.id)}
+                                    style={{ flex: 1, padding: "8px 6px", borderRadius: 8, border: `2px solid ${t.tagType === type.id ? type.color : "#c8d8c0"}`, background: t.tagType === type.id ? type.bg : "#fff", color: t.tagType === type.id ? type.color : "#7a8c74", fontWeight: 700, fontSize: 11, cursor: "pointer", fontFamily: "inherit", textAlign: "center" }}>
+                                    {type.label}
+                                  </button>
+                                ))}
+                              </div>
+                              <div style={{ fontSize: 10, color: "#7a8c74", marginTop: 4 }}>{tt.desc}</div>
+                            </div>
+                            {/* Supplier (show for ordered + sticker) */}
+                            {(t.tagType === "ordered" || t.tagType === "sticker") && (
+                              <div>
+                                <FL c="Tag Supplier" />
+                                <input style={IS(focus === t.id+"sup")} value={t.supplier}
+                                  onChange={e => updColorTag(t.id, "supplier", e.target.value)}
+                                  onFocus={() => setFocus(t.id+"sup")} onBlur={() => setFocus(null)}
+                                  placeholder="e.g. Emerald Prints" />
+                              </div>
+                            )}
+                            {/* Qty */}
+                            <div>
+                              <FL c="Qty (tags)" />
+                              <input type="number" style={IS(focus === t.id+"qty")} value={t.qty}
+                                onChange={e => updColorTag(t.id, "qty", e.target.value)}
+                                onFocus={() => setFocus(t.id+"qty")} onBlur={() => setFocus(null)} />
+                            </div>
+                            {/* Cost per tag */}
+                            <div>
+                              <FL c="Cost / tag ($)" />
+                              <input type="number" step="0.001" style={IS(focus === t.id+"cost")} value={t.costPerTag}
+                                onChange={e => updColorTag(t.id, "costPerTag", e.target.value)}
+                                onFocus={() => setFocus(t.id+"cost")} onBlur={() => setFocus(null)} placeholder="0.00" />
+                              {t.qty && t.costPerTag && (
+                                <div style={{ fontSize: 10, color: "#7fb069", marginTop: 3, fontWeight: 600 }}>
+                                  ${(Number(t.qty) * Number(t.costPerTag)).toFixed(2)} total
+                                </div>
+                              )}
+                            </div>
+                            {/* Notes */}
+                            <div style={{ gridColumn: "1 / -1" }}>
+                              <FL c="Notes" />
+                              <input style={IS(focus === t.id+"note")} value={t.notes}
+                                onChange={e => updColorTag(t.id, "notes", e.target.value)}
+                                onFocus={() => setFocus(t.id+"note")} onBlur={() => setFocus(null)}
+                                placeholder="e.g. 4-color, double-sided, barcode needed..." />
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Add row + by-type summary */}
+                <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+                  {varieties.length > 0 && colorTags.length > 0 && (
+                    <button onClick={autoPopulate}
+                      style={{ background: "#f0f8eb", color: "#2e5c1e", border: "1.5px solid #c8e0b8", borderRadius: 8, padding: "7px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                      ↺ Reset from varieties
+                    </button>
+                  )}
+                  <button onClick={() => addColorTag({})}
+                    style={{ background: "none", border: "1.5px dashed #c8d8c0", borderRadius: 8, padding: "7px 14px", fontSize: 12, color: "#7a8c74", cursor: "pointer", fontFamily: "inherit" }}>
+                    + Add tag row
+                  </button>
+                </div>
+
+                {/* Notes field */}
+                <div style={{ marginBottom: 14 }}>
+                  <FL c="General Tag Notes" />
+                  <textarea style={{ ...IS(focus === "tagNotes"), height: 60, resize: "vertical" }} value={form.tagNotes || ""}
+                    onChange={e => upd("tagNotes", e.target.value)}
+                    onFocus={() => setFocus("tagNotes")} onBlur={() => setFocus(null)}
+                    placeholder="Artwork due date, proof approval, print spec notes..." />
+                </div>
               </>)}
             </div>
           );
         })()}
+
 
         {/* Save as Template */}
         <div style={{ background: "#f8faf6", border: "1.5px solid #e0ead8", borderRadius: 12, padding: "14px 16px", marginTop: 20 }}>
