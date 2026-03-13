@@ -541,27 +541,88 @@ function SpaceAssignmentPicker({ assignments, onChange, houses, pads, sched, cur
                     ⚠️ No bays configured on this pad — edit the pad to add bays first.
                   </div>
                 ) : (
-                  <>
-                    <select style={IS(false)} value={pickForm.itemId} onChange={e => setPickForm(f => ({ ...f, itemId: e.target.value }))}>
-                      <option value="">— Select bay —</option>
-                      {(selectedPad.bays || []).map(b => {
-                        const sqFt = b.widthFt && b.lengthFt ? Math.round(Number(b.widthFt) * Number(b.lengthFt)) : 0;
-                        const pots = container?.diameterIn && sqFt ? Math.floor(sqFt / Math.pow(container.diameterIn / 12, 2)) : null;
-                        return <option key={b.id} value={b.id}>{b.number}{sqFt ? ` — ${sqFt.toLocaleString()} sq ft` : ""}{pots ? ` (~${pots.toLocaleString()} pots)` : ""}</option>;
-                      })}
-                    </select>
-                    {pickForm.itemId && (() => {
-                      const bay = (selectedPad.bays || []).find(b => b.id === pickForm.itemId);
-                      const sqFt = bay?.widthFt && bay?.lengthFt ? Math.round(Number(bay.widthFt) * Number(bay.lengthFt)) : 0;
-                      const pots = container?.diameterIn && sqFt ? Math.floor(sqFt / Math.pow(container.diameterIn / 12, 2)) : null;
-                      return sqFt > 0 ? (
-                        <div style={{ marginTop: 6, background: "#f0f8eb", border: "1px solid #c8e0b8", borderRadius: 8, padding: "8px 12px", fontSize: 12 }}>
-                          <span style={{ fontWeight: 700, color: "#2e5c1e" }}>📐 {sqFt.toLocaleString()} sq ft</span>
-                          {pots && container ? <span style={{ color: "#4a7a35", marginLeft: 8 }}>· ~{pots.toLocaleString()} {container.diameterIn}" pots</span> : ""}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 4, maxHeight: 340, overflowY: "auto" }}>
+                    {(selectedPad.bays || []).map(b => {
+                      const isSelected = pickForm.itemId === b.id;
+                      const sqFt = b.widthFt && b.lengthFt ? Math.round(Number(b.widthFt) * Number(b.lengthFt)) : 0;
+                      const potCap = container?.diameterIn && sqFt ? Math.floor(sqFt / Math.pow(container.diameterIn / 12, 2)) : null;
+                      const myPots = runForm ? (Number(runForm.cases)||0) * (runForm.isCased !== false ? (Number(runForm.packSize)||10) : 1) : 0;
+                      const fits = potCap ? myPots <= potCap : null;
+
+                      // Runs using this bay that overlap our outdoor window
+                      const mySched = runForm ? computeSchedule(runForm) : null;
+                      // Outdoor window: moveOut → ready
+                      const myOutStart = mySched?.moveOut ? mySched.moveOut.week + mySched.moveOut.year * 53 : null;
+                      const myOutEnd   = runForm?.targetWeek ? runForm.targetWeek + (runForm.targetYear||2026) * 53 : null;
+
+                      // Outside is one-and-done — any crop assigned to this bay occupies it for the season
+                      const bayRuns = allRuns.filter(r =>
+                        r.id !== currentRunId &&
+                        (r.outsideAssignments || []).some(a => a.structureId === selectedPad.id && a.itemId === b.id)
+                      );
+                      const overlappingBayRuns = bayRuns; // no turnover — if anything is here, bay is taken
+
+                      return (
+                        <div key={b.id}
+                          onClick={() => setPickForm(f => ({ ...f, itemId: b.id }))}
+                          style={{
+                            border: `2px solid ${isSelected ? "#7fb069" : "#e0ead8"}`,
+                            borderRadius: 10, padding: "10px 14px", cursor: "pointer",
+                            background: isSelected ? "#f0f8eb" : "#fff",
+                            transition: "border-color .15s, background .15s",
+                          }}>
+                          {/* Bay header */}
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: sqFt || overlappingBayRuns.length > 0 ? 5 : 0 }}>
+                            <span style={{ fontSize: 15 }}>🌤</span>
+                            <span style={{ fontWeight: 700, fontSize: 13, color: "#1e2d1a", flex: 1 }}>Bay {b.number}{b.name ? ` — ${b.name}` : ""}</span>
+                            {fits !== null && myPots > 0 && (
+                              <span style={{ fontSize: 10, fontWeight: 800, padding: "2px 8px", borderRadius: 10, background: fits ? "#f0f8eb" : "#fff0f0", color: fits ? "#2e5c1e" : "#b03020", border: `1px solid ${fits ? "#c8e0b8" : "#f0b0a0"}` }}>
+                                {fits ? "✅ Fits" : "⚠️ Too small"}
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Sq ft + capacity */}
+                          {sqFt > 0 && (
+                            <div style={{ fontSize: 11, color: "#7a8c74", marginBottom: overlappingBayRuns.length > 0 ? 5 : 0, display: "flex", gap: 12 }}>
+                              <span>📐 {sqFt.toLocaleString()} sq ft</span>
+                              {potCap && container && <span>~{potCap.toLocaleString()} {container.diameterIn}" pots capacity</span>}
+                            </div>
+                          )}
+
+                          {/* Overlapping runs */}
+                          {overlappingBayRuns.length > 0 && (
+                            <div style={{ borderTop: "1px solid #e8ede4", marginTop: 4, paddingTop: 6 }}>
+                              <div style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .4, marginBottom: 4 }}>
+                                Already assigned this season ({overlappingBayRuns.length} crop{overlappingBayRuns.length !== 1 ? "s" : ""}) — bay is taken
+                              </div>
+                              {overlappingBayRuns.map(r => {
+                                const rs = computeSchedule(r);
+                                return (
+                                  <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
+                                    <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 6, background: "#fdf3ea", color: "#a04010", border: "1px solid #f0c090" }}>
+                                      {r.tempGroup === "cool" ? "❄️" : r.tempGroup === "warm" ? "🌡" : "·"}
+                                    </span>
+                                    <span style={{ fontSize: 12, fontWeight: 600, color: "#1e2d1a" }}>{r.cropName}</span>
+                                    <span style={{ fontSize: 11, color: "#7a8c74" }}>
+                                      Wk {rs?.moveOut?.week || "?"} → Wk {r.targetWeek || "?"}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+
+                          {overlappingBayRuns.length === 0 && bayRuns.length === 0 && (
+                            <div style={{ fontSize: 11, color: "#7fb069", fontWeight: 600 }}>✨ Empty — no other crops in this bay</div>
+                          )}
+                          {overlappingBayRuns.length === 0 && bayRuns.length > 0 && (
+                            <div style={{ fontSize: 11, color: "#7a8c74" }}>No other crops assigned this season</div>
+                          )}
                         </div>
-                      ) : null;
-                    })()}
-                  </>
+                      );
+                    })}
+                  </div>
                 )}
               </div>
             )}
