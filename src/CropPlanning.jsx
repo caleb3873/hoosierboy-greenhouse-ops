@@ -734,7 +734,23 @@ function VarietyManager({ varieties, lotCases, packSize, onChange, onIncreaseLot
                   </div>
                   <div>
                     <FL c="Color" />
-                    <input style={IS(focus === v.id + "col")} value={v.color || ""} onChange={e => updVar(idx, "color", e.target.value)} onFocus={() => setFocus(v.id + "col")} onBlur={() => setFocus(null)} placeholder="e.g. Pink" />
+                    {v._catalogColors?.length > 0 ? (
+                      <select style={IS(false)} value={v.color || ""} onChange={e => {
+                        const picked = v._catalogColors.find(c => c.label === e.target.value);
+                        const next = varieties.map((x, i) => i !== idx ? x : {
+                          ...x,
+                          color: e.target.value,
+                          ballItemNumber: picked?.itemNumber || x.ballItemNumber,
+                          costPerUnit: picked?.price && picked?.perQty ? (Number(picked.price) / (Number(picked.perQty) || 100)).toFixed(4) : x.costPerUnit,
+                        });
+                        onChange(next);
+                      }}>
+                        <option value="">— Select color —</option>
+                        {v._catalogColors.map(c => <option key={c.label} value={c.label}>{c.label}</option>)}
+                      </select>
+                    ) : (
+                      <input style={IS(focus === v.id + "col")} value={v.color || ""} onChange={e => updVar(idx, "color", e.target.value)} onFocus={() => setFocus(v.id + "col")} onBlur={() => setFocus(null)} placeholder="e.g. Pink" />
+                    )}
                   </div>
                 </div>
                 {/* Quantity + cost row */}
@@ -981,7 +997,24 @@ function useBrokerLookup() {
       return matchesCrop && matchesSupplier && matchesQuery;
     });
   };
-  return { getBrokerNames, getCultivars, getSuppliers, getVarieties };
+  // Get unique series/variety names for a crop
+  const getSeries = (brokerName, cultivar, supplier) => {
+    const items = catalogs.filter(c => c.brokerName === brokerName).flatMap(c => c.items || []);
+    const filtered = items.filter(i =>
+      (!cultivar || i.crop === cultivar) &&
+      (!supplier || i.supplier === supplier || i.breeder === supplier)
+    );
+    return [...new Set(filtered.map(i => i.varietyName || i.series).filter(Boolean))].sort();
+  };
+  // Get colors for a specific series from a broker
+  const getColors = (brokerName, cultivar, seriesName) => {
+    const items = catalogs.filter(c => c.brokerName === brokerName).flatMap(c => c.items || []);
+    return items.filter(i =>
+      (!cultivar || i.crop === cultivar) &&
+      (i.varietyName === seriesName || i.series === seriesName)
+    );
+  };
+  return { getBrokerNames, getCultivars, getSuppliers, getVarieties, getSeries, getColors };
 }
 
 function SourcingSection({ form, upd, focus, setFocus }) {
@@ -989,17 +1022,47 @@ function SourcingSection({ form, upd, focus, setFocus }) {
   const units = form.cases && form.packSize ? Number(form.cases) * Number(form.packSize) : 0;
   const buffered = units > 0 ? Math.ceil(units * (1 + (Number(form.bufferPct) || 0) / 100)) : 0;
   const totalCost = buffered && form.unitCost ? (buffered * Number(form.unitCost)).toFixed(2) : null;
-  const { getBrokerNames, getCultivars, getSuppliers, getVarieties } = useBrokerLookup();
+  const { getBrokerNames, getCultivars, getSuppliers, getSeries, getColors } = useBrokerLookup();
   const brokerNames = getBrokerNames();
-  const [varQuery, setVarQuery] = useState("");
   const [cultivarFilter, setCultivarFilter] = useState("");
   const [supplierFilter, setSupplierFilter] = useState("");
-  const [showPicker, setShowPicker] = useState(false);
+  const [seriesQuery, setSeriesQuery] = useState("");
+  const [selectedSeries, setSelectedSeries] = useState(new Set());
   const cultivars = form.sourcingBroker ? getCultivars(form.sourcingBroker) : [];
   const suppliers = form.sourcingBroker ? getSuppliers(form.sourcingBroker, cultivarFilter) : [];
-  const catalogVarieties = form.sourcingBroker
-    ? getVarieties(form.sourcingBroker, cultivarFilter, supplierFilter, varQuery)
-    : [];
+  const allSeries = form.sourcingBroker ? getSeries(form.sourcingBroker, cultivarFilter, supplierFilter) : [];
+  const filteredSeries = seriesQuery ? allSeries.filter(s => s.toLowerCase().includes(seriesQuery.toLowerCase())) : allSeries;
+  
+  // Add a color row for a series - splits evenly across existing rows in 100-unit increments
+  const addColorRow = (seriesName) => {
+    const catalogItems = getColors(form.sourcingBroker, cultivarFilter, seriesName);
+    const firstItem = catalogItems[0];
+    const price = firstItem ? (firstItem.unitPrice || firstItem.sellPrice) : null;
+    const costPerUnit = price && firstItem?.perQty ? (Number(price) / (Number(firstItem.perQty) || 100)).toFixed(4) : "";
+    const existing = form.varieties || [];
+    const targetUnits = form.cases && form.packSize ? Number(form.cases) * Number(form.packSize) : 0;
+    const newCount = existing.length + 1;
+    const evenCases = targetUnits > 0 && form.packSize ? Math.floor(Math.round(targetUnits / newCount / 100) * 100 / Number(form.packSize)) : 0;
+    const rebalanced = existing.map(v => ({ ...v, cases: evenCases }));
+    const remainder = form.cases ? Math.max(0, Number(form.cases) - evenCases * existing.length) : 0;
+    const newVar = {
+      id: crypto.randomUUID(),
+      cultivar: cultivarFilter || firstItem?.crop || "",
+      name: seriesName,
+      color: "",
+      ballItemNumber: "",
+      cases: evenCases + remainder,
+      costPerUnit,
+      broker: form.sourcingBroker || "",
+      supplier: supplierFilter || firstItem?.supplier || firstItem?.breeder || "",
+      _seriesName: seriesName,
+      _catalogColors: catalogItems.map(i => ({ label: i.color || i.varietyName || "", itemNumber: i.itemNumber, price: i.unitPrice || i.sellPrice, perQty: i.perQty })).filter(c => c.label),
+      tags: [],
+    };
+    form.varieties?.length > 0 
+      ? upd("varieties", [...rebalanced, newVar])
+      : upd("varieties", [newVar]);
+  };
 
   return (
     <div>
@@ -1075,13 +1138,13 @@ function SourcingSection({ form, upd, focus, setFocus }) {
         </div>
       </>)}
 
-      <SH c="Broker, Cultivar & Varieties" />
-      {/* Step 1: Broker */}
+      <SH c="Broker & Varieties" />
+      {/* Row 1: Broker · Supplier · Crop Species */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
         <div>
           <FL c="Broker" />
           {brokerNames.length > 0 ? (
-            <select style={IS(false)} value={form.sourcingBroker || ""} onChange={e => { upd("sourcingBroker", e.target.value); setCultivarFilter(""); setSupplierFilter(""); setVarQuery(""); }}>
+            <select style={IS(false)} value={form.sourcingBroker || ""} onChange={e => { upd("sourcingBroker", e.target.value); setCultivarFilter(""); setSupplierFilter(""); setSeriesQuery(""); setSelectedSeries(new Set()); }}>
               <option value="">— Select broker —</option>
               {brokerNames.map(b => <option key={b} value={b}>{b}</option>)}
               <option value="__other__">Other (type below)</option>
@@ -1095,24 +1158,10 @@ function SourcingSection({ form, upd, focus, setFocus }) {
               onFocus={() => setFocus("sBrokerOther")} onBlur={() => setFocus(null)} placeholder="Enter broker name" />
           )}
         </div>
-        {/* Step 2: Cultivar */}
-        <div>
-          <FL c="Cultivar" />
-          {cultivars.length > 0 ? (
-            <select style={IS(false)} value={cultivarFilter} onChange={e => { setCultivarFilter(e.target.value); setSupplierFilter(""); setVarQuery(""); }}>
-              <option value="">— All cultivars —</option>
-              {cultivars.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
-          ) : (
-            <input style={IS(focus === "cultivar")} value={cultivarFilter} onChange={e => setCultivarFilter(e.target.value)}
-              onFocus={() => setFocus("cultivar")} onBlur={() => setFocus(null)} placeholder="e.g. Begonia Reiger" />
-          )}
-        </div>
-        {/* Step 3: Supplier */}
         <div>
           <FL c="Supplier" />
           {suppliers.length > 0 ? (
-            <select style={IS(false)} value={supplierFilter} onChange={e => { setSupplierFilter(e.target.value); setVarQuery(""); }}>
+            <select style={IS(false)} value={supplierFilter} onChange={e => { setSupplierFilter(e.target.value); setSeriesQuery(""); setSelectedSeries(new Set()); }}>
               <option value="">— All suppliers —</option>
               {suppliers.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
@@ -1121,89 +1170,81 @@ function SourcingSection({ form, upd, focus, setFocus }) {
               onFocus={() => setFocus("sSupplier")} onBlur={() => setFocus(null)} placeholder="e.g. Dümmen Orange" />
           )}
         </div>
+        <div>
+          <FL c="Crop Species" />
+          {cultivars.length > 0 ? (
+            <select style={IS(false)} value={cultivarFilter} onChange={e => { setCultivarFilter(e.target.value); setSupplierFilter(""); setSeriesQuery(""); setSelectedSeries(new Set()); }}>
+              <option value="">— All species —</option>
+              {cultivars.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          ) : (
+            <input style={IS(focus === "cultivar")} value={cultivarFilter} onChange={e => setCultivarFilter(e.target.value)}
+              onFocus={() => setFocus("cultivar")} onBlur={() => setFocus(null)} placeholder="e.g. Begonia Reiger" />
+          )}
+        </div>
       </div>
 
-      {/* Variety multi-select */}
+      {/* Variety / Series picker */}
       {form.sourcingBroker && form.sourcingBroker !== "__other__" && (
         <div style={{ marginBottom: 16, background: "#fafaf8", border: "1.5px solid #e0ead8", borderRadius: 12, overflow: "hidden" }}>
-          {/* Search + select all bar */}
           <div style={{ padding: "10px 14px", borderBottom: "1px solid #f0f0ea", display: "flex", gap: 10, alignItems: "center" }}>
-            <input value={varQuery} onChange={e => setVarQuery(e.target.value)} placeholder="Search varieties..."
+            <input value={seriesQuery} onChange={e => setSeriesQuery(e.target.value)} placeholder="Search varieties..."
               style={{ flex: 1, border: "1.5px solid #c8d8c0", borderRadius: 8, padding: "6px 10px", fontSize: 13, fontFamily: "inherit", background: "#fff" }} />
-            {catalogVarieties.length > 0 && (
+            {filteredSeries.length > 0 && (
               <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#4a5a40", fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
                 <input type="checkbox"
-                  checked={catalogVarieties.length > 0 && catalogVarieties.every(item => (form.varieties||[]).find(v => v.ballItemNumber === item.itemNumber))}
+                  checked={filteredSeries.length > 0 && filteredSeries.every(s => selectedSeries.has(s))}
                   onChange={e => {
-                    if (e.target.checked) {
-                      const existing = form.varieties || [];
-                      const toAdd = catalogVarieties.filter(item => !existing.find(v => v.ballItemNumber === item.itemNumber));
-                      const newVars = toAdd.map(item => {
-                        const price = item.unitPrice || item.sellPrice;
-                        const varName = item.varietyName || item.series || item.crop || "";
-                        return { id: crypto.randomUUID(), ballItemNumber: item.itemNumber, cultivar: item.crop || varName, name: varName, color: item.color || "", cases: 0, costPerUnit: price ? (Number(price) / (Number(item.perQty)||100)).toFixed(4) : "", broker: form.sourcingBroker, supplier: item.supplier || item.breeder || "", tags: [] };
-                      });
-                      upd("varieties", [...existing, ...newVars]);
-                    } else {
-                      const removeIds = new Set(catalogVarieties.map(i => i.itemNumber));
-                      upd("varieties", (form.varieties||[]).filter(v => !removeIds.has(v.ballItemNumber)));
-                    }
+                    if (e.target.checked) setSelectedSeries(new Set(filteredSeries));
+                    else setSelectedSeries(new Set());
                   }}
                   style={{ accentColor: "#7fb069", width: 15, height: 15 }} />
-                Select all ({catalogVarieties.length})
+                Select all ({filteredSeries.length})
               </label>
             )}
           </div>
-          {/* Variety list */}
-          {catalogVarieties.length === 0 ? (
+
+          {filteredSeries.length === 0 ? (
             <div style={{ padding: "20px", textAlign: "center", color: "#aabba0", fontSize: 13 }}>
               {form.sourcingBroker ? "No varieties found — try adjusting filters" : "Select a broker to see varieties"}
             </div>
           ) : (
-            <div style={{ maxHeight: 260, overflowY: "auto" }}>
-              {catalogVarieties.map(item => {
-                const isSelected = !!(form.varieties||[]).find(v => v.ballItemNumber === item.itemNumber);
-                const price = item.unitPrice || item.sellPrice;
-                const varName = item.varietyName || item.series || item.crop || "";
+            <div style={{ maxHeight: 220, overflowY: "auto" }}>
+              {filteredSeries.map(s => {
+                const isChecked = selectedSeries.has(s);
+                const colors = getColors(form.sourcingBroker, cultivarFilter, s);
+                const price = colors[0] ? (colors[0].unitPrice || colors[0].sellPrice) : null;
                 return (
-                  <label key={item.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 14px", borderBottom: "1px solid #f5f5f0", background: isSelected ? "#f0f8eb" : "#fff", cursor: "pointer" }}>
-                    <input type="checkbox" checked={isSelected}
+                  <label key={s} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 14px", borderBottom: "1px solid #f5f5f0", background: isChecked ? "#f0f8eb" : "#fff", cursor: "pointer" }}>
+                    <input type="checkbox" checked={isChecked}
                       onChange={e => {
-                        const existing = form.varieties || [];
-                        if (e.target.checked) {
-                          if (!existing.find(v => v.ballItemNumber === item.itemNumber)) {
-                            const newVar = { id: crypto.randomUUID(), ballItemNumber: item.itemNumber, cultivar: item.crop || varName, name: varName, color: item.color || "", cases: 0, costPerUnit: price ? (Number(price) / (Number(item.perQty)||100)).toFixed(4) : "", broker: form.sourcingBroker, supplier: item.supplier || item.breeder || "", tags: [] };
-                            upd("varieties", [...existing, newVar]);
-                          }
-                        } else {
-                          upd("varieties", existing.filter(v => v.ballItemNumber !== item.itemNumber));
-                        }
+                        const next = new Set(selectedSeries);
+                        e.target.checked ? next.add(s) : next.delete(s);
+                        setSelectedSeries(next);
                       }}
                       style={{ accentColor: "#7fb069", width: 15, height: 15, flexShrink: 0 }} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: isSelected ? 700 : 500, color: "#1a2a1a" }}>
-                        {item.isNew && <span style={{ background: "#8e44ad", color: "#fff", borderRadius: 4, padding: "1px 5px", fontSize: 9, fontWeight: 800, marginRight: 6 }}>NEW</span>}
-                        {varName || "—"}
-                        {item.color && item.color !== varName && <span style={{ color: "#7a8c74", fontWeight: 400, marginLeft: 6 }}>· {item.color}</span>}
-                      </div>
-                      <div style={{ fontSize: 11, color: "#aabba0" }}>
-                        {item.size && <span>{item.size}</span>}
-                        {item.itemNumber && <span> · #{item.itemNumber}</span>}
-                        {item.perQty && <span> · {item.perQty}/tray</span>}
-                        {(item.supplier || item.breeder) && <span> · {item.supplier || item.breeder}</span>}
-                      </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: "#1a2a1a" }}>{s}</div>
+                      <div style={{ fontSize: 11, color: "#aabba0" }}>{colors.length} color{colors.length !== 1 ? "s" : ""}{cultivarFilter ? ` · ${cultivarFilter}` : ""}</div>
                     </div>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: "#2e7a2e", flexShrink: 0 }}>
-                      {price ? `$${Number(price).toFixed(4)}` : "—"}
-                    </div>
+                    <div style={{ fontSize: 12, color: "#2e7a2e", fontWeight: 700 }}>{price ? `$${Number(price).toFixed(4)}` : "—"}</div>
                   </label>
                 );
               })}
             </div>
           )}
-          {(form.varieties||[]).length > 0 && (
-            <div style={{ padding: "8px 14px", background: "#f0f8eb", borderTop: "1px solid #d8eed0", fontSize: 12, color: "#2e5c1e", fontWeight: 700 }}>
-              ✓ {(form.varieties||[]).length} variet{(form.varieties||[]).length !== 1 ? "ies" : "y"} selected
+
+          {/* Add Plant button */}
+          {selectedSeries.size > 0 && (
+            <div style={{ padding: "10px 14px", borderTop: "1px solid #d8eed0", background: "#f0f8eb", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ fontSize: 12, color: "#2e5c1e" }}>{selectedSeries.size} variet{selectedSeries.size !== 1 ? "ies" : "y"} selected</div>
+              <button onClick={() => {
+                  [...selectedSeries].forEach(s => addColorRow(s));
+                  setSelectedSeries(new Set());
+                }}
+                style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 8, padding: "8px 20px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                + Add Plant{selectedSeries.size > 1 ? "s" : ""}
+              </button>
             </div>
           )}
         </div>
