@@ -511,7 +511,7 @@ function AlertsPanel({ brokers, allMeta }) {
 }
 
 // ── CONTAINER ORDERS TAB ──────────────────────────────────────────────────────
-function ContainerOrdersTab({ containerTotals, propTrayTotals, containers, runs }) {
+function ContainerOrdersTab({ containerTotals, propTrayTotals, containers, runs, tagOrderLines = [], tagByType = {}, tagGrandTotal = 0, tagTotalCost = 0 }) {
   const propTraySizes = Object.values(propTrayTotals).sort((a,b) => a.cellSize - b.cellSize);
   const finishedEntries = Object.entries(containerTotals)
     .map(([id, data]) => ({ id, ...data, container: containers.find(c => c.id === id) }))
@@ -585,19 +585,43 @@ function ContainerOrdersTab({ containerTotals, propTrayTotals, containers, runs 
     a.click(); URL.revokeObjectURL(url);
   }
 
+  const [innerTab, setInnerTab] = useState("containers");
+
+  const TAG_TYPE_META = {
+    ordered: { label: "📦 Order from supplier",        color: "#2e5c1e", bg: "#f0f8eb", desc: "Physical decorative tag — ordered from printer" },
+    sticker: { label: "🏷 Decorative + print sticker", color: "#1a4a7a", bg: "#e8f3fc", desc: "Order tag body, print our own label stickers" },
+    inhouse: { label: "🖨 Print in-house",             color: "#7a2a9a", bg: "#f5f0ff", desc: "We print the entire tag on our printer" },
+  };
+
   return (
     <div>
       {/* Header + download */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
         <div>
-          <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontSize: 22, color: "#1e2d1a" }}>Container Orders</div>
-          <div style={{ fontSize: 13, color: "#7a8c74", marginTop: 3 }}>Running totals across all crop runs — order everything at once</div>
+          <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontSize: 22, color: "#1e2d1a" }}>Orders Running Total</div>
+          <div style={{ fontSize: 13, color: "#7a8c74", marginTop: 3 }}>Across all crop runs — order everything at once</div>
         </div>
         <button onClick={downloadXLSX}
           style={{ background: "#2e5c1e", color: "#fff", border: "none", borderRadius: 10, padding: "10px 20px", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
           📥 Download Order (.xlsx)
         </button>
       </div>
+
+      {/* Inner tabs: Containers | Tags */}
+      <div style={{ display: "flex", gap: 4, marginBottom: 24, borderBottom: "2px solid #e0ead8" }}>
+        {[["containers","📦 Containers & Trays"],["tags","🏷 Tag Orders"]].map(([id, label]) => (
+          <button key={id} onClick={() => setInnerTab(id)}
+            style={{ padding: "8px 18px", borderRadius: "8px 8px 0 0", border: "1.5px solid #e0ead8", borderBottom: innerTab === id ? "2px solid #fff" : "none", background: innerTab === id ? "#fff" : "#f8faf6", color: innerTab === id ? "#1e2d1a" : "#7a8c74", fontWeight: innerTab === id ? 800 : 600, fontSize: 13, cursor: "pointer", fontFamily: "inherit", marginBottom: innerTab === id ? -2 : 0 }}>
+            {label}{id === "tags" && tagGrandTotal > 0 ? ` (${tagGrandTotal.toLocaleString()})` : ""}
+          </button>
+        ))}
+      </div>
+
+      {innerTab === "tags" && (
+        <TagOrdersTab tagByType={tagByType} tagGrandTotal={tagGrandTotal} tagTotalCost={tagTotalCost} tagOrderLines={tagOrderLines} TAG_TYPE_META={TAG_TYPE_META} />
+      )}
+
+      {innerTab === "containers" && (<>
 
       {/* Summary tiles */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px,1fr))", gap: 12, marginBottom: 24 }}>
@@ -729,10 +753,105 @@ function ContainerOrdersTab({ containerTotals, propTrayTotals, containers, runs 
           </div>
         )}
       </div>
+
+      </>)}  {/* end innerTab === "containers" */}
     </div>
   );
 }
 
+// ── TAG ORDERS TAB ────────────────────────────────────────────────────────────
+function TagOrdersTab({ tagByType, tagGrandTotal, tagTotalCost, tagOrderLines, TAG_TYPE_META }) {
+  const ordered = tagByType.ordered || [];
+  const sticker = tagByType.sticker || [];
+  const inhouse = tagByType.inhouse || [];
+  const totalOrdered = ordered.reduce((s,t) => s+t.qty, 0);
+  const totalSticker = sticker.reduce((s,t) => s+t.qty, 0);
+  const totalInhouse = inhouse.reduce((s,t) => s+t.qty, 0);
+
+  if (tagGrandTotal === 0) {
+    return (
+      <div style={{ background: "#f8faf6", borderRadius: 12, border: "1.5px dashed #c8d8c0", padding: "40px", textAlign: "center" }}>
+        <div style={{ fontSize: 32, marginBottom: 10 }}>🏷</div>
+        <div style={{ fontSize: 15, fontWeight: 700, color: "#1e2d1a", marginBottom: 6 }}>No tag orders yet</div>
+        <div style={{ fontSize: 13, color: "#7a8c74", maxWidth: 380, margin: "0 auto", lineHeight: 1.6 }}>
+          Open each crop run → Tags tab → auto-populate from varieties. Each color gets its own tag row.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px,1fr))", gap: 12, marginBottom: 24 }}>
+        {[
+          { label: "Total Tags",             value: tagGrandTotal.toLocaleString(), color: "#1e2d1a" },
+          { label: "📦 Order from supplier", value: totalOrdered.toLocaleString(), color: "#2e5c1e" },
+          { label: "🏷 Decorative + sticker",value: totalSticker.toLocaleString(), color: "#1a4a7a" },
+          { label: "🖨 Print in-house",       value: totalInhouse.toLocaleString(), color: "#7a2a9a" },
+          ...(tagTotalCost > 0 ? [{ label: "Est. Cost", value: "$"+tagTotalCost.toFixed(2), color: "#7fb069" }] : []),
+        ].map(s => (
+          <div key={s.label} style={{ background: "#fff", borderRadius: 12, border: "1.5px solid #e0ead8", padding: "14px 16px" }}>
+            <div style={{ fontSize: 9, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5, marginBottom: 4 }}>{s.label}</div>
+            <div style={{ fontSize: 20, fontWeight: 900, color: s.color }}>{s.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {[
+        { key: "ordered", rows: ordered, total: totalOrdered },
+        { key: "sticker", rows: sticker, total: totalSticker },
+        { key: "inhouse", rows: inhouse, total: totalInhouse },
+      ].filter(g => g.rows.length > 0).map(({ key, rows, total }) => {
+        const meta = TAG_TYPE_META[key];
+        return (
+          <div key={key} style={{ marginBottom: 28 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 6 }}>
+              <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontSize: 18, color: "#1e2d1a" }}>{meta.label}</div>
+              <span style={{ background: meta.bg, border: `1px solid ${meta.color}40`, borderRadius: 20, padding: "2px 12px", fontSize: 12, fontWeight: 700, color: meta.color }}>{total.toLocaleString()} tags</span>
+            </div>
+            <div style={{ fontSize: 11, color: "#7a8c74", marginBottom: 10, fontStyle: "italic" }}>{meta.desc}</div>
+            <div style={{ background: "#fff", borderRadius: 14, border: "1.5px solid #e0ead8", overflow: "hidden" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead>
+                  <tr style={{ background: "#f8faf6", borderBottom: "1.5px solid #e0ead8" }}>
+                    {["Crop Run","Color / Variety","Supplier","Qty","$/tag","Total","Notes"].map(h => (
+                      <th key={h} style={{ padding: "9px 14px", textAlign: "left", fontWeight: 800, fontSize: 10, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5 }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((t, i) => {
+                    const lineCost = t.qty * t.costPerTag;
+                    return (
+                      <tr key={i} style={{ borderBottom: "1px solid #f0f5ee", background: i%2===0?"#fff":"#fafcf8" }}>
+                        <td style={{ padding: "9px 14px", fontWeight: 700, color: "#1e2d1a" }}>{t.cropName}</td>
+                        <td style={{ padding: "9px 14px" }}>
+                          <span style={{ background: meta.bg, border: `1px solid ${meta.color}40`, borderRadius: 6, padding: "2px 8px", fontSize: 12, fontWeight: 600, color: meta.color }}>{t.color || "—"}</span>
+                        </td>
+                        <td style={{ padding: "9px 14px", color: "#7a8c74" }}>{t.supplier || "—"}</td>
+                        <td style={{ padding: "9px 14px", fontWeight: 800, color: "#1e2d1a" }}>{(t.qty||0).toLocaleString()}</td>
+                        <td style={{ padding: "9px 14px", color: "#7a8c74" }}>{t.costPerTag ? "$"+Number(t.costPerTag).toFixed(3) : "—"}</td>
+                        <td style={{ padding: "9px 14px", fontWeight: 700, color: "#2e5c1e" }}>{lineCost > 0 ? "$"+lineCost.toFixed(2) : "—"}</td>
+                        <td style={{ padding: "9px 14px", color: "#aabba0", fontSize: 11, fontStyle: "italic" }}>{t.notes}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              <div style={{ background: meta.bg, padding: "8px 14px", display: "flex", justifyContent: "space-between" }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: meta.color }}>{meta.label} total</span>
+                <span style={{ fontSize: 14, fontWeight: 800, color: meta.color }}>
+                  {total.toLocaleString()} tags
+                  {rows.reduce((s,t)=>s+t.qty*t.costPerTag,0) > 0 && <span style={{ marginLeft: 16 }}>${rows.reduce((s,t)=>s+t.qty*t.costPerTag,0).toFixed(2)}</span>}
+                </span>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 // ── MAIN ──────────────────────────────────────────────────────────────────────
 export default function YoungPlantOrders() {
@@ -802,6 +921,34 @@ export default function YoungPlantOrders() {
     containerTotals[run.containerId].totalPots += pots;
   });
 
+  // Build tag totals: across all runs, grouped by tagType (ordered/sticker/inhouse)
+  const tagOrderLines = []; // { runName, cropName, color, tagType, supplier, qty, costPerTag }
+  runs.forEach(run => {
+    if (!run.needsTags) return;
+    const colorTags = run.colorTags || [];
+    if (colorTags.length === 0) return;
+    colorTags.forEach(t => {
+      tagOrderLines.push({
+        runId: run.id,
+        runName: run.cropName,
+        cropName: t.cropName || run.cropName,
+        color: t.color || "",
+        tagType: t.tagType || "ordered",
+        supplier: t.supplier || "",
+        qty: Number(t.qty) || 0,
+        costPerTag: Number(t.costPerTag) || 0,
+        notes: t.notes || "",
+      });
+    });
+  });
+  const tagByType = {
+    ordered: tagOrderLines.filter(t => t.tagType === "ordered"),
+    sticker: tagOrderLines.filter(t => t.tagType === "sticker"),
+    inhouse: tagOrderLines.filter(t => t.tagType === "inhouse"),
+  };
+  const tagGrandTotal = tagOrderLines.reduce((s,t) => s+t.qty, 0);
+  const tagTotalCost  = tagOrderLines.reduce((s,t) => s+t.qty*t.costPerTag, 0);
+
   // Build prop tray totals: grouped by cell size
   const propTrayTotals = {};
   runs.forEach(run => {
@@ -827,7 +974,7 @@ export default function YoungPlantOrders() {
       </div>
 
       {mainTab === "containers" && (
-        <ContainerOrdersTab containerTotals={containerTotals} propTrayTotals={propTrayTotals} containers={containers} runs={runs} />
+        <ContainerOrdersTab containerTotals={containerTotals} propTrayTotals={propTrayTotals} containers={containers} runs={runs} tagOrderLines={tagOrderLines} tagByType={tagByType} tagGrandTotal={tagGrandTotal} tagTotalCost={tagTotalCost} />
       )}
 
       {mainTab === "plants" && (<>
@@ -908,75 +1055,118 @@ export default function YoungPlantOrders() {
 
       {/* ── TAGS SECTION ── */}
       {(() => {
-        const tagRuns = runs.filter(r => r.needsTags && r.cropName);
-        if (tagRuns.length === 0) return null;
+        // Collect all colorTag rows from all runs that need tags
+        const allColorTags = [];
+        runs.forEach(run => {
+          if (!run.needsTags) return;
+          const isCased = run.isCased ?? true;
+          const pSize = isCased ? (Number(run.packSize) || 10) : 1;
+          const defaultQty = (Number(run.cases) || 0) * 10;
+          const tags = run.colorTags && run.colorTags.length > 0
+            ? run.colorTags
+            : run.needsTags ? [{ id: run.id + "_default", cropName: run.cropName, color: "", tagType: run.tagPrintInHouse ? "inhouse" : "ordered", supplier: run.tagSupplier || "", qty: Number(run.tagOrderQty) || defaultQty, costPerTag: run.tagCostPerTag || "", notes: "" }]
+            : [];
+          tags.forEach(t => allColorTags.push({ ...t, runId: run.id }));
+        });
 
-        const tagLines = tagRuns.map(r => {
-          const totalPots = (Number(r.cases) || 0) * 10;
-          const qty = Number(r.tagOrderQty) || totalPots;
-          const costEach = Number(r.tagCostPerTag) || 0;
-          return {
-            id: r.id,
-            cropName: r.cropName,
-            tagDescription: r.tagDescription || r.cropName,
-            supplier: r.tagSupplier || "—",
-            printInHouse: r.tagPrintInHouse,
-            qty,
-            totalPots,
-            costEach,
-            totalCost: qty * costEach || null,
-            notes: r.tagNotes || "",
-            targetWeek: r.targetWeek,
-            targetYear: r.targetYear,
-          };
-        }).filter(l => l.qty > 0);
+        if (allColorTags.length === 0) return null;
 
-        if (tagLines.length === 0) return null;
+        const byType = { ordered: [], sticker: [], inhouse: [] };
+        allColorTags.forEach(t => { const key = t.tagType || "ordered"; if (byType[key]) byType[key].push(t); });
+        const totalOrdered  = byType.ordered.reduce((s,t)  => s+(Number(t.qty)||0), 0);
+        const totalSticker  = byType.sticker.reduce((s,t)  => s+(Number(t.qty)||0), 0);
+        const totalInhouse  = byType.inhouse.reduce((s,t)  => s+(Number(t.qty)||0), 0);
+        const grandTotal    = totalOrdered + totalSticker + totalInhouse;
+        const totalCost     = allColorTags.reduce((s,t) => s + (Number(t.qty)||0)*(Number(t.costPerTag)||0), 0);
 
-        const totalTags = tagLines.reduce((s, l) => s + l.qty, 0);
-        const totalTagCost = tagLines.reduce((s, l) => s + (l.totalCost || 0), 0);
-        const printCount = tagLines.filter(l => l.printInHouse).length;
-        const orderCount = tagLines.filter(l => !l.printInHouse).length;
+        const TAG_TYPES = [
+          { id: "ordered", label: "📦 Order from supplier",        color: "#2e5c1e", bg: "#f0f8eb", border: "#c8e0b8" },
+          { id: "sticker", label: "🏷 Decorative + print sticker", color: "#1a4a7a", bg: "#e8f3fc", border: "#a0c4e8" },
+          { id: "inhouse", label: "🖨 Print in-house",             color: "#7a2a9a", bg: "#f5f0ff", border: "#c0a0e0" },
+        ];
 
         return (
           <div style={{ marginTop: 32 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+            {/* Header */}
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
               <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontSize: 20, color: "#1e2d1a" }}>🏷 Tag Orders</div>
-              <div style={{ display: "flex", gap: 8 }}>
-                <span style={{ background: "#f0f8eb", border: "1px solid #c8e0b8", borderRadius: 20, padding: "3px 12px", fontSize: 12, fontWeight: 700, color: "#2e5c1e" }}>{totalTags.toLocaleString()} total</span>
-                {printCount > 0 && <span style={{ background: "#e8f3fc", border: "1px solid #a0c4e8", borderRadius: 20, padding: "3px 12px", fontSize: 12, fontWeight: 700, color: "#1a4a7a" }}>🖨 {printCount} in-house</span>}
-                {orderCount > 0 && <span style={{ background: "#fdf3ea", border: "1px solid #e8c090", borderRadius: 20, padding: "3px 12px", fontSize: 12, fontWeight: 700, color: "#a04010" }}>📦 {orderCount} to order</span>}
-                {totalTagCost > 0 && <span style={{ background: "#f8f0fc", border: "1px solid #d0a8e8", borderRadius: 20, padding: "3px 12px", fontSize: 12, fontWeight: 700, color: "#6a2a9a" }}>${totalTagCost.toFixed(2)}</span>}
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                <span style={{ background: "#f0f8eb", border: "1px solid #c8e0b8", borderRadius: 20, padding: "3px 12px", fontSize: 12, fontWeight: 700, color: "#1e2d1a" }}>{grandTotal.toLocaleString()} total</span>
+                {totalOrdered > 0  && <span style={{ background: "#f0f8eb", border: "1px solid #c8e0b8", borderRadius: 20, padding: "3px 12px", fontSize: 12, fontWeight: 700, color: "#2e5c1e" }}>📦 {totalOrdered.toLocaleString()} ordered</span>}
+                {totalSticker > 0  && <span style={{ background: "#e8f3fc", border: "1px solid #a0c4e8", borderRadius: 20, padding: "3px 12px", fontSize: 12, fontWeight: 700, color: "#1a4a7a" }}>🏷 {totalSticker.toLocaleString()} sticker</span>}
+                {totalInhouse > 0  && <span style={{ background: "#f5f0ff", border: "1px solid #c0a0e0", borderRadius: 20, padding: "3px 12px", fontSize: 12, fontWeight: 700, color: "#7a2a9a" }}>🖨 {totalInhouse.toLocaleString()} in-house</span>}
+                {totalCost > 0     && <span style={{ background: "#fdf8ff", border: "1px solid #d0a8e8", borderRadius: 20, padding: "3px 12px", fontSize: 12, fontWeight: 700, color: "#6a2a9a" }}>${totalCost.toFixed(2)}</span>}
               </div>
             </div>
 
+            {/* Three panels side by side */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14, marginBottom: 16 }}>
+              {TAG_TYPES.map(type => {
+                const rows = byType[type.id];
+                const typeTotal = rows.reduce((s,t) => s+(Number(t.qty)||0), 0);
+                if (rows.length === 0) return (
+                  <div key={type.id} style={{ background: "#f8faf6", borderRadius: 12, border: "1.5px dashed #e0ead8", padding: "24px 16px", textAlign: "center" }}>
+                    <div style={{ fontSize: 20, marginBottom: 6 }}>{type.label.split(" ")[0]}</div>
+                    <div style={{ fontSize: 12, color: "#aabba0" }}>None this season</div>
+                  </div>
+                );
+                return (
+                  <div key={type.id} style={{ background: type.bg, borderRadius: 12, border: `1.5px solid ${type.border}`, overflow: "hidden" }}>
+                    <div style={{ padding: "10px 14px", borderBottom: `1px solid ${type.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div style={{ fontWeight: 800, fontSize: 13, color: type.color }}>{type.label}</div>
+                      <div style={{ fontWeight: 900, fontSize: 16, color: type.color }}>{typeTotal.toLocaleString()}</div>
+                    </div>
+                    <div style={{ padding: "8px 0" }}>
+                      {rows.map((t, i) => (
+                        <div key={t.id || i} style={{ padding: "7px 14px", borderBottom: i < rows.length-1 ? `1px solid ${type.border}60` : "none", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <div>
+                            <div style={{ fontSize: 12, fontWeight: 700, color: "#1e2d1a" }}>{t.cropName}</div>
+                            {t.color && <div style={{ fontSize: 11, color: "#7a8c74" }}>{t.color}</div>}
+                            {t.supplier && <div style={{ fontSize: 10, color: "#aabba0" }}>{t.supplier}</div>}
+                            {t.notes && <div style={{ fontSize: 10, color: "#aabba0", fontStyle: "italic" }}>{t.notes}</div>}
+                          </div>
+                          <div style={{ textAlign: "right" }}>
+                            <div style={{ fontSize: 13, fontWeight: 800, color: type.color }}>{(Number(t.qty)||0).toLocaleString()}</div>
+                            {t.costPerTag && <div style={{ fontSize: 10, color: "#7a8c74" }}>${(Number(t.qty)*Number(t.costPerTag)).toFixed(2)}</div>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Full table */}
             <div style={{ background: "#fff", borderRadius: 14, border: "1.5px solid #e0ead8", overflow: "hidden" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                 <thead>
                   <tr style={{ background: "#f8faf6", borderBottom: "1.5px solid #e0ead8" }}>
-                    {["Crop Run", "Tag", "Source", "Supplier", "Qty", "$ / tag", "Total", "Wk Ready", "Notes"].map(h => (
-                      <th key={h} style={{ padding: "10px 14px", fontWeight: 800, fontSize: 10, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5, textAlign: "left" }}>{h}</th>
+                    {["Crop", "Color / Variety", "Tag Type", "Supplier", "Qty", "$/tag", "Total", "Notes"].map(h => (
+                      <th key={h} style={{ padding: "9px 12px", textAlign: "left", fontWeight: 800, fontSize: 10, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .4 }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {tagLines.map((l, i) => (
-                    <tr key={l.id} style={{ borderBottom: "1px solid #f0f5ee", background: i % 2 === 0 ? "#fff" : "#fafcf8" }}>
-                      <td style={{ padding: "10px 14px", fontWeight: 700, color: "#1e2d1a" }}>{l.cropName}</td>
-                      <td style={{ padding: "10px 14px", color: "#4a5a40" }}>{l.tagDescription}</td>
-                      <td style={{ padding: "10px 14px" }}>
-                        <span style={{ background: l.printInHouse ? "#e8f3fc" : "#f0f8eb", border: `1px solid ${l.printInHouse ? "#a0c4e8" : "#c8e0b8"}`, borderRadius: 6, padding: "2px 8px", fontSize: 11, fontWeight: 700, color: l.printInHouse ? "#1a4a7a" : "#2e5c1e" }}>
-                          {l.printInHouse ? "🖨 Print" : "📦 Order"}
-                        </span>
-                      </td>
-                      <td style={{ padding: "10px 14px", color: "#7a8c74" }}>{l.supplier}</td>
-                      <td style={{ padding: "10px 14px", fontWeight: 800, color: "#1e2d1a" }}>{l.qty.toLocaleString()}</td>
-                      <td style={{ padding: "10px 14px", color: "#8e44ad" }}>{l.costEach ? `$${Number(l.costEach).toFixed(3)}` : "—"}</td>
-                      <td style={{ padding: "10px 14px", fontWeight: 700, color: "#2e5c1e" }}>{l.totalCost ? `$${l.totalCost.toFixed(2)}` : "—"}</td>
-                      <td style={{ padding: "10px 14px", color: "#7a8c74" }}>{l.targetWeek ? `Wk ${l.targetWeek}` : "—"}</td>
-                      <td style={{ padding: "10px 14px", color: "#aabba0", fontStyle: "italic", maxWidth: 200 }}>{l.notes || ""}</td>
-                    </tr>
-                  ))}
+                  {allColorTags.map((t, i) => {
+                    const type = TAG_TYPES.find(x => x.id === (t.tagType || "ordered")) || TAG_TYPES[0];
+                    return (
+                      <tr key={t.id || i} style={{ borderBottom: "1px solid #f0f5ee", background: i%2===0?"#fff":"#fafcf8" }}>
+                        <td style={{ padding: "9px 12px", fontWeight: 700, color: "#1e2d1a" }}>{t.cropName}</td>
+                        <td style={{ padding: "9px 12px", color: "#4a5a40" }}>{t.color || "—"}</td>
+                        <td style={{ padding: "9px 12px" }}>
+                          <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 6, background: type.bg, color: type.color, border: `1px solid ${type.border}` }}>
+                            {type.label}
+                          </span>
+                        </td>
+                        <td style={{ padding: "9px 12px", color: "#7a8c74" }}>{t.supplier || "—"}</td>
+                        <td style={{ padding: "9px 12px", fontWeight: 800, color: "#1e2d1a" }}>{(Number(t.qty)||0).toLocaleString()}</td>
+                        <td style={{ padding: "9px 12px", color: "#7a8c74" }}>{t.costPerTag ? "$"+Number(t.costPerTag).toFixed(3) : "—"}</td>
+                        <td style={{ padding: "9px 12px", fontWeight: 700, color: "#2e5c1e" }}>{t.costPerTag && t.qty ? "$"+(Number(t.qty)*Number(t.costPerTag)).toFixed(2) : "—"}</td>
+                        <td style={{ padding: "9px 12px", color: "#aabba0", fontStyle: "italic", fontSize: 11 }}>{t.notes || ""}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
