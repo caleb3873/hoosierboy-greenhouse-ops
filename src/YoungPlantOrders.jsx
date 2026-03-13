@@ -1,5 +1,5 @@
 import { useState, useRef } from "react";
-import { useCropRuns } from "./supabase";
+import { useCropRuns, useContainers } from "./supabase";
 
 // ── CONSTANTS ─────────────────────────────────────────────────────────────────
 const MATERIAL_TYPES = [
@@ -510,15 +510,241 @@ function AlertsPanel({ brokers, allMeta }) {
   );
 }
 
+// ── CONTAINER ORDERS TAB ──────────────────────────────────────────────────────
+function ContainerOrdersTab({ containerTotals, propTrayTotals, containers, runs }) {
+  const propTraySizes = Object.values(propTrayTotals).sort((a,b) => a.cellSize - b.cellSize);
+  const finishedEntries = Object.entries(containerTotals)
+    .map(([id, data]) => ({ id, ...data, container: containers.find(c => c.id === id) }))
+    .sort((a,b) => (a.container?.name || "").localeCompare(b.container?.name || ""));
+
+  const totalFinishedCost = finishedEntries.reduce((s, e) => {
+    return s + (e.container?.costPerUnit ? e.totalPots * Number(e.container.costPerUnit) : 0);
+  }, 0);
+
+  // Find matching prop tray containers from library
+  const propTrayContainers = containers.filter(c => c.kind === "propagation");
+  function matchPropTray(cellSize) {
+    return propTrayContainers.find(c => Number(c.cellsPerFlat) === cellSize);
+  }
+
+  async function downloadXLSX() {
+    const XLSX = await new Promise((res, rej) => {
+      if (window.XLSX) { res(window.XLSX); return; }
+      const s = document.createElement("script");
+      s.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+      s.onload = () => res(window.XLSX); s.onerror = rej;
+      document.head.appendChild(s);
+    });
+    const wb = XLSX.utils.book_new();
+
+    // Sheet 1: Finished containers
+    const finRows = [
+      ["FINISHED CONTAINER ORDER", "", "", "", ""],
+      ["Container", "Supplier / SKU", "Pots Needed", "Cost/Unit", "Est. Total"],
+      ...finishedEntries.map(e => [
+        e.container?.name || e.id,
+        [e.container?.supplier, e.container?.sku].filter(Boolean).join(" / ") || "—",
+        e.totalPots,
+        e.container?.costPerUnit ? Number(e.container.costPerUnit).toFixed(4) : "",
+        e.container?.costPerUnit ? (e.totalPots * Number(e.container.costPerUnit)).toFixed(2) : "",
+      ]),
+      [],
+      ["TOTAL EST. COST", "", "", "", totalFinishedCost > 0 ? totalFinishedCost.toFixed(2) : ""],
+    ];
+
+    // Sheet 2: Prop trays
+    const propRows = [
+      ["PROPAGATION TRAY ORDER", "", "", ""],
+      ["Cell Size", "Trays Needed", "Supplier / SKU", "Est. Cost"],
+      ...propTraySizes.map(pt => {
+        const lib = matchPropTray(pt.cellSize);
+        return [
+          `${pt.cellSize}-cell`,
+          pt.totalTrays,
+          lib ? [lib.supplier, lib.sku].filter(Boolean).join(" / ") || "—" : "—",
+          lib?.costPerUnit ? (pt.totalTrays * Number(lib.costPerUnit)).toFixed(2) : "",
+        ];
+      }),
+    ];
+
+    const ws1 = XLSX.utils.aoa_to_sheet(finRows);
+    ws1["!cols"] = [28, 20, 14, 12, 14].map(w => ({ wch: w }));
+    XLSX.utils.book_append_sheet(wb, ws1, "Finished Containers");
+
+    if (propTraySizes.length > 0) {
+      const ws2 = XLSX.utils.aoa_to_sheet(propRows);
+      ws2["!cols"] = [14, 14, 22, 14].map(w => ({ wch: w }));
+      XLSX.utils.book_append_sheet(wb, ws2, "Prop Trays");
+    }
+
+    const wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+    const blob = new Blob([wbout], { type: "application/octet-stream" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url;
+    a.download = "Container_Order_" + new Date().getFullYear() + "_Spring.xlsx";
+    a.click(); URL.revokeObjectURL(url);
+  }
+
+  return (
+    <div>
+      {/* Header + download */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+        <div>
+          <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontSize: 22, color: "#1e2d1a" }}>Container Orders</div>
+          <div style={{ fontSize: 13, color: "#7a8c74", marginTop: 3 }}>Running totals across all crop runs — order everything at once</div>
+        </div>
+        <button onClick={downloadXLSX}
+          style={{ background: "#2e5c1e", color: "#fff", border: "none", borderRadius: 10, padding: "10px 20px", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
+          📥 Download Order (.xlsx)
+        </button>
+      </div>
+
+      {/* Summary tiles */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px,1fr))", gap: 12, marginBottom: 24 }}>
+        {[
+          { label: "Container Types", value: finishedEntries.length, color: "#1e2d1a" },
+          { label: "Total Pots", value: finishedEntries.reduce((s,e) => s+e.totalPots, 0).toLocaleString(), color: "#4a90d9" },
+          { label: "Est. Container Cost", value: totalFinishedCost > 0 ? "$" + Math.round(totalFinishedCost).toLocaleString() : "—", color: "#7fb069" },
+          { label: "Prop Tray Sizes", value: propTraySizes.length, color: "#8e44ad" },
+          { label: "Total Prop Trays", value: propTraySizes.reduce((s,p) => s+p.totalTrays, 0).toLocaleString(), color: "#e07b39" },
+        ].map(s => (
+          <div key={s.label} style={{ background: "#fff", borderRadius: 12, border: "1.5px solid #e0ead8", padding: "14px 16px" }}>
+            <div style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .6, marginBottom: 4 }}>{s.label}</div>
+            <div style={{ fontSize: 22, fontWeight: 900, color: s.color }}>{s.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── FINISHED CONTAINERS ── */}
+      <div style={{ marginBottom: 28 }}>
+        <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontSize: 18, color: "#1e2d1a", marginBottom: 12 }}>🛒 Finished Containers</div>
+        {finishedEntries.length === 0 ? (
+          <div style={{ background: "#f8faf6", borderRadius: 12, border: "1.5px dashed #c8d8c0", padding: "32px", textAlign: "center", color: "#7a8c74", fontSize: 13 }}>
+            No containers assigned to crop runs yet — set containers on each crop run.
+          </div>
+        ) : (
+          <div style={{ background: "#fff", borderRadius: 14, border: "1.5px solid #e0ead8", overflow: "hidden" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ background: "#f8faf6", borderBottom: "1.5px solid #e0ead8" }}>
+                  {["Container", "Supplier", "SKU", "Pots Needed", "$/unit", "Est. Total", "Crop Runs"].map(h => (
+                    <th key={h} style={{ padding: "10px 14px", textAlign: "left", fontWeight: 800, fontSize: 10, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5 }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {finishedEntries.map((e, i) => {
+                  const cost = e.container?.costPerUnit ? e.totalPots * Number(e.container.costPerUnit) : null;
+                  return (
+                    <tr key={e.id} style={{ borderBottom: "1px solid #f0f5ee", background: i%2===0?"#fff":"#fafcf8" }}>
+                      <td style={{ padding: "10px 14px", fontWeight: 700, color: "#1e2d1a" }}>
+                        {e.container?.name || "Unknown container"}
+                        {e.container?.diameter && <span style={{ fontSize: 11, color: "#7a8c74", marginLeft: 6 }}>{e.container.diameter}"</span>}
+                      </td>
+                      <td style={{ padding: "10px 14px", color: "#4a5a40" }}>{e.container?.supplier || "—"}</td>
+                      <td style={{ padding: "10px 14px", color: "#7a8c74", fontFamily: "monospace", fontSize: 11 }}>{e.container?.sku || "—"}</td>
+                      <td style={{ padding: "10px 14px", fontWeight: 800, color: "#1e2d1a" }}>{e.totalPots.toLocaleString()}</td>
+                      <td style={{ padding: "10px 14px", color: "#7a8c74" }}>{e.container?.costPerUnit ? "$" + Number(e.container.costPerUnit).toFixed(4) : "—"}</td>
+                      <td style={{ padding: "10px 14px", fontWeight: 700, color: "#2e5c1e" }}>{cost ? "$" + cost.toFixed(2) : "—"}</td>
+                      <td style={{ padding: "10px 14px" }}>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                          {e.runs.slice(0,4).map((r,ri) => (
+                            <span key={ri} style={{ background: "#f0f8eb", border: "1px solid #c8e0b8", borderRadius: 6, padding: "2px 8px", fontSize: 11, color: "#2e5c1e", fontWeight: 600 }}>
+                              {r.cropName} ({r.pots.toLocaleString()})
+                            </span>
+                          ))}
+                          {e.runs.length > 4 && <span style={{ fontSize: 11, color: "#7a8c74" }}>+{e.runs.length-4} more</span>}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            {totalFinishedCost > 0 && (
+              <div style={{ background: "#f0f8eb", padding: "10px 14px", display: "flex", justifyContent: "flex-end", gap: 20, fontSize: 13 }}>
+                <span style={{ fontWeight: 800, color: "#2e5c1e" }}>Total: ${totalFinishedCost.toFixed(2)}</span>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ── PROPAGATION TRAYS ── */}
+      <div>
+        <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontSize: 18, color: "#1e2d1a", marginBottom: 4 }}>🌱 Propagation Trays</div>
+        <div style={{ fontSize: 12, color: "#7a8c74", marginBottom: 12 }}>
+          Auto-calculated from URC and Seed runs. 105-cell trays = 100 ordered plants (5 extras not counted).
+        </div>
+        {propTraySizes.length === 0 ? (
+          <div style={{ background: "#f8faf6", borderRadius: 12, border: "1.5px dashed #c8d8c0", padding: "32px", textAlign: "center", color: "#7a8c74", fontSize: 13 }}>
+            No URC or Seed runs with a prop tray size set — add a tray size on each crop run.
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {propTraySizes.map(pt => {
+              const lib = matchPropTray(pt.cellSize);
+              const cost = lib?.costPerUnit ? pt.totalTrays * Number(lib.costPerUnit) : null;
+              return (
+                <div key={pt.cellSize} style={{ background: "#fff", borderRadius: 12, border: "1.5px solid #e0ead8", overflow: "hidden" }}>
+                  {/* Header */}
+                  <div style={{ background: "#f5f0ff", padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div>
+                      <span style={{ fontWeight: 800, fontSize: 15, color: "#4a2a8a" }}>{pt.cellSize}-cell trays</span>
+                      {lib && <span style={{ fontSize: 12, color: "#7a8c74", marginLeft: 10 }}>{lib.name}{lib.supplier ? ` · ${lib.supplier}` : ""}{lib.sku ? ` · ${lib.sku}` : ""}</span>}
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontWeight: 800, fontSize: 16, color: "#4a2a8a" }}>{pt.totalTrays.toLocaleString()} trays</div>
+                      <div style={{ fontSize: 11, color: "#7a8c74" }}>{pt.totalPlants.toLocaleString()} plants across {pt.runs.length} run{pt.runs.length !== 1 ? "s" : ""}</div>
+                      {cost && <div style={{ fontSize: 12, fontWeight: 700, color: "#2e5c1e" }}>${cost.toFixed(2)}</div>}
+                    </div>
+                  </div>
+                  {/* Run breakdown */}
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                    <thead>
+                      <tr style={{ background: "#fafcf8", borderBottom: "1px solid #e0ead8" }}>
+                        {["Crop Run", "Plants ordered", "Trays needed"].map(h => (
+                          <th key={h} style={{ padding: "7px 14px", textAlign: "left", fontWeight: 700, fontSize: 10, color: "#7a8c74", textTransform: "uppercase" }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pt.runs.map((r, i) => (
+                        <tr key={i} style={{ borderBottom: "1px solid #f0f5ee", background: i%2===0?"#fff":"#fafcf8" }}>
+                          <td style={{ padding: "8px 14px", fontWeight: 600, color: "#1e2d1a" }}>{r.cropName}</td>
+                          <td style={{ padding: "8px 14px", color: "#7a8c74" }}>{r.plants.toLocaleString()}</td>
+                          <td style={{ padding: "8px 14px", fontWeight: 700, color: "#4a2a8a" }}>{r.trays}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {!lib && (
+                    <div style={{ padding: "8px 14px", background: "#fff8f0", fontSize: 11, color: "#a04010" }}>
+                      ⚠️ No {pt.cellSize}-cell tray found in your container library — add one to get cost estimates and supplier info.
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
 // ── MAIN ──────────────────────────────────────────────────────────────────────
 export default function YoungPlantOrders() {
   const { rows: runs } = useCropRuns();
   const currentYear = new Date().getFullYear();
 
+  const [mainTab,    setMainTab   ] = useState("plants");
   const [yearFilter, setYearFilter] = useState(currentYear);
   const [matFilter,  setMatFilter ] = useState("all");
   const [activePO,   setActivePO  ] = useState(null);
   const [allMeta,    setAllMeta   ] = useState(() => load(STORAGE_KEY, {}));
+  const { rows: containers } = useContainers();
 
   function persistMeta(m) { setAllMeta(m); save(STORAGE_KEY, m); }
   function updateBrokerMeta(broker, updates) {
@@ -547,8 +773,64 @@ export default function YoungPlantOrders() {
   const totalShorts   = allOverrides.filter(o => o.status === "short").length;
   const totalConfirmed = allOverrides.filter(o => o.status === "confirmed").length;
 
+  // ── CONTAINER + PROP TRAY TOTALS ──────────────────────────────────────────
+  // For each run: finished container qty, prop tray qty (URC/Seed uses prop trays)
+  function getPropTrayCount(run) {
+    // Plants ordered — 105-cell = 100 plants (5 are extras), otherwise face value
+    const packSz = Number(run.packSize) || 10;
+    const cases  = Number(run.cases) || 0;
+    const rawPlants = cases * packSz;
+    // 105 tray = 100 ordered plants
+    const orderedPlants = packSz === 105 ? cases * 100 : rawPlants;
+    const traySize = Number(String(run.propTraySize || "").replace(/[^0-9]/g, "")) || 0;
+    if (!traySize || !["urc","seed"].includes(run.materialType)) return null;
+    return { trays: Math.ceil(orderedPlants / traySize), cellSize: traySize, plants: orderedPlants };
+  }
+
+  // Build container totals: finished containers grouped by containerId
+  const containerTotals = {};
+  runs.forEach(run => {
+    if (!run.containerId) return;
+    const isCased = run.isCased ?? true;
+    const packSz  = isCased ? (Number(run.packSize) || 10) : 1;
+    const pots    = (Number(run.cases) || 0) * packSz;
+    if (!pots) return;
+    if (!containerTotals[run.containerId]) {
+      containerTotals[run.containerId] = { runs: [], totalPots: 0 };
+    }
+    containerTotals[run.containerId].runs.push({ cropName: run.cropName, pots, week: run.targetWeek });
+    containerTotals[run.containerId].totalPots += pots;
+  });
+
+  // Build prop tray totals: grouped by cell size
+  const propTrayTotals = {};
+  runs.forEach(run => {
+    const info = getPropTrayCount(run);
+    if (!info) return;
+    const key = String(info.cellSize);
+    if (!propTrayTotals[key]) propTrayTotals[key] = { cellSize: info.cellSize, runs: [], totalTrays: 0, totalPlants: 0 };
+    propTrayTotals[key].runs.push({ cropName: run.cropName, trays: info.trays, plants: info.plants });
+    propTrayTotals[key].totalTrays += info.trays;
+    propTrayTotals[key].totalPlants += info.plants;
+  });
+
   return (
     <div>
+      {/* ── TOP TABS ── */}
+      <div style={{ display: "flex", gap: 4, marginBottom: 24, borderBottom: "2px solid #e0ead8", paddingBottom: 0 }}>
+        {[["plants","🌱 Plant Orders"],["containers","📦 Container Orders"]].map(([id, label]) => (
+          <button key={id} onClick={() => setMainTab(id)}
+            style={{ padding: "9px 20px", borderRadius: "8px 8px 0 0", border: "1.5px solid #e0ead8", borderBottom: mainTab === id ? "2px solid #fff" : "none", background: mainTab === id ? "#fff" : "#f8faf6", color: mainTab === id ? "#1e2d1a" : "#7a8c74", fontWeight: mainTab === id ? 800 : 600, fontSize: 13, cursor: "pointer", fontFamily: "inherit", marginBottom: mainTab === id ? -2 : 0 }}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {mainTab === "containers" && (
+        <ContainerOrdersTab containerTotals={containerTotals} propTrayTotals={propTrayTotals} containers={containers} runs={runs} />
+      )}
+
+      {mainTab === "plants" && (<>
       {/* Summary tiles */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 12, marginBottom: 22 }}>
         {[
@@ -702,6 +984,7 @@ export default function YoungPlantOrders() {
         );
       })()}
 
+      </>)}  {/* end mainTab === "plants" */}
     </div>
   );
 }
