@@ -528,7 +528,7 @@ function VarietyManager({ varieties, lotCases, packSize, materialType, propTrayS
     const unitsPerSlot = Math.floor(totalUnits / newCount / splitIncrement) * splitIncrement;
     const evenCases = unitsPerSlot > 0 ? Math.floor(unitsPerSlot / (packSize || 10)) : 0;
     const rebalanced = varieties.map(v => ({ ...v, cases: evenCases }));
-    const remainder = lotCases > 0 ? lotCases - evenCases * varieties.length : 0;
+    const remainder = lotCases > 0 ? lotCases - evenCases * newCount : 0;
     const newVar = { id: uid(), name: "", color: "", broker: "", supplier: "", costPerUnit: "", cases: evenCases + remainder };
     onChange([...rebalanced, newVar]);
   }
@@ -1078,7 +1078,8 @@ function SourcingSection({ form, upd, focus, setFocus }) {
     const unitsPerSlot = targetUnits > 0 ? Math.floor(targetUnits / newCount / splitIncrement) * splitIncrement : 0;
     const evenCases = unitsPerSlot > 0 ? Math.floor(unitsPerSlot / packSize) : 0;
     const rebalanced = existing.map(v => ({ ...v, cases: evenCases }));
-    const remainder = form.cases ? Math.max(0, Number(form.cases) - evenCases * existing.length) : 0;
+    // remainder goes to the new row only — based on newCount not existing.length
+    const remainder = form.cases ? Math.max(0, Number(form.cases) - evenCases * newCount) : 0;
     const newVar = {
       id: crypto.randomUUID(),
       cultivar: cultivarFilter || firstItem?.crop || "",
@@ -1177,6 +1178,30 @@ function SourcingSection({ form, upd, focus, setFocus }) {
             placeholder="e.g. 84-cell liner, 4in liner, Lin30mm" />
         </div>
       </>)}
+
+      {/* Plants per pot */}
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ fontSize: 11, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5, marginBottom: 8 }}>Plants Per Pot</div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {[1, 2, 3].map(n => (
+            <button key={n} onClick={() => upd("plantsPerPot", n)}
+              style={{ width: 48, height: 40, borderRadius: 8, border: `2px solid ${(form.plantsPerPot || 1) === n ? "#7fb069" : "#c8d8c0"}`, background: (form.plantsPerPot || 1) === n ? "#f0f8eb" : "#fff", color: (form.plantsPerPot || 1) === n ? "#2e5c1e" : "#7a8c74", fontWeight: 800, fontSize: 16, cursor: "pointer", fontFamily: "inherit" }}>
+              {n}
+            </button>
+          ))}
+          <input type="number" min="1" max="10"
+            value={(form.plantsPerPot || 1) > 3 ? form.plantsPerPot : ""}
+            onChange={e => upd("plantsPerPot", Math.max(1, Number(e.target.value)))}
+            placeholder="Other"
+            style={{ width: 70, border: "1.5px solid #c8d8c0", borderRadius: 8, padding: "8px 10px", fontSize: 13, fontFamily: "inherit" }} />
+          {(form.plantsPerPot || 1) > 1 && form.cases && (
+            <div style={{ background: "#fff8e8", border: "1px solid #f0d080", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "#7a5a10", fontWeight: 600 }}>
+              {Number(form.cases) * (Number(form.packSize) || 1)} pots × {form.plantsPerPot} plants = <strong>{Number(form.cases) * (Number(form.packSize) || 1) * form.plantsPerPot} plants to order</strong>
+            </div>
+          )}
+        </div>
+        {(form.plantsPerPot || 1) > 1 && <div style={{ fontSize: 11, color: "#aabba0", marginTop: 6 }}>Variety quantities below are in plants — tags are still ordered per pot</div>}
+      </div>
 
       <SH c="Broker & Varieties" />
       {/* Row 1: Broker · Supplier · Crop Species */}
@@ -1346,6 +1371,35 @@ function SourcingSection({ form, upd, focus, setFocus }) {
 }
 
 // ── CROP RUN FORM ─────────────────────────────────────────────────────────────
+
+// ── CROP RUN TEMPLATES ────────────────────────────────────────────────────────
+const TEMPLATE_KEY = "gh_crop_run_templates_v1";
+
+function useCropRunTemplates() {
+  const [templates, setTemplates] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(TEMPLATE_KEY) || "[]"); } catch { return []; }
+  });
+
+  const save = (name, form) => {
+    // Strip run-specific fields — keep everything reusable
+    const { id, cases, targetWeek, targetYear, status, groupNumber,
+            indoorAssignments, outsideAssignments, ...rest } = form;
+    const tpl = { id: crypto.randomUUID(), name: name.trim(), savedAt: Date.now(), ...rest };
+    const next = [tpl, ...templates.filter(t => t.name !== name.trim())];
+    setTemplates(next);
+    localStorage.setItem(TEMPLATE_KEY, JSON.stringify(next));
+    return tpl;
+  };
+
+  const remove = (id) => {
+    const next = templates.filter(t => t.id !== id);
+    setTemplates(next);
+    localStorage.setItem(TEMPLATE_KEY, JSON.stringify(next));
+  };
+
+  return { templates, save, remove };
+}
+
 function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles, containers, varietyLibrary, currentYear, allRuns = [] }) {
   const blank = {
     cropName: "", groupNumber: "",
@@ -1370,12 +1424,39 @@ function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles,
     sourcingSupplier: "",
     unitCost: "",
     bufferPct: 10,
+    // Planting density
+    plantsPerPot: 1,
+    // Tags
+    needsTags: true,
+    tagDescription: "",
+    tagPrintInHouse: false,
+    tagSupplier: "",
+    tagOrderQty: "",   // auto-calculated but overridable
+    tagCostPerTag: "",
+    tagNotes: "",
   };
   const [form, setForm] = useState(initial ? dc({ ...blank, ...initial }) : blank);
   const [focus, setFocus] = useState(null);
   const [tab, setTab] = useState("main");
+  const [showTemplates, setShowTemplates] = useState(false);
+  const [saveTemplateName, setSaveTemplateName] = useState("");
+  const [templateSaved, setTemplateSaved] = useState(false);
+  const { templates, save: saveTemplate, remove: removeTemplate } = useCropRunTemplates();
 
   const upd = (f, v) => setForm(x => ({ ...x, [f]: v }));
+
+  const applyTemplate = (tpl) => {
+    const { id, name, savedAt, ...rest } = tpl;
+    setForm(x => ({ ...x, ...rest }));
+    setShowTemplates(false);
+  };
+
+  const handleSaveTemplate = () => {
+    if (!saveTemplateName.trim()) return;
+    saveTemplate(saveTemplateName, form);
+    setTemplateSaved(true);
+    setTimeout(() => { setTemplateSaved(false); setSaveTemplateName(""); }, 2000);
+  };
   const units = form.cases && form.packSize ? Number(form.cases) * Number(form.packSize) : null;
   const sched = computeSchedule(form);
   const s = sens(form.sensitivity);
@@ -1384,13 +1465,50 @@ function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles,
     <div style={{ background: "#fff", borderRadius: 16, border: "1.5px solid #e0ead8", overflow: "hidden" }}>
       <div style={{ background: "#1e2d1a", padding: "16px 24px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontSize: 17, color: "#c8e6b8" }}>{initial ? "Edit Crop Run" : "New Crop Run"}</div>
-        {onCancel && <button onClick={onCancel} style={{ background: "none", border: "none", color: "#7a9a6a", fontSize: 20, cursor: "pointer" }}>×</button>}
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          {templates.length > 0 && (
+            <button onClick={() => setShowTemplates(v => !v)}
+              style={{ background: showTemplates ? "#7fb069" : "none", border: "1.5px solid #7fb069", borderRadius: 8, padding: "6px 14px", fontSize: 12, fontWeight: 700, color: showTemplates ? "#fff" : "#7fb069", cursor: "pointer", fontFamily: "inherit" }}>
+              📋 Templates ({templates.length})
+            </button>
+          )}
+          {onCancel && <button onClick={onCancel} style={{ background: "none", border: "none", color: "#7a9a6a", fontSize: 20, cursor: "pointer" }}>×</button>}
+        </div>
       </div>
+
+      {/* Template picker dropdown */}
+      {showTemplates && (
+        <div style={{ background: "#f0f8eb", borderBottom: "1.5px solid #c8e0b8", padding: "14px 24px" }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: "#4a7a3a", textTransform: "uppercase", letterSpacing: .5, marginBottom: 10 }}>Load a Template</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {templates.map(tpl => (
+              <div key={tpl.id} style={{ display: "flex", alignItems: "center", gap: 8, background: "#fff", border: "1.5px solid #c8e0b8", borderRadius: 10, padding: "8px 12px" }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: "#1e2d1a" }}>{tpl.name}</div>
+                  <div style={{ fontSize: 11, color: "#aabba0" }}>
+                    {[tpl.cropName, tpl.containerId ? "container set" : null, tpl.sourcingBroker, tpl.materialType?.toUpperCase()].filter(Boolean).join(" · ")}
+                    {" · saved "}{new Date(tpl.savedAt).toLocaleDateString()}
+                  </div>
+                </div>
+                <button onClick={() => applyTemplate(tpl)}
+                  style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 7, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                  Load
+                </button>
+                <button onClick={() => removeTemplate(tpl.id)}
+                  style={{ background: "none", border: "1px solid #e0b0b0", borderRadius: 7, padding: "6px 10px", fontSize: 12, color: "#c04040", cursor: "pointer", fontFamily: "inherit" }}>
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+          <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 10 }}>⚠ Loading fills all fields except quantity, target week, and space assignments</div>
+        </div>
+      )}
 
       <div style={{ padding: "22px 24px" }}>
         {/* Tabs */}
         <div style={{ display: "flex", borderBottom: "1.5px solid #e0ead8", marginBottom: 22 }}>
-          {[["main","Crop & Schedule"],["space","Space Assignment"],["spacing","Spacing"],["order","Order"]].map(([id, label]) => (
+          {[["main","Crop & Schedule"],["space","Space Assignment"],["spacing","Spacing"],["order","Order"],["tags","🏷 Tags"]].map(([id, label]) => (
             <button key={id} onClick={() => setTab(id)} style={{ background: "none", border: "none", borderBottom: `3px solid ${tab === id ? "#7fb069" : "transparent"}`, padding: "10px 18px", fontSize: 13, fontWeight: tab === id ? 700 : 500, color: tab === id ? "#1e2d1a" : "#7a8c74", cursor: "pointer", fontFamily: "inherit" }}>{label}</button>
           ))}
         </div>
@@ -1673,45 +1791,105 @@ function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles,
         {tab === "order" && (() => {
           const isCased = form.isCased ?? true;
           const pSize = isCased ? (Number(form.packSize) || 10) : 1;
-          // totalPots = total finished plants (cases × packSize, or just pot count if uncased)
           const totalPots = (Number(form.cases) || 0) * pSize;
           const varieties = form.varieties || [];
-          // variety rows store case counts; multiply by pSize to get plants
-          const varTotalCost = varieties.reduce((s, v) => {
-            const plantCount = (Number(v.cases) || 0) * pSize;
-            return s + (v.costPerUnit && plantCount ? Number(v.costPerUnit) * plantCount : 0);
-          }, 0);
-          const allHaveCost = varieties.length > 0 && varieties.every(v => v.costPerUnit);
           const assignedPots = varieties.reduce((s, v) => s + (Number(v.cases) || 0) * pSize, 0);
+
+          // Plant cost
+          const plantCostPerUnit = assignedPots > 0
+            ? varieties.reduce((s, v) => s + (Number(v.costPerUnit || 0) * (Number(v.cases) || 0) * pSize), 0) / assignedPots
+            : 0;
+
+          // Container costs (same logic as ComboDesigner CostRollup)
+          const selC = containers.find(c => c.id === form.containerId);
+          const potCost      = selC?.costPerUnit   ? Number(selC.costPerUnit)   : 0;
+          const trayCost     = selC?.hasCarrier    ? (Number(selC.carrierCost) || 0) / Math.max(Number(selC.potsPerCarrier) || 1, 1) : 0;
+          const wireCost     = selC?.hasWire       ? (Number(selC.wireCost)    || 0) : 0;
+          const saucerCost   = selC?.hasSaucer     ? (Number(selC.saucerCost)  || 0) : 0;
+          const sleeveCost   = selC?.hasSleeve     ? (Number(selC.sleeveCost)  || 0) : 0;
+          const hbTagCost    = selC?.isHBTagged    ? (Number(selC.tagCostPerUnit) || 0) : 0;
+          const accessoryPerPot = trayCost + wireCost + saucerCost + sleeveCost + hbTagCost;
+          const containerPerPot = potCost + accessoryPerPot;
+
+          const totalPerPot  = plantCostPerUnit + containerPerPot;
+          const grandTotal   = totalPerPot * (assignedPots || 0);
+          const allHaveCost  = varieties.length > 0 && varieties.every(v => v.costPerUnit);
+          const hasAnyCost   = plantCostPerUnit > 0 || containerPerPot > 0;
+
+          // Cost line items for breakdown
+          const costLines = [
+            plantCostPerUnit > 0  && { label: "Plant / URC",   value: plantCostPerUnit,   color: "#2e7a2e" },
+            potCost > 0           && { label: "Pot",           value: potCost,            color: "#4a90d9" },
+            trayCost > 0          && { label: "Tray / Carrier", value: trayCost,          color: "#7a5a9a" },
+            saucerCost > 0        && { label: "Saucer",        value: saucerCost,         color: "#7a5a9a" },
+            sleeveCost > 0        && { label: "Sleeve",        value: sleeveCost,         color: "#7a5a9a" },
+            wireCost > 0          && { label: "Wire",          value: wireCost,           color: "#7a5a9a" },
+            hbTagCost > 0         && { label: "HB Tag",        value: hbTagCost,          color: "#e07b39" },
+          ].filter(Boolean);
 
           return (
             <div>
               <SourcingSection form={form} upd={upd} focus={focus} setFocus={setFocus} />
               <div style={{ borderTop: "2px solid #e0ead8", marginTop: 8, marginBottom: 16 }} />
 
-              {/* Cost summary bar */}
-              {varieties.length > 0 && (
-                <div style={{ background: varTotalCost > 0 ? "#f0f8eb" : "#f8faf6", border: `1.5px solid ${varTotalCost > 0 ? "#c8e0b8" : "#e0ead8"}`, borderRadius: 12, padding: "12px 16px", marginBottom: 16, display: "flex", gap: 20, flexWrap: "wrap", alignItems: "center" }}>
-                  <div>
-                    <div style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5 }}>Total Pots</div>
-                    <div style={{ fontSize: 18, fontWeight: 800, color: "#1e2d1a" }}>{totalPots > 0 ? totalPots.toLocaleString() : "—"}</div>
-                  </div>
-                  <div>
-                    <div style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5 }}>Assigned</div>
-                    <div style={{ fontSize: 18, fontWeight: 800, color: assignedPots === totalPots && totalPots > 0 ? "#2e5c1e" : "#d94f3d" }}>{assignedPots.toLocaleString()}</div>
-                  </div>
-                  {varTotalCost > 0 && <>
+              {/* Cost summary */}
+              {(varieties.length > 0 || selC) && (
+                <div style={{ background: "#f8faf6", border: "1.5px solid #e0ead8", borderRadius: 12, padding: "14px 16px", marginBottom: 16 }}>
+                  {/* Top row: pots total + assignment status */}
+                  <div style={{ display: "flex", gap: 20, alignItems: "flex-end", marginBottom: costLines.length > 0 ? 14 : 0, flexWrap: "wrap" }}>
                     <div>
-                      <div style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5 }}>Est. Plant Cost</div>
-                      <div style={{ fontSize: 18, fontWeight: 800, color: "#2e5c1e" }}>${varTotalCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                      <div style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5 }}>Total Pots</div>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: "#1e2d1a" }}>{totalPots > 0 ? totalPots.toLocaleString() : "—"}</div>
                     </div>
-                    <div>
-                      <div style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5 }}>Per Pot</div>
-                      <div style={{ fontSize: 18, fontWeight: 800, color: "#8e44ad" }}>${(varTotalCost / (assignedPots || 1)).toFixed(4)}</div>
+                    {assignedPots > 0 && assignedPots !== totalPots && (
+                      <div>
+                        <div style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5 }}>Assigned</div>
+                        <div style={{ fontSize: 22, fontWeight: 800, color: "#d94f3d" }}>{assignedPots.toLocaleString()}</div>
+                      </div>
+                    )}
+                    {assignedPots > 0 && assignedPots === totalPots && (
+                      <div style={{ fontSize: 12, color: "#2e5c1e", fontWeight: 700, paddingBottom: 4 }}>✓ Fully assigned</div>
+                    )}
+                    {grandTotal > 0 && (
+                      <div style={{ marginLeft: "auto" }}>
+                        <div style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5 }}>Est. Total Cost</div>
+                        <div style={{ fontSize: 22, fontWeight: 800, color: "#2e5c1e" }}>${grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                      </div>
+                    )}
+                    {totalPerPot > 0 && (
+                      <div>
+                        <div style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5 }}>Per Pot</div>
+                        <div style={{ fontSize: 22, fontWeight: 800, color: "#8e44ad" }}>${totalPerPot.toFixed(3)}</div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Cost breakdown lines */}
+                  {costLines.length > 0 && (
+                    <div style={{ borderTop: "1px solid #e8eed8", paddingTop: 12 }}>
+                      <div style={{ fontSize: 10, fontWeight: 800, color: "#aabba0", textTransform: "uppercase", letterSpacing: .5, marginBottom: 8 }}>Cost Breakdown — per pot</div>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        {costLines.map(({ label, value, color }) => (
+                          <div key={label} style={{ background: "#fff", border: `1.5px solid ${color}30`, borderRadius: 8, padding: "6px 12px", minWidth: 90 }}>
+                            <div style={{ fontSize: 10, color: "#7a8c74", fontWeight: 700, textTransform: "uppercase" }}>{label}</div>
+                            <div style={{ fontSize: 14, fontWeight: 800, color }}>${value.toFixed(4)}</div>
+                          </div>
+                        ))}
+                        {costLines.length > 1 && (
+                          <div style={{ background: "#1e2d1a", border: "1.5px solid #1e2d1a", borderRadius: 8, padding: "6px 12px", minWidth: 90 }}>
+                            <div style={{ fontSize: 10, color: "#7fb069", fontWeight: 700, textTransform: "uppercase" }}>Total / Pot</div>
+                            <div style={{ fontSize: 14, fontWeight: 800, color: "#c8e6b8" }}>${totalPerPot.toFixed(4)}</div>
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  </>}
-                  {!allHaveCost && varieties.some(v => v.costPerUnit) && (
-                    <div style={{ fontSize: 11, color: "#e07b39", fontWeight: 600 }}>⚠ Some varieties missing cost — add from catalog or enter manually</div>
+                  )}
+
+                  {!allHaveCost && varieties.length > 0 && varieties.some(v => !v.costPerUnit) && (
+                    <div style={{ fontSize: 11, color: "#e07b39", fontWeight: 600, marginTop: 8 }}>⚠ Some varieties missing plant cost — select a color from catalog or enter manually</div>
+                  )}
+                  {varieties.length > 0 && !selC && (
+                    <div style={{ fontSize: 11, color: "#aabba0", marginTop: 8 }}>💡 Select a container on the Crop & Schedule tab to include pot + accessory costs</div>
                   )}
                 </div>
               )}
@@ -1732,7 +1910,148 @@ function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles,
           );
         })()}
 
-        <div style={{ display: "flex", gap: 10, marginTop: 24 }}>
+        {/* ── TAGS TAB ── */}
+        {tab === "tags" && (() => {
+          const isCased = form.isCased ?? true;
+          const pSize = isCased ? (Number(form.packSize) || 10) : 1;
+          const totalPots = (Number(form.cases) || 0) * pSize;
+          const selC = containers.find(c => c.id === form.containerId);
+          // Tags are per pot, never per plant
+          const autoTagQty = totalPots > 0 ? Math.ceil(totalPots * (1 + (Number(form.bufferPct) || 0) / 100)) : 0;
+          const tagQty = Number(form.tagOrderQty) || autoTagQty;
+          const tagCostEach = Number(form.tagCostPerTag) || (selC?.isHBTagged ? Number(selC.tagCostPerUnit) || 0 : 0);
+          const tagTotalCost = tagQty && tagCostEach ? tagQty * tagCostEach : 0;
+
+          return (
+            <div>
+              <SH c="Tag Setup" mt={0} />
+
+              {/* Needs tags toggle */}
+              <div style={{ marginBottom: 16 }}>
+                <button onClick={() => upd("needsTags", !form.needsTags)}
+                  style={{ display: "flex", alignItems: "center", gap: 10, background: form.needsTags ? "#f0f8eb" : "#fff", border: `1.5px solid ${form.needsTags ? "#7fb069" : "#c8d8c0"}`, borderRadius: 10, padding: "10px 16px", cursor: "pointer", fontFamily: "inherit", width: "100%", textAlign: "left" }}>
+                  <div style={{ width: 38, height: 20, borderRadius: 10, background: form.needsTags ? "#7fb069" : "#c8d8c0", position: "relative", flexShrink: 0 }}>
+                    <div style={{ width: 14, height: 14, borderRadius: 7, background: "#fff", position: "absolute", top: 3, left: form.needsTags ? 21 : 3, transition: "left .2s" }} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: form.needsTags ? "#2e5c1e" : "#7a8c74" }}>{form.needsTags ? "Tags required for this crop" : "No tags needed"}</div>
+                    <div style={{ fontSize: 11, color: "#aabba0" }}>Tags are always ordered per pot, never per plant</div>
+                  </div>
+                </button>
+              </div>
+
+              {form.needsTags && (<>
+                <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12, marginBottom: 12 }}>
+                  <div>
+                    <FL c="Tag Description / Name" />
+                    <input style={IS(focus === "tagDesc")} value={form.tagDescription || ""}
+                      onChange={e => upd("tagDescription", e.target.value)}
+                      onFocus={() => setFocus("tagDesc")} onBlur={() => setFocus(null)}
+                      placeholder={form.cropName ? `e.g. ${form.cropName} 4" tag` : "e.g. Petunia Vista 4" tag"} />
+                  </div>
+                  <div>
+                    <FL c="Tag Supplier" />
+                    <input style={IS(focus === "tagSupp")} value={form.tagSupplier || ""}
+                      onChange={e => upd("tagSupplier", e.target.value)}
+                      onFocus={() => setFocus("tagSupp")} onBlur={() => setFocus(null)}
+                      placeholder="e.g. Emerald Prints" />
+                  </div>
+                </div>
+
+                {/* Print in house vs order */}
+                <div style={{ marginBottom: 14 }}>
+                  <FL c="Tag Source" />
+                  <div style={{ display: "flex", gap: 8 }}>
+                    {[["false","📦 Order from supplier"],["true","🖨 Print in-house"]].map(([val, label]) => (
+                      <button key={val} onClick={() => upd("tagPrintInHouse", val === "true")}
+                        style={{ flex: 1, padding: "10px 8px", borderRadius: 9, border: `2px solid ${String(form.tagPrintInHouse) === val ? "#7fb069" : "#c8d8c0"}`, background: String(form.tagPrintInHouse) === val ? "#f0f8eb" : "#fff", color: String(form.tagPrintInHouse) === val ? "#2e5c1e" : "#7a8c74", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Quantity + cost */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 14 }}>
+                  <div>
+                    <FL c="Tags to Order" />
+                    <input type="number" style={IS(focus === "tagQty")} value={form.tagOrderQty || ""}
+                      onChange={e => upd("tagOrderQty", e.target.value)}
+                      onFocus={() => setFocus("tagQty")} onBlur={() => setFocus(null)}
+                      placeholder={autoTagQty > 0 ? String(autoTagQty) : "auto"} />
+                    {autoTagQty > 0 && !form.tagOrderQty && (
+                      <div style={{ fontSize: 10, color: "#7fb069", marginTop: 4, fontWeight: 600 }}>↑ Auto: {totalPots.toLocaleString()} pots + {form.bufferPct || 10}% buffer</div>
+                    )}
+                  </div>
+                  <div>
+                    <FL c="Cost per Tag ($)" />
+                    <input type="number" step="0.001" style={IS(focus === "tagCost")} value={form.tagCostPerTag || ""}
+                      onChange={e => upd("tagCostPerTag", e.target.value)}
+                      onFocus={() => setFocus("tagCost")} onBlur={() => setFocus(null)}
+                      placeholder={selC?.isHBTagged && selC?.tagCostPerUnit ? String(selC.tagCostPerUnit) : "0.00"} />
+                    {selC?.isHBTagged && selC?.tagCostPerUnit && !form.tagCostPerTag && (
+                      <div style={{ fontSize: 10, color: "#7fb069", marginTop: 4, fontWeight: 600 }}>↑ From container library</div>
+                    )}
+                  </div>
+                  <div style={{ display: "flex", alignItems: "flex-end" }}>
+                    {tagTotalCost > 0 && (
+                      <div style={{ background: "#f0f8eb", border: "1.5px solid #c8e0b8", borderRadius: 8, padding: "9px 14px", width: "100%" }}>
+                        <div style={{ fontSize: 10, color: "#7a8c74", fontWeight: 700 }}>EST. TAG COST</div>
+                        <div style={{ fontSize: 18, fontWeight: 800, color: "#2e5c1e" }}>${tagTotalCost.toFixed(2)}</div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <FL c="Tag Notes" />
+                  <textarea style={{ ...IS(focus === "tagNotes"), height: 70, resize: "vertical" }} value={form.tagNotes || ""}
+                    onChange={e => upd("tagNotes", e.target.value)}
+                    onFocus={() => setFocus("tagNotes")} onBlur={() => setFocus(null)}
+                    placeholder="e.g. 4-color process, double-sided, needs barcode, artwork due week 6..." />
+                </div>
+
+                {/* Summary card */}
+                {(tagQty > 0 || form.tagDescription) && (
+                  <div style={{ background: "#fafcf8", border: "1.5px solid #c8e0b8", borderRadius: 12, padding: "14px 16px", marginTop: 16 }}>
+                    <div style={{ fontSize: 11, fontWeight: 800, color: "#4a7a3a", textTransform: "uppercase", letterSpacing: .5, marginBottom: 10 }}>🏷 Tag Order Summary</div>
+                    <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                      {form.tagDescription && <div><div style={{ fontSize: 10, color: "#7a8c74", fontWeight: 700 }}>TAG</div><div style={{ fontSize: 13, fontWeight: 700, color: "#1e2d1a" }}>{form.tagDescription}</div></div>}
+                      <div><div style={{ fontSize: 10, color: "#7a8c74", fontWeight: 700 }}>QTY</div><div style={{ fontSize: 13, fontWeight: 700, color: "#1e2d1a" }}>{tagQty.toLocaleString()}</div></div>
+                      <div><div style={{ fontSize: 10, color: "#7a8c74", fontWeight: 700 }}>SOURCE</div><div style={{ fontSize: 13, fontWeight: 700, color: form.tagPrintInHouse ? "#4a90d9" : "#2e5c1e" }}>{form.tagPrintInHouse ? "🖨 Print in-house" : "📦 Order"}</div></div>
+                      {form.tagSupplier && <div><div style={{ fontSize: 10, color: "#7a8c74", fontWeight: 700 }}>SUPPLIER</div><div style={{ fontSize: 13, fontWeight: 700, color: "#1e2d1a" }}>{form.tagSupplier}</div></div>}
+                      {tagTotalCost > 0 && <div><div style={{ fontSize: 10, color: "#7a8c74", fontWeight: 700 }}>COST</div><div style={{ fontSize: 13, fontWeight: 700, color: "#2e5c1e" }}>${tagTotalCost.toFixed(2)}</div></div>}
+                    </div>
+                    {form.tagNotes && <div style={{ fontSize: 12, color: "#7a8c74", marginTop: 10, fontStyle: "italic" }}>{form.tagNotes}</div>}
+                  </div>
+                )}
+              </>)}
+            </div>
+          );
+        })()}
+
+        {/* Save as Template */}
+        <div style={{ background: "#f8faf6", border: "1.5px solid #e0ead8", borderRadius: 12, padding: "14px 16px", marginTop: 20 }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5, marginBottom: 8 }}>💾 Save as Template</div>
+          <div style={{ fontSize: 11, color: "#aabba0", marginBottom: 10 }}>
+            Saves everything except quantity, target week, and space assignments — reuse for repeat crops
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              value={saveTemplateName}
+              onChange={e => setSaveTemplateName(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && handleSaveTemplate()}
+              placeholder={form.cropName ? `e.g. ${form.cropName} standard` : "Template name..."}
+              style={{ flex: 1, border: "1.5px solid #c8d8c0", borderRadius: 8, padding: "8px 12px", fontSize: 13, fontFamily: "inherit", background: "#fff" }}
+            />
+            <button onClick={handleSaveTemplate} disabled={!saveTemplateName.trim()}
+              style={{ background: saveTemplateName.trim() ? "#4a7a3a" : "#c8d8c0", color: "#fff", border: "none", borderRadius: 8, padding: "8px 18px", fontSize: 13, fontWeight: 700, cursor: saveTemplateName.trim() ? "pointer" : "default", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+              {templateSaved ? "✓ Saved!" : "Save Template"}
+            </button>
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
           <button onClick={() => form.cropName.trim() && onSave({ ...form, id: form.id || uid() })} style={{ flex: 1, background: "#7fb069", color: "#fff", border: "none", borderRadius: 10, padding: 12, fontWeight: 700, fontSize: 15, cursor: "pointer", fontFamily: "inherit" }}>{initial ? "Save Changes" : "Create Crop Run"}</button>
           {onCancel && <button onClick={onCancel} style={{ background: "none", color: "#7a8c74", border: "1.5px solid #c8d8c0", borderRadius: 10, padding: "12px 20px", fontWeight: 600, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>}
         </div>
