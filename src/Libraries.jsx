@@ -2508,7 +2508,7 @@ function applyMapping(rows, mapping, headerRow) {
 }
 
 // ── UPLOAD WIZARD ─────────────────────────────────────────────────────────────
-function UploadWizard({ onSave, onCancel }) {
+function UploadWizard({ onSave, onCancel, brokerProfiles = [], initialBrokerId = null, onSaveBrokerProfile }) {
   const [step, setStep]       = useState(1); // 1=file, 2=map, 3=confirm
   const [rows, setRows]             = useState([]);
   const [allSheets, setAllSheets]   = useState({});
@@ -2517,7 +2517,8 @@ function UploadWizard({ onSave, onCancel }) {
   const [headers, setHeaders]       = useState([]);
   const [headerRow, setHeaderRow]   = useState(0);
   const [mapping, setMapping]       = useState({});
-  const [brokerName, setBrokerName] = useState("");
+  const initialBroker = initialBrokerId ? brokerProfiles.find(b => b.id === initialBrokerId) : null;
+  const [brokerName, setBrokerName] = useState(initialBroker?.name || "");
   const [brokerNameNew, setBrokerNameNew] = useState("");
   const [formType, setFormType] = useState("");
   const [supplierName, setSupplierName] = useState("");
@@ -2527,7 +2528,6 @@ function UploadWizard({ onSave, onCancel }) {
   const [templateApplied, setTemplateApplied] = useState(false);
   const [saveTemplate, setSaveTemplate] = useState(true);
   const fileRef = useRef();
-  const { rows: brokerProfiles, upsert: upsertBrokerProfile } = useBrokerProfiles();
 
   const applyBrokerTemplate = (template, sheets, sheetToLoad) => {
     if (!template) return false;
@@ -2788,11 +2788,9 @@ function UploadWizard({ onSave, onCancel }) {
       <div style={{ display: "flex", gap: 10 }}>
         <button onClick={() => setStep(2)} style={{ flex: 1, padding: "12px 0", borderRadius: 10, border: "1.5px solid #c8d8c0", background: "#fff", color: "#7a8c74", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>Back</button>
         <button onClick={async () => {
-          if (saveTemplate && brokerName.trim()) {
+          if (saveTemplate && brokerName.trim() && onSaveBrokerProfile) {
             const template = { mapping, headerRow, sheetName: selectedSheet };
-            const existing = brokerProfiles.find(b => b.name.toLowerCase() === brokerName.toLowerCase());
-            if (existing) { await upsertBrokerProfile({ ...existing, importTemplate: template }); }
-            else { await upsertBrokerProfile({ id: crypto.randomUUID(), name: brokerName, importTemplate: template, whatTheySell: [], seasonHistory: [] }); }
+            await onSaveBrokerProfile({ name: brokerName, importTemplate: template });
           }
           onSave({ id: crypto.randomUUID(), brokerName, formType, supplierName, season, items, importedAt: new Date().toISOString() });
         }} style={{ flex: 2, padding: "12px 0", borderRadius: 10, border: "none", background: "#7fb069", color: "#fff", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
@@ -2885,6 +2883,195 @@ function CatalogDetail({ catalog, onBack, onDelete }) {
 }
 
 // ── MAIN BROKER CATALOGS COMPONENT ───────────────────────────────────────────
+
+// ── BROKERS SECTION (unified: profiles + price lists) ─────────────────────────
+function BrokersSection() {
+  const { rows: brokerProfiles, upsert: upsertBrokerProfile, remove: removeBrokerProfile } = useBrokerProfiles();
+  const { rows: catalogs, upsert: upsertCatalog, remove: removeCatalog } = useBrokerCatalogs();
+  const [view, setView] = useState("list"); // list | upload | detail | addbroker | editbroker
+  const [selectedCatalogId, setSelectedCatalogId] = useState(null);
+  const [selectedBrokerId, setSelectedBrokerId] = useState(null); // broker to upload TO
+  const [editBroker, setEditBroker] = useState(null);
+  const [brokerForm, setBrokerForm] = useState({ name: "", contactName: "", email: "", phone: "", website: "", notes: "" });
+  const [expandedBroker, setExpandedBroker] = useState(null);
+
+  useEffect(() => {
+    if (!window.XLSX) {
+      const script = document.createElement("script");
+      script.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+      document.head.appendChild(script);
+    }
+  }, []);
+
+  const openAddBroker = () => { setBrokerForm({ name: "", contactName: "", email: "", phone: "", website: "", notes: "" }); setEditBroker(null); setView("addbroker"); };
+  const openEditBroker = (b) => { setBrokerForm({ name: b.name||"", contactName: b.contactName||"", email: b.email||"", phone: b.phone||"", website: b.website||"", notes: b.notes||"" }); setEditBroker(b); setView("addbroker"); };
+  const saveBroker = async () => {
+    if (!brokerForm.name.trim()) return;
+    if (editBroker) { await upsertBrokerProfile({ ...editBroker, ...brokerForm }); }
+    else { await upsertBrokerProfile({ id: crypto.randomUUID(), ...brokerForm, importTemplate: null, whatTheySell: [], seasonHistory: [] }); }
+    setView("list");
+  };
+
+  if (view === "addbroker") return (
+    <div style={{ maxWidth: 560, margin: "0 auto" }}>
+      <button onClick={() => setView("list")} style={{ background: "none", border: "none", color: "#7a8c74", fontSize: 13, cursor: "pointer", fontFamily: "inherit", marginBottom: 16 }}>← Back</button>
+      <div style={{ background: "#fff", borderRadius: 16, border: "1.5px solid #e0ead8", padding: "24px 28px" }}>
+        <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontSize: 18, color: "#1e2d1a", marginBottom: 20 }}>{editBroker ? "Edit Broker" : "Add Broker"}</div>
+        {[["name","Broker Name *"],["contactName","Contact Name"],["email","Email"],["phone","Phone"],["website","Website"]].map(([k,label]) => (
+          <div key={k} style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", marginBottom: 4 }}>{label.toUpperCase()}</div>
+            <input value={brokerForm[k]} onChange={e => setBrokerForm(f => ({...f,[k]:e.target.value}))}
+              style={{ width: "100%", border: "1.5px solid #c8d8c0", borderRadius: 8, padding: "9px 12px", fontSize: 13, fontFamily: "inherit", boxSizing: "border-box" }} />
+          </div>
+        ))}
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", marginBottom: 4 }}>NOTES</div>
+          <textarea value={brokerForm.notes} onChange={e => setBrokerForm(f => ({...f,notes:e.target.value}))} rows={3}
+            style={{ width: "100%", border: "1.5px solid #c8d8c0", borderRadius: 8, padding: "9px 12px", fontSize: 13, fontFamily: "inherit", boxSizing: "border-box", resize: "vertical" }} />
+        </div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={() => setView("list")} style={{ flex: 1, background: "none", border: "1.5px solid #c8d8c0", borderRadius: 8, padding: "10px 0", fontSize: 13, color: "#7a8c74", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+          <button onClick={saveBroker} disabled={!brokerForm.name.trim()} style={{ flex: 2, background: brokerForm.name.trim() ? "#7fb069" : "#c8d8c0", color: "#fff", border: "none", borderRadius: 8, padding: "10px 0", fontSize: 13, fontWeight: 700, cursor: brokerForm.name.trim() ? "pointer" : "default", fontFamily: "inherit" }}>
+            {editBroker ? "Save Changes" : "Add Broker"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  if (view === "upload") return (
+    <div style={{ maxWidth: 700, margin: "0 auto" }}>
+      <UploadWizard
+        brokerProfiles={brokerProfiles}
+        initialBrokerId={selectedBrokerId}
+        onSave={async (catalog) => { await upsertCatalog(catalog); setView("list"); setSelectedBrokerId(null); }}
+        onCancel={() => { setView("list"); setSelectedBrokerId(null); }}
+        onSaveBrokerProfile={async (profile) => {
+          const existing = brokerProfiles.find(b => b.name.toLowerCase() === profile.name.toLowerCase());
+          if (existing) { await upsertBrokerProfile({ ...existing, importTemplate: profile.importTemplate }); }
+          else { await upsertBrokerProfile({ id: crypto.randomUUID(), ...profile, whatTheySell: [], seasonHistory: [] }); }
+        }}
+      />
+    </div>
+  );
+
+  if (view === "detail" && selectedCatalogId) {
+    const cat = catalogs.find(c => c.id === selectedCatalogId);
+    if (cat) return <CatalogDetail catalog={cat} onBack={() => setView("list")} onDelete={async (id) => { await removeCatalog(id); setView("list"); }} />;
+  }
+
+  // LIST VIEW
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+        <div>
+          <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontSize: 20, color: "#1e2d1a" }}>Brokers</div>
+          <div style={{ fontSize: 13, color: "#7a8c74", marginTop: 2 }}>Manage your broker relationships and their price lists</div>
+        </div>
+        <button onClick={openAddBroker} style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 10, padding: "10px 20px", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>+ Add Broker</button>
+      </div>
+
+      {brokerProfiles.length === 0 && (
+        <div style={{ background: "#fff", borderRadius: 16, border: "1.5px dashed #c8d8c0", padding: "60px 40px", textAlign: "center" }}>
+          <div style={{ fontSize: 48, marginBottom: 12 }}>🤝</div>
+          <div style={{ fontSize: 16, fontWeight: 800, color: "#1e2d1a", marginBottom: 8 }}>No brokers yet</div>
+          <div style={{ fontSize: 13, color: "#7a8c74", marginBottom: 20 }}>Add your brokers first, then upload their price lists</div>
+          <button onClick={openAddBroker} style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 10, padding: "12px 28px", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>+ Add First Broker</button>
+        </div>
+      )}
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        {brokerProfiles.map(broker => {
+          const brokerCatalogs = catalogs.filter(c => c.brokerName === broker.name);
+          const isExpanded = expandedBroker === broker.id;
+          return (
+            <div key={broker.id} style={{ background: "#fff", borderRadius: 16, border: "1.5px solid #e0ead8", overflow: "hidden" }}>
+              {/* Broker header */}
+              <div style={{ padding: "18px 22px", display: "flex", alignItems: "center", gap: 14 }}>
+                <div style={{ width: 44, height: 44, borderRadius: 12, background: "#f0f8eb", border: "1.5px solid #c8e0b8", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, flexShrink: 0 }}>🤝</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 800, fontSize: 15, color: "#1e2d1a" }}>{broker.name}</div>
+                  <div style={{ fontSize: 12, color: "#7a8c74", marginTop: 2, display: "flex", gap: 12, flexWrap: "wrap" }}>
+                    {broker.contactName && <span>👤 {broker.contactName}</span>}
+                    {broker.email && <span>✉️ {broker.email}</span>}
+                    {broker.phone && <span>📞 {broker.phone}</span>}
+                    <span style={{ color: brokerCatalogs.length ? "#7fb069" : "#aabba0" }}>📊 {brokerCatalogs.length} price list{brokerCatalogs.length !== 1 ? "s" : ""}</span>
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                  <button onClick={() => { setSelectedBrokerId(broker.id); setView("upload"); }}
+                    style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 8, padding: "7px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                    + Price List
+                  </button>
+                  <button onClick={() => openEditBroker(broker)}
+                    style={{ background: "none", border: "1.5px solid #c8d8c0", borderRadius: 8, padding: "7px 12px", fontSize: 12, color: "#7a8c74", cursor: "pointer", fontFamily: "inherit" }}>Edit</button>
+                  <button onClick={() => setExpandedBroker(isExpanded ? null : broker.id)}
+                    style={{ background: "none", border: "1.5px solid #c8d8c0", borderRadius: 8, padding: "7px 12px", fontSize: 12, color: "#7a8c74", cursor: "pointer", fontFamily: "inherit" }}>
+                    {isExpanded ? "▲" : "▼"}
+                  </button>
+                </div>
+              </div>
+
+              {/* Price lists */}
+              {isExpanded && (
+                <div style={{ borderTop: "1px solid #f0f0ea", background: "#fafaf8", padding: "12px 22px" }}>
+                  {brokerCatalogs.length === 0 ? (
+                    <div style={{ textAlign: "center", padding: "20px 0", color: "#aabba0", fontSize: 13 }}>
+                      No price lists yet —
+                      <button onClick={() => { setSelectedBrokerId(broker.id); setView("upload"); }}
+                        style={{ background: "none", border: "none", color: "#7fb069", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 13, marginLeft: 4 }}>
+                        Upload one
+                      </button>
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {brokerCatalogs.map(cat => (
+                        <div key={cat.id} onClick={() => { setSelectedCatalogId(cat.id); setView("detail"); }}
+                          style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", background: "#fff", borderRadius: 10, border: "1.5px solid #e8ede4", cursor: "pointer" }}>
+                          <span style={{ fontSize: 18 }}>📊</span>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontWeight: 700, fontSize: 13, color: "#1e2d1a" }}>{cat.season || "Price List"} · {cat.formType || ""}</div>
+                            <div style={{ fontSize: 11, color: "#7a8c74" }}>{cat.items?.length?.toLocaleString() || 0} items · {cat.importedAt ? new Date(cat.importedAt).toLocaleDateString() : ""}</div>
+                          </div>
+                          <span style={{ color: "#c8d8c0", fontSize: 16 }}>›</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Unassigned catalogs (brokerName doesn't match any profile) */}
+      {(() => {
+        const knownNames = brokerProfiles.map(b => b.name);
+        const unassigned = catalogs.filter(c => !knownNames.includes(c.brokerName));
+        if (!unassigned.length) return null;
+        return (
+          <div style={{ marginTop: 24 }}>
+            <div style={{ fontSize: 11, fontWeight: 800, color: "#7a8c74", letterSpacing: 1, textTransform: "uppercase", marginBottom: 10 }}>Unassigned Price Lists</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {unassigned.map(cat => (
+                <div key={cat.id} onClick={() => { setSelectedCatalogId(cat.id); setView("detail"); }}
+                  style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", background: "#fff", borderRadius: 12, border: "1.5px solid #f0d8a0", cursor: "pointer" }}>
+                  <span>⚠️</span>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 700, fontSize: 13 }}>{cat.brokerName || "Unknown Broker"}</div>
+                    <div style={{ fontSize: 11, color: "#7a8c74" }}>{cat.items?.length || 0} items</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+    </div>
+  );
+}
+
 function BrokerCatalogs() {
   const { rows: catalogs, upsert: upsertCatalog, remove: removeCatalogDb } = useBrokerCatalogs();
   const [view, setView]          = useState("list"); // list | upload | detail
@@ -3492,11 +3679,10 @@ const LIBRARY_TABS = [
   { id: "soil",      label: "Soil",       icon: "🪱" },
   { id: "inputs",    label: "Inputs",     icon: "🧪" },
   { id: "spacing",   label: "Spacing",    icon: "📐" },
-  { id: "brokers",   label: "Price Lists", icon: "📊" },
+  { id: "brokers",   label: "Brokers",    icon: "🤝" },
   { id: "tags",      label: "Tags",       icon: "🏷️" },
   { id: "combos",    label: "Combos",     icon: "🌸" },
   { id: "pricing",   label: "Pricing",    icon: "💰" },
-  { id: "brkprofile", label: "Broker Profiles", icon: "🤝" },
   { id: "suppliers",  label: "Suppliers",  icon: "🏭" },
   { id: "breeders",   label: "Breeders",   icon: "🧬" },
 ];
@@ -3525,11 +3711,10 @@ export default function Libraries() {
       {tab === "soil"      && <SoilLibrary />}
       {tab === "inputs"    && <InputsLibrary />}
       {tab === "spacing"   && <SpacingLibrary />}
-      {tab === "brokers"   && <BrokerCatalogs />}
+      {tab === "brokers"   && <BrokersSection />}
       {tab === "tags"      && <TagsLibrary />}
       {tab === "combos"    && <ComboLibrary />}
       {tab === "pricing"   && <PriceUpdateLibrary />}
-      {tab === "brkprofile" && <BrokerProfiles />}
       {tab === "suppliers"  && <SupplierProfiles />}
       {tab === "breeders"   && <BreederProfiles />}
     </div>
