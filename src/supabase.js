@@ -197,6 +197,40 @@ export const useInputProducts  = () => useTable("inputs",         { orderBy: "na
 export const useFlags         = () => useTable("flags",           { orderBy: "created_at", localKey: "gh_flags_v1" });
 export const useTaskCompletions = () => useTable("task_completions", { orderBy: "completed_at", localKey: "gh_task_completions_v1" });
 export const useCombos = () => useTable("combo_lots", { orderBy: "created_at", localKey: "gh_combos_v1" });
+export const useMaintenanceRequests = () => useTable("maintenance_requests", { orderBy: "created_at", localKey: "gh_maintenance_v1" });
+
+// ── CROP RUN CODE GENERATOR ───────────────────────────────────────────────────
+// Calls the atomic Supabase RPC to get a never-repeating sequence number
+// Returns a code like "CR2026-0001" 
+export async function getNextCropRunCode(year) {
+  const db = getSupabase();
+  if (!db) {
+    // Fallback for localStorage mode — use timestamp-based number
+    const fallback = Date.now() % 9999 + 1;
+    return `CR${year}-${String(fallback).padStart(4, "0")}`;
+  }
+  try {
+    const { data, error } = await db.rpc("next_crop_run_seq");
+    if (error) throw error;
+    return `CR${year}-${String(data).padStart(4, "0")}`;
+  } catch (e) {
+    console.error("Failed to get crop run sequence:", e);
+    // Fallback: use timestamp
+    const fallback = Date.now() % 9999 + 1;
+    return `CR${year}-${String(fallback).padStart(4, "0")}`;
+  }
+}
+
+// ── BROKER SUB-CODE ───────────────────────────────────────────────────────────
+// Given a crop run code and a broker name, returns the deterministic sub-code
+// Brokers sorted alphabetically → -01, -02, etc.
+export function getBrokerSubCode(cropRunCode, broker, allBrokers) {
+  if (!cropRunCode || !broker) return null;
+  const sorted = [...allBrokers].sort();
+  const idx = sorted.indexOf(broker);
+  if (idx === -1) return `${cropRunCode}-01`;
+  return `${cropRunCode}-${String(idx + 1).padStart(2, "0")}`;
+}
 export const useComboTags = () => useTable("combo_tags", { orderBy: "name", localKey: "gh_tags_v1" });
 export const useOrderMeta = () => useTable("order_meta", { orderBy: "created_at", localKey: "gh_order_meta_v1" });
 export const useReceiving = () => useTable("receiving_records", { orderBy: "week_key", localKey: "gh_receiving_v1" });
