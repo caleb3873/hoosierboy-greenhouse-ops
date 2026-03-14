@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 
 // ── STORAGE KEY ────────────────────────────────────────────────────────────────
 const STORAGE_KEY    = "gh_tradeshow_sessions_v1";
@@ -218,12 +218,13 @@ export default function TradeShow() {
                             {selected > 0 && <span style={{ color: "#7fb069", fontWeight: 700 }}> · {selected} selected</span>}
                           </div>
                         </div>
-                      <div style={{ display: "flex", gap: 8 }}>
-                        <button onClick={e => { e.stopPropagation(); deleteSession(s.id); }}
-                          style={{ background: "none", border: "1px solid #f0d0c0", borderRadius: 7, padding: "5px 12px", fontSize: 12, color: "#c87060", cursor: "pointer", fontFamily: "inherit" }}>
-                          Delete
-                        </button>
-                        <div style={{ background: "#f0f8eb", borderRadius: 7, padding: "5px 12px", fontSize: 12, fontWeight: 700, color: "#2e5c1e" }}>Open →</div>
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <button onClick={e => { e.stopPropagation(); deleteSession(s.id); }}
+                            style={{ background: "none", border: "1px solid #f0d0c0", borderRadius: 7, padding: "5px 12px", fontSize: 12, color: "#c87060", cursor: "pointer", fontFamily: "inherit" }}>
+                            Delete
+                          </button>
+                          <div style={{ background: "#f0f8eb", borderRadius: 7, padding: "5px 12px", fontSize: 12, fontWeight: 700, color: "#2e5c1e" }}>Open →</div>
+                        </div>
                       </div>
                     </div>
                   );
