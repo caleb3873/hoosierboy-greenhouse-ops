@@ -12,6 +12,7 @@ import OperatorView     from "./OperatorView";
 import Preseason        from "./Preseason";
 import { PlannerReceiving } from "./Receiving";
 import Meetings            from "./Meetings";
+import TradeShow           from "./TradeShow";
 import Export              from "./Export";
 
 // ── PLANNER SHELL ─────────────────────────────────────────────────────────────
@@ -24,6 +25,7 @@ const PLANNER_TABS = [
   { id: "space",      label: "Space"     },
   { id: "library",    label: "Library"   },
   { id: "meetings",   label: "Meetings"  },
+  { id: "tradeshow",  label: "📸 Trade Show" },
   { id: "export",     label: "Export"    },
 ];
 
@@ -63,6 +65,7 @@ function PlannerShell() {
         {page === "space"      && <SpaceManagement />}
         {page === "library"    && <Libraries      />}
         {page === "meetings"   && <Meetings        />}
+        {page === "tradeshow"  && <TradeShow       />}
         {page === "export"     && <Export          />}
       </div>
     </div>
