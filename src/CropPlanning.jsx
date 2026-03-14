@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
-import { useCropRuns, useHouses, usePads, useContainers, useSpacingProfiles, useVarieties, useBrokerCatalogs } from "./supabase";
+import { useCropRuns, useHouses, usePads, useContainers, useSpacingProfiles, useVarieties, useBrokerCatalogs, getNextCropRunCode, getBrokerSubCode } from "./supabase";
+import { ViewToolbar, GanttView, BoardView, LaborView, CalendarView } from "./CropPlanningViews";
 import { CatalogPicker } from "./Libraries";
 
 // ── CONSTANTS ─────────────────────────────────────────────────────────────────
@@ -422,7 +423,7 @@ function SpaceAssignmentPicker({ assignments, onChange, houses, pads, sched, cur
                   // Capacity for this range
                   const capI = pickForm.type === "house" ? houseCapacityInfo(s, container) : null;
                   const myPots = runForm ? (Number(runForm.cases)||0) * (runForm.isCased !== false ? (Number(runForm.packSize)||10) : 1) : 0;
-                  const fits = capI?.potCapacity ? myPots <= capI.potCapacity : null;
+                  const fits = (capI?.potCapacity && myPots > 0) ? myPots <= capI.potCapacity : null;
 
                   // Temp group of runs already in this range
                   const rangeGroups = [...new Set(allInRange.map(r => r.tempGroup).filter(Boolean))];
@@ -550,9 +551,9 @@ function SpaceAssignmentPicker({ assignments, onChange, houses, pads, sched, cur
                     {(selectedPad.bays || []).map(b => {
                       const isSelected = pickForm.itemId === b.id;
                       const sqFt = b.widthFt && b.lengthFt ? Math.round(Number(b.widthFt) * Number(b.lengthFt)) : 0;
-                      const potCap = container?.diameterIn && sqFt ? Math.floor(sqFt / Math.pow(container.diameterIn / 12, 2)) : null;
-                      const myPots = runForm ? (Number(runForm.cases)||0) * (runForm.isCased !== false ? (Number(runForm.packSize)||10) : 1) : 0;
-                      const fits = potCap ? myPots <= potCap : null;
+                      // Outdoor bays: pot-tight calc doesn't apply — spacing varies
+                      const potCap = null;
+                      const fits = null;
 
                       // Runs using this bay that overlap our outdoor window
                       const mySched = runForm ? computeSchedule(runForm) : null;
@@ -1632,8 +1633,16 @@ function OrderReviewModal({ form, containers, onClose, onSave }) {
     const wb = XLSX.utils.book_new();
 
     groups.forEach(({ broker, supplier, lines }) => {
+      // Broker sub-code for this broker
+      const allBrokers = [...new Set((form.varieties||[]).map(v=>v.broker).filter(Boolean))].sort();
+      const brokerIdx = allBrokers.indexOf(broker);
+      const brokerSubCode = form.cropRunCode && brokerIdx >= 0
+        ? `${form.cropRunCode}-${String(brokerIdx+1).padStart(2,"0")}`
+        : (form.cropRunCode || "");
+
       const rows = [
         ["Crop Run Order", form.cropName, "", "", ""],
+        ["PO Reference", brokerSubCode || "—", "", "", ""],
         ["Broker", broker, "Supplier", supplier, ""],
         ["Target Week", form.targetWeek ? `Wk ${form.targetWeek} ${form.targetYear}` : "—", "", "", ""],
         [],
@@ -1672,7 +1681,7 @@ function OrderReviewModal({ form, containers, onClose, onSave }) {
       XLSX.utils.book_append_sheet(wb, ws, sheetName);
     });
 
-    const filename = ("Order_" + form.cropName + "_" + groups.map(g => g.broker).filter((v,i,a)=>a.indexOf(v)===i).join("-") + "_Wk" + (form.targetWeek||"TBD") + ".xlsx").replace(/[^a-zA-Z0-9_.-]/g, "_");
+    const filename = ((form.cropRunCode ? form.cropRunCode + "_" : "") + "Order_" + form.cropName + "_" + groups.map(g => g.broker).filter((v,i,a)=>a.indexOf(v)===i).join("-") + "_Wk" + (form.targetWeek||"TBD") + ".xlsx").replace(/[^a-zA-Z0-9_.-]/g, "_");
     const wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" });
     const blob = new Blob([wbout], { type: "application/octet-stream" });
     const url = URL.createObjectURL(blob);
@@ -1829,6 +1838,7 @@ function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles,
     needsSpacing: false,
     indoorAssignments: [], outsideAssignments: [],
     status: "planned", notes: "",
+    orderStatus: "", confirmationNumbers: {},
     // Sourcing
     materialType: "urc",   // urc | seed | liner
     propTraySize: "",       // for urc/seed: 50 | 72 | 84 | 102 | custom
@@ -1863,6 +1873,7 @@ function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles,
   const [showTagReview, setShowTagReview] = useState(false);
   const [runSaved, setRunSaved] = useState(!!initial);
   const { templates, save: saveTemplate, remove: removeTemplate } = useCropRunTemplates();
+  const cropCode = form.cropRunCode || null;
 
   const upd = (f, v) => setForm(x => ({ ...x, [f]: v }));
 
@@ -1927,6 +1938,21 @@ function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles,
       )}
 
       <div style={{ padding: "22px 24px" }}>
+        {/* Crop Run Code badge */}
+        {cropCode && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+            <span style={{ background: "#1e2d1a", color: "#7fb069", borderRadius: 7, padding: "3px 12px", fontSize: 12, fontWeight: 900, letterSpacing: .8, fontFamily: "monospace" }}>{cropCode}</span>
+            {(() => {
+              const brokers = [...new Set((form.varieties||[]).map(v=>v.broker).filter(Boolean))].sort();
+              return brokers.map((b, i) => (
+                <span key={b} style={{ background: "#f0f8eb", color: "#2e5c1e", border: "1px solid #c8e0b8", borderRadius: 5, padding: "2px 8px", fontSize: 10, fontWeight: 700, fontFamily: "monospace" }}>
+                  {cropCode}-{String(i+1).padStart(2,"0")} · {b}
+                </span>
+              ));
+            })()}
+          </div>
+        )}
+
         {/* Tabs */}
         <div style={{ display: "flex", borderBottom: "1.5px solid #e0ead8", marginBottom: 22 }}>
           {[["main","Crop & Schedule"],["space","Space Assignment"],["spacing","Spacing"],["order","Order"],["tags","🏷 Tags"]].map(([id, label]) => (
@@ -2081,10 +2107,10 @@ function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles,
             <div>
               <FL c="Target Week" />
               <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                <select style={{ ...IS(false), width: 90, flexShrink: 0 }} value={form.targetWeek || ""} onChange={e => upd("targetWeek", e.target.value ? Number(e.target.value) : "")}>
+                <select style={{ ...IS(false), width: 66, flexShrink: 0 }} value={form.targetWeek || ""} onChange={e => upd("targetWeek", e.target.value ? Number(e.target.value) : "")}>
                   <option value="">— Wk —</option>
                   {Array.from({ length: 52 }, (_, i) => i + 1).map(w => (
-                    <option key={w} value={w}>Week {w}</option>
+                    <option key={w} value={w}>{w}</option>
                   ))}
                 </select>
                 <span style={{ fontSize: 13, color: "#7a8c74" }}>of</span>
@@ -2318,6 +2344,58 @@ function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles,
           return (
             <div>
               <SourcingSection form={form} upd={upd} focus={focus} setFocus={setFocus} containers={containers} />
+
+              {/* Order Status */}
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5, marginBottom: 8 }}>Order Status</div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  {[
+                    { id: "",          label: "Not Ordered", color: "#aabba0", bg: "#f8faf6" },
+                    { id: "ordered",   label: "📤 Ordered",  color: "#e07b39", bg: "#fff4ee" },
+                    { id: "confirmed", label: "✅ Confirmed", color: "#2e5c1e", bg: "#f0f8eb" },
+                  ].map(os => (
+                    <button key={os.id} onClick={() => upd("orderStatus", os.id)}
+                      style={{ flex: 1, padding: "9px 8px", borderRadius: 9, border: `2px solid ${form.orderStatus === os.id ? os.color : "#e0ead8"}`, background: form.orderStatus === os.id ? os.bg : "#fff", color: form.orderStatus === os.id ? os.color : "#aabba0", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit", transition: "all .15s" }}>
+                      {os.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Confirmation numbers — one per broker */}
+              {(form.orderStatus === "ordered" || form.orderStatus === "confirmed") && (() => {
+                const brokers = [...new Set((form.varieties || []).map(v => v.broker).filter(Boolean))];
+                if (brokers.length === 0) return null;
+                return (
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontSize: 11, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5, marginBottom: 8 }}>Confirmation Numbers</div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {brokers.map(broker => {
+                        const val = (form.confirmationNumbers || {})[broker] || "";
+                        return (
+                          <div key={broker} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                            <div style={{ fontSize: 12, fontWeight: 700, color: "#7a8c74", minWidth: 100, flexShrink: 0 }}>{broker}</div>
+                            <input
+                              value={val}
+                              onChange={e => {
+                                const next = { ...(form.confirmationNumbers || {}), [broker]: e.target.value };
+                                upd("confirmationNumbers", next);
+                                // Auto-confirm if all brokers have numbers
+                                const allDone = brokers.every(b => b === broker ? e.target.value.trim() : next[b]);
+                                if (allDone) upd("orderStatus", "confirmed");
+                              }}
+                              placeholder={`Confirmation # from ${broker}`}
+                              style={{ flex: 1, padding: "7px 11px", border: `1.5px solid ${val ? "#c8e0b8" : "#e0ead8"}`, borderRadius: 8, fontSize: 12, fontFamily: "inherit", background: val ? "#fafcf8" : "#fff", outline: "none" }}
+                            />
+                            {val && <span style={{ fontSize: 14, color: "#7fb069" }}>✓</span>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
+
               <div style={{ borderTop: "2px solid #e0ead8", marginTop: 8, marginBottom: 16 }} />
 
               {/* Cost summary */}
@@ -2600,7 +2678,7 @@ function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles,
                 )}
 
                 {/* Add row + by-type summary */}
-                <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+                <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
                   {varieties.length > 0 && colorTags.length > 0 && (
                     <button onClick={autoPopulate}
                       style={{ background: "#f0f8eb", color: "#2e5c1e", border: "1.5px solid #c8e0b8", borderRadius: 8, padding: "7px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
@@ -2612,6 +2690,21 @@ function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles,
                     + Add tag row
                   </button>
                 </div>
+
+                {/* Running total confirmation banner */}
+                {colorTags.length > 0 && grandTagTotal > 0 && (
+                  <div style={{ background: "#f0f8eb", border: "1.5px solid #c8e0b8", borderRadius: 10, padding: "10px 16px", marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                    <div style={{ fontSize: 13, color: "#2e5c1e" }}>
+                      ✅ <strong>{grandTagTotal.toLocaleString()} tags</strong> across <strong>{colorTags.length} color{colorTags.length !== 1 ? "s" : ""}</strong> added to running tag order
+                      {totalTagCost > 0 && <span style={{ color: "#7fb069", marginLeft: 8 }}>· Est. ${totalTagCost.toFixed(2)}</span>}
+                    </div>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      {byType.ordered.length > 0 && <span style={{ background: "#fff", border: "1px solid #c8e0b8", borderRadius: 6, padding: "2px 8px", fontSize: 11, fontWeight: 700, color: "#2e5c1e" }}>📦 {totalOrdered.toLocaleString()} to order</span>}
+                      {byType.sticker.length > 0 && <span style={{ background: "#fff", border: "1px solid #a0c4e8", borderRadius: 6, padding: "2px 8px", fontSize: 11, fontWeight: 700, color: "#1a4a7a" }}>🏷 {totalSticker.toLocaleString()} sticker</span>}
+                      {byType.inhouse.length > 0 && <span style={{ background: "#fff", border: "1px solid #c0a0e0", borderRadius: 6, padding: "2px 8px", fontSize: 11, fontWeight: 700, color: "#7a2a9a" }}>🖨 {totalInhouse.toLocaleString()} in-house</span>}
+                    </div>
+                  </div>
+                )}
 
                 {/* Notes field */}
                 <div style={{ marginBottom: 14 }}>
@@ -2805,6 +2898,7 @@ function CropRunCard({ run, onEdit, onDelete, onStatusChange, currentYear, spaci
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
             <span style={{ fontSize: 20 }}>🌱</span>
             <span style={{ fontWeight: 800, fontSize: 17, color: "#1e2d1a" }}>{run.cropName}</span>
+            {run.cropRunCode && <span style={{ background: "#1e2d1a", color: "#7fb069", borderRadius: 6, padding: "2px 9px", fontSize: 11, fontWeight: 900, letterSpacing: .5, fontFamily: "monospace" }}>{run.cropRunCode}</span>}
             {run.groupNumber && <span style={{ background: "#1e2d1a", color: "#c8e6b8", borderRadius: 6, padding: "2px 9px", fontSize: 12, fontWeight: 800, letterSpacing: .3 }}>Group {run.groupNumber}</span>}
             {run.variety && <span style={{ fontSize: 13, color: "#7a8c74" }}>{run.variety}{run.color ? ` · ${run.color}` : ""}</span>}
             <Badge label={st.label} color={st.color} />
@@ -3198,16 +3292,25 @@ export default function App() {
   const currentYear = new Date().getFullYear();
   const [view,      setView     ] = useState("list");
   const [editingId, setEditingId] = useState(null);
-  const [tabView,   setTabView  ] = useState("list"); // list | calendar
+  const [tabView,   setTabView  ] = useState("list"); // list | gantt | board | labor | calendar
+  const [searchQuery,   setSearchQuery  ] = useState("");
+  const [brokerFilter,  setBrokerFilter ] = useState("");
   const [showCopyModal, setShowCopyModal] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
   const [yearFilter,   setYearFilter  ] = useState(currentYear);
 
   async function saveRun(r) {
-    await upsertRun(r);
+    let runToSave = r;
+    // Assign crop run code on first creation (no existing code)
+    if (!r.cropRunCode) {
+      const code = await getNextCropRunCode(r.targetYear || currentYear);
+      runToSave = { ...r, cropRunCode: code };
+    }
+    await upsertRun(runToSave);
     setView("list");
     setEditingId(null);
   }
+  async function saveLaborHours(r) { await upsertRun(r); }
   async function deleteRun(id) {
     if (window.confirm("Remove this crop run?")) await removeRun(id);
   }
@@ -3215,9 +3318,12 @@ export default function App() {
     await upsertRun({ id, status });
   }
 
+  const brokers = [...new Set(runs.flatMap(r => (r.varieties||[]).map(v => v.broker).filter(Boolean)))].sort();
   const filtered = runs
     .filter(r => statusFilter === "all" || r.status === statusFilter)
-    .filter(r => !r.targetYear || Number(r.targetYear) === yearFilter);
+    .filter(r => !r.targetYear || Number(r.targetYear) === yearFilter)
+    .filter(r => !searchQuery || r.cropName?.toLowerCase().includes(searchQuery.toLowerCase()))
+    .filter(r => !brokerFilter || (r.varieties||[]).some(v => v.broker === brokerFilter));
 
   const totalUnits = filtered.reduce((s, r) => s + (r.cases && r.packSize ? Number(r.cases) * Number(r.packSize) : 0), 0);
   const totalCost  = filtered.reduce((s, r) => { const u = r.cases && r.packSize ? Number(r.cases) * Number(r.packSize) : 0; return s + (r.costPerUnit ? Number(r.costPerUnit) * u : 0); }, 0);
@@ -3260,24 +3366,15 @@ export default function App() {
             </div>
           )}
 
-          {/* View toggle + filters */}
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              {/* Year filter */}
-              <select value={yearFilter} onChange={e => setYearFilter(Number(e.target.value))} style={{ background: "#fff", border: "1.5px solid #c8d8c0", borderRadius: 20, padding: "6px 14px", fontSize: 12, fontWeight: 600, color: "#1e2d1a", fontFamily: "inherit", cursor: "pointer" }}>
-                {years.map(y => <option key={y} value={y}>{y}</option>)}
-              </select>
-              {/* Status filter */}
-              {[["all","All"], ...CROP_STATUS.map(s => [s.id, s.label])].map(([id, label]) => (
-                <button key={id} onClick={() => setStatusFilter(id)} style={{ background: statusFilter === id ? "#1e2d1a" : "#fff", color: statusFilter === id ? "#c8e6b8" : "#7a8c74", border: `1.5px solid ${statusFilter === id ? "#1e2d1a" : "#c8d8c0"}`, borderRadius: 20, padding: "6px 14px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{label}</button>
-              ))}
-            </div>
-            <div style={{ display: "flex", gap: 5 }}>
-              {[["list","☰ List"],["calendar","📅 Calendar"]].map(([id, label]) => (
-                <button key={id} onClick={() => setTabView(id)} style={{ background: tabView === id ? "#1e2d1a" : "#fff", color: tabView === id ? "#c8e6b8" : "#7a8c74", border: `1.5px solid ${tabView === id ? "#1e2d1a" : "#c8d8c0"}`, borderRadius: 8, padding: "6px 14px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{label}</button>
-              ))}
-            </div>
-          </div>
+          <ViewToolbar
+            tabView={tabView} setTabView={setTabView}
+            statusFilter={statusFilter} setStatusFilter={setStatusFilter}
+            yearFilter={yearFilter} setYearFilter={setYearFilter}
+            years={years}
+            searchQuery={searchQuery} setSearchQuery={setSearchQuery}
+            brokerFilter={brokerFilter} setBrokerFilter={setBrokerFilter}
+            brokers={brokers}
+          />
 
           {tabView === "list" && (<>
             {filtered.length === 0 && (
@@ -3292,11 +3389,20 @@ export default function App() {
             </div>
           </>)}
 
+          {tabView === "gantt" && (
+            <GanttView runs={filtered} currentYear={yearFilter} onEdit={r => { setEditingId(r.id); setView("edit"); }} />
+          )}
+
+          {tabView === "board" && (
+            <BoardView runs={filtered} onEdit={r => { setEditingId(r.id); setView("edit"); }} onStatusChange={statusChange} />
+          )}
+
+          {tabView === "labor" && (
+            <LaborView runs={filtered} currentYear={yearFilter} onSaveLaborHours={saveLaborHours} />
+          )}
+
           {tabView === "calendar" && (
-            <div style={{ background: "#fff", borderRadius: 14, border: "1.5px solid #e0ead8", padding: "20px 24px" }}>
-              <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontSize: 15, color: "#1e2d1a", marginBottom: 16 }}>Week-by-Week — {yearFilter}</div>
-              <WeekCalendar runs={filtered.filter(r => Number(r.targetYear) === yearFilter)} currentYear={yearFilter} />
-            </div>
+            <CalendarView runs={filtered.filter(r => Number(r.targetYear) === yearFilter)} currentYear={yearFilter} />
           )}
         </>)}
 
