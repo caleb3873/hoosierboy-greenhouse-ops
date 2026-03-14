@@ -3,7 +3,7 @@
 
 import { useState, useRef } from "react";
 import { computeSchedule, getCurrentWeek, FLAG_TYPES, uid } from "./shared";
-import { useCropRuns, useFlags, useContainers, useHouses, usePads } from "./supabase";
+import { useCropRuns, useFlags, useContainers, useHouses, usePads, useMaintenanceRequests } from "./supabase";
 import { OperatorReceiving } from "./Receiving";
 
 const CURRENT_WEEK = getCurrentWeek();
@@ -131,6 +131,7 @@ export default function OperatorView({ onSwitchMode }) {
   const { rows: containers, upsert: upsertContainer } = useContainers();
   const { rows: houses,     upsert: upsertHouse }     = useHouses();
   const { rows: pads,       upsert: upsertPad }       = usePads();
+  const { rows: maintenanceRequests, upsert: upsertMaintenance } = useMaintenanceRequests();
 
   const autoTasks = runs.flatMap(r => getAutoTasks(r)).filter(t => !completedIds.has(t.id));
   autoTasks.sort((a, b) => (a.diff ?? 99) - (b.diff ?? 99));
@@ -144,8 +145,9 @@ export default function OperatorView({ onSwitchMode }) {
     { id: "ready",      label: "Ready",      count: readyRuns.length },
     { id: "crops",      label: "Crops",      count: activeRuns.length },
     { id: "flags",      label: "Flags",      count: flags.filter(f => !f.resolved).length },
-    { id: "containers", label: "Containers", count: 0 },
-    { id: "facilities", label: "Facilities", count: 0 },
+    { id: "containers",  label: "Containers",  count: 0 },
+    { id: "facilities",  label: "Facilities",  count: 0 },
+    { id: "maintenance", label: "🔧 Repairs",  count: maintenanceRequests.filter(r => r.status === "open" || r.status === "in_progress").length },
   ];
 
   return (
@@ -267,6 +269,7 @@ export default function OperatorView({ onSwitchMode }) {
         </>)}
 
         {tab === "containers" && <OperatorContainers containers={containers} onUpdate={upsertContainer} />}
+        {tab === "maintenance" && <OperatorMaintenance requests={maintenanceRequests} onSave={upsertMaintenance} />}
         {tab === "facilities" && <OperatorFacilities houses={houses} pads={pads} onSaveHouse={upsertHouse} onSavePad={upsertPad} />}
       </div>
 
@@ -554,6 +557,296 @@ function SimplePadForm({ onSave, onCancel }) {
         style={{ width: "100%", padding: "14px", borderRadius: 10, border: "none", background: "#c8791a", color: "#fff", fontWeight: 800, fontSize: 15, cursor: "pointer", fontFamily: "inherit", opacity: f.name.trim() ? 1 : 0.5 }}>
         Save Pad
       </button>
+    </div>
+  );
+}
+
+// ── OPERATOR MAINTENANCE ──────────────────────────────────────────────────────
+const PRIORITY_META = {
+  normal:   { label: "Normal",   color: "#7a8c74", bg: "#f4f6f2" },
+  urgent:   { label: "Urgent",   color: "#c8791a", bg: "#fff4e8" },
+  critical: { label: "Critical", color: "#c03030", bg: "#fff0f0" },
+};
+
+const CATEGORY_OPTIONS = [
+  "Heating / HVAC", "Irrigation / Watering", "Electrical", "Structure / Roof",
+  "Equipment", "Pest / Disease", "Plumbing", "Door / Gate", "Vehicle", "Other",
+];
+
+function getUrgencyColor(request) {
+  if (request.status === "resolved") return "#7a8c74";
+  const hoursOpen = (Date.now() - new Date(request.submittedAt || request.createdAt).getTime()) / 36e5;
+  if (request.priority === "critical" || hoursOpen > 72) return "#c03030";
+  if (request.priority === "urgent"   || hoursOpen > 24) return "#c8791a";
+  return "#7a8c74";
+}
+
+function getUrgencyBg(request) {
+  const c = getUrgencyColor(request);
+  if (c === "#c03030") return "#fff5f5";
+  if (c === "#c8791a") return "#fff8f0";
+  return "#fff";
+}
+
+function getAgeLabel(request) {
+  const ms = Date.now() - new Date(request.submittedAt || request.createdAt).getTime();
+  const hrs  = Math.floor(ms / 36e5);
+  const days = Math.floor(hrs / 24);
+  if (days > 0) return `${days}d open`;
+  if (hrs > 0)  return `${hrs}h open`;
+  return "Just submitted";
+}
+
+function OperatorMaintenance({ requests, onSave }) {
+  const [view,      setView    ] = useState("list"); // list | new | detail
+  const [selected,  setSelected] = useState(null);
+  const [filter,    setFilter  ] = useState("open"); // open | resolved | all
+  const fileRef = useRef(null);
+
+  // New request form state
+  const [form, setForm] = useState({ title: "", category: "", location: "", description: "", priority: "normal", photo: null, submittedBy: "" });
+  const [saving, setSaving] = useState(false);
+  const [saved,  setSaved ] = useState(false);
+
+  const upd = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const filtered = requests.filter(r => {
+    if (filter === "open")     return r.status === "open" || r.status === "in_progress";
+    if (filter === "resolved") return r.status === "resolved";
+    return true;
+  }).sort((a, b) => new Date(b.submittedAt || b.createdAt) - new Date(a.submittedAt || a.createdAt));
+
+  async function handlePhoto(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => upd("photo", ev.target.result);
+    reader.readAsDataURL(file);
+  }
+
+  async function submitRequest() {
+    if (!form.title.trim()) return;
+    setSaving(true);
+    await onSave({
+      id: crypto.randomUUID(),
+      title:       form.title.trim(),
+      category:    form.category,
+      location:    form.location.trim(),
+      description: form.description.trim(),
+      priority:    form.priority,
+      photo:       form.photo,
+      submittedBy: form.submittedBy.trim(),
+      status:      "open",
+      submittedAt: new Date().toISOString(),
+    });
+    setSaving(false); setSaved(true);
+    setTimeout(() => { setSaved(false); setView("list"); setForm({ title: "", category: "", location: "", description: "", priority: "normal", photo: null, submittedBy: "" }); }, 1200);
+  }
+
+  async function updateStatus(request, status) {
+    await onSave({ ...request, status, resolvedAt: status === "resolved" ? new Date().toISOString() : null });
+    if (selected?.id === request.id) setSelected({ ...request, status });
+  }
+
+  // ── Detail view ──
+  if (view === "detail" && selected) {
+    const req     = requests.find(r => r.id === selected.id) || selected;
+    const urgColor = getUrgencyColor(req);
+    const age      = getAgeLabel(req);
+    return (
+      <div>
+        <button onClick={() => { setView("list"); setSelected(null); }}
+          style={{ background: "none", border: "none", color: "#6a8a5a", fontSize: 13, cursor: "pointer", fontFamily: "inherit", marginBottom: 16, padding: 0 }}>← Back</button>
+
+        {/* Photo */}
+        {req.photo && (
+          <img src={req.photo} alt="Maintenance issue"
+            style={{ width: "100%", borderRadius: 12, maxHeight: 240, objectFit: "cover", marginBottom: 14, border: "1.5px solid #e0ead8" }} />
+        )}
+
+        {/* Header card */}
+        <div style={{ background: getUrgencyBg(req), borderRadius: 14, border: `2px solid ${urgColor}40`, padding: "16px 18px", marginBottom: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: 8 }}>
+            <div style={{ fontSize: 18, fontWeight: 800, color: "#1a2a1a", fontFamily: "'DM Serif Display',Georgia,serif", flex: 1 }}>{req.title}</div>
+            <span style={{ background: urgColor + "20", color: urgColor, border: `1px solid ${urgColor}40`, borderRadius: 20, padding: "2px 10px", fontSize: 10, fontWeight: 800, flexShrink: 0 }}>
+              {req.status === "resolved" ? "✓ Resolved" : age}
+            </span>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {req.category && <span style={{ fontSize: 11, background: "#f0f5ee", color: "#4a5a40", padding: "2px 8px", borderRadius: 6 }}>{req.category}</span>}
+            {req.location && <span style={{ fontSize: 11, background: "#f0f5ee", color: "#4a5a40", padding: "2px 8px", borderRadius: 6 }}>📍 {req.location}</span>}
+            <span style={{ fontSize: 11, background: PRIORITY_META[req.priority]?.bg || "#f4f6f2", color: PRIORITY_META[req.priority]?.color || "#7a8c74", padding: "2px 8px", borderRadius: 6 }}>
+              {PRIORITY_META[req.priority]?.label || "Normal"}
+            </span>
+          </div>
+          {req.submittedBy && <div style={{ fontSize: 11, color: "#8a9a80", marginTop: 8 }}>Submitted by {req.submittedBy}</div>}
+        </div>
+
+        {/* Description */}
+        {req.description && (
+          <div style={{ background: "#fff", borderRadius: 12, border: "1.5px solid #e0ead8", padding: "14px 16px", marginBottom: 12 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#6a8a5a", textTransform: "uppercase", letterSpacing: .6, marginBottom: 6 }}>Notes</div>
+            <div style={{ fontSize: 14, color: "#1a2a1a", lineHeight: 1.6 }}>{req.description}</div>
+          </div>
+        )}
+
+        {/* Status actions */}
+        {req.status !== "resolved" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {req.status === "open" && (
+              <button onClick={() => updateStatus(req, "in_progress")}
+                style={{ width: "100%", padding: 13, borderRadius: 10, border: "none", background: "#4a90d9", color: "#fff", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
+                🔧 Mark In Progress
+              </button>
+            )}
+            <button onClick={() => updateStatus(req, "resolved")}
+              style={{ width: "100%", padding: 13, borderRadius: 10, border: "none", background: "#7fb069", color: "#fff", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
+              ✓ Mark Resolved
+            </button>
+          </div>
+        )}
+        {req.status === "resolved" && req.resolvedAt && (
+          <div style={{ background: "#f0f8eb", borderRadius: 10, padding: "10px 14px", fontSize: 12, color: "#2e5c1e", textAlign: "center" }}>
+            ✓ Resolved {new Date(req.resolvedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── New request form ──
+  if (view === "new") {
+    const IS = { width: "100%", padding: "12px", borderRadius: 10, border: "1.5px solid #c8d8c0", fontSize: 14, fontFamily: "inherit", boxSizing: "border-box", marginBottom: 10, outline: "none" };
+    return (
+      <div>
+        <button onClick={() => setView("list")}
+          style={{ background: "none", border: "none", color: "#6a8a5a", fontSize: 13, cursor: "pointer", fontFamily: "inherit", marginBottom: 16, padding: 0 }}>← Back</button>
+
+        <div style={{ background: "#fff", borderRadius: 14, border: "1.5px solid #e0ead8", padding: "20px" }}>
+          <div style={{ fontSize: 17, fontWeight: 800, color: "#1a2a1a", marginBottom: 16, fontFamily: "'DM Serif Display',Georgia,serif" }}>Report a Repair</div>
+
+          {/* Photo first — most natural on mobile */}
+          <div style={{ marginBottom: 12 }}>
+            {form.photo ? (
+              <div style={{ position: "relative", marginBottom: 10 }}>
+                <img src={form.photo} alt="Issue" style={{ width: "100%", borderRadius: 10, maxHeight: 200, objectFit: "cover" }} />
+                <button onClick={() => fileRef.current.click()}
+                  style={{ position: "absolute", bottom: 8, right: 8, background: "rgba(0,0,0,.6)", border: "none", borderRadius: 8, padding: "6px 12px", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                  📷 Retake
+                </button>
+                <button onClick={() => upd("photo", null)}
+                  style={{ position: "absolute", top: 8, right: 8, background: "rgba(0,0,0,.5)", border: "none", borderRadius: 20, width: 26, height: 26, color: "#fff", fontSize: 14, cursor: "pointer" }}>×</button>
+              </div>
+            ) : (
+              <button onClick={() => fileRef.current.click()}
+                style={{ width: "100%", padding: "24px 0", borderRadius: 10, border: "2px dashed #c8d8c0", background: "#fafcf8", cursor: "pointer", fontFamily: "inherit", marginBottom: 10 }}>
+                <div style={{ fontSize: 28, marginBottom: 4 }}>📷</div>
+                <div style={{ fontSize: 13, color: "#7a8c74", fontWeight: 700 }}>Add photo of issue</div>
+              </button>
+            )}
+            <input ref={fileRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={handlePhoto} />
+          </div>
+
+          <input value={form.title} onChange={e => upd("title", e.target.value)}
+            placeholder="What needs fixing? *" style={IS} />
+
+          <select value={form.category} onChange={e => upd("category", e.target.value)} style={IS}>
+            <option value="">Category</option>
+            {CATEGORY_OPTIONS.map(c => <option key={c}>{c}</option>)}
+          </select>
+
+          <input value={form.location} onChange={e => upd("location", e.target.value)}
+            placeholder="Location (e.g. House 3, Bench B)" style={IS} />
+
+          <textarea value={form.description} onChange={e => upd("description", e.target.value)}
+            placeholder="Describe the issue..." rows={3}
+            style={{ ...IS, resize: "vertical" }} />
+
+          {/* Priority */}
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#6a8a5a", textTransform: "uppercase", letterSpacing: .6, marginBottom: 8 }}>Priority</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              {Object.entries(PRIORITY_META).map(([id, meta]) => (
+                <button key={id} onClick={() => upd("priority", id)}
+                  style={{ flex: 1, padding: "9px 0", borderRadius: 9, border: `2px solid ${form.priority === id ? meta.color : "#e0ead8"}`, background: form.priority === id ? meta.bg : "#fff", color: form.priority === id ? meta.color : "#7a8c74", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+                  {meta.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <input value={form.submittedBy} onChange={e => upd("submittedBy", e.target.value)}
+            placeholder="Your name (optional)" style={IS} />
+
+          <button onClick={submitRequest} disabled={!form.title.trim() || saving}
+            style={{ width: "100%", padding: 14, borderRadius: 10, border: "none", background: saved ? "#2e7d32" : form.title.trim() ? "#1a2a1a" : "#c8d8c0", color: "#fff", fontWeight: 800, fontSize: 15, cursor: form.title.trim() ? "pointer" : "default", fontFamily: "inherit" }}>
+            {saved ? "✓ Submitted!" : saving ? "Submitting..." : "Submit Repair Request"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── List view ──
+  const openCount = requests.filter(r => r.status === "open" || r.status === "in_progress").length;
+
+  return (
+    <div>
+      <button onClick={() => setView("new")}
+        style={{ width: "100%", padding: "14px", borderRadius: 10, border: "none", background: "#c03030", color: "#fff", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit", marginBottom: 14 }}>
+        🔧 Report a Repair
+      </button>
+
+      {/* Filter tabs */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+        {[["open","Open"], ["resolved","Resolved"], ["all","All"]].map(([id, label]) => (
+          <button key={id} onClick={() => setFilter(id)}
+            style={{ flex: 1, padding: "8px 0", borderRadius: 8, border: `1.5px solid ${filter === id ? "#1a2a1a" : "#c8d8c0"}`, background: filter === id ? "#1a2a1a" : "#fff", color: filter === id ? "#c8e6b8" : "#7a8c74", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+            {label}{id === "open" && openCount > 0 ? ` (${openCount})` : ""}
+          </button>
+        ))}
+      </div>
+
+      {filtered.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "48px 0", color: "#8a9a80" }}>
+          <div style={{ fontSize: 36, marginBottom: 10 }}>🔧</div>
+          <div style={{ fontSize: 14, fontWeight: 700 }}>
+            {filter === "open" ? "No open repairs" : filter === "resolved" ? "No resolved repairs" : "No requests yet"}
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {filtered.map(req => {
+            const urgColor = getUrgencyColor(req);
+            const age      = getAgeLabel(req);
+            return (
+              <div key={req.id}
+                onClick={() => { setSelected(req); setView("detail"); }}
+                style={{ background: getUrgencyBg(req), borderRadius: 12, border: `2px solid ${urgColor}40`, padding: "14px 16px", cursor: "pointer", display: "flex", gap: 12, alignItems: "flex-start" }}>
+                {req.photo && (
+                  <img src={req.photo} alt="" style={{ width: 56, height: 56, borderRadius: 8, objectFit: "cover", flexShrink: 0 }} />
+                )}
+                {!req.photo && (
+                  <div style={{ width: 44, height: 44, borderRadius: 8, background: urgColor + "20", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, flexShrink: 0 }}>🔧</div>
+                )}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 6, marginBottom: 4 }}>
+                    <div style={{ fontWeight: 800, fontSize: 14, color: "#1a2a1a", lineHeight: 1.3 }}>{req.title}</div>
+                    <span style={{ fontSize: 10, fontWeight: 800, color: urgColor, background: urgColor + "15", padding: "2px 7px", borderRadius: 8, flexShrink: 0, border: `1px solid ${urgColor}30` }}>
+                      {req.status === "resolved" ? "✓" : age}
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {req.category && <span style={{ fontSize: 10, color: "#7a8c74" }}>{req.category}</span>}
+                    {req.location && <span style={{ fontSize: 10, color: "#7a8c74" }}>· 📍 {req.location}</span>}
+                    {req.status === "in_progress" && <span style={{ fontSize: 10, color: "#4a90d9", fontWeight: 700 }}>· In Progress</span>}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
