@@ -5,8 +5,8 @@ import { getSupabase } from "./supabase";
 // Floor access codes — change these to whatever you want
 // These are stored in localStorage and checked against the floor_codes table
 export const FLOOR_CODES = {
-  operator:    "GRW2026",   // All floor operators / growers
-  maintenance: "MNT2026",   // Maintenance person
+  operator:    "2026100",   // All floor operators / growers
+  maintenance: "2026200",   // Maintenance person
 };
 
 const LOGO_WHITE = "https://cdn.prod.website-files.com/63b5c78a53ecb12c888ba09a/63b5d5e281aa6766b5cb8ace_HOO-Boy%20Logo%20Reversed-White.png";
@@ -242,7 +242,7 @@ function FloorCodeLogin({ onSuccess }) {
     ["1","2","3"],
     ["4","5","6"],
     ["7","8","9"],
-    ["A","0","DEL"],
+    ["","0","DEL"],
   ];
 
   return (
@@ -272,16 +272,18 @@ function FloorCodeLogin({ onSuccess }) {
       {/* Keypad */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, maxWidth: 260, margin: "0 auto" }}>
         {KEYS.flat().map(k => (
-          <button key={k} onClick={() => handleKeypad(k)}
+          <button key={k} onClick={() => k && handleKeypad(k)}
             style={{
-              padding: "14px 0", borderRadius: 10, border: "1.5px solid #c8d8c0",
-              background: k === "DEL" ? "#f8faf6" : "#fff",
+              padding: "14px 0", borderRadius: 10,
+              border: k === "" ? "none" : "1.5px solid #c8d8c0",
+              background: k === "DEL" ? "#f8faf6" : k === "" ? "transparent" : "#fff",
               color: k === "DEL" ? "#7a8c74" : "#1e2d1a",
               fontWeight: 800, fontSize: k === "DEL" ? 12 : 18,
-              cursor: "pointer", fontFamily: "inherit", transition: "all .1s",
+              cursor: k === "" ? "default" : "pointer", fontFamily: "inherit", transition: "all .1s",
+              pointerEvents: k === "" ? "none" : "auto",
             }}
-            onMouseDown={e => { e.currentTarget.style.background = "#f0f8eb"; e.currentTarget.style.borderColor = "#7fb069"; }}
-            onMouseUp={e => { e.currentTarget.style.background = k === "DEL" ? "#f8faf6" : "#fff"; e.currentTarget.style.borderColor = "#c8d8c0"; }}
+            onMouseDown={e => { if (k) { e.currentTarget.style.background = "#f0f8eb"; e.currentTarget.style.borderColor = "#7fb069"; }}}
+            onMouseUp={e => { if (k) { e.currentTarget.style.background = k === "DEL" ? "#f8faf6" : "#fff"; e.currentTarget.style.borderColor = "#c8d8c0"; }}}
           >
             {k === "DEL" ? "⌫" : k}
           </button>
