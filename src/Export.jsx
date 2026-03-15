@@ -663,221 +663,290 @@ export default function Export() {
 
 // ── BRANDED WEEK CALENDAR EXPORT ─────────────────────────────────────────────
 const LOGO_URL = "https://cdn.prod.website-files.com/63b5c78a53ecb12c888ba09a/63b5db6db690723f878c284b_HOO-Full%20Logo-Color.png";
-const BOY_URL  = "https://cdn.prod.website-files.com/63b5c78a53ecb12c888ba09a/63b5d5e281aa6766b5cb8ace_HOO-Boy%20Logo%20Reversed-White.png";
 
-const US_FIXED_HOLIDAYS = { "1-1":"New Year's Day","7-4":"Independence Day","11-11":"Veterans Day","12-25":"Christmas","12-31":"New Year's Eve" };
-
-function getNth(year, month, weekday, nth) {
-  const d = new Date(year, month, 1); let count = 0;
-  while (d.getMonth() === month) { if (d.getDay() === weekday) { count++; if (count === nth) return d; } d.setDate(d.getDate() + 1); }
+function getNthDay(year, month, weekday, nth) {
+  const d = new Date(year, month, 1); let n = 0;
+  while (d.getMonth() === month) { if (d.getDay() === weekday) { n++; if (n === nth) return d; } d.setDate(d.getDate() + 1); }
   return null;
 }
-function getLast(year, month, weekday) {
+function getLastDay(year, month, weekday) {
   const d = new Date(year, month + 1, 0);
   while (d.getDay() !== weekday) d.setDate(d.getDate() - 1);
   return d;
 }
-function getMovableHolidays(year) {
-  const h = {}; const fmt = d => `${d.getMonth()+1}-${d.getDate()}`;
-  h[fmt(getNth(year,0,1,3))] = "MLK Day";
-  h[fmt(getNth(year,1,1,3))] = "Presidents Day";
-  h[fmt(getLast(year,4,1))]  = "Memorial Day";
-  h[fmt(getNth(year,8,1,1))] = "Labor Day";
-  const tg = getNth(year,10,4,4); if (tg) { h[fmt(tg)] = "Thanksgiving"; const bf=new Date(tg); bf.setDate(bf.getDate()+1); h[fmt(bf)]="Day After Thxg."; }
-  // Easter
-  const a=year%19,b=Math.floor(year/100),c=year%100,d2=Math.floor(b/4),e2=b%4,f=Math.floor((b+8)/25),g=Math.floor((b-f+1)/3),h2=(19*a+b-d2-g+15)%30,i=Math.floor(c/4),k=c%4,l=(32+2*e2+2*i-h2-k)%7,m=Math.floor((a+11*h2+22*l)/451);
-  const em=Math.floor((h2+l-7*m+114)/31)-1, ed=((h2+l-7*m+114)%31)+1;
-  const easter=new Date(year,em,ed); h[fmt(easter)]="Easter";
-  const gf=new Date(easter); gf.setDate(gf.getDate()-2); h[fmt(gf)]="Good Friday";
+function getHolidays(year) {
+  const h = {};
+  const set = (d, name) => { if (d) h[`${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`] = name; };
+  // Fixed
+  set(new Date(year, 0, 1),  "New Year's Day");
+  set(new Date(year, 6, 4),  "Independence Day");
+  set(new Date(year, 10, 11),"Veterans Day");
+  set(new Date(year, 11, 25),"Christmas");
+  // Movable
+  set(getNthDay(year, 0, 1, 3),  "MLK Day");
+  set(getNthDay(year, 1, 1, 3),  "Presidents Day");
+  set(getLastDay(year, 4, 1),    "Memorial Day");
+  set(getNthDay(year, 8, 1, 1),  "Labor Day");
+  const tg = getNthDay(year, 10, 4, 4);
+  set(tg, "Thanksgiving");
+  if (tg) { const bf = new Date(tg); bf.setDate(bf.getDate()+1); set(bf,"Day After Thxg."); }
+  // Easter (Gregorian algorithm)
+  const a=year%19,b=Math.floor(year/100),c=year%100,d2=Math.floor(b/4),e2=b%4,
+        f=Math.floor((b+8)/25),g=Math.floor((b-f+1)/3),
+        h2=(19*a+b-d2-g+15)%30,i=Math.floor(c/4),k=c%4,
+        l=(32+2*e2+2*i-h2-k)%7,m=Math.floor((a+11*h2+22*l)/451),
+        em=Math.floor((h2+l-7*m+114)/31)-1, ed=((h2+l-7*m+114)%31)+1;
+  const easter = new Date(year, em, ed);
+  set(easter, "Easter");
+  const gf = new Date(easter); gf.setDate(gf.getDate()-2); set(gf,"Good Friday");
+  // Valentine's, Mother's Day, Father's Day
+  set(new Date(year, 1, 14), "Valentine's Day");
+  set(getNthDay(year, 4, 0, 2), "Mother's Day");
+  set(getNthDay(year, 5, 0, 3), "Father's Day");
   return h;
 }
-function getWeekNum(date) {
-  const d=new Date(Date.UTC(date.getFullYear(),date.getMonth(),date.getDate()));
-  d.setUTCDate(d.getUTCDate()+4-(d.getUTCDay()||7));
-  return Math.ceil((((d-new Date(Date.UTC(d.getUTCFullYear(),0,1)))/86400000)+1)/7);
+function isoWeek(date) {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
+  const y1 = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  return Math.ceil((((d - y1) / 86400000) + 1) / 7);
 }
-function buildCalendarWeeks(year) {
-  const fixed=US_FIXED_HOLIDAYS, movable=getMovableHolidays(year);
-  const weeks=[];
-  const jan1=new Date(year,0,1);
-  const dow=jan1.getDay()||7;
-  const weekStart=new Date(jan1); weekStart.setDate(jan1.getDate()-dow+1);
-  for (let wk=1; wk<=54; wk++) {
-    const mon=new Date(weekStart); mon.setDate(weekStart.getDate()+(wk-1)*7);
-    const sun=new Date(mon); sun.setDate(mon.getDate()+6);
-    if (sun.getFullYear()<year && wk>1) continue;
-    if (mon.getFullYear()>year) break;
-    const wn=getWeekNum(mon); if (wn>52) break;
-    const hols=[];
-    for (let d=0;d<7;d++) {
-      const day=new Date(mon); day.setDate(mon.getDate()+d);
-      const key=`${day.getMonth()+1}-${day.getDate()}`;
-      if (fixed[key])   hols.push(fixed[key]);
-      if (movable[key]) hols.push(movable[key]);
-    }
-    weeks.push({
-      week:wn, start:mon, end:sun, hols,
-      month:mon.getMonth(),
-      label:`${mon.toLocaleDateString("en-US",{month:"short",day:"numeric"})}–${sun.toLocaleDateString("en-US",{month:"short",day:"numeric"})}`,
-    });
-  }
-  return weeks;
+function isoWeekYear(date) {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
+  return d.getUTCFullYear();
 }
-
-// Month display names grouped for the calendar header
-const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-// Colors per month — cycling red/green brand palette with variation
-const MONTH_BG = ["#c8191a","#1a7a3a","#a01010","#155a28","#c8191a","#1a7a3a","#a01010","#155a28","#c8191a","#1a7a3a","#a01010","#155a28"];
 
 function WeekCalendarExport() {
   const currentYear = new Date().getFullYear();
-  const [calYear,    setCalYear   ] = useState(currentYear);
-  const [weekFrom,   setWeekFrom  ] = useState(1);
-  const [weekTo,     setWeekTo    ] = useState(52);
-  const [showHols,   setShowHols  ] = useState(true);
+  const [calYear,    setCalYear  ] = useState(currentYear);
+  const [showHols,   setShowHols ] = useState(true);
   const [generating, setGenerating] = useState(false);
 
-  function generateAndPrint() {
+  function generate() {
     setGenerating(true);
     setTimeout(() => {
-      try { buildAndPrint(calYear, weekFrom, weekTo, showHols); }
-      catch(e) { alert("Calendar failed: " + e.message); }
+      try { openCalendar(calYear, showHols); }
+      catch(e) { alert("Failed: " + e.message); }
       setGenerating(false);
     }, 50);
   }
 
-  function buildAndPrint(year, wFrom, wTo, hols) {
-    const weeks = buildCalendarWeeks(year).filter(w => w.week >= wFrom && w.week <= wTo);
-    const COLS = 4;
-    const ROWS = Math.ceil(weeks.length / COLS);
+  function openCalendar(year, hols) {
+    const holidays = hols ? getHolidays(year) : {};
+    const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+    const SHORT  = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
-    // Build HTML for the calendar
-    const cellStyle = (w) => {
-      const mc = MONTH_BG[w.month];
-      const hasHol = hols && w.hols.length > 0;
-      return `background:${hasHol ? "#fff8f0" : "#fff"};border:1px solid ${hasHol ? "#f0c080" : "#dde8d4"};border-radius:4px;padding:0;overflow:hidden;break-inside:avoid;`;
+    // Build each month's grid
+    function buildMonth(year, monthIdx) {
+      const rows = [];
+      const first = new Date(year, monthIdx, 1);
+      // Start from Sunday of the week containing the 1st
+      const start = new Date(first);
+      start.setDate(1 - first.getDay()); // go back to Sunday
+      let d = new Date(start);
+      while (d.getMonth() <= monthIdx || (d.getMonth() < monthIdx)) {
+        if (d.getFullYear() > year && d.getMonth() > monthIdx) break;
+        const row = [];
+        // Week number — use Monday of this week for ISO week
+        const mon = new Date(d); mon.setDate(d.getDate() + 1);
+        const wn = isoWeek(mon);
+        const wy = isoWeekYear(mon);
+        row.push({ type: "week", num: (wy === year || monthIdx < 2) ? wn : wn });
+        for (let i = 0; i < 7; i++) {
+          const day = new Date(d);
+          day.setDate(d.getDate() + i);
+          const inMonth = day.getMonth() === monthIdx && day.getFullYear() === year;
+          const key = `${day.getFullYear()}-${day.getMonth()}-${day.getDate()}`;
+          const hol = holidays[key] || null;
+          row.push({ type: "day", date: day.getDate(), inMonth, hol, isSun: i === 0, isSat: i === 6 });
+        }
+        rows.push(row);
+        d.setDate(d.getDate() + 7);
+        if (d.getMonth() > monthIdx && d.getFullYear() >= year) break;
+      }
+      return rows;
+    }
+
+    // Color palette — clean, professional, single accent color per month
+    // Muted blue-gray headers, clean white cells, green accent for week numbers
+    const monthColors = [
+      "#3a5a8a","#4a7a6a","#5a6a9a","#3a7a5a",
+      "#6a5a9a","#3a8a6a","#8a5a3a","#3a6a8a",
+      "#6a3a5a","#4a8a5a","#5a3a7a","#3a5a6a",
+    ];
+
+    const monthHTML = (monthIdx) => {
+      const rows = buildMonth(year, monthIdx);
+      const mc = monthColors[monthIdx];
+      const cells = rows.map(row => {
+        const weekCell = `<td class="wk">${row[0].num}</td>`;
+        const dayCells = row.slice(1).map(cell => {
+          if (!cell.inMonth) return `<td class="out"></td>`;
+          const holClass = cell.hol ? " hol" : "";
+          const holTitle = cell.hol ? ` title="${cell.hol}"` : "";
+          const holDot = cell.hol ? `<div class="hname">${cell.hol}</div>` : "";
+          return `<td class="d${holClass}"${holTitle}><span class="dn">${cell.date}</span>${holDot}</td>`;
+        }).join("");
+        return `<tr>${weekCell}${dayCells}</tr>`;
+      }).join("");
+
+      return `
+        <div class="month-block">
+          <div class="month-header" style="background:${mc}">
+            <span class="month-name">${MONTHS[monthIdx].toUpperCase()}</span>
+            <span class="month-short">${year}</span>
+          </div>
+          <table class="month-table">
+            <thead>
+              <tr>
+                <th class="wk-head">Wk</th>
+                <th>Su</th><th>Mo</th><th>Tu</th><th>We</th><th>Th</th><th>Fr</th><th>Sa</th>
+              </tr>
+            </thead>
+            <tbody>${cells}</tbody>
+          </table>
+        </div>`;
     };
 
-    const cellsHTML = weeks.map(w => {
-      const mc = MONTH_BG[w.month];
-      const holHtml = hols && w.hols.length > 0
-        ? `<div style="font-size:7px;color:#a04010;padding:2px 4px;line-height:1.3;font-style:italic;">${w.hols.join(" · ")}</div>`
-        : "";
-      return `
-        <div style="${cellStyle(w)}">
-          <div style="background:${mc};padding:3px 6px;display:flex;justify-content:space-between;align-items:center;">
-            <span style="font-size:13px;font-weight:900;color:#fff;font-family:'Arial Black',Arial,sans-serif;">${w.week}</span>
-            <span style="font-size:8px;color:rgba(255,255,255,0.85);font-weight:700;font-family:Arial,sans-serif;">${MONTH_NAMES[w.month]}</span>
-          </div>
-          <div style="padding:2px 5px;">
-            <div style="font-size:8px;color:#4a5a40;font-family:Arial,sans-serif;line-height:1.4;">${w.label}</div>
-            ${holHtml}
-          </div>
-        </div>`;
-    }).join("");
+    const allMonths = Array.from({length:12},(_,i)=>monthHTML(i)).join("");
 
     const html = `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8"/>
-<title>Hoosier Boy ${year} Week Calendar</title>
+<title>Hoosier Boy ${year} Grower Week Calendar</title>
 <style>
-  @page { size: letter portrait; margin: 0.4in; }
+  @page { size: letter portrait; margin: 0.35in 0.3in 0.3in 0.3in; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: Arial, sans-serif; background: #fff; }
-  .page { width: 100%; }
-  .header { background: #1e2d1a; padding: 14px 18px; display: flex; align-items: center; justify-content: space-between; border-radius: 6px; margin-bottom: 10px; }
-  .header-logo { height: 52px; object-fit: contain; }
-  .header-right { text-align: right; }
-  .header-year { font-size: 36px; font-weight: 900; color: #c8e6b8; font-family: Georgia, serif; line-height: 1; }
-  .header-sub { font-size: 10px; color: #7a9a6a; letter-spacing: 2px; text-transform: uppercase; margin-top: 2px; }
-  .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
-  .footer { margin-top: 10px; text-align: center; font-size: 8px; color: #aabba0; padding-top: 6px; border-top: 1px solid #e0ead8; }
-  .watermark { position: fixed; bottom: 0.4in; right: 0.3in; opacity: 0.06; width: 180px; pointer-events: none; }
+  body { font-family: 'Arial', sans-serif; background: #fff; color: #1a2a1a; }
+
+  /* ── HEADER ── */
+  .cal-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 12px; background: #1e2d1a; border-radius: 5px;
+    margin-bottom: 8px;
+  }
+  .cal-logo { height: 44px; object-fit: contain; }
+  .cal-title-block { text-align: right; }
+  .cal-year { font-size: 32px; font-weight: 900; color: #fff; line-height: 1; font-family: Georgia, serif; }
+  .cal-subtitle { font-size: 8px; color: #7a9a6a; letter-spacing: 2px; text-transform: uppercase; margin-top: 1px; }
+
+  /* ── GRID ── */
+  .cal-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+  }
+
+  /* ── MONTH BLOCK ── */
+  .month-block { break-inside: avoid; }
+  .month-header {
+    padding: 4px 7px; border-radius: 3px 3px 0 0;
+    display: flex; align-items: baseline; justify-content: space-between;
+  }
+  .month-name { font-size: 10px; font-weight: 900; color: #fff; letter-spacing: 1.5px; }
+  .month-short { font-size: 8px; color: rgba(255,255,255,0.6); font-weight: 600; }
+
+  /* ── TABLE ── */
+  .month-table { width: 100%; border-collapse: collapse; border: 1px solid #dde; border-top: none; }
+  .month-table thead tr { background: #f0f4f0; }
+  .month-table th {
+    font-size: 7px; font-weight: 800; color: #6a7a6a;
+    padding: 2px 0; text-align: center; border-bottom: 1px solid #dde;
+    letter-spacing: 0.3px;
+  }
+  .month-table th.wk-head { color: #2e5c1e; font-size: 6.5px; }
+  .month-table td {
+    font-size: 8px; text-align: center; padding: 1.5px 1px;
+    vertical-align: top; border: 0.5px solid #eef2ee; min-height: 16px;
+    line-height: 1;
+  }
+  td.wk {
+    font-size: 7px; font-weight: 800; color: #2e5c1e;
+    background: #f0f8eb; border-right: 1px solid #c8e0b8;
+    text-align: center; vertical-align: middle;
+    padding: 0 2px;
+  }
+  td.out { background: #fafafa; }
+  td.d { color: #1a2a1a; }
+  td.hol { background: #fff8f0; }
+  .dn { display: block; font-weight: 600; }
+  .hname {
+    font-size: 5.5px; color: #a04010; font-weight: 600;
+    line-height: 1.2; margin-top: 1px; text-align: center;
+    word-break: break-word; hyphens: auto;
+  }
+
+  /* ── FOOTER ── */
+  .cal-footer {
+    margin-top: 6px; text-align: center;
+    font-size: 7px; color: #aabba0; padding-top: 4px;
+    border-top: 0.5px solid #e0ead8;
+  }
+
   @media print {
     body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   }
 </style>
 </head>
 <body>
-<div class="page">
-  <div class="header">
-    <img src="${LOGO_URL}" class="header-logo" crossorigin="anonymous" />
-    <div class="header-right">
-      <div class="header-year">${year}</div>
-      <div class="header-sub">Production Week Calendar</div>
-      ${wFrom > 1 || wTo < 52 ? `<div style="font-size:9px;color:#4a6a3a;margin-top:2px;">Weeks ${wFrom}–${wTo}</div>` : ""}
+  <div class="cal-header">
+    <img src="${LOGO_URL}" class="cal-logo" crossorigin="anonymous" />
+    <div class="cal-title-block">
+      <div class="cal-year">${year}</div>
+      <div class="cal-subtitle">Grower Week Calendar</div>
     </div>
   </div>
-  <div class="grid">${cellsHTML}</div>
-  <div class="footer">
-    Hoosier Boy Greenhouse · by Schlegel Greenhouse · Indianapolis, IN
-    · Week numbers follow ISO 8601 standard
-    ${hols ? "· Holidays highlighted in orange" : ""}
+  <div class="cal-grid">${allMonths}</div>
+  <div class="cal-footer">
+    Hoosier Boy Greenhouse &nbsp;·&nbsp; by Schlegel Greenhouse &nbsp;·&nbsp; Indianapolis, IN
+    &nbsp;·&nbsp; Week numbers follow ISO 8601 standard (weeks begin Sunday)
+    ${hols ? "&nbsp;·&nbsp; Holidays highlighted" : ""}
   </div>
-</div>
-<img src="${BOY_URL}" class="watermark" crossorigin="anonymous" />
 </body>
 </html>`;
 
-    // Open in new window and print
-    const win = window.open("", "_blank", "width=900,height=1100");
+    const win = window.open("", "_blank", "width=850,height=1100");
     win.document.write(html);
     win.document.close();
-    win.onload = () => {
-      setTimeout(() => {
-        win.focus();
-        win.print();
-      }, 800);
-    };
+    win.onload = () => setTimeout(() => { win.focus(); win.print(); }, 600);
   }
 
   return (
     <div>
       <div style={{ marginBottom: 16 }}>
-        <div style={{ fontSize: 18, fontWeight: 800, color: "#1e2d1a", marginBottom: 4 }}>📅 Branded Week Calendar</div>
-        <div style={{ fontSize: 13, color: "#7a8c74" }}>Portrait calendar with week numbers, US holidays, and Hoosier Boy branding. Opens in a new window — print directly or save as PDF from your browser's print dialog.</div>
+        <div style={{ fontSize: 18, fontWeight: 800, color: "#1e2d1a", marginBottom: 4 }}>📅 Grower Week Calendar</div>
+        <div style={{ fontSize: 13, color: "#7a8c74" }}>Standard 12-month grower calendar with ISO week numbers. Opens in a new window — print or save as PDF from your browser.</div>
       </div>
 
-      <div style={{ background: "#fff", borderRadius: 12, border: "1.5px solid #e0ead8", padding: "16px 20px", marginBottom: 14 }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 14, marginBottom: 16 }}>
+      <div style={{ background: "#fff", borderRadius: 12, border: "1.5px solid #e0ead8", padding: "16px 20px" }}>
+        <div style={{ display: "flex", gap: 14, alignItems: "flex-end", marginBottom: 16, flexWrap: "wrap" }}>
           <div>
             <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5, marginBottom: 6 }}>Year</div>
             <select value={calYear} onChange={e => setCalYear(Number(e.target.value))}
-              style={{ width: "100%", padding: "9px 12px", border: "1.5px solid #c8d8c0", borderRadius: 9, fontSize: 13, fontFamily: "inherit", background: "#fff" }}>
-              {[currentYear - 1, currentYear, currentYear + 1, currentYear + 2].map(y => <option key={y} value={y}>{y}</option>)}
+              style={{ padding: "9px 14px", border: "1.5px solid #c8d8c0", borderRadius: 9, fontSize: 13, fontFamily: "inherit", background: "#fff" }}>
+              {[currentYear-1, currentYear, currentYear+1, currentYear+2].map(y => <option key={y} value={y}>{y}</option>)}
             </select>
           </div>
-          <div>
-            <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5, marginBottom: 6 }}>Week Range</div>
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <input type="number" min="1" max="52" value={weekFrom} onChange={e => setWeekFrom(Math.max(1, Math.min(52, Number(e.target.value))))}
-                style={{ width: "100%", padding: "9px 10px", border: "1.5px solid #c8d8c0", borderRadius: 9, fontSize: 13, fontFamily: "inherit" }} />
-              <span style={{ fontSize: 12, color: "#aabba0", flexShrink: 0 }}>to</span>
-              <input type="number" min="1" max="52" value={weekTo} onChange={e => setWeekTo(Math.max(1, Math.min(52, Number(e.target.value))))}
-                style={{ width: "100%", padding: "9px 10px", border: "1.5px solid #c8d8c0", borderRadius: 9, fontSize: 13, fontFamily: "inherit" }} />
-            </div>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, justifyContent: "flex-end" }}>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-              <input type="checkbox" checked={showHols} onChange={e => setShowHols(e.target.checked)} style={{ accentColor: "#7fb069", width: 15, height: 15 }} />
-              <span style={{ fontSize: 12, fontWeight: 700, color: "#7a8c74" }}>Show US holidays</span>
-            </label>
-          </div>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", paddingBottom: 2 }}>
+            <input type="checkbox" checked={showHols} onChange={e => setShowHols(e.target.checked)} style={{ accentColor: "#7fb069", width: 15, height: 15 }} />
+            <span style={{ fontSize: 12, fontWeight: 700, color: "#7a8c74" }}>Show holidays</span>
+          </label>
         </div>
 
         <div style={{ background: "#f8faf6", border: "1px solid #e0ead8", borderRadius: 8, padding: "10px 14px", marginBottom: 14, fontSize: 12, color: "#7a8c74" }}>
-          {calYear} · Weeks {weekFrom}–{weekTo} · 4-column portrait layout · Letter size · Red & green brand colors
+          12 months · ISO week numbers · 3-column portrait layout · Letter size · Hoosier Boy branded header
         </div>
 
-        <button onClick={generateAndPrint} disabled={generating}
-          style={{ width: "100%", padding: "13px 0", borderRadius: 10, border: "none", background: generating ? "#7a8c74" : "#c8191a", color: "#fff", fontWeight: 800, fontSize: 14, cursor: generating ? "wait" : "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+        <button onClick={generate} disabled={generating}
+          style={{ width: "100%", padding: "13px 0", borderRadius: 10, border: "none", background: generating ? "#7a8c74" : "#1e2d1a", color: "#c8e6b8", fontWeight: 800, fontSize: 14, cursor: generating ? "wait" : "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
           {generating
             ? <><span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>⟳</span> Building...</>
             : <><span>🖨</span> Open & Print {calYear} Calendar</>}
         </button>
         <div style={{ fontSize: 11, color: "#aabba0", textAlign: "center", marginTop: 8 }}>
-          Opens in new tab → use browser Print dialog → "Save as PDF" to download
+          Opens in new tab → browser Print dialog → "Save as PDF" to download
         </div>
       </div>
     </div>
