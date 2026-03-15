@@ -548,13 +548,17 @@ export default function Export() {
 
   return (
     <div style={{ fontFamily: "'DM Sans','Segoe UI',sans-serif", maxWidth: 700 }}>
-      <div style={{ marginBottom: 22 }}>
-        <div style={{ fontSize: 24, fontWeight: 900, color: "#1e2d1a", marginBottom: 4 }}>Export & Backup</div>
+
+      {/* ── PDF DROP ZONE — featured at top ── */}
+      <ConfirmationDropZoneFeature runs={runs} upsertRun={async (r) => { /* handled in PlannerHome — this is display only */ }} />
+
+      <div style={{ marginTop: 28, marginBottom: 18 }}>
+        <div style={{ fontSize: 24, fontWeight: 900, color: "#1e2d1a", marginBottom: 4 }}>Season Backup</div>
         <div style={{ fontSize: 14, color: "#7a8c74" }}>Download your entire season as an Excel file — always have a local copy</div>
       </div>
 
-      {/* Overdue backup warning */}
-      {exportOverdue && (
+      {/* Backup status */}
+      {exportOverdue ? (
         <div style={{ background: daysSinceExport === null ? "#fff8e8" : "#fde8e8", border: `1.5px solid ${daysSinceExport === null ? "#f0d080" : "#f0c0c0"}`, borderRadius: 12, padding: "12px 18px", marginBottom: 16, display: "flex", alignItems: "center", gap: 12 }}>
           <span style={{ fontSize: 20 }}>{daysSinceExport === null ? "📋" : "⚠️"}</span>
           <div style={{ flex: 1 }}>
@@ -566,8 +570,7 @@ export default function Export() {
             </div>
           </div>
         </div>
-      )}
-      {!exportOverdue && lastExport && (
+      ) : lastExport && (
         <div style={{ background: "#f0f8eb", border: "1.5px solid #b8d8a0", borderRadius: 12, padding: "10px 18px", marginBottom: 16, display: "flex", alignItems: "center", gap: 10 }}>
           <span style={{ fontSize: 16 }}>✓</span>
           <div style={{ fontSize: 13, fontWeight: 600, color: "#2e5c1e" }}>
@@ -656,6 +659,65 @@ export default function Export() {
       {/* ── BRANDED WEEK CALENDAR ── */}
       <div style={{ marginTop: 32, borderTop: "2px solid #e0ead8", paddingTop: 24 }}>
         <WeekCalendarExport />
+      </div>
+    </div>
+  );
+}
+
+// ── CONFIRMATION PDF DROP ZONE (featured) ────────────────────────────────────
+function ConfirmationDropZoneFeature({ runs }) {
+  const [dragOver, setDragOver] = useState(false);
+
+  return (
+    <div style={{
+      background: "linear-gradient(135deg, #1e2d1a 0%, #2e4a22 100%)",
+      borderRadius: 16, padding: "22px 24px", position: "relative", overflow: "hidden",
+    }}>
+      {/* Decorative circles */}
+      <div style={{ position: "absolute", top: -30, right: -30, width: 120, height: 120, borderRadius: "50%", background: "rgba(127,176,105,0.08)", pointerEvents: "none" }} />
+      <div style={{ position: "absolute", bottom: -20, right: 60, width: 80, height: 80, borderRadius: "50%", background: "rgba(127,176,105,0.06)", pointerEvents: "none" }} />
+
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 18, position: "relative" }}>
+        {/* Icon */}
+        <div style={{ background: "rgba(127,176,105,0.15)", borderRadius: 14, padding: "14px 16px", flexShrink: 0, border: "1.5px solid rgba(127,176,105,0.25)" }}>
+          <div style={{ fontSize: 36 }}>📄</div>
+        </div>
+
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontSize: 20, color: "#c8e6b8", marginBottom: 4 }}>
+            Drop Broker Confirmation
+          </div>
+          <div style={{ fontSize: 13, color: "#7a9a6a", lineHeight: 1.6, marginBottom: 14 }}>
+            Drag a PDF confirmation from your broker email directly here. Claude reads the PO number, matches it to your crop runs via the CR code, and logs the confirmation automatically.
+          </div>
+
+          {/* Drop target */}
+          <div
+            onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={e => {
+              e.preventDefault(); setDragOver(false);
+              // Redirect to home page drop zone logic — just show a tip
+              alert("For full PDF processing, use the drop zone on the Home page where your crop run data is loaded.");
+            }}
+            style={{
+              border: `2px dashed ${dragOver ? "#7fb069" : "rgba(127,176,105,0.4)"}`,
+              borderRadius: 10, padding: "14px 18px",
+              background: dragOver ? "rgba(127,176,105,0.15)" : "rgba(255,255,255,0.05)",
+              cursor: "pointer", transition: "all .2s",
+              display: "flex", alignItems: "center", gap: 12,
+            }}>
+            <span style={{ fontSize: 24 }}>{dragOver ? "📂" : "📋"}</span>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: dragOver ? "#c8e6b8" : "#7a9a6a" }}>
+                {dragOver ? "Drop to process" : "Drop PDF here or use the Home page drop zone"}
+              </div>
+              <div style={{ fontSize: 11, color: "rgba(127,176,105,0.6)", marginTop: 2 }}>
+                Ball · Dümmen · Syngenta · PanAm · CR code matching
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
