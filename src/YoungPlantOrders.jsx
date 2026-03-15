@@ -1,5 +1,6 @@
 import { useState, useRef } from "react";
 import { useCropRuns, useContainers } from "./supabase";
+import { VarietySwapTab, AdvancedSearchTab } from "./VarietySwapAdvancedSearch";
 
 // ── CONSTANTS ─────────────────────────────────────────────────────────────────
 const MATERIAL_TYPES = [
@@ -69,14 +70,15 @@ function lineKey(l) { return `${l.runId}||${l.cultivar || ""}||${l.variety || ""
 function deriveLines(runs) {
   const lines = [];
   runs.forEach(run => {
-    if (!run.broker) return;
+    const broker = run.sourcingBroker || run.broker || "";
+    if (!broker) return;
     const arrival = computeArrivalWeek(run);
     const matType = mt(run.materialType);
     const makeLineBase = (qty) => {
       const buffered = Math.ceil(qty * (1 + (+run.bufferPct || 0) / 100));
       const lineCost = run.unitCost ? +(run.unitCost * buffered).toFixed(2) : null;
       return {
-        runId: run.id, broker: run.broker, cropName: run.cropName,
+        runId: run.id, broker, cropName: run.cropName,
         materialType: run.materialType, matType,
         arrivalWeek: arrival?.week, arrivalYear: arrival?.year,
         propTraySize: run.propTraySize, linerSize: run.linerSize,
@@ -761,12 +763,15 @@ function ContainerOrdersTab({ containerTotals, propTrayTotals, containers, runs,
 
 // ── TAG ORDERS TAB ────────────────────────────────────────────────────────────
 function TagOrdersTab({ tagByType, tagGrandTotal, tagTotalCost, tagOrderLines, TAG_TYPE_META }) {
+  const [expandedRuns, setExpandedRuns] = useState({});
   const ordered = tagByType.ordered || [];
   const sticker = tagByType.sticker || [];
   const inhouse = tagByType.inhouse || [];
   const totalOrdered = ordered.reduce((s,t) => s+t.qty, 0);
   const totalSticker = sticker.reduce((s,t) => s+t.qty, 0);
   const totalInhouse = inhouse.reduce((s,t) => s+t.qty, 0);
+
+  function toggleRun(key) { setExpandedRuns(p => ({ ...p, [key]: !p[key] })); }
 
   if (tagGrandTotal === 0) {
     return (
@@ -782,12 +787,13 @@ function TagOrdersTab({ tagByType, tagGrandTotal, tagTotalCost, tagOrderLines, T
 
   return (
     <div>
+      {/* Summary tiles */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px,1fr))", gap: 12, marginBottom: 24 }}>
         {[
-          { label: "Total Tags",             value: tagGrandTotal.toLocaleString(), color: "#1e2d1a" },
-          { label: "📦 Order from supplier", value: totalOrdered.toLocaleString(), color: "#2e5c1e" },
-          { label: "🏷 Decorative + sticker",value: totalSticker.toLocaleString(), color: "#1a4a7a" },
-          { label: "🖨 Print in-house",       value: totalInhouse.toLocaleString(), color: "#7a2a9a" },
+          { label: "Total Tags",              value: tagGrandTotal.toLocaleString(), color: "#1e2d1a" },
+          { label: "📦 Order from supplier",  value: totalOrdered.toLocaleString(), color: "#2e5c1e" },
+          { label: "🏷 Decorative + sticker", value: totalSticker.toLocaleString(), color: "#1a4a7a" },
+          { label: "🖨 Print in-house",        value: totalInhouse.toLocaleString(), color: "#7a2a9a" },
           ...(tagTotalCost > 0 ? [{ label: "Est. Cost", value: "$"+tagTotalCost.toFixed(2), color: "#7fb069" }] : []),
         ].map(s => (
           <div key={s.label} style={{ background: "#fff", borderRadius: 12, border: "1.5px solid #e0ead8", padding: "14px 16px" }}>
@@ -797,54 +803,91 @@ function TagOrdersTab({ tagByType, tagGrandTotal, tagTotalCost, tagOrderLines, T
         ))}
       </div>
 
+      {/* One section per tag type */}
       {[
         { key: "ordered", rows: ordered, total: totalOrdered },
         { key: "sticker", rows: sticker, total: totalSticker },
         { key: "inhouse", rows: inhouse, total: totalInhouse },
       ].filter(g => g.rows.length > 0).map(({ key, rows, total }) => {
         const meta = TAG_TYPE_META[key];
+        // Group rows by crop run
+        const byRun = {};
+        rows.forEach(t => {
+          const rk = t.runId || t.cropName;
+          if (!byRun[rk]) byRun[rk] = { runName: t.runName || t.cropName, rows: [] };
+          byRun[rk].rows.push(t);
+        });
+        const runGroups = Object.entries(byRun);
+        const sectionCost = rows.reduce((s,t) => s+t.qty*t.costPerTag, 0);
+
         return (
           <div key={key} style={{ marginBottom: 28 }}>
+            {/* Section header */}
             <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 6 }}>
               <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontSize: 18, color: "#1e2d1a" }}>{meta.label}</div>
               <span style={{ background: meta.bg, border: `1px solid ${meta.color}40`, borderRadius: 20, padding: "2px 12px", fontSize: 12, fontWeight: 700, color: meta.color }}>{total.toLocaleString()} tags</span>
+              {sectionCost > 0 && <span style={{ fontSize: 12, color: "#7a8c74" }}>Est. ${sectionCost.toFixed(2)}</span>}
             </div>
             <div style={{ fontSize: 11, color: "#7a8c74", marginBottom: 10, fontStyle: "italic" }}>{meta.desc}</div>
-            <div style={{ background: "#fff", borderRadius: 14, border: "1.5px solid #e0ead8", overflow: "hidden" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-                <thead>
-                  <tr style={{ background: "#f8faf6", borderBottom: "1.5px solid #e0ead8" }}>
-                    {["Crop Run","Color / Variety","Supplier","Qty","$/tag","Total","Notes"].map(h => (
-                      <th key={h} style={{ padding: "9px 14px", textAlign: "left", fontWeight: 800, fontSize: 10, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5 }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((t, i) => {
-                    const lineCost = t.qty * t.costPerTag;
-                    return (
-                      <tr key={i} style={{ borderBottom: "1px solid #f0f5ee", background: i%2===0?"#fff":"#fafcf8" }}>
-                        <td style={{ padding: "9px 14px", fontWeight: 700, color: "#1e2d1a" }}>{t.cropName}</td>
-                        <td style={{ padding: "9px 14px" }}>
-                          <span style={{ background: meta.bg, border: `1px solid ${meta.color}40`, borderRadius: 6, padding: "2px 8px", fontSize: 12, fontWeight: 600, color: meta.color }}>{t.color || "—"}</span>
-                        </td>
-                        <td style={{ padding: "9px 14px", color: "#7a8c74" }}>{t.supplier || "—"}</td>
-                        <td style={{ padding: "9px 14px", fontWeight: 800, color: "#1e2d1a" }}>{(t.qty||0).toLocaleString()}</td>
-                        <td style={{ padding: "9px 14px", color: "#7a8c74" }}>{t.costPerTag ? "$"+Number(t.costPerTag).toFixed(3) : "—"}</td>
-                        <td style={{ padding: "9px 14px", fontWeight: 700, color: "#2e5c1e" }}>{lineCost > 0 ? "$"+lineCost.toFixed(2) : "—"}</td>
-                        <td style={{ padding: "9px 14px", color: "#aabba0", fontSize: 11, fontStyle: "italic" }}>{t.notes}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-              <div style={{ background: meta.bg, padding: "8px 14px", display: "flex", justifyContent: "space-between" }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: meta.color }}>{meta.label} total</span>
-                <span style={{ fontSize: 14, fontWeight: 800, color: meta.color }}>
-                  {total.toLocaleString()} tags
-                  {rows.reduce((s,t)=>s+t.qty*t.costPerTag,0) > 0 && <span style={{ marginLeft: 16 }}>${rows.reduce((s,t)=>s+t.qty*t.costPerTag,0).toFixed(2)}</span>}
-                </span>
-              </div>
+
+            {/* Crop run cards — expandable */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {runGroups.map(([rk, group]) => {
+                const isOpen = expandedRuns[key + rk];
+                const runTotal = group.rows.reduce((s,t) => s+t.qty, 0);
+                const runCost  = group.rows.reduce((s,t) => s+t.qty*t.costPerTag, 0);
+                return (
+                  <div key={rk} style={{ border: `1.5px solid ${meta.color}30`, borderRadius: 12, overflow: "hidden" }}>
+                    {/* Run header — click to expand */}
+                    <div onClick={() => toggleRun(key+rk)}
+                      style={{ background: meta.bg, padding: "10px 16px", display: "flex", alignItems: "center", gap: 10, cursor: "pointer", userSelect: "none" }}>
+                      <span style={{ fontSize: 14, color: meta.color, transition: "transform .2s", display: "inline-block", transform: isOpen ? "rotate(90deg)" : "rotate(0)" }}>▶</span>
+                      <span style={{ fontWeight: 800, fontSize: 14, color: "#1e2d1a", flex: 1 }}>{group.runName}</span>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: meta.color }}>{runTotal.toLocaleString()} tags</span>
+                      {runCost > 0 && <span style={{ fontSize: 12, color: "#7a8c74" }}>${runCost.toFixed(2)}</span>}
+                      <span style={{ fontSize: 11, color: "#aabba0" }}>{group.rows.length} color{group.rows.length !== 1 ? "s" : ""}</span>
+                    </div>
+
+                    {/* Expanded color rows */}
+                    {isOpen && (
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                        <thead>
+                          <tr style={{ background: "#fafcf8", borderBottom: "1px solid #e0ead8" }}>
+                            {["Color / Variety","Supplier","Qty","Price / tag","Total","Notes"].map(h => (
+                              <th key={h} style={{ padding: "8px 14px", textAlign: "left", fontWeight: 800, fontSize: 10, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .4 }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {group.rows.map((t, i) => {
+                            const lineCost = t.qty * t.costPerTag;
+                            return (
+                              <tr key={i} style={{ borderBottom: "1px solid #f0f5ee", background: i%2===0?"#fff":"#fafcf8" }}>
+                                <td style={{ padding: "9px 14px" }}>
+                                  <span style={{ background: meta.bg, border: `1px solid ${meta.color}40`, borderRadius: 6, padding: "2px 8px", fontSize: 12, fontWeight: 600, color: meta.color }}>{t.color || "—"}</span>
+                                </td>
+                                <td style={{ padding: "9px 14px", color: "#7a8c74" }}>{t.supplier || "—"}</td>
+                                <td style={{ padding: "9px 14px", fontWeight: 800, color: "#1e2d1a" }}>{(t.qty||0).toLocaleString()}</td>
+                                <td style={{ padding: "9px 14px", color: "#8e44ad", fontWeight: 600 }}>{t.costPerTag ? "$"+Number(t.costPerTag).toFixed(4) : "—"}</td>
+                                <td style={{ padding: "9px 14px", fontWeight: 700, color: "#2e5c1e" }}>{lineCost > 0 ? "$"+lineCost.toFixed(2) : "—"}</td>
+                                <td style={{ padding: "9px 14px", color: "#aabba0", fontSize: 11, fontStyle: "italic" }}>{t.notes}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Section footer total */}
+            <div style={{ background: meta.bg, borderRadius: "0 0 10px 10px", padding: "8px 16px", display: "flex", justifyContent: "space-between", marginTop: 4 }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: meta.color }}>{meta.label} — {runGroups.length} crop run{runGroups.length !== 1 ? "s" : ""}</span>
+              <span style={{ fontSize: 14, fontWeight: 800, color: meta.color }}>
+                {total.toLocaleString()} tags{sectionCost > 0 && <span style={{ marginLeft: 16 }}>${sectionCost.toFixed(2)}</span>}
+              </span>
             </div>
           </div>
         );
@@ -855,7 +898,7 @@ function TagOrdersTab({ tagByType, tagGrandTotal, tagTotalCost, tagOrderLines, T
 
 // ── MAIN ──────────────────────────────────────────────────────────────────────
 export default function YoungPlantOrders() {
-  const { rows: runs } = useCropRuns();
+  const { rows: runs, upsert: upsertRun } = useCropRuns();
   const currentYear = new Date().getFullYear();
 
   const [mainTab,    setMainTab   ] = useState("plants");
@@ -965,7 +1008,7 @@ export default function YoungPlantOrders() {
     <div>
       {/* ── TOP TABS ── */}
       <div style={{ display: "flex", gap: 4, marginBottom: 24, borderBottom: "2px solid #e0ead8", paddingBottom: 0 }}>
-        {[["plants","🌱 Plant Orders"],["containers","📦 Container Orders"]].map(([id, label]) => (
+        {[["plants","🌱 Plant Orders"],["containers","📦 Container Orders"],["swap","🔄 Variety Swap"],["search","🔍 Search"]].map(([id, label]) => (
           <button key={id} onClick={() => setMainTab(id)}
             style={{ padding: "9px 20px", borderRadius: "8px 8px 0 0", border: "1.5px solid #e0ead8", borderBottom: mainTab === id ? "2px solid #fff" : "none", background: mainTab === id ? "#fff" : "#f8faf6", color: mainTab === id ? "#1e2d1a" : "#7a8c74", fontWeight: mainTab === id ? 800 : 600, fontSize: 13, cursor: "pointer", fontFamily: "inherit", marginBottom: mainTab === id ? -2 : 0 }}>
             {label}
@@ -975,6 +1018,14 @@ export default function YoungPlantOrders() {
 
       {mainTab === "containers" && (
         <ContainerOrdersTab containerTotals={containerTotals} propTrayTotals={propTrayTotals} containers={containers} runs={runs} tagOrderLines={tagOrderLines} tagByType={tagByType} tagGrandTotal={tagGrandTotal} tagTotalCost={tagTotalCost} />
+      )}
+
+      {mainTab === "swap" && (
+        <VarietySwapTab runs={runs} onSaveRun={upsertRun} />
+      )}
+
+      {mainTab === "search" && (
+        <AdvancedSearchTab runs={runs} onSaveRun={upsertRun} />
       )}
 
       {mainTab === "plants" && (<>
