@@ -128,6 +128,8 @@ export default function OperatorView({ onSwitchMode }) {
   const [completedIds, setDone] = useState(new Set());
   const [tab, setTab]           = useState("tasks");
   const [flagging, setFlagging] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
   const { rows: containers, upsert: upsertContainer } = useContainers();
   const { rows: houses,     upsert: upsertHouse }     = useHouses();
   const { rows: pads,       upsert: upsertPad }       = usePads();
@@ -154,27 +156,66 @@ export default function OperatorView({ onSwitchMode }) {
     <div style={{ fontFamily: "'DM Sans','Segoe UI',sans-serif", background: "#f2f5ef", minHeight: "100vh", maxWidth: 480, margin: "0 auto" }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
 
-      <div style={{ background: "#1a2a1a", padding: "16px 20px 0", position: "sticky", top: 0, zIndex: 100 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+      {/* ── SLIDE-OUT DRAWER BACKDROP ── */}
+      {drawerOpen && (
+        <div onClick={() => setDrawerOpen(false)}
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 200 }} />
+      )}
+
+      {/* ── SLIDE-OUT DRAWER ── */}
+      <div style={{ position: "fixed", top: 0, left: drawerOpen ? 0 : "-280px", width: 260, bottom: 0, background: "#1a2a1a", zIndex: 300, transition: "left .25s ease", display: "flex", flexDirection: "column", boxShadow: drawerOpen ? "4px 0 20px rgba(0,0,0,0.4)" : "none" }}>
+        {/* Drawer header */}
+        <div style={{ padding: "20px 20px 14px", borderBottom: "1px solid #2a3a2a" }}>
+          <div style={{ fontSize: 10, color: "#6a8a5a", fontWeight: 700, letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 2 }}>Hoosier Boy</div>
+          <div style={{ fontSize: 22, fontWeight: 900, color: "#e8f4d8", fontFamily: "'DM Serif Display',Georgia,serif" }}>Floor View</div>
+          <div style={{ fontSize: 11, color: "#6a8a5a", marginTop: 4 }}>Week {CURRENT_WEEK} · {new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" })}</div>
+        </div>
+        {/* Nav items */}
+        <div style={{ flex: 1, overflowY: "auto", padding: "10px 0" }}>
+          {TABS.map(t => {
+            const isActive = tab === t.id;
+            return (
+              <button key={t.id} onClick={() => { setTab(t.id); setDrawerOpen(false); }}
+                style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 20px", background: isActive ? "#2e4a22" : "none", border: "none", borderLeft: `3px solid ${isActive ? "#7fb069" : "transparent"}`, color: isActive ? "#c8e6b8" : "#8a9a80", fontWeight: isActive ? 800 : 600, fontSize: 15, cursor: "pointer", fontFamily: "inherit", textAlign: "left", transition: "all .15s" }}>
+                <span>{t.label}</span>
+                {t.count > 0 && (
+                  <span style={{ background: isActive ? "#7fb069" : "#3a4a3a", color: isActive ? "#1a2a1a" : "#8a9a80", borderRadius: 20, padding: "2px 9px", fontSize: 11, fontWeight: 800 }}>{t.count}</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+        {/* Drawer footer */}
+        <div style={{ padding: "14px 20px", borderTop: "1px solid #2a3a2a" }}>
+          <button onClick={onSwitchMode} style={{ width: "100%", background: "#2a3a2a", border: "1px solid #3a4a3a", borderRadius: 8, padding: "10px 0", color: "#8a9a80", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+            ← Switch to Planner
+          </button>
+        </div>
+      </div>
+
+      {/* ── STICKY TOP BAR ── */}
+      <div style={{ background: "#1a2a1a", padding: "12px 16px", position: "sticky", top: 0, zIndex: 100, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          {/* Hamburger */}
+          <button onClick={() => setDrawerOpen(v => !v)}
+            style={{ background: "none", border: "none", cursor: "pointer", padding: "8px 10px", display: "flex", flexDirection: "column", gap: 5, flexShrink: 0, minWidth: 44, minHeight: 44, alignItems: "center", justifyContent: "center" }}>
+            {[0,1,2].map(i => (
+              <div key={i} style={{ width: 24, height: 3, background: "#c8e6b8", borderRadius: 2, transition: "all .2s",
+                transform: drawerOpen ? (i===0?"rotate(45deg) translate(5px,5px)":i===2?"rotate(-45deg) translate(5px,-5px)":"scaleX(0)") : "none",
+                opacity: drawerOpen && i===1 ? 0 : 1 }} />
+            ))}
+          </button>
+          {/* Current section label */}
           <div>
-            <div style={{ fontSize: 10, color: "#6a8a5a", fontWeight: 700, letterSpacing: 1.5, textTransform: "uppercase" }}>Hoosier Boy</div>
-            <div style={{ fontSize: 20, fontWeight: 900, color: "#e8f4d8", fontFamily: "'DM Serif Display',Georgia,serif" }}>Floor View</div>
-          </div>
-          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-            <div style={{ textAlign: "right" }}>
-              <div style={{ fontSize: 11, color: "#6a8a5a" }}>Week {CURRENT_WEEK}</div>
-              <div style={{ fontSize: 12, color: "#c8e6b8", fontWeight: 700 }}>{new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" })}</div>
+            <div style={{ fontSize: 11, color: "#6a8a5a", fontWeight: 700, letterSpacing: .8, textTransform: "uppercase" }}>Floor View</div>
+            <div style={{ fontSize: 16, fontWeight: 800, color: "#e8f4d8", lineHeight: 1.2 }}>
+              {TABS.find(t => t.id === tab)?.label || ""}
             </div>
-            <button onClick={onSwitchMode} style={{ background: "none", border: "1px solid #4a6a3a", borderRadius: 8, padding: "5px 10px", color: "#6a8a5a", fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>Switch</button>
           </div>
         </div>
-        <div style={{ display: "flex", overflowX: "auto", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", msOverflowStyle: "none" }}>
-          {TABS.map(t => (
-            <button key={t.id} onClick={() => setTab(t.id)}
-              style={{ flexShrink: 0, padding: "9px 12px", background: "none", border: "none", borderBottom: `3px solid ${tab === t.id ? "#7fb069" : "transparent"}`, color: tab === t.id ? "#c8e6b8" : "#6a8a5a", fontWeight: tab === t.id ? 800 : 600, fontSize: 12, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
-              {t.label}{t.count > 0 && <span style={{ marginLeft: 4, background: tab === t.id ? "#7fb069" : "#3a4a3a", color: tab === t.id ? "#1a2a1a" : "#6a8a5a", borderRadius: 20, padding: "1px 6px", fontSize: 10, fontWeight: 800 }}>{t.count}</span>}
-            </button>
-          ))}
+        <div style={{ textAlign: "right" }}>
+          <div style={{ fontSize: 11, color: "#6a8a5a" }}>Wk {CURRENT_WEEK}</div>
+          <div style={{ fontSize: 12, color: "#c8e6b8", fontWeight: 700 }}>{new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" })}</div>
         </div>
       </div>
 
