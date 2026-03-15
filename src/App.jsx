@@ -74,7 +74,7 @@ function PlannerShell() {
 
 // ── ROOT (auth-aware) ─────────────────────────────────────────────────────────
 function AppInner() {
-  const { isAuthenticated, isAdmin, isOperator, role, loading } = useAuth();
+  const { isAuthenticated, isAdmin, isOperator, role, loading, signOut } = useAuth();
 
   if (loading) return (
     <div style={{ minHeight: "100vh", background: "#1e2d1a", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans',sans-serif" }}>
@@ -91,7 +91,7 @@ function AppInner() {
   if (isAdmin) return <PlannerShell />;
 
   // Operator / maintenance → operator view
-  if (isOperator) return <OperatorView onSwitchMode={null} />;
+  if (isOperator) return <OperatorView onSwitchMode={signOut} />;
 
   // Fallback
   return <LoginScreen />;
