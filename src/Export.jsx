@@ -661,245 +661,182 @@ export default function Export() {
   );
 }
 
-// ── BRANDED WEEK CALENDAR EXPORT ──────────────────────────────────────────────
-const LOGO_COLOR = "https://cdn.prod.website-files.com/63b5c78a53ecb12c888ba09a/63b5db6db690723f878c284b_HOO-Full%20Logo-Color.png";
+// ── BRANDED WEEK CALENDAR EXPORT ─────────────────────────────────────────────
+const LOGO_URL = "https://cdn.prod.website-files.com/63b5c78a53ecb12c888ba09a/63b5db6db690723f878c284b_HOO-Full%20Logo-Color.png";
+const BOY_URL  = "https://cdn.prod.website-files.com/63b5c78a53ecb12c888ba09a/63b5d5e281aa6766b5cb8ace_HOO-Boy%20Logo%20Reversed-White.png";
 
-const US_HOLIDAYS = {
-  "1-1":   "New Year's Day",
-  "7-4":   "Independence Day",
-  "11-11": "Veterans Day",
-  "12-25": "Christmas Day",
-  "12-26": "Christmas (obs.)",
-};
+const US_FIXED_HOLIDAYS = { "1-1":"New Year's Day","7-4":"Independence Day","11-11":"Veterans Day","12-25":"Christmas","12-31":"New Year's Eve" };
 
-function getNthWeekdayOfMonth(year, month, weekday, nth) {
-  // weekday: 0=Sun,1=Mon...6=Sat
-  const d = new Date(year, month, 1);
-  let count = 0;
-  while (d.getMonth() === month) {
-    if (d.getDay() === weekday) { count++; if (count === nth) return d; }
-    d.setDate(d.getDate() + 1);
-  }
+function getNth(year, month, weekday, nth) {
+  const d = new Date(year, month, 1); let count = 0;
+  while (d.getMonth() === month) { if (d.getDay() === weekday) { count++; if (count === nth) return d; } d.setDate(d.getDate() + 1); }
   return null;
 }
-
-function getLastWeekdayOfMonth(year, month, weekday) {
+function getLast(year, month, weekday) {
   const d = new Date(year, month + 1, 0);
   while (d.getDay() !== weekday) d.setDate(d.getDate() - 1);
   return d;
 }
-
 function getMovableHolidays(year) {
-  const h = {};
-  const fmt = (d) => `${d.getMonth() + 1}-${d.getDate()}`;
-  // MLK Day: 3rd Monday Jan
-  h[fmt(getNthWeekdayOfMonth(year, 0, 1, 3))] = "MLK Day";
-  // Presidents Day: 3rd Monday Feb
-  h[fmt(getNthWeekdayOfMonth(year, 1, 1, 3))] = "Presidents Day";
-  // Memorial Day: last Monday May
-  h[fmt(getLastWeekdayOfMonth(year, 4, 1))] = "Memorial Day";
-  // Labor Day: 1st Monday Sep
-  h[fmt(getNthWeekdayOfMonth(year, 8, 1, 1))] = "Labor Day";
-  // Thanksgiving: 4th Thursday Nov
-  h[fmt(getNthWeekdayOfMonth(year, 10, 4, 4))] = "Thanksgiving";
-  // Black Friday
-  const tg = getNthWeekdayOfMonth(year, 10, 4, 4);
-  if (tg) { const bf = new Date(tg); bf.setDate(bf.getDate() + 1); h[fmt(bf)] = "Day After Thanksgiving"; }
-  // Easter (approximate — Gregorian algorithm)
-  const a = year % 19, b = Math.floor(year / 100), c = year % 100;
-  const d2 = Math.floor(b / 4), e2 = b % 4, f = Math.floor((b + 8) / 25);
-  const g = Math.floor((b - f + 1) / 3), h2 = (19 * a + b - d2 - g + 15) % 30;
-  const i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e2 + 2 * i - h2 - k) % 7;
-  const m = Math.floor((a + 11 * h2 + 22 * l) / 451);
-  const month = Math.floor((h2 + l - 7 * m + 114) / 31) - 1;
-  const day = ((h2 + l - 7 * m + 114) % 31) + 1;
-  const easter = new Date(year, month, day);
-  h[fmt(easter)] = "Easter";
-  // GF Friday
-  const gf = new Date(easter); gf.setDate(gf.getDate() - 2);
-  h[fmt(gf)] = "Good Friday";
+  const h = {}; const fmt = d => `${d.getMonth()+1}-${d.getDate()}`;
+  h[fmt(getNth(year,0,1,3))] = "MLK Day";
+  h[fmt(getNth(year,1,1,3))] = "Presidents Day";
+  h[fmt(getLast(year,4,1))]  = "Memorial Day";
+  h[fmt(getNth(year,8,1,1))] = "Labor Day";
+  const tg = getNth(year,10,4,4); if (tg) { h[fmt(tg)] = "Thanksgiving"; const bf=new Date(tg); bf.setDate(bf.getDate()+1); h[fmt(bf)]="Day After Thxg."; }
+  // Easter
+  const a=year%19,b=Math.floor(year/100),c=year%100,d2=Math.floor(b/4),e2=b%4,f=Math.floor((b+8)/25),g=Math.floor((b-f+1)/3),h2=(19*a+b-d2-g+15)%30,i=Math.floor(c/4),k=c%4,l=(32+2*e2+2*i-h2-k)%7,m=Math.floor((a+11*h2+22*l)/451);
+  const em=Math.floor((h2+l-7*m+114)/31)-1, ed=((h2+l-7*m+114)%31)+1;
+  const easter=new Date(year,em,ed); h[fmt(easter)]="Easter";
+  const gf=new Date(easter); gf.setDate(gf.getDate()-2); h[fmt(gf)]="Good Friday";
   return h;
 }
+function getWeekNum(date) {
+  const d=new Date(Date.UTC(date.getFullYear(),date.getMonth(),date.getDate()));
+  d.setUTCDate(d.getUTCDate()+4-(d.getUTCDay()||7));
+  return Math.ceil((((d-new Date(Date.UTC(d.getUTCFullYear(),0,1)))/86400000)+1)/7);
+}
+function buildCalendarWeeks(year) {
+  const fixed=US_FIXED_HOLIDAYS, movable=getMovableHolidays(year);
+  const weeks=[];
+  const jan1=new Date(year,0,1);
+  const dow=jan1.getDay()||7;
+  const weekStart=new Date(jan1); weekStart.setDate(jan1.getDate()-dow+1);
+  for (let wk=1; wk<=54; wk++) {
+    const mon=new Date(weekStart); mon.setDate(weekStart.getDate()+(wk-1)*7);
+    const sun=new Date(mon); sun.setDate(mon.getDate()+6);
+    if (sun.getFullYear()<year && wk>1) continue;
+    if (mon.getFullYear()>year) break;
+    const wn=getWeekNum(mon); if (wn>52) break;
+    const hols=[];
+    for (let d=0;d<7;d++) {
+      const day=new Date(mon); day.setDate(mon.getDate()+d);
+      const key=`${day.getMonth()+1}-${day.getDate()}`;
+      if (fixed[key])   hols.push(fixed[key]);
+      if (movable[key]) hols.push(movable[key]);
+    }
+    weeks.push({
+      week:wn, start:mon, end:sun, hols,
+      month:mon.getMonth(),
+      label:`${mon.toLocaleDateString("en-US",{month:"short",day:"numeric"})}–${sun.toLocaleDateString("en-US",{month:"short",day:"numeric"})}`,
+    });
+  }
+  return weeks;
+}
+
+// Month display names grouped for the calendar header
+const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+// Colors per month — cycling red/green brand palette with variation
+const MONTH_BG = ["#c8191a","#1a7a3a","#a01010","#155a28","#c8191a","#1a7a3a","#a01010","#155a28","#c8191a","#1a7a3a","#a01010","#155a28"];
 
 function WeekCalendarExport() {
   const currentYear = new Date().getFullYear();
-  const [calYear,   setCalYear  ] = useState(currentYear);
-  const [weekFrom,  setWeekFrom ] = useState(1);
-  const [weekTo,    setWeekTo   ] = useState(52);
-  const [showWeeks, setShowWeeks] = useState(true);
-  const [showHols,  setShowHols ] = useState(true);
+  const [calYear,    setCalYear   ] = useState(currentYear);
+  const [weekFrom,   setWeekFrom  ] = useState(1);
+  const [weekTo,     setWeekTo    ] = useState(52);
+  const [showHols,   setShowHols  ] = useState(true);
   const [generating, setGenerating] = useState(false);
 
-  // Build calendar data for the year
-  function buildCalendar(year) {
-    const fixed   = US_HOLIDAYS;
-    const movable = getMovableHolidays(year);
-
-    const weeks = [];
-    // Find Jan 1 and work week by week
-    const jan1 = new Date(year, 0, 1);
-    // Start from Monday of week 1
-    const dayOfWeek = jan1.getDay() || 7; // Mon=1...Sun=7
-    const weekStart = new Date(jan1);
-    weekStart.setDate(jan1.getDate() - dayOfWeek + 1);
-
-    for (let wk = 1; wk <= 53; wk++) {
-      const monday = new Date(weekStart);
-      monday.setDate(weekStart.getDate() + (wk - 1) * 7);
-      const sunday = new Date(monday);
-      sunday.setDate(monday.getDate() + 6);
-
-      // Only include weeks that overlap with the year
-      if (sunday.getFullYear() < year && wk > 1) continue;
-      if (monday.getFullYear() > year) break;
-
-      const actualWeek = getWeekNumber(monday);
-      if (actualWeek > 52 && wk > 52) break;
-
-      // Collect holidays in this week
-      const weekHolidays = [];
-      for (let d = 0; d < 7; d++) {
-        const day = new Date(monday);
-        day.setDate(monday.getDate() + d);
-        const key = `${day.getMonth() + 1}-${day.getDate()}`;
-        if (fixed[key])   weekHolidays.push({ name: fixed[key],   date: day });
-        if (movable[key]) weekHolidays.push({ name: movable[key], date: day });
-      }
-
-      const monthLabel = monday.toLocaleDateString("en-US", { month: "short" });
-      const endLabel   = sunday.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-      weeks.push({
-        week: actualWeek,
-        start: monday,
-        end: sunday,
-        monthLabel,
-        dateRange: `${monday.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${endLabel}`,
-        holidays: weekHolidays,
-        month: monday.getMonth(),
-        isNewMonth: d => {
-          const day = new Date(monday);
-          day.setDate(monday.getDate() + d);
-          return day.getDate() === 1;
-        },
-      });
-    }
-    return weeks.filter(w => w.week >= 1 && w.week <= 52);
+  function generateAndPrint() {
+    setGenerating(true);
+    setTimeout(() => {
+      try { buildAndPrint(calYear, weekFrom, weekTo, showHols); }
+      catch(e) { alert("Calendar failed: " + e.message); }
+      setGenerating(false);
+    }, 50);
   }
 
-  async function generatePDF() {
-    setGenerating(true);
-    try {
-      // Load pptxgenjs
-      await new Promise((res, rej) => {
-        if (window.PptxGenJS) { res(); return; }
-        const s = document.createElement("script");
-        s.src = "https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js";
-        s.onload = res; s.onerror = rej;
-        document.head.appendChild(s);
-      });
+  function buildAndPrint(year, wFrom, wTo, hols) {
+    const weeks = buildCalendarWeeks(year).filter(w => w.week >= wFrom && w.week <= wTo);
+    const COLS = 4;
+    const ROWS = Math.ceil(weeks.length / COLS);
 
-      const pres = new window.PptxGenJS();
-      pres.layout  = "LAYOUT_WIDE"; // 13.3 x 7.5
-      pres.title   = `Hoosier Boy ${calYear} Week Calendar`;
-      pres.author  = "Hoosier Boy Greenhouse";
+    // Build HTML for the calendar
+    const cellStyle = (w) => {
+      const mc = MONTH_BG[w.month];
+      const hasHol = hols && w.hols.length > 0;
+      return `background:${hasHol ? "#fff8f0" : "#fff"};border:1px solid ${hasHol ? "#f0c080" : "#dde8d4"};border-radius:4px;padding:0;overflow:hidden;break-inside:avoid;`;
+    };
 
-      const weeks = buildCalendar(calYear).filter(w => w.week >= weekFrom && w.week <= weekTo);
-      const COLS  = 13;
-      const ROWS  = Math.ceil(weeks.length / COLS);
+    const cellsHTML = weeks.map(w => {
+      const mc = MONTH_BG[w.month];
+      const holHtml = hols && w.hols.length > 0
+        ? `<div style="font-size:7px;color:#a04010;padding:2px 4px;line-height:1.3;font-style:italic;">${w.hols.join(" · ")}</div>`
+        : "";
+      return `
+        <div style="${cellStyle(w)}">
+          <div style="background:${mc};padding:3px 6px;display:flex;justify-content:space-between;align-items:center;">
+            <span style="font-size:13px;font-weight:900;color:#fff;font-family:'Arial Black',Arial,sans-serif;">${w.week}</span>
+            <span style="font-size:8px;color:rgba(255,255,255,0.85);font-weight:700;font-family:Arial,sans-serif;">${MONTH_NAMES[w.month]}</span>
+          </div>
+          <div style="padding:2px 5px;">
+            <div style="font-size:8px;color:#4a5a40;font-family:Arial,sans-serif;line-height:1.4;">${w.label}</div>
+            ${holHtml}
+          </div>
+        </div>`;
+    }).join("");
 
-      // ── TITLE SLIDE ──
-      const title = pres.addSlide();
-      title.background = { color: "1e2d1a" };
-      title.addShape(pres.shapes.RECTANGLE, { x: 0, y: 6.5, w: 13.3, h: 1.0, fill: { color: "2e4a22" }, line: { color: "2e4a22" } });
-      title.addText(`${calYear}`, { x: 0.5, y: 1.0, w: 12.3, h: 2.5, fontSize: 96, fontFace: "Georgia", color: "c8e6b8", bold: true, align: "center", valign: "middle", margin: 0 });
-      title.addText("PRODUCTION WEEK CALENDAR", { x: 0.5, y: 3.6, w: 12.3, h: 0.5, fontSize: 18, fontFace: "Calibri", color: "7a9a6a", align: "center", charSpacing: 4, margin: 0 });
-      if (weekFrom > 1 || weekTo < 52) {
-        title.addText(`Weeks ${weekFrom} – ${weekTo}`, { x: 0.5, y: 4.2, w: 12.3, h: 0.4, fontSize: 14, fontFace: "Calibri", color: "4a6a3a", align: "center", margin: 0 });
-      }
-      title.addText("Hoosier Boy Greenhouse  ·  Indianapolis, IN", { x: 0.5, y: 6.6, w: 12.3, h: 0.35, fontSize: 11, fontFace: "Calibri", color: "c8e6b8", align: "center", margin: 0 });
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>Hoosier Boy ${year} Week Calendar</title>
+<style>
+  @page { size: letter portrait; margin: 0.4in; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, sans-serif; background: #fff; }
+  .page { width: 100%; }
+  .header { background: #1e2d1a; padding: 14px 18px; display: flex; align-items: center; justify-content: space-between; border-radius: 6px; margin-bottom: 10px; }
+  .header-logo { height: 52px; object-fit: contain; }
+  .header-right { text-align: right; }
+  .header-year { font-size: 36px; font-weight: 900; color: #c8e6b8; font-family: Georgia, serif; line-height: 1; }
+  .header-sub { font-size: 10px; color: #7a9a6a; letter-spacing: 2px; text-transform: uppercase; margin-top: 2px; }
+  .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
+  .footer { margin-top: 10px; text-align: center; font-size: 8px; color: #aabba0; padding-top: 6px; border-top: 1px solid #e0ead8; }
+  .watermark { position: fixed; bottom: 0.4in; right: 0.3in; opacity: 0.06; width: 180px; pointer-events: none; }
+  @media print {
+    body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="header">
+    <img src="${LOGO_URL}" class="header-logo" crossorigin="anonymous" />
+    <div class="header-right">
+      <div class="header-year">${year}</div>
+      <div class="header-sub">Production Week Calendar</div>
+      ${wFrom > 1 || wTo < 52 ? `<div style="font-size:9px;color:#4a6a3a;margin-top:2px;">Weeks ${wFrom}–${wTo}</div>` : ""}
+    </div>
+  </div>
+  <div class="grid">${cellsHTML}</div>
+  <div class="footer">
+    Hoosier Boy Greenhouse · by Schlegel Greenhouse · Indianapolis, IN
+    · Week numbers follow ISO 8601 standard
+    ${hols ? "· Holidays highlighted in orange" : ""}
+  </div>
+</div>
+<img src="${BOY_URL}" class="watermark" crossorigin="anonymous" />
+</body>
+</html>`;
 
-      // ── CALENDAR SLIDE ──
-      const slide = pres.addSlide();
-      slide.background = { color: "f8faf6" };
-
-      // Header bar
-      slide.addShape(pres.shapes.RECTANGLE, { x: 0, y: 0, w: 13.3, h: 0.65, fill: { color: "1e2d1a" }, line: { color: "1e2d1a" } });
-      slide.addText(`${calYear} Production Week Calendar  ·  Hoosier Boy Greenhouse`, {
-        x: 0.2, y: 0, w: 11, h: 0.65,
-        fontSize: 11, fontFace: "Calibri", color: "c8e6b8", bold: true, valign: "middle", margin: 0,
-      });
-      if (weekFrom > 1 || weekTo < 52) {
-        slide.addText(`Weeks ${weekFrom}–${weekTo}`, { x: 11.2, y: 0, w: 1.9, h: 0.65, fontSize: 10, fontFace: "Calibri", color: "7a9a6a", align: "right", valign: "middle", margin: 0 });
-      }
-
-      // Grid
-      const startY  = 0.75;
-      const endY    = 7.3;
-      const gridH   = endY - startY;
-      const cellW   = 13.2 / COLS;
-      const cellH   = gridH / Math.max(ROWS, 1);
-
-      const MONTH_COLORS = ["2e5c8e","7a3a9a","1a7a3a","c8791a","8e3a2e","2e7a5a","3a5a9a","7a5a1a","5a2e7a","1a5a4a","7a2e4a","2e4a7a"];
-
-      weeks.forEach((w, i) => {
-        const col = i % COLS;
-        const row = Math.floor(i / COLS);
-        const x   = 0.05 + col * cellW;
-        const y   = startY + row * cellH;
-        const ww  = cellW - 0.06;
-        const wh  = cellH - 0.05;
-        const mc  = MONTH_COLORS[w.month] || "2e5c8e";
-        const hasHol = w.holidays.length > 0;
-
-        // Cell background
-        slide.addShape(pres.shapes.RECTANGLE, {
-          x, y, w: ww, h: wh,
-          fill: { color: hasHol ? "fff8f0" : "ffffff" },
-          line: { color: hasHol ? "f0c080" : "dde8d4", pt: hasHol ? 1.5 : 0.75 },
-        });
-
-        // Week number bar
-        slide.addShape(pres.shapes.RECTANGLE, { x, y, w: ww, h: wh * 0.28, fill: { color: mc }, line: { color: mc } });
-        if (showWeeks) {
-          slide.addText(`${w.week}`, { x: x + 0.01, y, w: ww * 0.5, h: wh * 0.28, fontSize: Math.max(7, Math.min(11, cellH * 9)), fontFace: "Calibri", color: "ffffff", bold: true, valign: "middle", margin: 0 });
-        }
-        // Month label top-right in bar
-        slide.addText(w.monthLabel, { x: x + ww * 0.5, y, w: ww * 0.48, h: wh * 0.28, fontSize: Math.max(5, Math.min(8, cellH * 6.5)), fontFace: "Calibri", color: "ffffff", align: "right", valign: "middle", margin: { right: 2 } });
-
-        // Date range
-        slide.addText(w.dateRange, {
-          x: x + 0.02, y: y + wh * 0.3, w: ww - 0.04, h: wh * 0.3,
-          fontSize: Math.max(5, Math.min(7.5, cellH * 6)), fontFace: "Calibri", color: "4a5a40",
-          align: "center", valign: "middle", margin: 0,
-        });
-
-        // Holiday text
-        if (showHols && hasHol) {
-          const holText = w.holidays.map(h => h.name).join(" · ");
-          slide.addText(holText, {
-            x: x + 0.02, y: y + wh * 0.62, w: ww - 0.04, h: wh * 0.35,
-            fontSize: Math.max(4.5, Math.min(6, cellH * 5)), fontFace: "Calibri", color: "a04010",
-            align: "center", valign: "top", margin: 0, wrap: true,
-          });
-        }
-      });
-
-      // Footer
-      slide.addShape(pres.shapes.RECTANGLE, { x: 0, y: 7.3, w: 13.3, h: 0.2, fill: { color: "1e2d1a" }, line: { color: "1e2d1a" } });
-
-      const filename = `HoosierBoy_${calYear}_WeekCalendar_Wk${weekFrom}-${weekTo}.pptx`;
-      await pres.writeFile({ fileName: filename });
-    } catch (e) {
-      alert("Calendar generation failed: " + e.message);
-    }
-    setGenerating(false);
+    // Open in new window and print
+    const win = window.open("", "_blank", "width=900,height=1100");
+    win.document.write(html);
+    win.document.close();
+    win.onload = () => {
+      setTimeout(() => {
+        win.focus();
+        win.print();
+      }, 800);
+    };
   }
 
   return (
     <div>
       <div style={{ marginBottom: 16 }}>
         <div style={{ fontSize: 18, fontWeight: 800, color: "#1e2d1a", marginBottom: 4 }}>📅 Branded Week Calendar</div>
-        <div style={{ fontSize: 13, color: "#7a8c74" }}>Single-page production calendar with week numbers, US holidays, and Hoosier Boy branding. Exports as a PowerPoint slide you can print or share.</div>
+        <div style={{ fontSize: 13, color: "#7a8c74" }}>Portrait calendar with week numbers, US holidays, and Hoosier Boy branding. Opens in a new window — print directly or save as PDF from your browser's print dialog.</div>
       </div>
 
       <div style={{ background: "#fff", borderRadius: 12, border: "1.5px solid #e0ead8", padding: "16px 20px", marginBottom: 14 }}>
@@ -923,29 +860,25 @@ function WeekCalendarExport() {
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8, justifyContent: "flex-end" }}>
             <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-              <input type="checkbox" checked={showWeeks} onChange={e => setShowWeeks(e.target.checked)} style={{ accentColor: "#7fb069", width: 15, height: 15 }} />
-              <span style={{ fontSize: 12, fontWeight: 700, color: "#7a8c74" }}>Show week numbers</span>
-            </label>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
               <input type="checkbox" checked={showHols} onChange={e => setShowHols(e.target.checked)} style={{ accentColor: "#7fb069", width: 15, height: 15 }} />
               <span style={{ fontSize: 12, fontWeight: 700, color: "#7a8c74" }}>Show US holidays</span>
             </label>
           </div>
         </div>
 
-        {/* Preview summary */}
         <div style={{ background: "#f8faf6", border: "1px solid #e0ead8", borderRadius: 8, padding: "10px 14px", marginBottom: 14, fontSize: 12, color: "#7a8c74" }}>
-          Weeks {weekFrom}–{weekTo} of {calYear} · {weekTo - weekFrom + 1} weeks · 13-column grid · 16:9 widescreen slide
-          {showHols && " · US holidays included"}
+          {calYear} · Weeks {weekFrom}–{weekTo} · 4-column portrait layout · Letter size · Red & green brand colors
         </div>
 
-        <button onClick={generatePDF} disabled={generating}
-          style={{ width: "100%", padding: "13px 0", borderRadius: 10, border: "none", background: generating ? "#7a8c74" : "#1e2d1a", color: "#fff", fontWeight: 800, fontSize: 14, cursor: generating ? "wait" : "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+        <button onClick={generateAndPrint} disabled={generating}
+          style={{ width: "100%", padding: "13px 0", borderRadius: 10, border: "none", background: generating ? "#7a8c74" : "#c8191a", color: "#fff", fontWeight: 800, fontSize: 14, cursor: generating ? "wait" : "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
           {generating
-            ? <><span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>⟳</span> Building calendar...</>
-            : <><span>⬇</span> Download {calYear} Week Calendar (.pptx)</>
-          }
+            ? <><span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>⟳</span> Building...</>
+            : <><span>🖨</span> Open & Print {calYear} Calendar</>}
         </button>
+        <div style={{ fontSize: 11, color: "#aabba0", textAlign: "center", marginTop: 8 }}>
+          Opens in new tab → use browser Print dialog → "Save as PDF" to download
+        </div>
       </div>
     </div>
   );
