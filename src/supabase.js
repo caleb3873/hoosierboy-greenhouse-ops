@@ -198,6 +198,7 @@ export const useFlags         = () => useTable("flags",           { orderBy: "cr
 export const useTaskCompletions = () => useTable("task_completions", { orderBy: "completed_at", localKey: "gh_task_completions_v1" });
 export const useCombos = () => useTable("combo_lots", { orderBy: "created_at", localKey: "gh_combos_v1" });
 export const useMaintenanceRequests = () => useTable("maintenance_requests", { orderBy: "created_at", localKey: "gh_maintenance_v1" });
+export const useCropRunTemplates2 = () => useTable("crop_run_templates", { orderBy: "saved_at", localKey: "gh_crop_run_templates_v1" });
 
 // ── CROP RUN CODE GENERATOR ───────────────────────────────────────────────────
 // Calls the atomic Supabase RPC to get a never-repeating sequence number
