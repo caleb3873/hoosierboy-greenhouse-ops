@@ -286,10 +286,201 @@ function PlantCatalogPicker({ plant, onChange }) {
   );
 }
 
+
+// ── CATALOG SLIDE-OUT PANEL ───────────────────────────────────────────────────
+function CatalogSlideOut({ plant, onChange, onClose }) {
+  const { getBrokerNames, getCultivars, getSuppliers, getSeries, getColors } = useBrokerLookup();
+  const [broker,         setBroker        ] = useState(plant.broker || "");
+  const [supplierFilter, setSupplierFilter ] = useState("");
+  const [speciesFilter,  setSpeciesFilter  ] = useState("");
+  const [seriesQuery,    setSeriesQuery    ] = useState("");
+  const [selectedSeries, setSelectedSeries ] = useState("");
+  const [selectedColor,  setSelectedColor  ] = useState("");
+
+  const brokerNames = getBrokerNames();
+  const suppliers   = broker ? getSuppliers(broker, speciesFilter) : [];
+  const cultivars   = broker ? getCultivars(broker) : [];
+  const allSeries   = broker ? getSeries(broker, speciesFilter, supplierFilter) : [];
+  const filtered    = seriesQuery ? allSeries.filter(s => s.toLowerCase().includes(seriesQuery.toLowerCase())) : allSeries;
+  const colors      = selectedSeries ? getColors(broker, speciesFilter, selectedSeries) : [];
+
+  function confirm() {
+    if (!selectedSeries) return;
+    const colorItem = colors.find(c => (c.color || c.varietyName || "") === selectedColor);
+    onChange("broker",         broker);
+    onChange("cultivar",       speciesFilter || colors[0]?.crop || "");
+    onChange("_seriesName",    selectedSeries);
+    onChange("name",           [selectedSeries, selectedColor].filter(Boolean).join(" "));
+    onChange("_catalogColors", colors.map(c => ({ label: c.color || c.varietyName || "", itemNumber: c.itemNumber, price: c.unitPrice || c.sellPrice, perQty: c.perQty })).filter(c => c.label));
+    onChange("color",          selectedColor);
+    if (colorItem?.itemNumber) onChange("itemNumber", colorItem.itemNumber);
+    const price = colorItem ? (colorItem.unitPrice || colorItem.sellPrice) : (colors[0]?.unitPrice || colors[0]?.sellPrice);
+    if (price) onChange("costPerPlant", String(price));
+    onClose();
+  }
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div onClick={onClose}
+        style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.4)", zIndex:998 }} />
+
+      {/* Panel */}
+      <div style={{ position:"fixed", top:0, right:0, bottom:0, width:420, maxWidth:"92vw", background:"#fff", zIndex:999, boxShadow:"-4px 0 32px rgba(0,0,0,0.15)", display:"flex", flexDirection:"column", fontFamily:"'DM Sans','Segoe UI',sans-serif" }}>
+
+        {/* Header */}
+        <div style={{ background:"#1e2d1a", padding:"18px 20px", display:"flex", alignItems:"center", justifyContent:"space-between", flexShrink:0 }}>
+          <div>
+            <div style={{ fontFamily:"'Playfair Display',Georgia,serif", fontSize:18, color:"#c8e6b8" }}>📋 Browse Catalog</div>
+            <div style={{ fontSize:11, color:"#7a9a6a", marginTop:2 }}>Select broker, species, and variety</div>
+          </div>
+          <button onClick={onClose} style={{ background:"none", border:"none", color:"#7a9a6a", fontSize:22, cursor:"pointer", lineHeight:1 }}>×</button>
+        </div>
+
+        {/* Scrollable body */}
+        <div style={{ flex:1, overflowY:"auto", padding:"16px 20px" }}>
+
+          {/* Broker */}
+          <div style={{ marginBottom:14 }}>
+            <div style={{ fontSize:11, fontWeight:700, color:"#7a8c74", textTransform:"uppercase", letterSpacing:.5, marginBottom:6 }}>Broker</div>
+            {brokerNames.length > 0 ? (
+              <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+                {brokerNames.map(b => (
+                  <button key={b} onClick={() => { setBroker(b); setSpeciesFilter(""); setSupplierFilter(""); setSeriesQuery(""); setSelectedSeries(""); setSelectedColor(""); }}
+                    style={{ padding:"6px 14px", borderRadius:20, border:`1.5px solid ${broker===b?"#7fb069":"#c8d8c0"}`, background:broker===b?"#f0f8eb":"#fff", color:broker===b?"#2e5c1e":"#7a8c74", fontWeight:700, fontSize:12, cursor:"pointer", fontFamily:"inherit" }}>
+                    {b}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <input value={broker} onChange={e => setBroker(e.target.value)} placeholder="Broker name"
+                style={{ width:"100%", padding:"9px 12px", border:"1.5px solid #c8d8c0", borderRadius:9, fontSize:13, fontFamily:"inherit", boxSizing:"border-box" }} />
+            )}
+          </div>
+
+          {broker && (<>
+            {/* Species filter */}
+            {cultivars.length > 0 && (
+              <div style={{ marginBottom:12 }}>
+                <div style={{ fontSize:11, fontWeight:700, color:"#7a8c74", textTransform:"uppercase", letterSpacing:.5, marginBottom:6 }}>Crop / Species</div>
+                <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+                  <button onClick={() => { setSpeciesFilter(""); setSupplierFilter(""); setSeriesQuery(""); setSelectedSeries(""); setSelectedColor(""); }}
+                    style={{ padding:"5px 12px", borderRadius:20, border:`1.5px solid ${!speciesFilter?"#7fb069":"#c8d8c0"}`, background:!speciesFilter?"#f0f8eb":"#fff", color:!speciesFilter?"#2e5c1e":"#7a8c74", fontWeight:700, fontSize:11, cursor:"pointer", fontFamily:"inherit" }}>
+                    All
+                  </button>
+                  {cultivars.map(c => (
+                    <button key={c} onClick={() => { setSpeciesFilter(c); setSupplierFilter(""); setSeriesQuery(""); setSelectedSeries(""); setSelectedColor(""); }}
+                      style={{ padding:"5px 12px", borderRadius:20, border:`1.5px solid ${speciesFilter===c?"#7fb069":"#c8d8c0"}`, background:speciesFilter===c?"#f0f8eb":"#fff", color:speciesFilter===c?"#2e5c1e":"#7a8c74", fontWeight:700, fontSize:11, cursor:"pointer", fontFamily:"inherit" }}>
+                      {c}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Supplier filter */}
+            {suppliers.length > 1 && (
+              <div style={{ marginBottom:12 }}>
+                <div style={{ fontSize:11, fontWeight:700, color:"#7a8c74", textTransform:"uppercase", letterSpacing:.5, marginBottom:6 }}>Supplier</div>
+                <select value={supplierFilter} onChange={e => { setSupplierFilter(e.target.value); setSeriesQuery(""); setSelectedSeries(""); setSelectedColor(""); }}
+                  style={{ width:"100%", padding:"8px 12px", border:"1.5px solid #c8d8c0", borderRadius:9, fontSize:13, fontFamily:"inherit", boxSizing:"border-box" }}>
+                  <option value="">All suppliers</option>
+                  {suppliers.map(s => <option key={s}>{s}</option>)}
+                </select>
+              </div>
+            )}
+
+            {/* Series search + list */}
+            {!selectedSeries && (<>
+              <div style={{ marginBottom:10 }}>
+                <input value={seriesQuery} onChange={e => setSeriesQuery(e.target.value)}
+                  placeholder="Search varieties..."
+                  style={{ width:"100%", padding:"9px 12px", border:"1.5px solid #c8d8c0", borderRadius:9, fontSize:13, fontFamily:"inherit", boxSizing:"border-box" }} />
+              </div>
+              <div style={{ border:"1.5px solid #e0ead8", borderRadius:10, overflow:"hidden" }}>
+                {filtered.length === 0 ? (
+                  <div style={{ padding:"24px", textAlign:"center", color:"#aabba0", fontSize:13 }}>
+                    {broker ? "No varieties found" : "Select a broker to browse"}
+                  </div>
+                ) : (
+                  filtered.map(s => {
+                    const cols = getColors(broker, speciesFilter, s);
+                    const price = cols[0] ? (cols[0].unitPrice || cols[0].sellPrice) : null;
+                    return (
+                      <div key={s} onClick={() => { setSelectedSeries(s); setSelectedColor(""); }}
+                        style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 14px", borderBottom:"1px solid #f0f5ee", cursor:"pointer", background:"#fff" }}
+                        onMouseEnter={e => e.currentTarget.style.background="#f0f8eb"}
+                        onMouseLeave={e => e.currentTarget.style.background="#fff"}>
+                        <div>
+                          <div style={{ fontSize:13, fontWeight:700, color:"#1e2d1a" }}>{s}</div>
+                          <div style={{ fontSize:10, color:"#aabba0", marginTop:2 }}>
+                            {cols.length} color{cols.length!==1?"s":""}
+                            {speciesFilter ? ` · ${speciesFilter}` : ""}
+                          </div>
+                        </div>
+                        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                          {price && <span style={{ fontSize:11, color:"#2e7a2e", fontWeight:700 }}>${Number(price).toFixed(4)}</span>}
+                          <span style={{ fontSize:16, color:"#c8d8c0" }}>›</span>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </>)}
+
+            {/* Color picker after series selected */}
+            {selectedSeries && (
+              <div>
+                <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:14 }}>
+                  <button onClick={() => { setSelectedSeries(""); setSelectedColor(""); }}
+                    style={{ background:"none", border:"none", color:"#7a8c74", fontSize:13, cursor:"pointer", fontFamily:"inherit", padding:0 }}>← Back</button>
+                  <div style={{ fontWeight:800, fontSize:16, color:"#1e2d1a" }}>{selectedSeries}</div>
+                </div>
+                <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+                  {colors.map(c => {
+                    const label = c.color || c.varietyName || "";
+                    const price = c.unitPrice || c.sellPrice;
+                    const isSelected = selectedColor === label;
+                    return (
+                      <div key={label} onClick={() => setSelectedColor(isSelected ? "" : label)}
+                        style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 14px", borderRadius:10, border:`2px solid ${isSelected?"#7fb069":"#e0ead8"}`, background:isSelected?"#f0f8eb":"#fff", cursor:"pointer", transition:"all .15s" }}>
+                        <div style={{ width:18, height:18, borderRadius:5, border:`2px solid ${isSelected?"#7fb069":"#c8d8c0"}`, background:isSelected?"#7fb069":"#fff", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                          {isSelected && <span style={{ color:"#fff", fontSize:11, fontWeight:900 }}>✓</span>}
+                        </div>
+                        <div style={{ flex:1 }}>
+                          <div style={{ fontWeight:700, fontSize:13, color:"#1e2d1a" }}>{label || "—"}</div>
+                          {c.itemNumber && <div style={{ fontSize:10, color:"#aabba0" }}>#{c.itemNumber}</div>}
+                        </div>
+                        {price && <div style={{ fontSize:12, fontWeight:700, color:"#2e7a2e" }}>${Number(price).toFixed(4)}</div>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </>)}
+        </div>
+
+        {/* Footer confirm */}
+        <div style={{ padding:"14px 20px", borderTop:"1.5px solid #e0ead8", flexShrink:0 }}>
+          <button onClick={confirm} disabled={!selectedSeries}
+            style={{ width:"100%", padding:13, borderRadius:10, border:"none", background:selectedSeries?"#7fb069":"#c8d8c0", color:"#fff", fontWeight:800, fontSize:14, cursor:selectedSeries?"pointer":"default", fontFamily:"inherit" }}>
+            {selectedSeries
+              ? selectedColor ? `✓ Select ${selectedSeries} · ${selectedColor}` : `✓ Select ${selectedSeries}`
+              : "Choose a variety first"}
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
 function ComponentRow({ plant, index, onChange, onRemove }) {
-  const [imgErr,     setImgErr]     = useState(false);
-  const [dragging,   setDragging]   = useState(false);
-  const [focusField, setFocusField] = useState(null);
+  const [imgErr,       setImgErr    ] = useState(false);
+  const [dragging,     setDragging  ] = useState(false);
+  const [focusField,   setFocusField] = useState(null);
+  const [showCatalog,  setShowCatalog] = useState(false);
   const role    = PLANT_ROLES.find(r=>r.id===plant.role)||PLANT_ROLES[1];
   const fileRef = useRef(null);
 
@@ -347,12 +538,37 @@ function ComponentRow({ plant, index, onChange, onRemove }) {
             </button>
           </div>
 
-          {plant._useCatalog && (
-            <PlantCatalogPicker
-              plant={plant}
-              onChange={onChange}
-            />
-          )}
+          {plant._useCatalog && (<>
+            {/* Show selected variety summary or browse button */}
+            {plant._seriesName ? (
+              <div style={{ display:"flex", alignItems:"center", gap:8, background:"#f0f8eb", border:"1.5px solid #c8e0b8", borderRadius:9, padding:"7px 12px", marginBottom:8 }}>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontWeight:700, fontSize:13, color:"#1e2d1a", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{plant._seriesName}{plant.color ? ` · ${plant.color}` : ""}</div>
+                  <div style={{ fontSize:10, color:"#7a8c74" }}>{plant.broker}{plant.cultivar ? ` · ${plant.cultivar}` : ""}{plant.costPerPlant ? ` · $${Number(plant.costPerPlant).toFixed(4)}` : ""}</div>
+                </div>
+                <button onClick={() => setShowCatalog(true)}
+                  style={{ background:"none", border:"1px solid #c8e0b8", borderRadius:7, padding:"3px 10px", fontSize:11, fontWeight:700, color:"#2e5c1e", cursor:"pointer", fontFamily:"inherit", whiteSpace:"nowrap" }}>
+                  Change
+                </button>
+                <button onClick={() => { onChange("_seriesName",""); onChange("_catalogColors",[]); onChange("color",""); onChange("name",""); }}
+                  style={{ background:"none", border:"none", color:"#aabba0", fontSize:16, cursor:"pointer", lineHeight:1, padding:0 }}>×</button>
+              </div>
+            ) : (
+              <button onClick={() => setShowCatalog(true)}
+                style={{ width:"100%", padding:"9px 0", borderRadius:9, border:"1.5px dashed #c8e0b8", background:"#fafcf8", color:"#2e5c1e", fontWeight:700, fontSize:12, cursor:"pointer", fontFamily:"inherit", marginBottom:8, display:"flex", alignItems:"center", justifyContent:"center", gap:6 }}>
+                <span style={{ fontSize:14 }}>📋</span> Browse Catalog
+              </button>
+            )}
+
+            {/* Slide-out catalog panel */}
+            {showCatalog && (
+              <CatalogSlideOut
+                plant={plant}
+                onChange={onChange}
+                onClose={() => setShowCatalog(false)}
+              />
+            )}
+          </>)}
 
           <div style={{ display: plant._useCatalog ? "none" : "grid", gridTemplateColumns:"1.8fr 1fr 0.9fr 0.9fr 0.8fr 0.8fr auto", gap:8, alignItems:"end" }}>
             <div>
