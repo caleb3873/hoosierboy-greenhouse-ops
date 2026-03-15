@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { useCropRuns, useHouses, usePads, useContainers, useSpacingProfiles, useVarieties, useBrokerCatalogs, getNextCropRunCode, getBrokerSubCode } from "./supabase";
+import { useCropRuns, useHouses, usePads, useContainers, useSpacingProfiles, useVarieties, useBrokerCatalogs, getNextCropRunCode, getBrokerSubCode, useCropRunTemplates2 } from "./supabase";
 import { ViewToolbar, GanttView, BoardView, LaborView, CalendarView } from "./CropPlanningViews";
 import { CatalogPicker } from "./Libraries";
 
@@ -1437,7 +1437,7 @@ function SourcingSection({ form, upd, focus, setFocus, containers = [] }) {
       </div>
 
       <SH c="Broker & Varieties" />
-      {/* Row 1: Broker · Supplier · Crop Species */}
+      {/* Row 1: Broker · Crop Species · Supplier */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
         <div>
           <FL c="Broker" />
@@ -1457,24 +1457,6 @@ function SourcingSection({ form, upd, focus, setFocus, containers = [] }) {
           )}
         </div>
         <div>
-          <FL c="Supplier" />
-          {/* Always show dropdown if catalog has suppliers for this broker+species, else text input */}
-          {suppliers.length > 0 ? (
-            <select style={IS(false)} value={supplierFilter || form.sourcingSupplier || ""} onChange={e => {
-              setSupplierFilter(e.target.value);
-              upd("sourcingSupplier", e.target.value);
-              setSeriesQuery("");
-              setSelectedSeries(new Set());
-            }}>
-              <option value="">— All suppliers —</option>
-              {suppliers.map(s => <option key={s} value={s}>{s}</option>)}
-            </select>
-          ) : (
-            <input style={IS(focus === "sSupplier")} value={form.sourcingSupplier || ""} onChange={e => { upd("sourcingSupplier", e.target.value); setSupplierFilter(e.target.value); }}
-              onFocus={() => setFocus("sSupplier")} onBlur={() => setFocus(null)} placeholder="e.g. Dümmen Orange" />
-          )}
-        </div>
-        <div>
           <FL c="Crop Species" />
           {cultivars.length > 0 ? (
             <select style={IS(false)} value={cultivarFilter} onChange={e => { setCultivarFilter(e.target.value); setSupplierFilter(""); setSeriesQuery(""); setSelectedSeries(new Set()); }}>
@@ -1484,6 +1466,24 @@ function SourcingSection({ form, upd, focus, setFocus, containers = [] }) {
           ) : (
             <input style={IS(focus === "cultivar")} value={cultivarFilter} onChange={e => setCultivarFilter(e.target.value)}
               onFocus={() => setFocus("cultivar")} onBlur={() => setFocus(null)} placeholder="e.g. Begonia Reiger" />
+          )}
+        </div>
+        <div>
+          <FL c="Supplier" />
+          {suppliers.length > 0 ? (
+            <select style={IS(false)} value={supplierFilter || form.sourcingSupplier || ""} onChange={e => {
+              setSupplierFilter(e.target.value);
+              upd("sourcingSupplier", e.target.value);
+              setSeriesQuery(""); setSelectedSeries(new Set());
+            }}>
+              <option value="">— All suppliers —</option>
+              {suppliers.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          ) : (
+            <input style={IS(focus === "sSupplier")} value={form.sourcingSupplier || ""}
+              onChange={e => { upd("sourcingSupplier", e.target.value); setSupplierFilter(e.target.value); }}
+              onFocus={() => setFocus("sSupplier")} onBlur={() => setFocus(null)}
+              placeholder={form.sourcingBroker && form.sourcingBroker !== "__other__" ? "Auto-populated from catalog" : "e.g. Dümmen Orange"} />
           )}
         </div>
       </div>
@@ -1563,16 +1563,28 @@ function SourcingSection({ form, upd, focus, setFocus, containers = [] }) {
             onFocus={() => setFocus("unitCost")} onBlur={() => setFocus(null)} placeholder="e.g. 0.42" />
         </div>
         <div>
-          <FL c="Loss Buffer %" />
-          <div style={{ display: "flex", gap: 6 }}>
-            {[5, 10, 15, 20].map(n => (
-              <button key={n} onClick={() => upd("bufferPct", n)}
-                style={{ flex: 1, padding: "8px 0", borderRadius: 7, border: `1.5px solid ${Number(form.bufferPct) === n ? "#7fb069" : "#c8d8c0"}`, background: Number(form.bufferPct) === n ? "#f0f8eb" : "#fff", color: Number(form.bufferPct) === n ? "#2e5c1e" : "#7a8c74", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>{n}%</button>
-            ))}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 3 }}>
+            <FL c="Loss Buffer %" />
+            <button onClick={() => upd("bufferPct", form.bufferPct != null && form.bufferPct !== "" ? "" : 10)}
+              style={{ background: "none", border: "none", fontSize: 10, color: form.bufferPct != null && form.bufferPct !== "" ? "#c8791a" : "#7fb069", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", padding: 0 }}>
+              {form.bufferPct != null && form.bufferPct !== "" ? "✕ Remove buffer" : "+ Add buffer"}
+            </button>
           </div>
-          <input type="number" min="0" max="50" style={{ ...IS(focus === "bufPct"), marginTop: 6, fontSize: 12 }}
-            value={form.bufferPct ?? 10} onChange={e => upd("bufferPct", e.target.value)}
-            onFocus={() => setFocus("bufPct")} onBlur={() => setFocus(null)} placeholder="%" />
+          {(form.bufferPct != null && form.bufferPct !== "") ? (<>
+            <div style={{ display: "flex", gap: 6 }}>
+              {[5, 10, 15, 20].map(n => (
+                <button key={n} onClick={() => upd("bufferPct", n)}
+                  style={{ flex: 1, padding: "8px 0", borderRadius: 7, border: `1.5px solid ${Number(form.bufferPct) === n ? "#7fb069" : "#c8d8c0"}`, background: Number(form.bufferPct) === n ? "#f0f8eb" : "#fff", color: Number(form.bufferPct) === n ? "#2e5c1e" : "#7a8c74", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>{n}%</button>
+              ))}
+            </div>
+            <input type="number" min="0" max="50" style={{ ...IS(focus === "bufPct"), marginTop: 6, fontSize: 12 }}
+              value={form.bufferPct} onChange={e => upd("bufferPct", e.target.value)}
+              onFocus={() => setFocus("bufPct")} onBlur={() => setFocus(null)} placeholder="%" />
+          </>) : (
+            <div style={{ background: "#f8faf6", border: "1.5px solid #e0ead8", borderRadius: 8, padding: "8px 12px", fontSize: 11, color: "#aabba0", fontStyle: "italic" }}>
+              No buffer — ordering exact quantity
+            </div>
+          )}
         </div>
         <div>
           <FL c="Order Summary" />
@@ -1796,34 +1808,26 @@ function OrderReviewModal({ form, containers, onClose, onSave }) {
 // ── CROP RUN FORM ─────────────────────────────────────────────────────────────
 
 // ── CROP RUN TEMPLATES ────────────────────────────────────────────────────────
-const TEMPLATE_KEY = "gh_crop_run_templates_v1";
-
+// ── TEMPLATES (Supabase-backed, shared across devices) ────────────────────────
 function useCropRunTemplates() {
-  const [templates, setTemplates] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(TEMPLATE_KEY) || "[]"); } catch { return []; }
-  });
+  const { rows, upsert, remove: removeRow } = useCropRunTemplates2();
 
-  const save = (name, form) => {
-    // Strip run-specific fields — keep everything reusable
+  // rows are { id, name, data, savedAt } — spread data for applyTemplate compatibility
+  const templates = rows.map(r => ({ id: r.id, name: r.name, savedAt: r.savedAt, ...((r.data) || {}) }));
+
+  async function save(name, form) {
     const { id, cases, targetWeek, targetYear, status, groupNumber,
             indoorAssignments, outsideAssignments, ...rest } = form;
-    const tpl = { id: crypto.randomUUID(), name: name.trim(), savedAt: Date.now(), ...rest };
-    const next = [tpl, ...templates.filter(t => t.name !== name.trim())];
-    setTemplates(next);
-    localStorage.setItem(TEMPLATE_KEY, JSON.stringify(next));
-    return tpl;
-  };
+    const existing = rows.find(r => r.name === name.trim());
+    await upsert({ id: existing?.id || crypto.randomUUID(), name: name.trim(), savedAt: new Date().toISOString(), data: rest });
+  }
 
-  const remove = (id) => {
-    const next = templates.filter(t => t.id !== id);
-    setTemplates(next);
-    localStorage.setItem(TEMPLATE_KEY, JSON.stringify(next));
-  };
+  async function remove(id) { await removeRow(id); }
 
   return { templates, save, remove };
 }
 
-function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles, containers, varietyLibrary, currentYear, allRuns = [] }) {
+function CropRunForm({ initial, onSave, onSaveSilent, onCancel, houses, pads, spacingProfiles, containers, varietyLibrary, currentYear, allRuns = [] }) {
   const blank = {
     cropName: "", groupNumber: "",
     cases: "", packSize: 10,
@@ -2398,10 +2402,23 @@ function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles,
 
               <div style={{ borderTop: "2px solid #e0ead8", marginTop: 8, marginBottom: 16 }} />
 
-              {/* Cost summary */}
+              <VarietyManager
+                varieties={form.varieties || []}
+                lotCases={Number(form.cases) || 0}
+                packSize={pSize}
+                materialType={form.materialType || "urc"}
+                propTraySize={form.propTraySize || ""}
+                linerSize={form.linerSize || ""}
+                isCased={isCased}
+                onChange={v => upd("varieties", v)}
+                onIncreaseLot={newCases => upd("cases", String(newCases))}
+                varietyLibrary={varietyLibrary}
+              />
+
+
+              {/* Cost summary — pinned at bottom like combo designer */}
               {(varieties.length > 0 || selC) && (
-                <div style={{ background: "#f8faf6", border: "1.5px solid #e0ead8", borderRadius: 12, padding: "14px 16px", marginBottom: 16 }}>
-                  {/* Top row: pots total + assignment status */}
+                <div style={{ background: "#f8faf6", border: "1.5px solid #e0ead8", borderRadius: 12, padding: "14px 16px", marginTop: 16 }}>
                   <div style={{ display: "flex", gap: 20, alignItems: "flex-end", marginBottom: costLines.length > 0 ? 14 : 0, flexWrap: "wrap" }}>
                     <div>
                       <div style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5 }}>Total Pots</div>
@@ -2429,8 +2446,6 @@ function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles,
                       </div>
                     )}
                   </div>
-
-                  {/* Cost breakdown lines */}
                   {costLines.length > 0 && (
                     <div style={{ borderTop: "1px solid #e8eed8", paddingTop: 12 }}>
                       <div style={{ fontSize: 10, fontWeight: 800, color: "#aabba0", textTransform: "uppercase", letterSpacing: .5, marginBottom: 8 }}>Cost Breakdown — per pot</div>
@@ -2450,28 +2465,14 @@ function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles,
                       </div>
                     </div>
                   )}
-
                   {!allHaveCost && varieties.length > 0 && varieties.some(v => !v.costPerUnit) && (
                     <div style={{ fontSize: 11, color: "#e07b39", fontWeight: 600, marginTop: 8 }}>⚠ Some varieties missing plant cost — select a color from catalog or enter manually</div>
                   )}
                   {varieties.length > 0 && !selC && (
-                    <div style={{ fontSize: 11, color: "#aabba0", marginTop: 8 }}>💡 Select a container on the Crop & Schedule tab to include pot + accessory costs</div>
+                    <div style={{ fontSize: 11, color: "#aabba0", marginTop: 8 }}>💡 Select a container on Crop & Schedule to include pot + accessory costs</div>
                   )}
                 </div>
               )}
-
-              <VarietyManager
-                varieties={form.varieties || []}
-                lotCases={Number(form.cases) || 0}
-                packSize={pSize}
-                materialType={form.materialType || "urc"}
-                propTraySize={form.propTraySize || ""}
-                linerSize={form.linerSize || ""}
-                isCased={isCased}
-                onChange={v => upd("varieties", v)}
-                onIncreaseLot={newCases => upd("cases", String(newCases))}
-                varietyLibrary={varietyLibrary}
-              />
             </div>
           );
         })()}
@@ -2756,13 +2757,24 @@ function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles,
           </>)}
 
           {/* SPACE TAB: Save Space Assignment */}
-          {tab === "space" && (<>
-            <button onClick={() => { onSave({ ...form, id: form.id || uid() }); setTab("spacing"); }}
-              style={{ flex: 1, background: "#4a90d9", color: "#fff", border: "none", borderRadius: 10, padding: 12, fontWeight: 700, fontSize: 15, cursor: "pointer", fontFamily: "inherit" }}>
-              🗂 Save Space Assignment
-            </button>
-            {onCancel && <button onClick={onCancel} style={{ background: "none", color: "#7a8c74", border: "1.5px solid #c8d8c0", borderRadius: 10, padding: "12px 20px", fontWeight: 600, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>}
-          </>)}
+          {tab === "space" && (() => {
+            const hasIndoor = (form.indoorAssignments || []).some(a => a.structureId);
+            const hasOutdoor = !form.movesOutside || (form.outsideAssignments || []).some(a => a.structureId);
+            const spaceReady = hasIndoor && hasOutdoor;
+            return (<>
+              <button
+                onClick={() => { if (!spaceReady) return; onSave({ ...form, id: form.id || uid() }); setTab("spacing"); }}
+                style={{ flex: 1, background: spaceReady ? "#7fb069" : "#c8d8c0", color: spaceReady ? "#fff" : "#7a8c74", border: "none", borderRadius: 10, padding: 12, fontWeight: 700, fontSize: 15, cursor: spaceReady ? "pointer" : "not-allowed", fontFamily: "inherit", transition: "background .2s, color .2s" }}>
+                {spaceReady ? "🗂 Save Space Assignment ✓" : "🗂 Assign a space to continue"}
+              </button>
+              {!spaceReady && (
+                <div style={{ fontSize: 11, color: "#c8791a", textAlign: "center", marginTop: 6, width: "100%" }}>
+                  {!hasIndoor ? "Select an indoor range above to continue" : "Select an outdoor pad to continue"}
+                </div>
+              )}
+              {onCancel && <button onClick={onCancel} style={{ background: "none", color: "#7a8c74", border: "1.5px solid #c8d8c0", borderRadius: 10, padding: "12px 20px", fontWeight: 600, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>}
+            </>);
+          })()}
 
           {/* SPACING TAB: Save Spacing */}
           {tab === "spacing" && (<>
@@ -2866,7 +2878,7 @@ function CropRunForm({ initial, onSave, onCancel, houses, pads, spacingProfiles,
             form={form}
             containers={containers}
             onClose={() => setShowOrderReview(null)}
-            onSave={() => { onSave({ ...form, id: form.id || uid() }); setShowOrderReview(null); }}
+            onSave={() => { (onSaveSilent || onSave)({ ...form, id: form.id || uid(), orderStatus: "ordered" }); setShowOrderReview(null); }}
           />
         )}
       </div>
@@ -3301,7 +3313,6 @@ export default function App() {
 
   async function saveRun(r) {
     let runToSave = r;
-    // Assign crop run code on first creation (no existing code)
     if (!r.cropRunCode) {
       const code = await getNextCropRunCode(r.targetYear || currentYear);
       runToSave = { ...r, cropRunCode: code };
@@ -3309,6 +3320,15 @@ export default function App() {
     await upsertRun(runToSave);
     setView("list");
     setEditingId(null);
+  }
+  // saveSilent — saves without navigating away (used by order review modal)
+  async function saveSilent(r) {
+    let runToSave = r;
+    if (!r.cropRunCode) {
+      const code = await getNextCropRunCode(r.targetYear || currentYear);
+      runToSave = { ...r, cropRunCode: code };
+    }
+    await upsertRun(runToSave);
   }
   async function saveLaborHours(r) { await upsertRun(r); }
   async function deleteRun(id) {
@@ -3406,8 +3426,8 @@ export default function App() {
           )}
         </>)}
 
-        {view === "add" && <CropRunForm onSave={saveRun} onCancel={() => setView("list")} houses={houses} pads={pads} containers={containers} spacingProfiles={spacingProfiles} varietyLibrary={varietyLibrary} currentYear={currentYear} allRuns={runs} />}
-        {view === "edit" && editingId && <CropRunForm initial={runs.find(r => r.id === editingId)} onSave={saveRun} onCancel={() => { setView("list"); setEditingId(null); }} houses={houses} pads={pads} containers={containers} spacingProfiles={spacingProfiles} varietyLibrary={varietyLibrary} currentYear={currentYear} allRuns={runs} />}
+        {view === "add" && <CropRunForm onSave={saveRun} onSaveSilent={saveSilent} onCancel={() => setView("list")} houses={houses} pads={pads} containers={containers} spacingProfiles={spacingProfiles} varietyLibrary={varietyLibrary} currentYear={currentYear} allRuns={runs} />}
+        {view === "edit" && editingId && <CropRunForm initial={runs.find(r => r.id === editingId)} onSave={saveRun} onSaveSilent={saveSilent} onCancel={() => { setView("list"); setEditingId(null); }} houses={houses} pads={pads} containers={containers} spacingProfiles={spacingProfiles} varietyLibrary={varietyLibrary} currentYear={currentYear} allRuns={runs} />}
       </div>
       {showCopyModal && (
         <CopyRunModal
