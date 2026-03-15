@@ -218,7 +218,7 @@ function FloorCodeLogin({ onSuccess }) {
     const next = (code + digit).slice(0, 7).toUpperCase();
     setCode(next);
     setError(false);
-    if (next.length >= 6) {
+    if (next.length >= 7) {
       setTimeout(() => {
         const ok = signInWithCode(next);
         if (!ok) { setError(true); setCode(""); setTimeout(() => setError(false), 1500); }
