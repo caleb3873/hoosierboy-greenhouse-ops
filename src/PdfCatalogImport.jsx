@@ -50,6 +50,193 @@ async function renderPageToBase64(pdfDoc, pageNum, scale = 1.0) {
   return canvas.toDataURL("image/jpeg", 0.85);
 }
 
+// Placeholder — implemented in Task 6
+function MergeCommit() { return null; }
+
+// ── REVIEW TABLE ─────────────────────────────────────────────────────────────
+function ReviewTable({ items, setItems, pageConfidences, onReExtract, onNext, onBack, cancelled }) {
+  const [search, setSearch] = useState("");
+  const [cropFilter, setCropFilter] = useState("all");
+  const [editingCell, setEditingCell] = useState(null); // { id, field }
+  const [selected, setSelected] = useState(new Set());
+
+  const crops = [...new Set(items.map(i => i.cropName).filter(Boolean))].sort();
+
+  const filtered = items.filter(item => {
+    const matchCrop = cropFilter === "all" || item.cropName === cropFilter;
+    const matchSearch = !search ||
+      item.cropName?.toLowerCase().includes(search.toLowerCase()) ||
+      item.variety?.toLowerCase().includes(search.toLowerCase());
+    return matchCrop && matchSearch;
+  });
+
+  const updateItem = (id, field, value) => {
+    setItems(prev => prev.map(i => i.id === id ? { ...i, [field]: value } : i));
+    setEditingCell(null);
+  };
+
+  const deleteSelected = () => {
+    if (selected.size === 0) return;
+    if (!window.confirm(`Delete ${selected.size} selected row(s)?`)) return;
+    setItems(prev => prev.filter(i => !selected.has(i.id)));
+    setSelected(new Set());
+  };
+
+  const toggleSelectAll = () => {
+    if (selected.size === filtered.length) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(filtered.map(i => i.id)));
+    }
+  };
+
+  const confColor = (pageNum) => {
+    const c = pageConfidences[pageNum];
+    if (c === "high") return "#4caf50";
+    if (c === "low") return "#f44336";
+    return "#ff9800";
+  };
+
+  const COLUMNS = [
+    { key: "cropName", label: "Crop", width: 120 },
+    { key: "variety", label: "Series", width: 120 },
+    { key: "finishWeeks", label: "Finish Wks", width: 80 },
+    { key: "finishTempDay", label: "Day °F", width: 70 },
+    { key: "finishTempNight", label: "Night °F", width: 70 },
+    { key: "tempGroup", label: "Temp", width: 60 },
+    { key: "lightRequirement", label: "Light", width: 80 },
+    { key: "pgrType", label: "PGR", width: 100 },
+  ];
+
+  return (
+    <div style={{ fontFamily: font }}>
+      <div style={{ fontSize: 20, fontWeight: 800, color: darkGreen, marginBottom: 4 }}>
+        Review Extracted Varieties
+      </div>
+      <div style={{ fontSize: 13, color: muted, marginBottom: 20 }}>
+        {items.length} varieties extracted from {Object.keys(pageConfidences).length} pages.
+        {cancelled && <span style={{ color: "#ff9800", fontWeight: 700 }}> (Partial — extraction was cancelled)</span>}
+        {" "}Click any cell to edit. Delete junk rows before proceeding.
+      </div>
+
+      {/* Search & filter bar */}
+      <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search varieties..."
+          style={{ ...inputStyle(false), flex: 2, minWidth: 180 }} />
+        <select value={cropFilter} onChange={e => setCropFilter(e.target.value)}
+          style={{ ...inputStyle(false), flex: 1, minWidth: 140 }}>
+          <option value="all">All Crops ({items.length})</option>
+          {crops.map(c => <option key={c} value={c}>{c} ({items.filter(i => i.cropName === c).length})</option>)}
+        </select>
+        {selected.size > 0 && (
+          <button onClick={deleteSelected}
+            style={{ background: "#fff0f0", border: "1px solid #f0c0c0", borderRadius: 8, padding: "8px 16px", color: "#c03030", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: font }}>
+            Delete {selected.size} selected
+          </button>
+        )}
+      </div>
+
+      {/* Table */}
+      <div style={{ overflowX: "auto", marginBottom: 20 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <thead>
+            <tr style={{ background: "#f2f5ef", position: "sticky", top: 0 }}>
+              <th style={{ padding: "8px 6px", textAlign: "center", borderBottom: "1.5px solid #e0ead8", width: 32 }}>
+                <input type="checkbox" checked={selected.size === filtered.length && filtered.length > 0}
+                  onChange={toggleSelectAll} style={{ accentColor: green, cursor: "pointer" }} />
+              </th>
+              {COLUMNS.map(col => (
+                <th key={col.key} style={{ padding: "8px 10px", textAlign: "left", fontWeight: 700, color: "#4a5a40", borderBottom: "1.5px solid #e0ead8", whiteSpace: "nowrap", width: col.width }}>{col.label}</th>
+              ))}
+              <th style={{ padding: "8px 10px", textAlign: "center", fontWeight: 700, color: "#4a5a40", borderBottom: "1.5px solid #e0ead8", width: 50 }}>Pg</th>
+              <th style={{ padding: "8px 10px", textAlign: "center", borderBottom: "1.5px solid #e0ead8", width: 50 }}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.slice(0, 200).map(item => {
+              const isLowConf = pageConfidences[item.sourcePageNumber] === "low";
+              return (
+                <tr key={item.id}
+                  style={{ borderBottom: "1px solid #f0f5ee", background: isLowConf ? "#fff8e8" : "" }}
+                  onMouseEnter={e => { if (!isLowConf) e.currentTarget.style.background = "#fafcf8"; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = isLowConf ? "#fff8e8" : ""; }}
+                >
+                  <td style={{ padding: "6px", textAlign: "center" }}>
+                    <input type="checkbox" checked={selected.has(item.id)}
+                      onChange={() => setSelected(prev => {
+                        const next = new Set(prev);
+                        next.has(item.id) ? next.delete(item.id) : next.add(item.id);
+                        return next;
+                      })}
+                      style={{ accentColor: green, cursor: "pointer" }} />
+                  </td>
+                  {COLUMNS.map(col => {
+                    const isEditing = editingCell?.id === item.id && editingCell?.field === col.key;
+                    return (
+                      <td key={col.key}
+                        onClick={() => setEditingCell({ id: item.id, field: col.key })}
+                        style={{ padding: "6px 10px", cursor: "pointer", color: darkGreen, maxWidth: col.width, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {isEditing ? (
+                          <input
+                            autoFocus
+                            defaultValue={item[col.key] || ""}
+                            onBlur={e => updateItem(item.id, col.key, e.target.value)}
+                            onKeyDown={e => { if (e.key === "Enter") e.target.blur(); if (e.key === "Escape") setEditingCell(null); }}
+                            style={{ width: "100%", padding: "2px 6px", borderRadius: 4, border: `1.5px solid ${green}`, fontSize: 13, fontFamily: font, boxSizing: "border-box" }}
+                          />
+                        ) : (
+                          <span style={{ color: item[col.key] ? darkGreen : "#c8d8c0" }}>
+                            {item[col.key] || "—"}
+                          </span>
+                        )}
+                      </td>
+                    );
+                  })}
+                  <td style={{ padding: "6px 10px", textAlign: "center", fontSize: 11 }}>
+                    <span style={{ color: confColor(item.sourcePageNumber), fontWeight: 700 }}>
+                      {item.sourcePageNumber || "?"}
+                    </span>
+                  </td>
+                  <td style={{ padding: "6px 10px", textAlign: "center" }}>
+                    {isLowConf && (
+                      <button onClick={() => onReExtract(item.sourcePageNumber)}
+                        title="Re-extract this page"
+                        style={{ background: "none", border: "none", fontSize: 14, cursor: "pointer", color: "#ff9800", padding: 0 }}>
+                        🔄
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        {filtered.length > 200 && (
+          <div style={{ textAlign: "center", padding: 16, fontSize: 13, color: muted }}>
+            Showing 200 of {filtered.length} — use search to narrow results
+          </div>
+        )}
+      </div>
+
+      {/* Actions */}
+      <div style={{ display: "flex", gap: 10 }}>
+        <button onClick={onBack} style={{ flex: 1, padding: "12px 0", borderRadius: 10, border: `1.5px solid ${border}`, background: cardBg, color: muted, fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: font }}>
+          ← Start Over
+        </button>
+        <button onClick={onNext} disabled={items.length === 0}
+          style={{
+            flex: 2, padding: "12px 0", borderRadius: 10, border: "none",
+            background: items.length > 0 ? green : "#c8d8c0",
+            color: "#fff", fontWeight: 800, fontSize: 14,
+            cursor: items.length > 0 ? "pointer" : "default", fontFamily: font,
+          }}>
+          Merge & Save ({items.length} varieties) →
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── MAIN COMPONENT ───────────────────────────────────────────────────────────
 export default function PdfCatalogImport({ existingLibrary = [], onSave, onCancel }) {
   const [step, setStep] = useState(1); // 1=upload, 2=extracting, 3=review, 4=merge
@@ -405,6 +592,34 @@ export default function PdfCatalogImport({ existingLibrary = [], onSave, onCance
     );
   }
 
-  // Steps 3 and 4 will be added in the next task
+  // ── STEP 3: REVIEW TABLE ────────────────────────────────────────────────
+  if (step === 3) {
+    return <ReviewTable
+      items={extractedItems}
+      setItems={setExtractedItems}
+      pageConfidences={pageConfidences}
+      onReExtract={reExtractPage}
+      onNext={() => setStep(4)}
+      onBack={() => { setStep(1); setExtractedItems([]); setPdfDoc(null); }}
+      cancelled={cancelled}
+    />;
+  }
+
+  // ── STEP 4: MERGE & COMMIT ──────────────────────────────────────────────
+  if (step === 4) {
+    const breederObj = BREEDERS.find(b => b.name === breeder);
+    const cultureGuideUrl = breederObj?.url || "";
+
+    return <MergeCommit
+      items={extractedItems}
+      existingLibrary={existingLibrary}
+      breeder={breeder}
+      cultureGuideUrl={cultureGuideUrl}
+      onCommit={onSave}
+      onBack={() => setStep(3)}
+      onDone={onCancel}
+    />;
+  }
+
   return null;
 }
