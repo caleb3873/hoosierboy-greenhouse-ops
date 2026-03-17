@@ -50,8 +50,255 @@ async function renderPageToBase64(pdfDoc, pageNum, scale = 1.0) {
   return canvas.toDataURL("image/jpeg", 0.85);
 }
 
-// Placeholder — implemented in Task 6
-function MergeCommit() { return null; }
+// ── MERGE LOGIC ──────────────────────────────────────────────────────────────
+// Protected fields — never overwritten by import
+const PROTECTED_FIELDS = ["growerGrade", "customerGrade", "id"];
+
+// Fields to compare for merge
+const MERGE_FIELDS = [
+  "cropName", "variety", "type",
+  "propTraySize", "propCellCount", "propWeeks",
+  "finishWeeks", "finishTempDay", "finishTempNight", "tempGroup",
+  "lightRequirement", "spacing",
+  "fertilizerType", "fertilizerRate",
+  "pgrType", "pgrRate", "pgrTiming",
+  "pinchingNotes", "chemSensitivities", "generalNotes",
+];
+
+function classifyMerge(item, existingLibrary) {
+  const match = existingLibrary.find(
+    v => v.cropName?.toLowerCase() === item.cropName?.toLowerCase() &&
+         v.variety?.toLowerCase() === item.variety?.toLowerCase() &&
+         v.breeder?.toLowerCase() === item.breeder?.toLowerCase()
+  );
+
+  if (!match) return { status: "new", match: null, conflicts: [] };
+
+  // Check for conflicts and enrichments
+  const conflicts = [];
+  let hasEnrichment = false;
+
+  for (const field of MERGE_FIELDS) {
+    const existing = (match[field] || "").toString().trim();
+    const incoming = (item[field] || "").toString().trim();
+
+    if (!incoming) continue; // Nothing to merge
+    if (!existing && incoming) { hasEnrichment = true; continue; } // Fill empty field
+    if (existing && incoming && existing.toLowerCase() !== incoming.toLowerCase()) {
+      conflicts.push({ field, existing, incoming });
+    }
+  }
+
+  if (conflicts.length > 0) return { status: "conflict", match, conflicts };
+  if (hasEnrichment) return { status: "enriched", match, conflicts: [] };
+  return { status: "skipped", match, conflicts: [] };
+}
+
+// ── MERGE & COMMIT COMPONENT ─────────────────────────────────────────────────
+function MergeCommit({ items, existingLibrary, breeder, cultureGuideUrl, onCommit, onBack, onDone }) {
+  const [mergeResults, setMergeResults] = useState([]);
+  const [conflictResolutions, setConflictResolutions] = useState({}); // { itemId: { field: "keep"|"use" } }
+  const [committing, setCommitting] = useState(false);
+  const [committed, setCommitted] = useState(false);
+
+  // Classify all items on mount
+  useEffect(() => {
+    const results = items.map(item => ({
+      item,
+      ...classifyMerge(item, existingLibrary),
+    }));
+    setMergeResults(results);
+
+    // Default conflict resolutions to "use" (prefer PDF data)
+    const defaults = {};
+    results.forEach(r => {
+      if (r.status === "conflict") {
+        defaults[r.item.id] = {};
+        r.conflicts.forEach(c => { defaults[r.item.id][c.field] = "use"; });
+      }
+    });
+    setConflictResolutions(defaults);
+  }, [items, existingLibrary]);
+
+  const counts = {
+    new: mergeResults.filter(r => r.status === "new").length,
+    enriched: mergeResults.filter(r => r.status === "enriched").length,
+    conflict: mergeResults.filter(r => r.status === "conflict").length,
+    skipped: mergeResults.filter(r => r.status === "skipped").length,
+  };
+
+  const handleCommit = async () => {
+    setCommitting(true);
+
+    const toSave = [];
+
+    for (const result of mergeResults) {
+      if (result.status === "skipped") continue;
+
+      if (result.status === "new") {
+        toSave.push({
+          ...result.item,
+          id: crypto.randomUUID(),
+          breeder,
+          cultureGuideUrl: cultureGuideUrl || "",
+        });
+      } else if (result.status === "enriched") {
+        // Merge: fill empty fields only
+        const merged = { ...result.match };
+        for (const field of MERGE_FIELDS) {
+          const existing = (merged[field] || "").toString().trim();
+          const incoming = (result.item[field] || "").toString().trim();
+          if (!existing && incoming) merged[field] = incoming;
+        }
+        if (!merged.cultureGuideUrl && cultureGuideUrl) merged.cultureGuideUrl = cultureGuideUrl;
+        toSave.push(merged);
+      } else if (result.status === "conflict") {
+        const merged = { ...result.match };
+        const resolutions = conflictResolutions[result.item.id] || {};
+
+        // Fill empty fields
+        for (const field of MERGE_FIELDS) {
+          const existing = (merged[field] || "").toString().trim();
+          const incoming = (result.item[field] || "").toString().trim();
+          if (!existing && incoming) merged[field] = incoming;
+        }
+
+        // Apply conflict resolutions
+        for (const c of result.conflicts) {
+          if (resolutions[c.field] === "use") {
+            merged[c.field] = c.incoming;
+          }
+          // "keep" = do nothing, existing value stays
+        }
+
+        if (!merged.cultureGuideUrl && cultureGuideUrl) merged.cultureGuideUrl = cultureGuideUrl;
+        toSave.push(merged);
+      }
+    }
+
+    await onCommit(toSave);
+    setCommitted(true);
+    setCommitting(false);
+  };
+
+  const statusBadge = (status) => {
+    const styles = {
+      new: { bg: "#e8f3eb", color: "#2e7a2e", label: "NEW" },
+      enriched: { bg: "#e8f0fc", color: "#1a4a7a", label: "ENRICHED" },
+      conflict: { bg: "#fff8e8", color: "#a06010", label: "CONFLICT" },
+      skipped: { bg: "#f0f0ea", color: muted, label: "SKIPPED" },
+    };
+    const s = styles[status];
+    return <span style={{ background: s.bg, color: s.color, padding: "2px 10px", borderRadius: 12, fontWeight: 700, fontSize: 11 }}>{s.label}</span>;
+  };
+
+  if (committed) {
+    return (
+      <div style={{ fontFamily: font, maxWidth: 500, margin: "0 auto", textAlign: "center", padding: "60px 0" }}>
+        <div style={{ fontSize: 48, marginBottom: 16 }}>✓</div>
+        <div style={{ fontSize: 20, fontWeight: 800, color: darkGreen, marginBottom: 8 }}>Import Complete</div>
+        <div style={{ fontSize: 14, color: muted, lineHeight: 1.8 }}>
+          {counts.new > 0 && <div><span style={{ fontWeight: 700, color: "#2e7a2e" }}>{counts.new}</span> new varieties added</div>}
+          {counts.enriched > 0 && <div><span style={{ fontWeight: 700, color: "#1a4a7a" }}>{counts.enriched}</span> existing varieties enriched</div>}
+          {counts.conflict > 0 && <div><span style={{ fontWeight: 700, color: "#a06010" }}>{counts.conflict}</span> conflicts resolved</div>}
+          {counts.skipped > 0 && <div><span style={{ fontWeight: 700, color: muted }}>{counts.skipped}</span> unchanged (skipped)</div>}
+        </div>
+        <button onClick={onDone} style={{ marginTop: 24, background: green, color: "#fff", border: "none", borderRadius: 10, padding: "12px 32px", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: font }}>
+          Done
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ fontFamily: font }}>
+      <div style={{ fontSize: 20, fontWeight: 800, color: darkGreen, marginBottom: 4 }}>
+        Merge & Save
+      </div>
+      <div style={{ fontSize: 13, color: muted, marginBottom: 20 }}>
+        Review how extracted varieties will be merged into your library.
+      </div>
+
+      {/* Summary badges */}
+      <div style={{ display: "flex", gap: 16, marginBottom: 24, flexWrap: "wrap" }}>
+        {[
+          { label: "New", count: counts.new, bg: "#e8f3eb", color: "#2e7a2e" },
+          { label: "Enriched", count: counts.enriched, bg: "#e8f0fc", color: "#1a4a7a" },
+          { label: "Conflicts", count: counts.conflict, bg: "#fff8e8", color: "#a06010" },
+          { label: "Skipped", count: counts.skipped, bg: "#f0f0ea", color: muted },
+        ].map(s => (
+          <div key={s.label} style={{ background: s.bg, borderRadius: 12, padding: "14px 20px", textAlign: "center", minWidth: 80 }}>
+            <div style={{ fontSize: 24, fontWeight: 800, color: s.color }}>{s.count}</div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: s.color, textTransform: "uppercase", letterSpacing: 0.6 }}>{s.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Conflicts requiring resolution */}
+      {counts.conflict > 0 && (
+        <div style={{ marginBottom: 24 }}>
+          <div style={{ fontSize: 14, fontWeight: 800, color: "#a06010", marginBottom: 12 }}>
+            Resolve Conflicts
+          </div>
+          {mergeResults.filter(r => r.status === "conflict").map(result => (
+            <div key={result.item.id} style={{ background: "#fff", borderRadius: 12, border: "1.5px solid #f0d090", padding: "16px 20px", marginBottom: 12 }}>
+              <div style={{ fontWeight: 700, color: darkGreen, marginBottom: 10 }}>
+                {result.item.cropName} — {result.item.variety}
+              </div>
+              {result.conflicts.map(c => {
+                const resolution = conflictResolutions[result.item.id]?.[c.field] || "use";
+                return (
+                  <div key={c.field} style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8, fontSize: 13 }}>
+                    <div style={{ width: 120, fontWeight: 600, color: muted, fontSize: 11, textTransform: "uppercase" }}>{c.field}</div>
+                    <label style={{ flex: 1, display: "flex", alignItems: "center", gap: 6, cursor: "pointer", padding: "6px 10px", borderRadius: 8, background: resolution === "keep" ? "#f0f8eb" : "#fafafa", border: `1px solid ${resolution === "keep" ? green : "#e8e8e4"}` }}>
+                      <input type="radio" name={`${result.item.id}-${c.field}`} checked={resolution === "keep"}
+                        onChange={() => setConflictResolutions(prev => ({ ...prev, [result.item.id]: { ...prev[result.item.id], [c.field]: "keep" } }))}
+                        style={{ accentColor: green }} />
+                      <span style={{ color: darkGreen }}>Keep: <strong>{c.existing}</strong></span>
+                    </label>
+                    <label style={{ flex: 1, display: "flex", alignItems: "center", gap: 6, cursor: "pointer", padding: "6px 10px", borderRadius: 8, background: resolution === "use" ? "#fff8e8" : "#fafafa", border: `1px solid ${resolution === "use" ? "#f0d090" : "#e8e8e4"}` }}>
+                      <input type="radio" name={`${result.item.id}-${c.field}`} checked={resolution === "use"}
+                        onChange={() => setConflictResolutions(prev => ({ ...prev, [result.item.id]: { ...prev[result.item.id], [c.field]: "use" } }))}
+                        style={{ accentColor: "#e67e22" }} />
+                      <span style={{ color: "#a06010" }}>Use PDF: <strong>{c.incoming}</strong></span>
+                    </label>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Item list with status badges */}
+      <div style={{ maxHeight: 300, overflowY: "auto", marginBottom: 20, border: `1px solid ${border}`, borderRadius: 12 }}>
+        {mergeResults.map(r => (
+          <div key={r.item.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", borderBottom: "1px solid #f0f5ee" }}>
+            {statusBadge(r.status)}
+            <span style={{ fontWeight: 600, color: darkGreen }}>{r.item.cropName}</span>
+            <span style={{ color: muted }}>— {r.item.variety}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Action buttons */}
+      <div style={{ display: "flex", gap: 10 }}>
+        <button onClick={onBack} style={{ flex: 1, padding: "12px 0", borderRadius: 10, border: `1.5px solid ${border}`, background: cardBg, color: muted, fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: font }}>
+          ← Back to Review
+        </button>
+        <button onClick={handleCommit} disabled={committing || (counts.new + counts.enriched + counts.conflict) === 0}
+          style={{
+            flex: 2, padding: "12px 0", borderRadius: 10, border: "none",
+            background: committing ? "#c8d8c0" : green,
+            color: "#fff", fontWeight: 800, fontSize: 14,
+            cursor: committing ? "default" : "pointer", fontFamily: font,
+          }}>
+          {committing ? "Saving..." : `Save ${counts.new + counts.enriched + counts.conflict} Varieties ✓`}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 // ── REVIEW TABLE ─────────────────────────────────────────────────────────────
 function ReviewTable({ items, setItems, pageConfidences, onReExtract, onNext, onBack, cancelled }) {
