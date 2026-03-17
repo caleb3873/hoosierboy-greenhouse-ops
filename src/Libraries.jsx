@@ -2,9 +2,10 @@ import { useState, useEffect, useRef } from "react";
 import { useVarieties, useContainers, useSpacingProfiles, useBrokerCatalogs, useSoilMixes, useInputProducts, useComboTags, useBrokerProfiles } from "./supabase";
 import { BrokerProfiles, SupplierProfiles, BreederProfiles } from "./Profiles";
 import ComboLibrary from "./ComboDesigner";
+import PdfCatalogImport from "./PdfCatalogImport";
 
 // ── BREEDER CONFIG ────────────────────────────────────────────────────────────
-const BREEDERS = [
+export const BREEDERS = [
   { name: "Ball Seed", color: "#c0392b", url: "https://www.ballseed.com/culture-guides" },
   { name: "Proven Winners", color: "#27ae60", url: "https://www.provenwinners.com/growers/culture-guides" },
   { name: "Syngenta / Goldsmith", color: "#2980b9", url: "https://www.syngentaflowers-us.com/culture-guides" },
@@ -50,46 +51,6 @@ function SectionHeader({ children }) {
       {children}
     </div>
   );
-}
-
-// ── PARSE PROMPT ──────────────────────────────────────────────────────────────
-function buildParsePrompt(breeder) {
-  return `You are a horticulture data extraction assistant. The user has uploaded a breeder culture guide PDF from ${breeder || "a flower breeder"}.
-
-Your job is to extract the SERIES-LEVEL cultural data — one entry per series or crop, NOT one per color variant.
-
-Rules:
-- If the guide covers one series (e.g. "Cabaret Calibrachoa") with many colors listed, create EXACTLY ONE entry for that series. Ignore individual color names — they are irrelevant.
-- cropName = the genus or crop type (e.g. "Calibrachoa", "Petunia", "Impatiens")
-- variety = the series name only (e.g. "Cabaret", "Wave", "Infinity")
-- If the guide covers multiple distinct series with different cultural data, create one entry per series.
-- Use the primary/smallest container crop time for finishWeeks.
-- All temperatures in °F, ranges are fine (e.g. "71-76").
-- Use null for any field not mentioned in the PDF.
-- Return ONLY a valid JSON array, no markdown, no explanation, no backticks.
-
-Return objects with these exact fields:
-{
-  "cropName": "",
-  "variety": "",
-  "breeder": "${breeder || ""}",
-  "type": "Annual",
-  "propTraySize": "",
-  "propCellCount": "",
-  "propWeeks": "",
-  "finishWeeks": "",
-  "finishTempDay": "",
-  "finishTempNight": "",
-  "lightRequirement": "",
-  "fertilizerRate": "",
-  "fertilizerType": "",
-  "spacing": "",
-  "pgrType": "",
-  "pgrRate": "",
-  "pgrTiming": "",
-  "pinchingNotes": "",
-  "generalNotes": ""
-}`;
 }
 
 // ── VARIETY FORM ──────────────────────────────────────────────────────────────
@@ -501,138 +462,11 @@ function VarietyCard({ variety, onEdit, onDelete }) {
   );
 }
 
-// ── PDF UPLOADER ──────────────────────────────────────────────────────────────
-function PDFUploader({ onExtracted }) {
-  const [breeder, setBreeder] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [status, setStatus] = useState(null);
-  const fileRef = useRef(null);
-
-  async function handleFile(e) {
-    const file = e.target.files[0];
-    if (!file) return;
-    if (file.type !== "application/pdf") { setError("Please upload a PDF file."); return; }
-
-    setLoading(true);
-    setError(null);
-    setStatus("Reading PDF...");
-
-    try {
-      const base64 = await new Promise((res, rej) => {
-        const reader = new FileReader();
-        reader.onload = () => res(reader.result.split(",")[1]);
-        reader.onerror = () => rej(new Error("Failed to read file"));
-        reader.readAsDataURL(file);
-      });
-
-      setStatus("Extracting variety data with AI...");
-
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": process.env.REACT_APP_ANTHROPIC_API_KEY || "",
-          "anthropic-version": "2023-06-01",
-          "anthropic-dangerous-direct-browser-access": "true",
-        },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 4000,
-          messages: [{
-            role: "user",
-            content: [
-              {
-                type: "document",
-                source: { type: "base64", media_type: "application/pdf", data: base64 }
-              },
-              {
-                type: "text",
-                text: buildParsePrompt(breeder)
-              }
-            ]
-          }]
-        })
-      });
-
-      const data = await response.json();
-      if (data.error) throw new Error(data.error.message || "API error");
-      const text = data.content?.find(b => b.type === "text")?.text || "";
-
-      let parsed;
-      try {
-        const clean = text.replace(/```json|```/g, "").trim();
-        parsed = JSON.parse(clean);
-      } catch {
-        throw new Error("Could not parse variety data from this PDF. Try a different guide or add manually.");
-      }
-
-      if (!Array.isArray(parsed) || parsed.length === 0) {
-        throw new Error("No variety data found in this PDF.");
-      }
-
-      setStatus(`Found ${parsed.length} variet${parsed.length === 1 ? "y" : "ies"} — review below before saving.`);
-      onExtracted(parsed.map(v => ({ ...v, id: crypto.randomUUID(), breeder: breeder || v.breeder || "" })));
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-      if (fileRef.current) fileRef.current.value = "";
-    }
-  }
-
-  return (
-    <div style={{ background: "#fff", borderRadius: 14, border: "1.5px dashed #c8d8c0", padding: "24px 28px", marginBottom: 24 }}>
-      <div style={{ fontWeight: 700, fontSize: 15, color: "#1e2d1a", marginBottom: 4 }}>📄 Import from Culture Guide PDF</div>
-      <div style={{ fontSize: 13, color: "#7a8c74", marginBottom: 18 }}>Upload a breeder PDF and AI will extract variety data automatically. You'll review before saving.</div>
-
-      <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
-        <div style={{ minWidth: 200 }}>
-          <label style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", letterSpacing: 0.6, textTransform: "uppercase", display: "block", marginBottom: 5 }}>Breeder Source</label>
-          <select style={inputStyle(false)} value={breeder} onChange={e => setBreeder(e.target.value)}>
-            <option value="">— Select breeder —</option>
-            {BREEDERS.map(b => <option key={b.name}>{b.name}</option>)}
-          </select>
-        </div>
-
-        <div>
-          <label style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", letterSpacing: 0.6, textTransform: "uppercase", display: "block", marginBottom: 5 }}>PDF File</label>
-          <label style={{ display: "inline-block", background: loading ? "#e0ead8" : "#7fb069", color: "#fff", borderRadius: 9, padding: "9px 18px", fontWeight: 700, fontSize: 13, cursor: loading ? "default" : "pointer", fontFamily: "inherit" }}>
-            {loading ? "Processing..." : "Choose PDF"}
-            <input ref={fileRef} type="file" accept="application/pdf" onChange={handleFile} disabled={loading} style={{ display: "none" }} />
-          </label>
-        </div>
-      </div>
-
-      {status && !error && (
-        <div style={{ marginTop: 14, fontSize: 13, color: "#4a7a35", background: "#f0f8eb", borderRadius: 8, padding: "10px 14px", display: "flex", alignItems: "center", gap: 8 }}>
-          {loading && <span style={{ display: "inline-block", width: 14, height: 14, border: "2px solid #7fb069", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.7s linear infinite" }} />}
-          {status}
-        </div>
-      )}
-      {error && (
-        <div style={{ marginTop: 14, fontSize: 13, color: "#c0392b", background: "#fdf0ee", borderRadius: 8, padding: "10px 14px" }}>⚠ {error}</div>
-      )}
-
-      <div style={{ marginTop: 16, display: "flex", gap: 10, flexWrap: "wrap" }}>
-        {BREEDERS.filter(b => b.url).map(b => (
-          <a key={b.name} href={b.url} target="_blank" rel="noopener noreferrer"
-            style={{ fontSize: 11, color: b.color, textDecoration: "none", border: `1px solid ${b.color}55`, borderRadius: 20, padding: "3px 10px", fontWeight: 600, background: b.color + "11" }}>
-            {b.name} ↗
-          </a>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 // ── MAIN APP ──────────────────────────────────────────────────────────────────
 function VarietyLibrary() {
   const { rows: library, upsert: upsertVariety, remove: removeVarietyDb } = useVarieties();
-  const [view, setView] = useState("library"); // library | add | edit | review
+  const [view, setView] = useState("library"); // library | add | edit | grades | pdf-import
   const [editingId, setEditingId] = useState(null);
-  const [reviewQueue, setReviewQueue] = useState([]);
-  const [reviewIndex, setReviewIndex] = useState(0);
   const [search, setSearch] = useState("");
   const [filterBreeder, setFilterBreeder] = useState("");
   const [filterType, setFilterType] = useState("");
@@ -653,31 +487,6 @@ function VarietyLibrary() {
   async function deleteVariety(id) {
     if (window.confirm("Remove this variety from the library?")) {
       await removeVarietyDb(id);
-    }
-  }
-
-  function handleExtracted(varieties) {
-    setReviewQueue(varieties);
-    setReviewIndex(0);
-    setView("review");
-  }
-
-  async function saveReviewed(form) {
-    try { await upsertVariety({ ...form, id: form.id || crypto.randomUUID() }); } catch(e) { alert("Save failed: " + e.message); return; }
-    if (reviewIndex < reviewQueue.length - 1) {
-      setReviewIndex(i => i + 1);
-    } else {
-      setView("library");
-      setReviewQueue([]);
-    }
-  }
-
-  function skipReviewed() {
-    if (reviewIndex < reviewQueue.length - 1) {
-      setReviewIndex(i => i + 1);
-    } else {
-      setView("library");
-      setReviewQueue([]);
     }
   }
 
@@ -708,6 +517,7 @@ function VarietyLibrary() {
             <button onClick={() => { setView("library"); setEditingId(null); }} style={{ background: "none", color: "#c8e6b8", border: "1px solid #4a6a3a", borderRadius: 8, padding: "8px 16px", fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>← Library</button>
           )}
           {view === "library" && (<>
+            <button onClick={() => setView("pdf-import")} style={{ background: "none", color: "#c8e6b8", border: "1px solid #4a6a3a", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>📄 Import PDF Catalog</button>
             <button onClick={() => setView("grades")} style={{ background: "none", color: "#c8e6b8", border: "1px solid #4a6a3a", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>⭐ Grade Varieties</button>
             <button onClick={() => { setEditingId(null); setView("add"); }} style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 8, padding: "8px 18px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>+ Add Variety</button>
           </>)}
@@ -716,11 +526,22 @@ function VarietyLibrary() {
 
       <div style={{ maxWidth: 900, margin: "0 auto", padding: "32px 24px" }}>
 
+        {view === "pdf-import" && (
+          <PdfCatalogImport
+            existingLibrary={library}
+            onSave={async (varieties) => {
+              for (const v of varieties) {
+                await upsertVariety({ ...v, id: v.id || crypto.randomUUID() });
+              }
+              setView("library");
+            }}
+            onCancel={() => setView("library")}
+          />
+        )}
+
         {/* LIBRARY VIEW */}
         {view === "library" && (
           <>
-            <PDFUploader onExtracted={handleExtracted} />
-
             {/* Search & Filter */}
             <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
               <input
@@ -798,33 +619,6 @@ function VarietyLibrary() {
           />
         )}
 
-        {/* REVIEW VIEW — extracted from PDF */}
-        {view === "review" && reviewQueue.length > 0 && (
-          <div>
-            <div style={{ background: "#f0f8eb", border: "1.5px solid #c8e6b8", borderRadius: 12, padding: "14px 20px", marginBottom: 24, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <div>
-                <div style={{ fontWeight: 700, color: "#2e5c1e", fontSize: 14 }}>Reviewing extracted varieties</div>
-                <div style={{ fontSize: 12, color: "#7a9a6a", marginTop: 2 }}>{reviewIndex + 1} of {reviewQueue.length} — review each variety, edit if needed, then save or skip</div>
-              </div>
-              <button onClick={() => { setView("library"); setReviewQueue([]); }} style={{ background: "none", color: "#7a8c74", border: "1px solid #c8d8c0", borderRadius: 7, padding: "6px 14px", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
-                Exit Review
-              </button>
-            </div>
-
-            <VarietyForm
-              title={`${reviewQueue[reviewIndex].cropName || "Variety"} ${reviewQueue[reviewIndex].variety || ""}`}
-              initial={reviewQueue[reviewIndex]}
-              onSave={saveReviewed}
-              onCancel={null}
-            />
-
-            <div style={{ marginTop: 12, textAlign: "center" }}>
-              <button onClick={skipReviewed} style={{ background: "none", color: "#aabba0", border: "none", fontSize: 13, cursor: "pointer", fontFamily: "inherit", textDecoration: "underline" }}>
-                Skip this variety →
-              </button>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );
