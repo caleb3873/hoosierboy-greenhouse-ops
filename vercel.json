@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "api/extract-catalog.js": {
+      "maxDuration": 60
+    }
+  }
+}
