@@ -97,7 +97,7 @@ module.exports = async function handler(req, res) {
   // Auth check
   const authHeader = req.headers.authorization;
   const appToken = req.headers["x-app-token"];
-  const validAppToken = process.env.APP_SECRET_TOKEN || "greenhouse-ops-default";
+  const validAppToken = process.env.APP_SECRET_TOKEN || "greenhouse-ops";
   if (!authHeader && (!appToken || appToken !== validAppToken)) {
     return res.status(401).json({ error: "Unauthorized" });
   }
