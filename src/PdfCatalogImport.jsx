@@ -55,6 +55,28 @@ async function renderPageToBase64(pdfDoc, pageNum, scale = 1.0) {
 // Protected fields — never overwritten by import
 const PROTECTED_FIELDS = ["growerGrade", "customerGrade", "id"];
 
+// Fields that exist in variety_library table — only these get saved
+const VARIETY_FIELDS = [
+  "cropName", "variety", "breeder", "type",
+  "propTraySize", "propCellCount", "propWeeks",
+  "finishWeeks", "finishTempDay", "finishTempNight", "tempGroup",
+  "lightRequirement", "spacing",
+  "fertilizerType", "fertilizerRate",
+  "pgrType", "pgrRate", "pgrTiming",
+  "pinchingNotes", "chemSensitivities", "generalNotes",
+  "cultureGuideUrl", "growerGrade", "customerGrade",
+];
+
+// Strip extraction-only fields (sourcePageNumber, confidence, etc.) before saving
+function cleanForDb(item) {
+  const clean = {};
+  for (const field of VARIETY_FIELDS) {
+    if (item[field] !== undefined) clean[field] = item[field];
+  }
+  if (item.id) clean.id = item.id;
+  return clean;
+}
+
 // Fields to compare for merge
 const MERGE_FIELDS = [
   "cropName", "variety", "type",
@@ -137,12 +159,12 @@ function MergeCommit({ items, existingLibrary, breeder, cultureGuideUrl, onCommi
       if (result.status === "skipped") continue;
 
       if (result.status === "new") {
-        toSave.push({
+        toSave.push(cleanForDb({
           ...result.item,
           id: crypto.randomUUID(),
           breeder,
           cultureGuideUrl: cultureGuideUrl || "",
-        });
+        }));
       } else if (result.status === "enriched") {
         // Merge: fill empty fields only
         const merged = { ...result.match };
@@ -152,7 +174,7 @@ function MergeCommit({ items, existingLibrary, breeder, cultureGuideUrl, onCommi
           if (!existing && incoming) merged[field] = incoming;
         }
         if (!merged.cultureGuideUrl && cultureGuideUrl) merged.cultureGuideUrl = cultureGuideUrl;
-        toSave.push(merged);
+        toSave.push(cleanForDb(merged));
       } else if (result.status === "conflict") {
         const merged = { ...result.match };
         const resolutions = conflictResolutions[result.item.id] || {};
@@ -173,7 +195,7 @@ function MergeCommit({ items, existingLibrary, breeder, cultureGuideUrl, onCommi
         }
 
         if (!merged.cultureGuideUrl && cultureGuideUrl) merged.cultureGuideUrl = cultureGuideUrl;
-        toSave.push(merged);
+        toSave.push(cleanForDb(merged));
       }
     }
 
@@ -587,7 +609,7 @@ export default function PdfCatalogImport({ existingLibrary = [], onSave, onCance
     setDetectedStructure(null);
 
     let structure = null;
-    const BATCH_SIZE = 5;
+    const BATCH_SIZE = 2; // Keep small to avoid Vercel 60s timeout
 
     for (let start = startPage; start <= endPage; start += BATCH_SIZE) {
       if (cancelRef.current) break;
