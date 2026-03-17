@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { BREEDERS } from "./Libraries";
+import { useExtraction } from "./ExtractionContext";
 
 // ── STYLES ───────────────────────────────────────────────────────────────────
 const font = "'DM Sans','Segoe UI',sans-serif";
@@ -491,6 +492,8 @@ export default function PdfCatalogImport({ existingLibrary = [], onSave, onCance
   const [pdfDoc, setPdfDoc] = useState(null);
   const [totalPages, setTotalPages] = useState(0);
   const [fileName, setFileName] = useState("");
+  const [startPage, setStartPage] = useState(1);
+  const [endPage, setEndPage] = useState(0); // 0 means "use totalPages"
 
   // Extraction state
   const [extractedItems, setExtractedItems] = useState([]);
@@ -504,8 +507,58 @@ export default function PdfCatalogImport({ existingLibrary = [], onSave, onCance
   const cancelRef = useRef(false);
   const itemCountRef = useRef(0); // Track count via ref to avoid stale closures
 
+  const { extractionState, setExtractionState } = useExtraction();
   const pdfReady = usePdfJs();
   const fileRef = useRef(null);
+
+  // Restore state from context if returning to this page during/after extraction
+  useEffect(() => {
+    if (extractionState && !pdfDoc) {
+      setBreeder(extractionState.breeder || "");
+      setFileName(extractionState.fileName || "");
+      setExtractedItems(extractionState.extractedItems || []);
+      setProcessedPages(extractionState.processedPages || 0);
+      setPageConfidences(extractionState.pageConfidences || {});
+      setBatchErrors(extractionState.batchErrors || []);
+      setDetectedStructure(extractionState.detectedStructure || null);
+      setCancelled(extractionState.cancelled || false);
+      setCurrentBatch(extractionState.currentBatch || "");
+      setStartPage(extractionState.startPage || 1);
+      setEndPage(extractionState.endPage || 0);
+      setTotalPages(extractionState.totalToProcess || 0);
+      setPdfDoc(extractionState.pdfDoc || null);
+      setExtracting(extractionState.extracting || false);
+      itemCountRef.current = extractionState.extractedItems?.length || 0;
+      // If extraction is done (not extracting and has items), go to review
+      if (!extractionState.extracting && extractionState.extractedItems?.length > 0 && extractionState.step >= 3) {
+        setStep(extractionState.step);
+      } else if (extractionState.extracting) {
+        setStep(2);
+      }
+    }
+  }, []); // Only on mount
+
+  // Sync state to context so it persists across navigation
+  useEffect(() => {
+    if (step >= 2 || extractedItems.length > 0) {
+      setExtractionState({
+        breeder, fileName, startPage, endPage,
+        totalToProcess: endPage - startPage + 1,
+        processedPages, extractedItems, pageConfidences,
+        batchErrors, extracting, cancelled, detectedStructure,
+        currentBatch, step, pdfDoc,
+      });
+    }
+  }, [breeder, fileName, startPage, endPage, processedPages, extractedItems,
+      pageConfidences, batchErrors, extracting, cancelled, detectedStructure,
+      currentBatch, step, pdfDoc, setExtractionState]);
+
+  // Clear context when resetting to step 1 with no items
+  useEffect(() => {
+    if (step === 1 && extractedItems.length === 0) {
+      setExtractionState(null);
+    }
+  }, [step, extractedItems.length, setExtractionState]);
 
   // ── LOAD PDF ─────────────────────────────────────────────────────────────
   const handleFile = async (file) => {
@@ -516,6 +569,7 @@ export default function PdfCatalogImport({ existingLibrary = [], onSave, onCance
     const doc = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
     setPdfDoc(doc);
     setTotalPages(doc.numPages);
+    setEndPage(doc.numPages);
   };
 
   // ── EXTRACT ALL PAGES ────────────────────────────────────────────────────
@@ -535,11 +589,11 @@ export default function PdfCatalogImport({ existingLibrary = [], onSave, onCance
     let structure = null;
     const BATCH_SIZE = 5;
 
-    for (let start = 1; start <= totalPages; start += BATCH_SIZE) {
+    for (let start = startPage; start <= endPage; start += BATCH_SIZE) {
       if (cancelRef.current) break;
 
-      const end = Math.min(start + BATCH_SIZE - 1, totalPages);
-      setCurrentBatch(`Processing pages ${start}–${end} of ${totalPages}...`);
+      const end = Math.min(start + BATCH_SIZE - 1, endPage);
+      setCurrentBatch(`Processing pages ${start}–${end} of ${endPage}...`);
 
       try {
         // Render pages to images
@@ -628,7 +682,7 @@ export default function PdfCatalogImport({ existingLibrary = [], onSave, onCance
       setCancelled(true);
       if (itemCountRef.current > 0) setStep(3); // Show partial results via ref (avoids stale closure)
     }
-  }, [pdfDoc, breeder, totalPages]);
+  }, [pdfDoc, breeder, totalPages, startPage, endPage]);
 
   // ── RE-EXTRACT SINGLE PAGE ───────────────────────────────────────────────
   const reExtractPage = async (pageNum) => {
@@ -734,7 +788,7 @@ export default function PdfCatalogImport({ existingLibrary = [], onSave, onCance
           </div>
           {pdfDoc ? (
             <div style={{ fontSize: 13, color: green, fontWeight: 700 }}>
-              {totalPages} pages ready to process
+              {endPage - startPage + 1} of {totalPages} pages selected
             </div>
           ) : (
             <div style={{ fontSize: 13, color: muted }}>or click to browse</div>
@@ -744,8 +798,34 @@ export default function PdfCatalogImport({ existingLibrary = [], onSave, onCance
         <input ref={fileRef} type="file" accept="application/pdf" style={{ display: "none" }}
           onChange={e => handleFile(e.target.files[0])} />
 
+        {/* Page range selector */}
+        {pdfDoc && totalPages > 1 && (
+          <div style={{ marginTop: 16, background: "#f8faf6", borderRadius: 12, border: "1.5px solid #e0ead8", padding: "16px 20px" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 10 }}>
+              Page Range
+            </div>
+            <div style={{ fontSize: 12, color: "#7a8c74", marginBottom: 12 }}>
+              Skip cover pages, table of contents, index, and back matter. Only process pages with variety data.
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 13, color: "#4a5a40", fontWeight: 600 }}>Pages</span>
+              <input type="number" min={1} max={endPage} value={startPage}
+                onChange={e => setStartPage(Math.max(1, Math.min(parseInt(e.target.value) || 1, endPage)))}
+                style={{ width: 70, padding: "8px 10px", borderRadius: 8, border: "1.5px solid #c8d8c0", fontSize: 14, textAlign: "center", fontFamily: font, color: "#1e2d1a" }} />
+              <span style={{ fontSize: 13, color: "#7a8c74" }}>to</span>
+              <input type="number" min={startPage} max={totalPages} value={endPage}
+                onChange={e => setEndPage(Math.max(startPage, Math.min(parseInt(e.target.value) || totalPages, totalPages)))}
+                style={{ width: 70, padding: "8px 10px", borderRadius: 8, border: "1.5px solid #c8d8c0", fontSize: 14, textAlign: "center", fontFamily: font, color: "#1e2d1a" }} />
+              <span style={{ fontSize: 13, color: "#7a8c74" }}>of {totalPages}</span>
+              <span style={{ fontSize: 12, color: "#7fb069", fontWeight: 700, marginLeft: "auto" }}>
+                {endPage - startPage + 1} pages to process
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* Page count validation */}
-        {totalPages > 200 && (
+        {(endPage - startPage + 1) > 200 && (
           <div style={{ marginTop: 12, fontSize: 13, color: "#c03030", background: "#fdf0ee", borderRadius: 8, padding: "10px 14px" }}>
             This PDF has {totalPages} pages — maximum is 200. Try splitting the catalog into sections.
           </div>
@@ -758,16 +838,16 @@ export default function PdfCatalogImport({ existingLibrary = [], onSave, onCance
           </button>
           <button
             onClick={startExtraction}
-            disabled={!pdfDoc || !breeder || totalPages > 200}
+            disabled={!pdfDoc || !breeder || (endPage - startPage + 1) > 200}
             style={{
               flex: 2, padding: "12px 0", borderRadius: 10, border: "none",
-              background: pdfDoc && breeder && totalPages <= 200 ? green : "#c8d8c0",
+              background: pdfDoc && breeder && (endPage - startPage + 1) <= 200 ? green : "#c8d8c0",
               color: "#fff", fontWeight: 800, fontSize: 14,
-              cursor: pdfDoc && breeder && totalPages <= 200 ? "pointer" : "default",
+              cursor: pdfDoc && breeder && (endPage - startPage + 1) <= 200 ? "pointer" : "default",
               fontFamily: font,
             }}
           >
-            Extract Varieties →
+            Extract from {endPage - startPage + 1} Pages →
           </button>
         </div>
       </div>
@@ -776,7 +856,8 @@ export default function PdfCatalogImport({ existingLibrary = [], onSave, onCance
 
   // ── STEP 2: EXTRACTING ──────────────────────────────────────────────────
   if (step === 2) {
-    const pct = totalPages > 0 ? Math.round((processedPages / totalPages) * 100) : 0;
+    const totalToProcess = endPage - startPage + 1;
+    const pct = totalToProcess > 0 ? Math.round((processedPages / totalToProcess) * 100) : 0;
 
     return (
       <div style={{ fontFamily: font, maxWidth: 600, margin: "0 auto" }}>
@@ -797,14 +878,14 @@ export default function PdfCatalogImport({ existingLibrary = [], onSave, onCance
           }} />
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: muted, marginBottom: 20 }}>
-          <span>{processedPages} / {totalPages} pages</span>
+          <span>{processedPages} / {totalToProcess} pages</span>
           <span>{extractedItems.length} varieties found</span>
         </div>
 
         {/* Page confidence dots */}
         <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 20 }}>
-          {Array.from({ length: totalPages }, (_, i) => {
-            const pageNum = i + 1;
+          {Array.from({ length: totalToProcess }, (_, i) => {
+            const pageNum = startPage + i;
             const conf = pageConfidences[pageNum];
             const color = !conf ? "#e0e0d8" : conf === "high" ? "#4caf50" : conf === "medium" ? "#ff9800" : "#f44336";
             return (
@@ -847,7 +928,7 @@ export default function PdfCatalogImport({ existingLibrary = [], onSave, onCance
       pageConfidences={pageConfidences}
       onReExtract={reExtractPage}
       onNext={() => setStep(4)}
-      onBack={() => { setStep(1); setExtractedItems([]); setPdfDoc(null); }}
+      onBack={() => { setStep(1); setExtractedItems([]); setPdfDoc(null); setExtractionState(null); }}
       cancelled={cancelled}
     />;
   }

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { AuthProvider, LoginScreen, UserMenu, useAuth } from "./Auth";
+import { ExtractionProvider, useExtraction } from "./ExtractionContext";
 import { CROP_STATUS } from "./shared";
 
 // Module imports — each is a self-contained page
@@ -66,6 +67,7 @@ const LOGO_WHITE = "https://cdn.prod.website-files.com/63b5c78a53ecb12c888ba09a/
 function PlannerShell() {
   const [page, setPage] = useState("home");
   const { signOut, displayName, floorMode } = useAuth();
+  const { extractionState } = useExtraction();
 
   const activeGroup = pageGroup(page) || page;
 
@@ -76,6 +78,7 @@ function PlannerShell() {
   return (
     <div style={{ fontFamily: "'DM Sans','Segoe UI',sans-serif", background: "#f2f5ef", minHeight: "100vh" }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
 
       {/* ── TOP NAV — primary group bar ── */}
       <div style={{ background: "#1a2a1a", position: "sticky", top: 0, zIndex: 100 }}>
@@ -110,6 +113,39 @@ function PlannerShell() {
           </div>
         )}
       </div>
+
+      {/* Extraction progress banner — visible from any page */}
+      {extractionState?.extracting && (
+        <div
+          onClick={() => setPage("library")}
+          style={{
+            background: "linear-gradient(90deg, #1e3a1a, #2a4a25)",
+            padding: "8px 20px",
+            display: "flex", alignItems: "center", gap: 12,
+            cursor: "pointer",
+            borderBottom: "1px solid #3a5a35",
+          }}>
+          <div style={{
+            width: 16, height: 16, border: "2px solid #7fb069", borderTopColor: "transparent",
+            borderRadius: "50%", animation: "spin 0.7s linear infinite", flexShrink: 0
+          }} />
+          <div style={{ fontSize: 12, color: "#c8e6b8", fontWeight: 600, flex: 1 }}>
+            Importing {extractionState.breeder} catalog — {extractionState.processedPages}/{extractionState.totalToProcess} pages
+          </div>
+          <div style={{ fontSize: 11, color: "#7a9a6a" }}>
+            {extractionState.extractedItems?.length || 0} varieties found
+          </div>
+          <div style={{
+            background: "#3a5a35", borderRadius: 10, height: 6, width: 120, overflow: "hidden", flexShrink: 0
+          }}>
+            <div style={{
+              background: "#7fb069", height: "100%", borderRadius: 10,
+              width: `${extractionState.totalToProcess > 0 ? Math.round((extractionState.processedPages / extractionState.totalToProcess) * 100) : 0}%`,
+              transition: "width 300ms ease-out",
+            }} />
+          </div>
+        </div>
+      )}
 
       {/* Page content */}
       <div style={{ maxWidth: 1100, margin: "0 auto", padding: "28px 24px" }}>
@@ -156,7 +192,9 @@ function AppInner() {
 export default function App() {
   return (
     <AuthProvider>
-      <AppInner />
+      <ExtractionProvider>
+        <AppInner />
+      </ExtractionProvider>
     </AuthProvider>
   );
 }
