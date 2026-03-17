@@ -853,6 +853,61 @@ export default function PdfCatalogImport({ existingLibrary = [], onSave, onCance
           </div>
         )}
 
+        {/* OR: Load pre-extracted JSON */}
+        <div style={{ marginTop: 24, borderTop: "1.5px solid #e0ead8", paddingTop: 20 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+            <div style={{ height: 1, flex: 1, background: "#e0ead8" }} />
+            <span style={{ fontSize: 11, fontWeight: 700, color: muted, textTransform: "uppercase", letterSpacing: 1 }}>Or</span>
+            <div style={{ height: 1, flex: 1, background: "#e0ead8" }} />
+          </div>
+          <div style={{ fontSize: 13, color: muted, marginBottom: 10 }}>
+            Load a pre-extracted JSON file from the local import script:
+          </div>
+          <div style={{ fontSize: 11, color: "#aabba0", marginBottom: 12, fontFamily: "monospace", background: "#f8faf6", borderRadius: 8, padding: "8px 12px", border: "1px solid #e0ead8" }}>
+            python scripts/import_catalog.py catalog.pdf --breeder "Ball FloraPlant"
+          </div>
+          <label style={{
+            display: "inline-block", background: "#f8faf6", border: `1.5px solid ${border}`,
+            borderRadius: 10, padding: "10px 20px", fontWeight: 700, fontSize: 13,
+            cursor: "pointer", fontFamily: font, color: "#4a5a40",
+          }}>
+            Load JSON File
+            <input type="file" accept=".json" style={{ display: "none" }} onChange={async (e) => {
+              const file = e.target.files[0];
+              if (!file) return;
+              try {
+                const text = await file.text();
+                const items = JSON.parse(text);
+                if (!Array.isArray(items) || items.length === 0) {
+                  alert("JSON file must contain a non-empty array of varieties.");
+                  return;
+                }
+                // Add IDs and detect breeder
+                const withIds = items.map(item => ({
+                  ...item,
+                  id: crypto.randomUUID(),
+                }));
+                // Auto-set breeder from first item if not already set
+                if (!breeder && withIds[0]?.breeder) {
+                  setBreeder(withIds[0].breeder);
+                }
+                setExtractedItems(withIds);
+                setFileName(file.name);
+                // Build page confidences from sourcePageNumber (all "high" for local extraction)
+                const confs = {};
+                withIds.forEach(item => {
+                  if (item.sourcePageNumber) confs[item.sourcePageNumber] = "high";
+                });
+                setPageConfidences(confs);
+                setStep(3); // Go straight to review
+              } catch (err) {
+                alert("Failed to read JSON: " + err.message);
+              }
+              e.target.value = "";
+            }} />
+          </label>
+        </div>
+
         {/* Action buttons */}
         <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
           <button onClick={onCancel} style={{ flex: 1, padding: "12px 0", borderRadius: 10, border: `1.5px solid ${border}`, background: cardBg, color: muted, fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: font }}>
