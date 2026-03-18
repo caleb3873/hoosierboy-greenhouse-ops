@@ -17,6 +17,8 @@ import Meetings            from "./Meetings";
 import TradeShow           from "./TradeShow";
 import Export              from "./Export";
 import GrowerManagement   from "./GrowerManagement";
+import WateringPlan        from "./WateringPlan";
+import SprayLog            from "./SprayLog";
 
 // ── PLANNER SHELL ─────────────────────────────────────────────────────────────
 // Nav grouped by category
@@ -163,8 +165,8 @@ function PlannerShell() {
       {/* Page content */}
       <div style={{ maxWidth: 1100, margin: "0 auto", padding: "28px 24px" }}>
         {page === "home"       && <PlannerHome    onNavigate={setPage} />}
-        {page === "spraylog"  && <div style={{ padding: 40, textAlign: "center", color: "#7a8c74" }}>Spray Log — coming soon</div>}
-        {page === "watering"  && <div style={{ padding: 40, textAlign: "center", color: "#7a8c74" }}>Watering Plans — coming soon</div>}
+        {page === "spraylog"  && <SprayLog />}
+        {page === "watering"  && <WateringPlan />}
         {page === "scouting"  && <div style={{ padding: 40, textAlign: "center", color: "#7a8c74" }}>Scouting — coming soon</div>}
         {page === "growers"   && <GrowerManagement />}
         {page === "preseason"  && <Preseason      onNavigate={setPage} onCreateCropRun={() => setPage("crops")} />}
