@@ -10,11 +10,13 @@ import YoungPlantOrders from "./YoungPlantOrders";
 import SpaceManagement  from "./SpaceManagement";
 import Libraries        from "./Libraries";
 import OperatorView     from "./OperatorView";
+import GrowerView      from "./GrowerView";
 import Preseason        from "./Preseason";
 import { PlannerReceiving } from "./Receiving";
 import Meetings            from "./Meetings";
 import TradeShow           from "./TradeShow";
 import Export              from "./Export";
+import GrowerManagement   from "./GrowerManagement";
 
 // ── PLANNER SHELL ─────────────────────────────────────────────────────────────
 // Nav grouped by category
@@ -29,6 +31,17 @@ const NAV_GROUPS = [
       { id: "crops",     label: "Crop Planning" },
       { id: "orders",    label: "Orders" },
       { id: "receiving", label: "Receiving" },
+    ],
+  },
+  {
+    id: "operations",
+    label: "Operations",
+    icon: "⚙",
+    items: [
+      { id: "spraylog",  label: "Spray Log" },
+      { id: "watering",  label: "Watering" },
+      { id: "scouting",  label: "Scouting" },
+      { id: "growers",   label: "Growers" },
     ],
   },
   {
@@ -150,6 +163,10 @@ function PlannerShell() {
       {/* Page content */}
       <div style={{ maxWidth: 1100, margin: "0 auto", padding: "28px 24px" }}>
         {page === "home"       && <PlannerHome    onNavigate={setPage} />}
+        {page === "spraylog"  && <div style={{ padding: 40, textAlign: "center", color: "#7a8c74" }}>Spray Log — coming soon</div>}
+        {page === "watering"  && <div style={{ padding: 40, textAlign: "center", color: "#7a8c74" }}>Watering Plans — coming soon</div>}
+        {page === "scouting"  && <div style={{ padding: 40, textAlign: "center", color: "#7a8c74" }}>Scouting — coming soon</div>}
+        {page === "growers"   && <GrowerManagement />}
         {page === "preseason"  && <Preseason      onNavigate={setPage} onCreateCropRun={() => setPage("crops")} />}
         {page === "crops"      && <CropPlanning   />}
         {page === "orders"     && <YoungPlantOrders />}
@@ -181,6 +198,9 @@ function AppInner() {
 
   // Admin → full planner
   if (isAdmin) return <PlannerShell />;
+
+  // Grower → grower mobile view
+  if (role === "grower") return <GrowerView onSwitchMode={signOut} />;
 
   // Operator / maintenance → operator view
   if (isOperator) return <OperatorView onSwitchMode={signOut} />;
