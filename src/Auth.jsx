@@ -23,11 +23,12 @@ const FLOOR_SESSION_KEY = "gh_floor_session_v1";
 
 // ── AUTH PROVIDER ─────────────────────────────────────────────────────────────
 export function AuthProvider({ children }) {
-  const [user,        setUser]        = useState(null);   // Supabase user object
-  const [role,        setRole]        = useState(null);   // admin | operator | maintenance
-  const [floorMode,   setFloorMode]   = useState(null);   // operator | maintenance | null
-  const [loading,     setLoading]     = useState(true);
-  const [initialized, setInitialized] = useState(false);
+  const [user,          setUser]          = useState(null);   // Supabase user object
+  const [role,          setRole]          = useState(null);   // admin | operator | maintenance
+  const [floorMode,     setFloorMode]     = useState(null);   // operator | maintenance | null
+  const [loading,       setLoading]       = useState(true);
+  const [initialized,   setInitialized]   = useState(false);
+  const [growerProfile, setGrowerProfile] = useState(null);
 
   const sb = getSupabase();
 
@@ -36,10 +37,12 @@ export function AuthProvider({ children }) {
     try {
       const stored = localStorage.getItem(FLOOR_SESSION_KEY);
       if (stored) {
-        const { mode, expires } = JSON.parse(stored);
+        const s = JSON.parse(stored);
+        const { mode, expires } = s;
         if (expires > Date.now()) {
           setFloorMode(mode);
           setRole(mode);
+          if (s.growerProfile) setGrowerProfile(s.growerProfile);
           return true;
         } else {
           localStorage.removeItem(FLOOR_SESSION_KEY);
@@ -103,36 +106,57 @@ export function AuthProvider({ children }) {
       localStorage.removeItem(FLOOR_SESSION_KEY);
       setFloorMode(null);
       setRole(null);
+      setGrowerProfile(null);
     } else {
       if (sb) await sb.auth.signOut();
       setUser(null);
       setRole(null);
+      setGrowerProfile(null);
     }
   }, [sb, floorMode]);
 
   // Floor code sign in
-  const signInWithCode = useCallback((code) => {
-    const trimmed = code.trim().toUpperCase();
-    const matchedRole = Object.entries(FLOOR_CODES).find(([, c]) => c === trimmed)?.[0];
-    if (!matchedRole) return false;
-
-    // Store floor session for 12 hours
-    const session = { mode: matchedRole, expires: Date.now() + 12 * 60 * 60 * 1000 };
-    localStorage.setItem(FLOOR_SESSION_KEY, JSON.stringify(session));
-    setFloorMode(matchedRole);
-    setRole(matchedRole);
-    return true;
-  }, []);
+  const signInWithCode = useCallback(async (raw) => {
+    const code = (raw || "").trim().toUpperCase();
+    const matchedRole = Object.entries(FLOOR_CODES).find(([, v]) => v === code)?.[0];
+    if (matchedRole) {
+      const session = { mode: matchedRole, expires: Date.now() + 12 * 60 * 60 * 1000 };
+      localStorage.setItem(FLOOR_SESSION_KEY, JSON.stringify(session));
+      setFloorMode(matchedRole);
+      setRole(matchedRole);
+      setGrowerProfile(null);
+      return true;
+    }
+    try {
+      const { data, error } = await sb.from("grower_profiles")
+        .select("*")
+        .eq("code", code)
+        .eq("active", true)
+        .single();
+      if (data && !error) {
+        const profile = { id: data.id, name: data.name, role: data.role, code: data.code };
+        const session = { mode: "grower", growerProfile: profile, expires: Date.now() + 12 * 60 * 60 * 1000 };
+        localStorage.setItem(FLOOR_SESSION_KEY, JSON.stringify(session));
+        setFloorMode("grower");
+        setRole("grower");
+        setGrowerProfile(profile);
+        return true;
+      }
+    } catch (e) { /* offline — fall through */ }
+    return false;
+  }, [sb]);
 
   const isAdmin       = role === "admin";
   const isOperator    = role === "operator" || role === "maintenance";
+  const isGrower      = role === "grower";
   const isAuthenticated = !!role;
 
   const value = {
     user, role, floorMode, loading, initialized,
-    isAdmin, isOperator, isAuthenticated,
+    isAdmin, isOperator, isGrower, isAuthenticated,
+    growerProfile,
     signIn, signOut, signInWithCode,
-    displayName: user?.email?.split("@")[0] || (floorMode ? floorMode.charAt(0).toUpperCase() + floorMode.slice(1) : null),
+    displayName: growerProfile?.name || user?.email?.split("@")[0] || (floorMode ? floorMode.charAt(0).toUpperCase() + floorMode.slice(1) : ""),
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
@@ -219,8 +243,8 @@ function FloorCodeLogin({ onSuccess }) {
     setCode(next);
     setError(false);
     if (next.length >= 7) {
-      setTimeout(() => {
-        const ok = signInWithCode(next);
+      setTimeout(async () => {
+        const ok = await signInWithCode(next);
         if (!ok) { setError(true); setCode(""); setTimeout(() => setError(false), 1500); }
         else onSuccess?.();
       }, 100);
