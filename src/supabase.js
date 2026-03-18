@@ -238,6 +238,10 @@ export const useReceiving = () => useTable("receiving_records", { orderBy: "week
 export const useBrokerProfiles   = () => useTable("broker_profiles",   { orderBy: "name", localKey: "gh_broker_profiles_v1" });
 export const useSupplierProfiles = () => useTable("supplier_profiles", { orderBy: "name", localKey: "gh_supplier_profiles_v1" });
 export const useBreederProfiles  = () => useTable("breeder_profiles",  { orderBy: "name", localKey: "gh_breeder_profiles_v1" });
+export const useGrowerProfiles   = () => useTable("grower_profiles",   { orderBy: "name", localKey: "gh_grower_profiles_v1" });
+export const useWateringPlans = () => useTable("watering_plans", { orderBy: "plan_date", localKey: "gh_watering_plans_v1" });
+export const useWateringTasks = () => useTable("watering_tasks", { orderBy: "sort_order", localKey: "gh_watering_tasks_v1" });
+export const useSprayRecords = () => useTable("spray_records", { orderBy: "applied_at", localKey: "gh_spray_records_v1" });
 
 // ── AUTH HELPERS ──────────────────────────────────────────────────────────────
 export async function sendPasswordReset(email) {

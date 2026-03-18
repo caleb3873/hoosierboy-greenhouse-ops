@@ -197,3 +197,110 @@ create policy "allow all" on crop_runs        for all using (true) with check (t
 create policy "allow all" on flags            for all using (true) with check (true);
 create policy "allow all" on task_completions for all using (true) with check (true);
 create policy "allow all" on manual_tasks     for all using (true) with check (true);
+
+-- ============================================================
+-- GROWER PROFILES
+-- ============================================================
+CREATE TABLE grower_profiles (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'assistant',
+  code TEXT NOT NULL UNIQUE,
+  active BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE grower_profiles ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow all access to grower_profiles" ON grower_profiles FOR ALL USING (true);
+
+CREATE TRIGGER grower_profiles_updated_at
+  BEFORE UPDATE ON grower_profiles
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+-- ============================================================
+-- WATERING PLANS
+-- ============================================================
+CREATE TABLE watering_plans (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title TEXT NOT NULL,
+  plan_date DATE NOT NULL,
+  created_by_id UUID REFERENCES grower_profiles(id),
+  created_by_name TEXT NOT NULL,
+  weather_notes TEXT,
+  status TEXT DEFAULT 'draft',
+  notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE watering_tasks (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  plan_id UUID NOT NULL REFERENCES watering_plans(id) ON DELETE CASCADE,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  house_id UUID REFERENCES houses(id),
+  house_name TEXT NOT NULL,
+  zone_label TEXT,
+  instructions TEXT NOT NULL,
+  fertilizer_type TEXT DEFAULT 'none',
+  fertilizer_detail TEXT,
+  urgency TEXT DEFAULT 'normal',
+  estimated_minutes INTEGER,
+  completed BOOLEAN DEFAULT FALSE,
+  completed_at TIMESTAMPTZ,
+  completed_by_id UUID REFERENCES grower_profiles(id),
+  completed_by_name TEXT,
+  notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE watering_plans ENABLE ROW LEVEL SECURITY;
+ALTER TABLE watering_tasks ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow all access to watering_plans" ON watering_plans FOR ALL USING (true);
+CREATE POLICY "Allow all access to watering_tasks" ON watering_tasks FOR ALL USING (true);
+
+CREATE TRIGGER watering_plans_updated_at
+  BEFORE UPDATE ON watering_plans
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+-- ============================================================
+-- SPRAY RECORDS (State Chemist Compliance)
+-- ============================================================
+CREATE TABLE spray_records (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  grower_id UUID REFERENCES grower_profiles(id),
+  grower_name TEXT NOT NULL,
+  product_name TEXT NOT NULL,
+  input_id UUID,
+  epa_reg_number TEXT,
+  active_ingredient TEXT,
+  application_method TEXT NOT NULL,
+  rate TEXT,
+  total_volume TEXT,
+  house_id UUID REFERENCES houses(id),
+  house_name TEXT NOT NULL,
+  target_pest TEXT,
+  applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  rei_hours INTEGER,
+  rei_expires_at TIMESTAMPTZ,
+  wind_speed TEXT,
+  temperature TEXT,
+  ppe_worn TEXT,
+  applicator_license TEXT,
+  product_cost NUMERIC,
+  labor_minutes INTEGER,
+  notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE spray_records ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow all access to spray_records" ON spray_records FOR ALL USING (true);
+
+CREATE TRIGGER spray_records_updated_at
+  BEFORE UPDATE ON spray_records
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+CREATE INDEX idx_spray_records_applied_at ON spray_records (applied_at DESC);
+CREATE INDEX idx_spray_records_grower ON spray_records (grower_id);
+CREATE INDEX idx_spray_records_house ON spray_records (house_id);

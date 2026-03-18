@@ -51,6 +51,38 @@ export const FLAG_TYPES = [
   { id: "other",     label: "Other",     color: "#7a8c74" },
 ];
 
+export const GROWER_ROLES = [
+  { id: "head_grower", label: "Head Grower", color: "#1e5a8e", bg: "#e0ecf8" },
+  { id: "grower",      label: "Grower",      color: "#2e7a2e", bg: "#e0f0e0" },
+  { id: "assistant",   label: "Assistant",   color: "#7a8c74", bg: "#f0f5ee" },
+];
+
+export const APPLICATION_METHODS = [
+  { id: "spray",    label: "Spray",    icon: "💨" },
+  { id: "drench",   label: "Drench",   icon: "💧" },
+  { id: "fog",      label: "Fog",      icon: "🌫" },
+  { id: "granular", label: "Granular", icon: "🟤" },
+];
+
+export const REI_PRESETS = [
+  { label: "4 hours",  hours: 4 },
+  { label: "12 hours", hours: 12 },
+  { label: "24 hours", hours: 24 },
+  { label: "48 hours", hours: 48 },
+  { label: "Custom",   hours: null },
+];
+
+export const PPE_OPTIONS = [
+  "Chemical-resistant gloves",
+  "Long-sleeve shirt & pants",
+  "Chemical-resistant apron",
+  "Shoes + socks",
+  "Protective eyewear",
+  "Respirator (NIOSH approved)",
+  "Chemical-resistant headgear",
+  "Full-body chemical-resistant suit",
+];
+
 // ── SHARED HELPERS ────────────────────────────────────────────────────────────
 export const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 export const dc  = (o) => JSON.parse(JSON.stringify(o));
@@ -188,3 +220,17 @@ export function getCropRunCalendarEvents(run) {
 
   return events;
 }
+
+export const FERTILIZER_TYPES = [
+  { id: "none",     label: "Water Only",    color: "#4a90d9", bg: "#e0ecf8" },
+  { id: "standard", label: "Standard Feed", color: "#2e7a2e", bg: "#e0f0e0" },
+  { id: "geranium", label: "Geranium Feed", color: "#c03030", bg: "#fce8e8" },
+  { id: "custom",   label: "Custom",        color: "#8e44ad", bg: "#f5f0ff" },
+];
+
+export const URGENCY_LEVELS = [
+  { id: "low",      label: "Low",      color: "#7a8c74", bg: "#f0f5ee" },
+  { id: "normal",   label: "Normal",   color: "#4a90d9", bg: "#e0ecf8" },
+  { id: "high",     label: "High",     color: "#c8791a", bg: "#fff4e8" },
+  { id: "critical", label: "Critical", color: "#c03030", bg: "#fce8e8" },
+];
