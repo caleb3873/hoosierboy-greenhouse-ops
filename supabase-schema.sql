@@ -346,3 +346,39 @@ CREATE TRIGGER spray_records_updated_at
 CREATE INDEX idx_spray_records_applied_at ON spray_records (applied_at DESC);
 CREATE INDEX idx_spray_records_grower ON spray_records (grower_id);
 CREATE INDEX idx_spray_records_house ON spray_records (house_id);
+
+-- ============================================================
+-- SEASON TARGETS
+-- ============================================================
+CREATE TABLE IF NOT EXISTS season_targets (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  season TEXT NOT NULL,
+  label TEXT NOT NULL,
+  target_date DATE NOT NULL,
+  target_pct INTEGER NOT NULL DEFAULT 80,
+  metric TEXT NOT NULL DEFAULT 'ordered',
+  notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE season_targets ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow all access to season_targets" ON season_targets FOR ALL USING (true);
+
+-- ============================================================
+-- PLANNING EODS (Broker-driven deadlines)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS planning_eods (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title TEXT NOT NULL,
+  due_date DATE NOT NULL,
+  broker TEXT,
+  crop TEXT,
+  season TEXT,
+  completed BOOLEAN DEFAULT FALSE,
+  completed_at TIMESTAMPTZ,
+  notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE planning_eods ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow all access to planning_eods" ON planning_eods FOR ALL USING (true);

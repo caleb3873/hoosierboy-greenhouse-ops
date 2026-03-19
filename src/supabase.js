@@ -242,6 +242,8 @@ export const useGrowerProfiles   = () => useTable("grower_profiles",   { orderBy
 export const useWateringPlans = () => useTable("watering_plans", { orderBy: "plan_date", localKey: "gh_watering_plans_v1" });
 export const useWateringTasks = () => useTable("watering_tasks", { orderBy: "sort_order", localKey: "gh_watering_tasks_v1" });
 export const useSprayRecords = () => useTable("spray_records", { orderBy: "applied_at", localKey: "gh_spray_records_v1" });
+export const useSeasonTargets = () => useTable("season_targets", { orderBy: "target_date", localKey: "gh_season_targets_v1" });
+export const usePlanningEods  = () => useTable("planning_eods",  { orderBy: "due_date",    localKey: "gh_planning_eods_v1" });
 
 // ── AUTH HELPERS ──────────────────────────────────────────────────────────────
 export async function sendPasswordReset(email) {
