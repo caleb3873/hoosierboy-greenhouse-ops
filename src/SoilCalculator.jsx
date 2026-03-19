@@ -232,10 +232,12 @@ export default function SoilCalculator() {
     return Object.values(byMix).map((entry) => {
       const bagSizeCuFt = bagSizeToCuFt(entry.mix.bagSize, entry.mix.bagUnit);
       const bagsNeeded = bagSizeCuFt > 0 ? Math.ceil(entry.totalVolCuFt / bagSizeCuFt) : 0;
-      const bagsPerPallet = entry.mix.bagsPerPallet || 1;
+      const bagsPerPallet = Number(entry.mix.bagsPerPallet) || 1;
       const palletsNeeded = Math.ceil(bagsNeeded / bagsPerPallet);
-      const totalCost = bagsNeeded * (entry.mix.costPerBag || 0);
-      return { ...entry, bagSizeCuFt, bagsNeeded, palletsNeeded, totalCost };
+      const totalCost = bagsNeeded * (Number(entry.mix.costPerBag) || 0);
+      const PALLETS_PER_TRUCK = 22;
+      const trucksNeeded = palletsNeeded / PALLETS_PER_TRUCK;
+      return { ...entry, bagSizeCuFt, bagsNeeded, palletsNeeded, trucksNeeded, totalCost };
     });
   }, [containerGroups, soilMap]);
 
@@ -244,6 +246,8 @@ export default function SoilCalculator() {
   const totalUnits = enrichedRuns.reduce((s, r) => s + r.totalUnits, 0);
   const totalVolCuFt = enrichedRuns.reduce((s, r) => s + r.totalVolCuFt, 0);
   const totalCost = mixSummary.reduce((s, m) => s + m.totalCost, 0);
+  const totalPallets = mixSummary.reduce((s, m) => s + m.palletsNeeded, 0);
+  const totalTrucks = totalPallets / 22;
   const unassignedCount = containerGroups.filter((g) => !g.assignedMixId).length;
 
   // ── Assignment handler ─────────────────────────────────────────────────────
@@ -284,12 +288,13 @@ export default function SoilCalculator() {
         `  Bag: ${entry.mix.bagSize} ${entry.mix.bagUnit}  |  ${fmtNum(entry.totalVolCuFt)} cu ft needed`
       );
       lines.push(
-        `  Bags: ${entry.bagsNeeded}  |  Pallets: ${entry.palletsNeeded}  |  Cost: ${fmt$(entry.totalCost)}`
+        `  Bags: ${entry.bagsNeeded}  |  Pallets: ${entry.palletsNeeded}  |  Trucks: ${entry.trucksNeeded < 1 ? entry.trucksNeeded.toFixed(2) : entry.trucksNeeded.toFixed(1)}  |  Cost: ${fmt$(entry.totalCost)}`
       );
       lines.push("");
     });
     lines.push(`GRAND TOTAL: ${fmt$(totalCost)}`);
     lines.push(`Total Volume: ${fmtNum(totalVolCuFt)} cu ft`);
+    lines.push(`Total Pallets: ${totalPallets}  |  Trucks (22 plt): ${totalTrucks < 1 ? totalTrucks.toFixed(2) : totalTrucks.toFixed(1)}`);
 
     const text = lines.join("\n");
     navigator.clipboard
@@ -346,6 +351,17 @@ export default function SoilCalculator() {
           value={fmt$(totalCost)}
           color="#c8791a"
           sub={unassignedCount > 0 ? `${unassignedCount} container${unassignedCount > 1 ? "s" : ""} unassigned` : undefined}
+        />
+        <StatPill
+          label="Pallets"
+          value={totalPallets}
+          color="#2e7d9e"
+        />
+        <StatPill
+          label="Trucks (22 plt)"
+          value={totalTrucks < 1 ? totalTrucks.toFixed(2) : totalTrucks % 1 === 0 ? totalTrucks : totalTrucks.toFixed(1)}
+          color="#1e2d1a"
+          sub={totalTrucks > 0 && totalTrucks % 1 !== 0 ? `${Math.ceil(totalTrucks)} full truck${Math.ceil(totalTrucks) > 1 ? "s" : ""}` : undefined}
         />
       </div>
 

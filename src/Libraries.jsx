@@ -3533,7 +3533,7 @@ const BAG_UNITS = ["cu ft", "gal", "L", "qt", "lbs"];
 
 
 function SoilForm({ initial, onSave, onCancel }) {
-  const blank = { id: null, name: "", category: "annual", vendor: "", productName: "", sku: "", bagSize: "", bagUnit: "cu ft", costPerBag: "", notes: "" };
+  const blank = { id: null, name: "", category: "annual", vendor: "", productName: "", sku: "", bagSize: "", bagUnit: "cu ft", costPerBag: "", bagsPerPallet: "", notes: "" };
   const [f, setF] = useState(initial ? { ...blank, ...initial } : blank);
   const [focus, setFocus] = useState(null);
   const upd = (k, v) => setF(p => ({ ...p, [k]: v }));
@@ -3588,7 +3588,7 @@ function SoilForm({ initial, onSave, onCancel }) {
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12, marginBottom: 14 }}>
         <div>
           <FL c="SKU / Item #" />
           <input style={IS(focus === "sku")} value={f.sku} onChange={e => upd("sku", e.target.value)}
@@ -3610,12 +3610,20 @@ function SoilForm({ initial, onSave, onCancel }) {
           <input type="number" step="0.01" style={IS(focus === "cost")} value={f.costPerBag} onChange={e => upd("costPerBag", e.target.value)}
             onFocus={() => setFocus("cost")} onBlur={() => setFocus(null)} placeholder="e.g. 28.50" />
         </div>
+        <div>
+          <FL c="Bags per Pallet" />
+          <input type="number" step="1" style={IS(focus === "bpp")} value={f.bagsPerPallet} onChange={e => upd("bagsPerPallet", e.target.value)}
+            onFocus={() => setFocus("bpp")} onBlur={() => setFocus(null)} placeholder="e.g. 60" />
+        </div>
       </div>
 
       {cpf && (
-        <div style={{ background: "#f0f8eb", border: "1.5px solid #c8e0b8", borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", gap: 20 }}>
+        <div style={{ background: "#f0f8eb", border: "1.5px solid #c8e0b8", borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", gap: 20, flexWrap: "wrap" }}>
           <div><div style={{ fontSize: 11, color: "#7a8c74", fontWeight: 700, textTransform: "uppercase" }}>Cost / cu ft</div><div style={{ fontSize: 18, fontWeight: 800, color: "#2e5c1e" }}>${cpf}</div></div>
           {f.bagSize && f.bagUnit !== "cu ft" && <div><div style={{ fontSize: 11, color: "#7a8c74", fontWeight: 700, textTransform: "uppercase" }}>Bag in cu ft</div><div style={{ fontSize: 18, fontWeight: 800, color: "#2e5c1e" }}>{(Number(f.bagSize) * (f.bagUnit === "gal" ? 0.134 : f.bagUnit === "L" ? 0.0353 : f.bagUnit === "qt" ? 0.0334 : 1)).toFixed(2)}</div></div>}
+          {f.bagsPerPallet && f.costPerBag && <div><div style={{ fontSize: 11, color: "#7a8c74", fontWeight: 700, textTransform: "uppercase" }}>Cost / Pallet</div><div style={{ fontSize: 18, fontWeight: 800, color: "#2e5c1e" }}>${(Number(f.costPerBag) * Number(f.bagsPerPallet)).toFixed(2)}</div></div>}
+          {f.bagsPerPallet && <div><div style={{ fontSize: 11, color: "#7a8c74", fontWeight: 700, textTransform: "uppercase" }}>Pallets / Truck</div><div style={{ fontSize: 18, fontWeight: 800, color: "#4a90d9" }}>22</div></div>}
+          {f.bagsPerPallet && f.costPerBag && <div><div style={{ fontSize: 11, color: "#7a8c74", fontWeight: 700, textTransform: "uppercase" }}>Cost / Truck</div><div style={{ fontSize: 18, fontWeight: 800, color: "#4a90d9" }}>${(Number(f.costPerBag) * Number(f.bagsPerPallet) * 22).toFixed(2)}</div></div>}
         </div>
       )}
 
