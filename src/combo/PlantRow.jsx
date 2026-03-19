@@ -41,12 +41,13 @@ function PlantRow({
   onMoveDown,
   isFirst,
   isLast,
+  initialExpanded,
 }) {
   const [imgErr,       setImgErr    ] = useState(false);
   const [dragging,     setDragging  ] = useState(false);
   const [focusField,   setFocusField] = useState(null);
-  const [showCatalog,  setShowCatalog] = useState(false);
-  const [expanded,     setExpanded  ] = useState(false);
+  const [showCatalog,  setShowCatalog] = useState(!!initialExpanded && !plant.name);
+  const [expanded,     setExpanded  ] = useState(!!initialExpanded);
   const role    = PLANT_ROLES.find(r=>r.id===plant.role)||PLANT_ROLES[1];
   const fileRef = useRef(null);
 

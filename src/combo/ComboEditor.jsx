@@ -194,9 +194,12 @@ function ComboEditor({ combo, onChange, lotQty, containerType, containers, soilM
     const updated = [...plants]; updated[idx] = { ...updated[idx], [field]: val };
     onChange({ ...combo, plants: updated });
   };
+  const [newPlantId, setNewPlantId] = useState(null);
   const addPlant = () => {
     if (plants.length >= 10) return;
-    onChange({ ...combo, plants: [...plants, { id: uid(), name: "", imageUrl: "", role: "filler", qty: 1, costPerPlant: "", broker: "", formType: "URC", needBy: "" }] });
+    const id = uid();
+    setNewPlantId(id);
+    onChange({ ...combo, plants: [...plants, { id, name: "", imageUrl: "", role: "filler", qty: 1, costPerPlant: "", broker: "", formType: "URC", needBy: "", _useCatalog: true }] });
   };
   const removePlant = (idx) => onChange({ ...combo, plants: plants.filter((_, i) => i !== idx) });
 
@@ -314,6 +317,7 @@ function ComboEditor({ combo, onChange, lotQty, containerType, containers, soilM
               onMoveDown={() => movePlant(idx, idx + 1)}
               isFirst={idx === 0}
               isLast={idx === plants.length - 1}
+              initialExpanded={plant.id === newPlantId}
             />
           ))}
         </div>
