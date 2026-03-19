@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import SeasonDeadlineWidget from "./SeasonDeadlineWidget";
 import { getUnviewedPhotoCount, getRecentPhotos, getSessionsWithPhotos } from "./TradeShow";
 import { computeSchedule, getCurrentWeek, getCropRunCalendarEvents, makeGCalUrl, CROP_STATUS, formatWeekDate } from "./shared";
 import { useCropRuns, useMaintenanceRequests } from "./supabase";
@@ -120,6 +121,11 @@ export default function PlannerHome({ onNavigate }) {
           )}
         </div>
       )}
+
+      {/* ── SEASON DEADLINE WIDGET ── */}
+      <div style={{ marginBottom: 16 }}>
+        <SeasonDeadlineWidget onNavigate={onNavigate} />
+      </div>
 
       {/* ── STATUS TILES ── */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 12, marginBottom: 28 }}>
