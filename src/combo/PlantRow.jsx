@@ -201,6 +201,14 @@ function PlantRow({
                   <div style={{ fontWeight:700, fontSize:13, color:"#1e2d1a", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{plant._seriesName}{plant.color ? ` · ${plant.color}` : ""}</div>
                   <div style={{ fontSize:10, color:"#7a8c74" }}>{plant.broker}{plant.cultivar ? ` · ${plant.cultivar}` : ""}{plant.costPerPlant ? ` · $${Number(plant.costPerPlant).toFixed(4)}` : ""}</div>
                 </div>
+                <button onClick={() => {
+                    const text = [plant._seriesName, plant.color].filter(Boolean).join(" ");
+                    navigator.clipboard.writeText(text);
+                    setShowImageSearch(true);
+                  }}
+                  style={{ background:"none", border:"1px solid #c8e0b8", borderRadius:7, padding:"3px 10px", fontSize:11, fontWeight:700, color:"#2e5c1e", cursor:"pointer", fontFamily:"inherit", whiteSpace:"nowrap" }}>
+                  Find Image
+                </button>
                 <button onClick={() => setShowCatalog(true)}
                   style={{ background:"none", border:"1px solid #c8e0b8", borderRadius:7, padding:"3px 10px", fontSize:11, fontWeight:700, color:"#2e5c1e", cursor:"pointer", fontFamily:"inherit", whiteSpace:"nowrap" }}>
                   Change

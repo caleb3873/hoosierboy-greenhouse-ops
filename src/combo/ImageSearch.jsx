@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 
 const FONT = "'DM Sans','Segoe UI',sans-serif";
 const DARK = "#1e2d1a";
@@ -62,10 +62,12 @@ export default function ImageSearch({ defaultQuery, onSelect, onClose }) {
 
   // Auto-search on mount if we have a default query
   const [didAutoSearch, setDidAutoSearch] = useState(false);
-  if (defaultQuery && !didAutoSearch && CSE_KEY && CSE_CX) {
-    setDidAutoSearch(true);
-    setTimeout(() => search(defaultQuery), 100);
-  }
+  useEffect(() => {
+    if (defaultQuery && !didAutoSearch && CSE_KEY && CSE_CX) {
+      setDidAutoSearch(true);
+      search(defaultQuery);
+    }
+  }, []); // eslint-disable-line
 
   return (
     <>
