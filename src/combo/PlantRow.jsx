@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useRef } from "react";
 import CatalogSlideOut from "./CatalogPicker";
 import { ManualBrokerSelect } from "./CatalogPicker";
+import ImageSearch from "./ImageSearch";
 
 // ── CONSTANTS ──────────────────────────────────────────────────────────────────
 const FORM_TYPES = [
@@ -47,6 +48,7 @@ function PlantRow({
   const [dragging,     setDragging  ] = useState(false);
   const [focusField,   setFocusField] = useState(null);
   const [showCatalog,  setShowCatalog] = useState(!!initialExpanded && !plant.name);
+  const [showImageSearch, setShowImageSearch] = useState(false);
   const [expanded,     setExpanded  ] = useState(!!initialExpanded);
   const role    = PLANT_ROLES.find(r=>r.id===plant.role)||PLANT_ROLES[1];
   const fileRef = useRef(null);
@@ -162,6 +164,20 @@ function PlantRow({
           }
           <div style={{ position:"absolute",top:3,left:3,width:16,height:16,borderRadius:"50%",background:role.color,color:"#fff",fontSize:9,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center" }}>{index+1}</div>
         </div>
+        <button onClick={() => setShowImageSearch(true)} style={{
+          padding:"4px 8px", borderRadius:7, border:"1.5px solid #c8e0b8", background:"#fafcf8",
+          color:"#2e5c1e", fontWeight:700, fontSize:10, cursor:"pointer", fontFamily:"inherit",
+          writingMode:"vertical-rl", textOrientation:"mixed", letterSpacing:1, flexShrink:0,
+        }}>FIND IMAGE</button>
+
+        {/* Image search panel */}
+        {showImageSearch && (
+          <ImageSearch
+            defaultQuery={plant.name || plant._seriesName || ""}
+            onSelect={(url) => { onChange("imageUrl", url); setImgErr(false); }}
+            onClose={() => setShowImageSearch(false)}
+          />
+        )}
 
         {/* Fields grid */}
         <div style={{ flex:1, minWidth:0 }}>
