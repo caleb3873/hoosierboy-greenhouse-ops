@@ -20,6 +20,7 @@ import GrowerManagement   from "./GrowerManagement";
 import WateringPlan        from "./WateringPlan";
 import SprayLog            from "./SprayLog";
 import ComboDesigner       from "./ComboDesigner";
+import SeasonDeadlines     from "./SeasonDeadlines";
 
 // ── PLANNER SHELL ─────────────────────────────────────────────────────────────
 // Nav grouped by category
@@ -34,6 +35,7 @@ const NAV_GROUPS = [
       { id: "crops",     label: "Crop Planning" },
       { id: "orders",    label: "Orders" },
       { id: "receiving", label: "Receiving" },
+      { id: "deadlines", label: "Deadlines" },
     ],
   },
   {
@@ -180,6 +182,7 @@ function PlannerShell() {
         {page === "tradeshow"  && <TradeShow       />}
         {page === "export"     && <Export          />}
         {page === "combos"     && <ComboDesigner   />}
+        {page === "deadlines"  && <SeasonDeadlines />}
       </div>
     </div>
   );
