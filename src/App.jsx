@@ -19,6 +19,7 @@ import Export              from "./Export";
 import GrowerManagement   from "./GrowerManagement";
 import WateringPlan        from "./WateringPlan";
 import SprayLog            from "./SprayLog";
+import ComboDesigner       from "./ComboDesigner";
 
 // ── PLANNER SHELL ─────────────────────────────────────────────────────────────
 // Nav grouped by category
@@ -178,6 +179,7 @@ function PlannerShell() {
         {page === "meetings"   && <Meetings        />}
         {page === "tradeshow"  && <TradeShow       />}
         {page === "export"     && <Export          />}
+        {page === "combos"     && <ComboDesigner   />}
       </div>
     </div>
   );

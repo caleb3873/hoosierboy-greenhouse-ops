@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { useCombos, useComboTags, useBrokerCatalogs } from "./supabase";
 import { useContainers, useSoilMixes, useCropRuns } from "./supabase";
 
@@ -1617,7 +1617,7 @@ export default function ComboLibrary() {
   if (view==="add") return (
     <LotDesigner
       initial={prefilledLot || undefined}
-      onSave={(lot) => { save(lot); setPrefilledLot(null); }}
+      onSave={(lot) => { saveLot(lot); setPrefilledLot(null); }}
       onCancel={() => { setView("list"); setPrefilledLot(null); }}
       {...shared}
     />
