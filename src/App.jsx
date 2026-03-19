@@ -21,6 +21,7 @@ import WateringPlan        from "./WateringPlan";
 import SprayLog            from "./SprayLog";
 import ComboDesigner       from "./ComboDesigner";
 import SeasonDeadlines     from "./SeasonDeadlines";
+import SoilCalculator      from "./SoilCalculator";
 
 // ── PLANNER SHELL ─────────────────────────────────────────────────────────────
 // Nav grouped by category
@@ -36,6 +37,7 @@ const NAV_GROUPS = [
       { id: "orders",    label: "Orders" },
       { id: "receiving", label: "Receiving" },
       { id: "deadlines", label: "Deadlines" },
+      { id: "soil",      label: "Soil Calculator" },
     ],
   },
   {
@@ -183,6 +185,7 @@ function PlannerShell() {
         {page === "export"     && <Export          />}
         {page === "combos"     && <ComboDesigner   />}
         {page === "deadlines"  && <SeasonDeadlines />}
+        {page === "soil"       && <SoilCalculator />}
       </div>
     </div>
   );
