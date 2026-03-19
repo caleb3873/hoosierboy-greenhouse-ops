@@ -4,3 +4,6 @@ build/
 .env
 .DS_Store
 .superpowers/
+
+.vercel
+.env*.local

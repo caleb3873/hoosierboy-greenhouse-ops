@@ -199,6 +199,48 @@ create policy "allow all" on task_completions for all using (true) with check (t
 create policy "allow all" on manual_tasks     for all using (true) with check (true);
 
 -- ============================================================
+-- COMBO LOTS
+-- ============================================================
+CREATE TABLE IF NOT EXISTS combo_lots (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  season TEXT,
+  total_qty INTEGER,
+  status TEXT DEFAULT 'draft',
+  notes TEXT,
+  approval_note TEXT,
+  crop_run_id UUID,
+  combos JSONB DEFAULT '[]',
+  changelog JSONB DEFAULT '[]',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE combo_lots ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow all access to combo_lots" ON combo_lots FOR ALL USING (true);
+
+CREATE TRIGGER combo_lots_updated_at
+  BEFORE UPDATE ON combo_lots
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+-- ============================================================
+-- COMBO TAGS
+-- ============================================================
+CREATE TABLE IF NOT EXISTS combo_tags (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  tier TEXT,
+  type TEXT,
+  cost_per_unit NUMERIC,
+  print_spec TEXT,
+  notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE combo_tags ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow all access to combo_tags" ON combo_tags FOR ALL USING (true);
+
+-- ============================================================
 -- GROWER PROFILES
 -- ============================================================
 CREATE TABLE grower_profiles (
