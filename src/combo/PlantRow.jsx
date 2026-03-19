@@ -205,8 +205,8 @@ function PlantRow({
                   style={{ background:"none", border:"1px solid #c8e0b8", borderRadius:7, padding:"3px 10px", fontSize:11, fontWeight:700, color:"#2e5c1e", cursor:"pointer", fontFamily:"inherit", whiteSpace:"nowrap" }}>
                   Change
                 </button>
-                <button onClick={() => { onChange("_seriesName",""); onChange("_catalogColors",[]); onChange("color",""); onChange("name",""); }}
-                  style={{ background:"none", border:"none", color:"#aabba0", fontSize:16, cursor:"pointer", lineHeight:1, padding:0 }}>×</button>
+                <button onClick={() => onChange({ _seriesName: "", _catalogColors: [], color: "", name: "" })}
+                  style={{ background:"none", border:"none", color:"#aabba0", fontSize:16, cursor:"pointer", lineHeight:1, padding:0 }}>x</button>
               </div>
             ) : (
               <button onClick={() => setShowCatalog(true)}

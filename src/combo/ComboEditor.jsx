@@ -191,6 +191,12 @@ function ComboEditor({ combo, onChange, lotQty, containerType, containers, soilM
   const totalPlantsPerUnit = plants.reduce((s, p) => s + (p.qty || 1), 0);
 
   const updPlant = (idx, field, val) => {
+    // Support batch update: if field is an object, merge all keys at once
+    if (typeof field === "object" && field !== null) {
+      const updated = [...plants]; updated[idx] = { ...updated[idx], ...field };
+      onChange({ ...combo, plants: updated });
+      return;
+    }
     const updated = [...plants]; updated[idx] = { ...updated[idx], [field]: val };
     onChange({ ...combo, plants: updated });
   };

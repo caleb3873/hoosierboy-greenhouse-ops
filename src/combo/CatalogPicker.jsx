@@ -198,15 +198,19 @@ function CatalogSlideOut({ plant, onChange, onClose }) {
   function confirm() {
     if (!selectedSeries) return;
     const colorItem = colors.find(c => (c.color || c.varietyName || "") === selectedColor);
-    onChange("broker",         broker);
-    onChange("cultivar",       speciesFilter || colors[0]?.crop || "");
-    onChange("_seriesName",    selectedSeries);
-    onChange("name",           [selectedSeries, selectedColor].filter(Boolean).join(" "));
-    onChange("_catalogColors", colors.map(c => ({ label: c.color || c.varietyName || "", itemNumber: c.itemNumber, price: c.unitPrice || c.sellPrice, perQty: c.perQty })).filter(c => c.label));
-    onChange("color",          selectedColor);
-    if (colorItem?.itemNumber) onChange("itemNumber", colorItem.itemNumber);
     const price = colorItem ? (colorItem.unitPrice || colorItem.sellPrice) : (colors[0]?.unitPrice || colors[0]?.sellPrice);
-    if (price) onChange("costPerPlant", String(price));
+    // Batch all updates in a single call to avoid stale state overwrites
+    const updates = {
+      broker,
+      cultivar: speciesFilter || colors[0]?.crop || "",
+      _seriesName: selectedSeries,
+      name: [selectedSeries, selectedColor].filter(Boolean).join(" "),
+      _catalogColors: colors.map(c => ({ label: c.color || c.varietyName || "", itemNumber: c.itemNumber, price: c.unitPrice || c.sellPrice, perQty: c.perQty })).filter(c => c.label),
+      color: selectedColor,
+    };
+    if (colorItem?.itemNumber) updates.itemNumber = colorItem.itemNumber;
+    if (price) updates.costPerPlant = String(price);
+    onChange(updates);
     onClose();
   }
 
