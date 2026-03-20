@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { AuthProvider, LoginScreen, UserMenu, useAuth } from "./Auth";
+import { AuthProvider, LoginScreen, UserMenu, useAuth, RecoveryPasswordForm } from "./Auth";
 import { ExtractionProvider, useExtraction } from "./ExtractionContext";
 import { CROP_STATUS } from "./shared";
 
@@ -193,7 +193,7 @@ function PlannerShell() {
 
 // ── ROOT (auth-aware) ─────────────────────────────────────────────────────────
 function AppInner() {
-  const { isAuthenticated, isAdmin, isOperator, role, loading, signOut } = useAuth();
+  const { isAuthenticated, isAdmin, isOperator, role, loading, signOut, recoveryMode } = useAuth();
 
   if (loading) return (
     <div style={{ minHeight: "100vh", background: "#1e2d1a", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans',sans-serif" }}>
@@ -204,6 +204,7 @@ function AppInner() {
     </div>
   );
 
+  if (recoveryMode) return <RecoveryPasswordForm />;
   if (!isAuthenticated) return <LoginScreen />;
 
   // Admin → full planner
