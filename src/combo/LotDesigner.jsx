@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useRef } from "react";
+import { QRCodeSVG } from "qrcode.react";
 import ComboEditor from "./ComboEditor";
 import { CostRollup } from "./ComboEditor";
 import OrderSummary from "./OrderSummary";
@@ -33,6 +34,56 @@ function SH({ c }) {
   return <div style={{ fontSize: 11, fontWeight: 800, color: "#7fb069", letterSpacing: 1, textTransform: "uppercase", borderBottom: "1.5px solid #e0ead8", paddingBottom: 7, marginBottom: 14 }}>{c}</div>;
 }
 
+// ── QR CODE POPOVER ──────────────────────────────────────────────────────────
+function QRPopover({ lotId, lotName, onClose }) {
+  const RETAIL_URL = `https://hoosierboy.com/combo/${lotId}`;
+  const qrRef = useRef(null);
+
+  function handleDownload() {
+    const svg = qrRef.current?.querySelector("svg");
+    if (!svg) return;
+    const svgData = new XMLSerializer().serializeToString(svg);
+    const canvas = document.createElement("canvas");
+    canvas.width = 512;
+    canvas.height = 512;
+    const ctx = canvas.getContext("2d");
+    const img = new Image();
+    img.onload = () => {
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, 512, 512);
+      ctx.drawImage(img, 0, 0, 512, 512);
+      const a = document.createElement("a");
+      a.download = `${(lotName || "combo").replace(/[^a-zA-Z0-9]/g, "-")}-qr.png`;
+      a.href = canvas.toDataURL("image/png");
+      a.click();
+    };
+    img.src = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(svgData)));
+  }
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 20 }}
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={{ background: "#fff", borderRadius: 20, padding: 28, textAlign: "center", maxWidth: 360, width: "100%", fontFamily: "'DM Sans','Segoe UI',sans-serif" }}>
+        <div style={{ fontSize: 16, fontWeight: 800, color: "#1e2d1a", marginBottom: 4 }}>{lotName || "Combo"}</div>
+        <div style={{ fontSize: 11, color: "#7a8c74", marginBottom: 20 }}>Scan to view combo details</div>
+        <div ref={qrRef} style={{ display: "inline-block", padding: 16, background: "#fff", borderRadius: 12, border: "2px solid #e0ead8", marginBottom: 16 }}>
+          <QRCodeSVG value={RETAIL_URL} size={200} level="M" fgColor="#1e2d1a" />
+        </div>
+        <div style={{ fontSize: 11, color: "#9aaa90", marginBottom: 16, wordBreak: "break-all" }}>{RETAIL_URL}</div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={handleDownload} style={{ flex: 1, padding: "10px 0", borderRadius: 10, border: "none", background: "#1e2d1a", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
+            Download PNG
+          </button>
+          <button onClick={() => { navigator.clipboard.writeText(RETAIL_URL); }} style={{ flex: 1, padding: "10px 0", borderRadius: 10, border: "1.5px solid #e0ead8", background: "#fff", color: "#1e2d1a", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
+            Copy Link
+          </button>
+        </div>
+        <button onClick={onClose} style={{ marginTop: 12, background: "none", border: "none", color: "#7a8c74", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Close</button>
+      </div>
+    </div>
+  );
+}
+
 // ── LOT DESIGNER ─────────────────────────────────────────────────────────────
 function LotDesigner({ initial, onSave, onCancel, containers, soilMixes, tags }) {
   const blankCombo = (name="") => ({ id:uid(), name, qty:null, plants:[], containerId:"", soilId:"", tagId:"", tagDescription:"" });
@@ -40,6 +91,8 @@ function LotDesigner({ initial, onSave, onCancel, containers, soilMixes, tags })
   const [lot, setLot] = useState(initial ? dc({...blank,...initial}) : blank);
   const [activeIdx, setActiveIdx] = useState(0);
   const [showOrder, setShowOrder] = useState(false);
+
+  const [showQR, setShowQR] = useState(false);
 
   // Completion modal state
   const [showComplete, setShowComplete] = useState(false);
@@ -75,6 +128,7 @@ function LotDesigner({ initial, onSave, onCancel, containers, soilMixes, tags })
   return (
     <div style={{maxWidth:1100,margin:"0 auto"}}>
       {showOrder && <OrderSummary lot={{...effectiveLot,name:lot.name}} onClose={()=>setShowOrder(false)} onMarkOrdered={()=>handleSave("ordered")} containers={containers} soilMixes={soilMixes} tags={tags} />}
+      {showQR && <QRPopover lotId={lot.id || "preview"} lotName={lot.name} onClose={() => setShowQR(false)} />}
 
       {/* Completion modal */}
       {showComplete && (
@@ -154,6 +208,7 @@ function LotDesigner({ initial, onSave, onCancel, containers, soilMixes, tags })
           </div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
             <span style={{background:status.bg,color:status.color,border:`1px solid ${status.color}55`,borderRadius:20,padding:"6px 14px",fontSize:12,fontWeight:700,alignSelf:"center"}}>{status.label}</span>
+            {lot.id&&<button onClick={()=>setShowQR(true)} style={{background:"rgba(255,255,255,.1)",color:"#c8e6b8",border:"1px solid rgba(255,255,255,.2)",borderRadius:10,padding:"8px 14px",fontSize:13,cursor:"pointer",fontFamily:"inherit"}} title="QR Code">QR</button>}
             {onCancel&&<button onClick={onCancel} style={{background:"rgba(255,255,255,.1)",color:"#c8e6b8",border:"1px solid rgba(255,255,255,.2)",borderRadius:10,padding:"8px 16px",fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Back</button>}
             <button onClick={()=>handleSave()} style={{background:"rgba(255,255,255,.15)",color:"#c8e6b8",border:"1px solid rgba(255,255,255,.25)",borderRadius:10,padding:"8px 18px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>Save</button>
             {lot.status==="draft"&&<button onClick={()=>handleSave("submitted")} style={{background:"#2e7d9e",color:"#fff",border:"none",borderRadius:10,padding:"8px 18px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Submit for Approval</button>}
