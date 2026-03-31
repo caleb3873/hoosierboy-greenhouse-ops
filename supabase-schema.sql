@@ -382,3 +382,53 @@ CREATE TABLE IF NOT EXISTS planning_eods (
 
 ALTER TABLE planning_eods ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Allow all access to planning_eods" ON planning_eods FOR ALL USING (true);
+
+-- ══════════════════════════════════════════════════════════════════════════════
+-- HOUSEPLANT AVAILABILITY
+-- ══════════════════════════════════════════════════════════════════════════════
+
+-- Suppliers within a broker (e.g. "AgriStarts" under Express Seed)
+CREATE TABLE hp_suppliers (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  broker TEXT NOT NULL,
+  name TEXT NOT NULL,
+  tab_name TEXT,
+  format_config JSONB DEFAULT '{}',
+  contact_name TEXT,
+  contact_phone TEXT,
+  contact_email TEXT,
+  notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE (broker, name)
+);
+
+ALTER TABLE hp_suppliers ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow all access to hp_suppliers" ON hp_suppliers FOR ALL USING (true);
+
+-- Normalized availability rows (replaced on each upload)
+CREATE TABLE hp_availability (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  supplier_id UUID REFERENCES hp_suppliers(id) ON DELETE CASCADE,
+  broker TEXT NOT NULL,
+  supplier_name TEXT NOT NULL,
+  plant_name TEXT NOT NULL,
+  variety TEXT,
+  common_name TEXT,
+  size TEXT,
+  form TEXT,
+  product_id TEXT,
+  location TEXT,
+  availability JSONB DEFAULT '{}',
+  availability_text TEXT,
+  comments TEXT,
+  upload_batch TEXT,
+  uploaded_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX idx_hp_avail_search ON hp_availability USING gin (to_tsvector('english', plant_name || ' ' || COALESCE(variety, '') || ' ' || COALESCE(common_name, '')));
+CREATE INDEX idx_hp_avail_broker ON hp_availability (broker);
+CREATE INDEX idx_hp_avail_supplier ON hp_availability (supplier_id);
+
+ALTER TABLE hp_availability ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow all access to hp_availability" ON hp_availability FOR ALL USING (true);

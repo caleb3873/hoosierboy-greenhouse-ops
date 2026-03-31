@@ -41,7 +41,7 @@ function toSnake(obj) {
       SNAKE_OVERRIDES[k] || k.replace(/([A-Z])/g, "_$1").toLowerCase(),
       // Don't recurse into jsonb fields — keep them as-is
       typeof v === "object" && v !== null && !Array.isArray(v) &&
-        !["varieties","indoorAssignments","outsideAssignments","zones","sections","stages","items","spacing","details","priceHistory","inventoryHistory"].includes(k)
+        !["varieties","indoorAssignments","outsideAssignments","zones","sections","stages","items","spacing","details","priceHistory","inventoryHistory","formatConfig","availability"].includes(k)
         ? toSnake(v)
         : v,
     ])
@@ -244,6 +244,8 @@ export const useWateringTasks = () => useTable("watering_tasks", { orderBy: "sor
 export const useSprayRecords = () => useTable("spray_records", { orderBy: "applied_at", localKey: "gh_spray_records_v1" });
 export const useSeasonTargets = () => useTable("season_targets", { orderBy: "target_date", localKey: "gh_season_targets_v1" });
 export const usePlanningEods  = () => useTable("planning_eods",  { orderBy: "due_date",    localKey: "gh_planning_eods_v1" });
+export const useHpSuppliers    = () => useTable("hp_suppliers",    { orderBy: "name",        localKey: "gh_hp_suppliers_v1" });
+export const useHpAvailability = () => useTable("hp_availability", { orderBy: "plant_name",  localKey: "gh_hp_availability_v1" });
 
 // ── AUTH HELPERS ──────────────────────────────────────────────────────────────
 export async function sendPasswordReset(email) {

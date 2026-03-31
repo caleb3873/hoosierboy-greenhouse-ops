@@ -22,6 +22,7 @@ import SprayLog            from "./SprayLog";
 import ComboDesigner       from "./ComboDesigner";
 import SeasonDeadlines     from "./SeasonDeadlines";
 import SoilCalculator      from "./SoilCalculator";
+import HouseplantAvailability from "./HouseplantAvailability";
 
 // ── PLANNER SHELL ─────────────────────────────────────────────────────────────
 // Nav grouped by category
@@ -67,6 +68,9 @@ const NAV_GROUPS = [
   },
   {
     id: "combos", label: "Combos", icon: "🎨", solo: true,
+  },
+  {
+    id: "houseplants", label: "Houseplants", icon: "🌿", solo: true,
   },
 ];
 
@@ -186,6 +190,7 @@ function PlannerShell() {
         {page === "combos"     && <ComboDesigner   />}
         {page === "deadlines"  && <SeasonDeadlines />}
         {page === "soil"       && <SoilCalculator />}
+        {page === "houseplants" && <HouseplantAvailability />}
       </div>
     </div>
   );
