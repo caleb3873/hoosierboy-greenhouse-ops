@@ -50,6 +50,7 @@ export default function HouseplantAvailability() {
   const [view, setView] = useState("search"); // "search" | "upload" | "mapping"
   const [searchQ, setSearchQ] = useState("");
   const [brokerFilter, setBrokerFilter] = useState("all");
+  const [supplierFilter, setSupplierFilter] = useState("all");
   const [weekFilter, setWeekFilter] = useState("any");
   const [uploadState, setUploadState] = useState(null);
   const [mappingSupplier, setMappingSupplier] = useState(null);
@@ -59,6 +60,9 @@ export default function HouseplantAvailability() {
     let items = availability;
     if (brokerFilter !== "all") {
       items = items.filter(r => r.broker === brokerFilter);
+    }
+    if (supplierFilter !== "all") {
+      items = items.filter(r => r.supplierName === supplierFilter);
     }
     if (searchQ.trim()) {
       const q = searchQ.toLowerCase();
@@ -76,7 +80,7 @@ export default function HouseplantAvailability() {
       });
     }
     return items;
-  }, [availability, searchQ, brokerFilter, weekFilter]);
+  }, [availability, searchQ, brokerFilter, supplierFilter, weekFilter]);
 
   const allWeekKeys = useMemo(() => {
     const keys = new Set();
@@ -94,6 +98,13 @@ export default function HouseplantAvailability() {
     const set = new Set(availability.map(r => r.broker));
     return Array.from(set).sort();
   }, [availability]);
+
+  const supplierNames = useMemo(() => {
+    let items = availability;
+    if (brokerFilter !== "all") items = items.filter(r => r.broker === brokerFilter);
+    const set = new Set(items.map(r => r.supplierName).filter(Boolean));
+    return Array.from(set).sort();
+  }, [availability, brokerFilter]);
 
   // ── Upload handler ───────────────────────────────────────────────────────
   const handleFileUpload = useCallback(async (e) => {
@@ -357,6 +368,12 @@ export default function HouseplantAvailability() {
               style={{ ...IS(false), width: "auto", minWidth: 140 }}>
               <option value="all">All Brokers</option>
               {brokers.map(b => <option key={b} value={b}>{b}</option>)}
+            </select>
+            <select value={supplierFilter} onChange={e => setSupplierFilter(e.target.value)}
+              onFocus={() => { if (supplierFilter !== "all" && !supplierNames.includes(supplierFilter)) setSupplierFilter("all"); }}
+              style={{ ...IS(false), width: "auto", minWidth: 160 }}>
+              <option value="all">All Suppliers</option>
+              {supplierNames.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
             <select value={weekFilter} onChange={e => setWeekFilter(e.target.value)}
               style={{ ...IS(false), width: "auto", minWidth: 120 }}>
