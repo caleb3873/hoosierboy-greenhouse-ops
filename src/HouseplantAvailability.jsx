@@ -1,9 +1,9 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { useHpSuppliers, useHpAvailability, getSupabase } from "./supabase";
-import { readWorkbook, parseSheet, parseWeekLabel } from "./hpParsers";
+import { useHpSuppliers, useHpAvailability, useHpPricing, useHpOrderItems, getSupabase } from "./supabase";
+import { readWorkbook, parseSheet } from "./hpParsers";
 import { matchSupplierConfig } from "./hpDefaultConfigs";
 
-// ── Design tokens (matches app palette) ──────────────────────────────────────
+// ── Design tokens ────────────────────────────────────────────────────────────
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
 const card = { background: "#fff", borderRadius: 14, border: "1.5px solid #e0ead8", padding: "18px 20px", marginBottom: 12 };
 const IS = (f) => ({
@@ -26,7 +26,6 @@ const BTN = { background: "#7fb069", color: "#fff", border: "none", borderRadius
 const BTN_SEC = { background: "#fff", color: "#7a8c74", border: "1.5px solid #c8d8c0",
   borderRadius: 10, padding: "10px 18px", fontWeight: 600, fontSize: 14, cursor: "pointer", fontFamily: "inherit" };
 
-// ── XLSX CDN loader ──────────────────────────────────────────────────────────
 function useXLSX() {
   const [ready, setReady] = useState(!!window.XLSX);
   useEffect(() => {
@@ -39,6 +38,24 @@ function useXLSX() {
   return ready;
 }
 
+// ── Week label display ───────────────────────────────────────────────────────
+function weekLabel(key) {
+  if (!key) return "";
+  if (key === "ready") return "Ready";
+  if (key === "1month") return "1 Mo";
+  if (key === "future") return "Future";
+  if (key === "total") return "Qty";
+  if (key.startsWith("wk")) {
+    const num = key.replace("wk", "");
+    return num.includes("-") ? `Wk${num}` : `Wk${num}`;
+  }
+  if (key.startsWith("month_")) {
+    const m = key.replace("month_", "");
+    return m.charAt(0).toUpperCase() + m.slice(1);
+  }
+  return key;
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // ── MAIN COMPONENT ───────────────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════════════
@@ -46,96 +63,136 @@ export default function HouseplantAvailability() {
   const xlsxReady = useXLSX();
   const { rows: suppliers, upsert: upsertSupplier, refresh: refreshSuppliers } = useHpSuppliers();
   const { rows: availability, insert: insertAvail, remove: removeAvail, refresh: refreshAvail } = useHpAvailability();
+  const { rows: pricing } = useHpPricing();
+  const { rows: orderItems, upsert: upsertOrder, remove: removeOrder } = useHpOrderItems();
 
-  const [view, setView] = useState("search"); // "search" | "upload" | "mapping"
+  const [activeTab, setActiveTab] = useState(null); // null = summary
   const [searchQ, setSearchQ] = useState("");
-  const [brokerFilter, setBrokerFilter] = useState("all");
-  const [supplierFilter, setSupplierFilter] = useState("all");
-  const [weekFilter, setWeekFilter] = useState("any");
   const [uploadState, setUploadState] = useState(null);
   const [mappingSupplier, setMappingSupplier] = useState(null);
+  const [view, setView] = useState("browse"); // "browse" | "mapping"
 
-  // ── Search logic ─────────────────────────────────────────────────────────
-  const filtered = useMemo(() => {
-    let items = availability;
-    if (brokerFilter !== "all") {
-      items = items.filter(r => r.broker === brokerFilter);
-    }
-    if (supplierFilter !== "all") {
-      items = items.filter(r => r.supplierName === supplierFilter);
-    }
-    if (searchQ.trim()) {
-      const q = searchQ.toLowerCase();
-      items = items.filter(r =>
+  // ── Group availability by supplier ───────────────────────────────────────
+  const bySupplier = useMemo(() => {
+    const map = {};
+    availability.forEach(r => {
+      const key = r.supplierName || "Unknown";
+      if (!map[key]) map[key] = [];
+      map[key].push(r);
+    });
+    return map;
+  }, [availability]);
+
+  const supplierNames = useMemo(() => Object.keys(bySupplier).sort(), [bySupplier]);
+
+  // ── Search filter ────────────────────────────────────────────────────────
+  const searchFiltered = useMemo(() => {
+    if (!searchQ.trim()) return bySupplier;
+    const q = searchQ.toLowerCase();
+    const result = {};
+    for (const [sup, rows] of Object.entries(bySupplier)) {
+      const matched = rows.filter(r =>
         (r.plantName || "").toLowerCase().includes(q) ||
         (r.variety || "").toLowerCase().includes(q) ||
-        (r.commonName || "").toLowerCase().includes(q) ||
-        (r.supplierName || "").toLowerCase().includes(q)
+        (r.commonName || "").toLowerCase().includes(q)
       );
+      if (matched.length > 0) result[sup] = matched;
     }
-    if (weekFilter !== "any") {
-      items = items.filter(r => {
-        const avail = r.availability || {};
-        return avail[weekFilter] && avail[weekFilter] > 0;
-      });
+    return result;
+  }, [bySupplier, searchQ]);
+
+  // Supplier match counts for tab badges
+  const supplierCounts = useMemo(() => {
+    const counts = {};
+    for (const name of supplierNames) {
+      counts[name] = searchFiltered[name]?.length || 0;
     }
-    return items;
-  }, [availability, searchQ, brokerFilter, supplierFilter, weekFilter]);
+    return counts;
+  }, [supplierNames, searchFiltered]);
 
-  const allWeekKeys = useMemo(() => {
-    const keys = new Set();
-    availability.forEach(r => {
-      Object.keys(r.availability || {}).forEach(k => keys.add(k));
+  // ── Pricing lookup ───────────────────────────────────────────────────────
+  const priceMap = useMemo(() => {
+    const map = {};
+    pricing.forEach(p => {
+      const key = `${p.supplierName}||${p.plantName}||${p.variety || ""}`;
+      map[key] = parseFloat(p.unitPrice) || 0;
     });
-    return Array.from(keys).sort((a, b) => {
-      const numA = parseInt(a.replace(/\D/g, "")) || 0;
-      const numB = parseInt(b.replace(/\D/g, "")) || 0;
-      return numA - numB;
+    return map;
+  }, [pricing]);
+
+  function getPrice(supplierName, plantName, variety) {
+    return priceMap[`${supplierName}||${plantName}||${variety || ""}`] || 0;
+  }
+
+  // ── Order lookup ─────────────────────────────────────────────────────────
+  const orderMap = useMemo(() => {
+    const map = {};
+    orderItems.forEach(o => {
+      const key = `${o.supplierName}||${o.plantName}||${o.variety || ""}||${o.weekKey}`;
+      map[key] = o;
     });
-  }, [availability]);
+    return map;
+  }, [orderItems]);
 
-  const brokers = useMemo(() => {
-    const set = new Set(availability.map(r => r.broker));
-    return Array.from(set).sort();
-  }, [availability]);
+  function getOrderQty(supplierName, plantName, variety, weekKey) {
+    const o = orderMap[`${supplierName}||${plantName}||${variety || ""}||${weekKey}`];
+    return o?.quantity || 0;
+  }
 
-  const supplierNames = useMemo(() => {
-    let items = availability;
-    if (brokerFilter !== "all") items = items.filter(r => r.broker === brokerFilter);
-    const set = new Set(items.map(r => r.supplierName).filter(Boolean));
-    return Array.from(set).sort();
-  }, [availability, brokerFilter]);
+  function setOrderQty(row, weekKey, qty) {
+    const key = `${row.supplierName}||${row.plantName}||${row.variety || ""}||${weekKey}`;
+    const existing = orderMap[key];
+    if (qty <= 0 && existing) {
+      removeOrder(existing.id);
+      return;
+    }
+    if (qty <= 0) return;
+    const price = getPrice(row.supplierName, row.plantName, row.variety);
+    upsertOrder({
+      id: existing?.id || crypto.randomUUID(),
+      broker: row.broker,
+      supplierName: row.supplierName,
+      plantName: row.plantName,
+      variety: row.variety || null,
+      size: row.size || null,
+      form: row.form || null,
+      weekKey,
+      quantity: qty,
+      unitPrice: price || null,
+    });
+  }
+
+  // ── Order totals per supplier ────────────────────────────────────────────
+  const ordersBySupplier = useMemo(() => {
+    const map = {};
+    orderItems.forEach(o => {
+      if (!map[o.supplierName]) map[o.supplierName] = [];
+      map[o.supplierName].push(o);
+    });
+    return map;
+  }, [orderItems]);
+
+  const totalOrderItems = orderItems.length;
 
   // ── Upload handler ───────────────────────────────────────────────────────
   const handleFileUpload = useCallback(async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    setUploadState({ broker: "Express Seed", status: "reading", sheets: null, parsed: null });
+    setUploadState({ broker: "Express Seed", status: "reading" });
     try {
       const sheets = await readWorkbook(file);
       const tabNames = Object.keys(sheets).filter(n => n !== "Directory");
-
       const parsed = tabNames.map(tabName => {
         const match = matchSupplierConfig(tabName);
         const existing = suppliers.find(s => s.tabName === tabName || s.name === (match?.key || tabName));
         const config = existing?.formatConfig || match?.config || {};
         const rows = parseSheet(sheets[tabName], config);
-        return {
-          tabName,
-          supplierKey: match?.key || tabName,
-          config,
-          rows,
-          matched: !!match,
-          existing,
-          rowCount: rows.length,
-        };
+        return { tabName, supplierKey: match?.key || tabName, config, rows, matched: !!match, existing, rowCount: rows.length };
       });
-
       setUploadState({ broker: "Express Seed", status: "preview", sheets, parsed });
     } catch (err) {
       setUploadState({ broker: "Express Seed", status: "error", error: err.message });
     }
-    // Reset the file input so re-uploading the same file triggers onChange
     e.target.value = "";
   }, [suppliers]);
 
@@ -143,137 +200,109 @@ export default function HouseplantAvailability() {
   const handleImportConfirm = useCallback(async () => {
     if (!uploadState?.parsed) return;
     setUploadState(prev => ({ ...prev, status: "importing" }));
-
     const batchId = crypto.randomUUID();
     const broker = uploadState.broker;
 
     try {
-      // Try bulk Supabase operations first, fall back to useTable hooks (localStorage) if tables don't exist
       const sb = getSupabase();
       let useDirectDb = false;
-
       if (sb) {
         const { error: testErr } = await sb.from("hp_availability").select("id").limit(1);
-        useDirectDb = !testErr; // tables exist if no error
+        useDirectDb = !testErr;
       }
 
-      // 1. Delete existing availability for this broker
       if (useDirectDb) {
         await sb.from("hp_availability").delete().eq("broker", broker);
       } else {
-        // localStorage fallback: remove matching rows
         const existing = availability.filter(r => r.broker === broker);
-        for (const row of existing) {
-          await removeAvail(row.id);
-        }
+        for (const row of existing) await removeAvail(row.id);
       }
 
-      // 2. Upsert supplier records and track their IDs
-      const supplierIdMap = {}; // supplierKey → id
+      const supplierIdMap = {};
       for (const tab of uploadState.parsed) {
         const supplierId = tab.existing?.id || crypto.randomUUID();
         supplierIdMap[tab.supplierKey] = supplierId;
-
         if (useDirectDb) {
           const { error } = await sb.from("hp_suppliers").upsert({
-            id: supplierId,
-            broker,
-            name: tab.supplierKey,
-            tab_name: tab.tabName,
-            format_config: tab.config,
+            id: supplierId, broker, name: tab.supplierKey, tab_name: tab.tabName, format_config: tab.config,
           }, { onConflict: "broker,name" });
           if (error) {
-            // If upsert conflict, fetch the existing ID
-            const { data } = await sb.from("hp_suppliers")
-              .select("id").eq("broker", broker).eq("name", tab.supplierKey).single();
+            const { data } = await sb.from("hp_suppliers").select("id").eq("broker", broker).eq("name", tab.supplierKey).single();
             if (data) supplierIdMap[tab.supplierKey] = data.id;
           }
         } else {
-          await upsertSupplier({
-            id: supplierId,
-            broker,
-            name: tab.supplierKey,
-            tabName: tab.tabName,
-            formatConfig: tab.config,
-          });
+          await upsertSupplier({ id: supplierId, broker, name: tab.supplierKey, tabName: tab.tabName, formatConfig: tab.config });
         }
       }
 
-      // 3. Build all availability rows using tracked IDs
       const allRows = [];
       for (const tab of uploadState.parsed) {
         const supplierId = supplierIdMap[tab.supplierKey];
         for (const row of tab.rows) {
           allRows.push({
-            id: crypto.randomUUID(),
-            supplierId,
-            broker,
-            supplierName: tab.supplierKey,
-            plantName: row.plantName,
-            variety: row.variety,
-            commonName: row.commonName,
-            size: row.size,
-            form: row.form,
-            productId: row.productId,
-            location: row.location,
-            availability: row.availability,
-            availabilityText: row.availabilityText,
-            comments: row.comments,
-            uploadBatch: batchId,
+            id: crypto.randomUUID(), supplier_id: supplierId, broker, supplier_name: tab.supplierKey,
+            plant_name: row.plantName, variety: row.variety, common_name: row.commonName,
+            size: row.size, form: row.form, product_id: row.productId, location: row.location,
+            availability: row.availability, availability_text: row.availabilityText,
+            comments: row.comments, upload_batch: batchId,
           });
         }
       }
 
-      // 4. Insert rows
       if (useDirectDb) {
-        // Bulk insert in chunks (snake_case for direct DB)
         for (let i = 0; i < allRows.length; i += 500) {
-          const chunk = allRows.slice(i, i + 500).map(r => ({
-            id: r.id,
-            supplier_id: r.supplierId,
-            broker: r.broker,
-            supplier_name: r.supplierName,
-            plant_name: r.plantName,
-            variety: r.variety,
-            common_name: r.commonName,
-            size: r.size,
-            form: r.form,
-            product_id: r.productId,
-            location: r.location,
-            availability: r.availability,
-            availability_text: r.availabilityText,
-            comments: r.comments,
-            upload_batch: r.uploadBatch,
-          }));
+          const chunk = allRows.slice(i, i + 500);
           const { error } = await sb.from("hp_availability").insert(chunk);
           if (error) throw error;
         }
       } else {
-        // localStorage fallback via useTable hooks (camelCase)
-        for (const row of allRows) {
-          await insertAvail(row);
-        }
+        for (const row of allRows) await insertAvail(row);
       }
 
       refreshSuppliers();
       refreshAvail();
       setUploadState(null);
-      setView("search");
     } catch (err) {
       setUploadState(prev => ({ ...prev, status: "error", error: err.message }));
     }
   }, [uploadState, availability, suppliers, upsertSupplier, insertAvail, removeAvail, refreshSuppliers, refreshAvail]);
 
-  // ── Week label display ───────────────────────────────────────────────────
-  function weekLabel(key) {
-    if (!key) return "";
-    if (key === "ready") return "Ready";
-    if (key === "1month") return "1 Month";
-    if (key === "future") return "Future";
-    if (key === "total") return "Total";
-    if (key.startsWith("wk")) return "Wk " + key.replace("wk", "");
-    if (key.startsWith("month_")) return key.replace("month_", "").charAt(0).toUpperCase() + key.replace("month_", "").slice(1);
-    return key;
+  // ── Excel download ───────────────────────────────────────────────────────
+  function downloadOrders(supplierName) {
+    const XLSX = window.XLSX;
+    if (!XLSX) return;
+    const items = supplierName ? (ordersBySupplier[supplierName] || []) : orderItems;
+    if (items.length === 0) return;
+
+    const wb = XLSX.utils.book_new();
+
+    // Group by supplier for multi-sheet download
+    const grouped = {};
+    items.forEach(o => {
+      if (!grouped[o.supplierName]) grouped[o.supplierName] = [];
+      grouped[o.supplierName].push(o);
+    });
+
+    for (const [sup, rows] of Object.entries(grouped)) {
+      const data = rows.map(r => ({
+        "Plant": r.plantName,
+        "Variety": r.variety || "",
+        "Size": r.size || "",
+        "Form": r.form || "",
+        "Week": r.weekKey,
+        "Quantity": r.quantity,
+        "Unit Price": r.unitPrice ? parseFloat(r.unitPrice) : "",
+        "Total": r.unitPrice ? r.quantity * parseFloat(r.unitPrice) : "",
+      }));
+      const ws = XLSX.utils.json_to_sheet(data);
+      ws["!cols"] = [{ wch: 30 }, { wch: 25 }, { wch: 10 }, { wch: 8 }, { wch: 8 }, { wch: 10 }, { wch: 12 }, { wch: 12 }];
+      XLSX.utils.book_append_sheet(wb, ws, sup.slice(0, 31));
+    }
+
+    const filename = supplierName
+      ? `Order_${supplierName.replace(/\s+/g, "_")}_${new Date().toISOString().slice(0, 10)}.xlsx`
+      : `Orders_All_${new Date().toISOString().slice(0, 10)}.xlsx`;
+    XLSX.writeFile(wb, filename);
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -284,18 +313,23 @@ export default function HouseplantAvailability() {
       <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
 
       {/* Header */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
         <div>
           <div style={{ fontFamily: "'DM Serif Display',Georgia,serif", fontSize: 26, fontWeight: 400, color: "#1a2a1a" }}>
             Houseplant Availability
           </div>
           <div style={{ fontSize: 13, color: "#7a8c74", marginTop: 4 }}>
-            {availability.length} items from {brokers.length} broker{brokers.length !== 1 ? "s" : ""}
-            {suppliers.length > 0 && ` / ${suppliers.length} suppliers`}
+            {availability.length} items / {supplierNames.length} suppliers
+            {totalOrderItems > 0 && <span style={{ color: "#7fb069", fontWeight: 700 }}> / {totalOrderItems} items in cart</span>}
           </div>
         </div>
         <div style={{ display: "flex", gap: 10 }}>
-          <label style={{ ...BTN, display: "flex", alignItems: "center", gap: 8, opacity: xlsxReady ? 1 : 0.5, cursor: xlsxReady ? "pointer" : "wait" }}>
+          {totalOrderItems > 0 && (
+            <button onClick={() => downloadOrders(activeTab)} style={BTN}>
+              {activeTab ? `Download ${activeTab} Order` : "Download All Orders"}
+            </button>
+          )}
+          <label style={{ ...BTN, display: "flex", alignItems: "center", gap: 8, opacity: xlsxReady ? 1 : 0.5, background: "#1e2d1a" }}>
             Upload Availability
             <input type="file" accept=".xlsx,.xlsm,.xls,.csv" onChange={handleFileUpload}
               disabled={!xlsxReady} style={{ display: "none" }} />
@@ -303,30 +337,29 @@ export default function HouseplantAvailability() {
         </div>
       </div>
 
-      {/* Upload preview overlay */}
-      {uploadState && uploadState.status === "preview" && (
-        <UploadPreview
-          state={uploadState}
-          onConfirm={handleImportConfirm}
-          onCancel={() => setUploadState(null)}
-          onEditMapping={(tab) => { setMappingSupplier(tab); setView("mapping"); }}
-          weekLabel={weekLabel}
-        />
-      )}
+      {/* Search bar */}
+      <div style={{ marginBottom: 16 }}>
+        <input value={searchQ} onChange={e => setSearchQ(e.target.value)}
+          placeholder="Search plants across all suppliers..."
+          style={{ ...IS(!!searchQ), fontSize: 15, maxWidth: 500 }} />
+      </div>
 
+      {/* Upload states */}
+      {uploadState && uploadState.status === "preview" && (
+        <UploadPreview state={uploadState} onConfirm={handleImportConfirm}
+          onCancel={() => setUploadState(null)}
+          onEditMapping={(tab) => { setMappingSupplier(tab); setView("mapping"); }} />
+      )}
       {uploadState && uploadState.status === "importing" && (
         <div style={{ ...card, textAlign: "center", padding: 40 }}>
-          <div style={{ fontSize: 16, fontWeight: 700, color: "#1e2d1a", marginBottom: 8 }}>Importing availability...</div>
-          <div style={{ fontSize: 13, color: "#7a8c74" }}>This may take a moment for large files.</div>
+          <div style={{ fontSize: 16, fontWeight: 700, color: "#1e2d1a" }}>Importing availability...</div>
         </div>
       )}
-
       {uploadState && uploadState.status === "reading" && (
         <div style={{ ...card, textAlign: "center", padding: 40 }}>
           <div style={{ fontSize: 16, fontWeight: 700, color: "#1e2d1a" }}>Reading Excel file...</div>
         </div>
       )}
-
       {uploadState && uploadState.status === "error" && (
         <div style={{ ...card, borderColor: "#f0c8c0", padding: 20 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: "#d94f3d", marginBottom: 6 }}>Upload Error</div>
@@ -337,74 +370,298 @@ export default function HouseplantAvailability() {
 
       {/* Mapping editor */}
       {view === "mapping" && mappingSupplier && (
-        <MappingEditor
-          tab={mappingSupplier}
-          sheets={uploadState?.sheets}
+        <MappingEditor tab={mappingSupplier} sheets={uploadState?.sheets}
           onSave={(updatedTab) => {
-            setUploadState(prev => ({
-              ...prev,
-              parsed: prev.parsed.map(t => t.tabName === updatedTab.tabName ? updatedTab : t),
-            }));
-            setView("search");
+            setUploadState(prev => ({ ...prev, parsed: prev.parsed.map(t => t.tabName === updatedTab.tabName ? updatedTab : t) }));
+            setView("browse");
           }}
-          onCancel={() => setView("search")}
-        />
+          onCancel={() => setView("browse")} />
       )}
 
-      {/* Search view */}
-      {(view === "search" && !uploadState) && (
+      {/* Tab bar */}
+      {view === "browse" && !uploadState && availability.length > 0 && (
         <>
-          {/* Search bar + filters */}
-          <div style={{ ...card, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-            <div style={{ flex: 1, minWidth: 200 }}>
-              <input
-                value={searchQ}
-                onChange={e => setSearchQ(e.target.value)}
-                placeholder="Search plants, varieties, suppliers..."
-                style={{ ...IS(!!searchQ), fontSize: 15 }}
-              />
-            </div>
-            <select value={brokerFilter} onChange={e => setBrokerFilter(e.target.value)}
-              style={{ ...IS(false), width: "auto", minWidth: 140 }}>
-              <option value="all">All Brokers</option>
-              {brokers.map(b => <option key={b} value={b}>{b}</option>)}
-            </select>
-            <select value={supplierFilter} onChange={e => setSupplierFilter(e.target.value)}
-              onFocus={() => { if (supplierFilter !== "all" && !supplierNames.includes(supplierFilter)) setSupplierFilter("all"); }}
-              style={{ ...IS(false), width: "auto", minWidth: 160 }}>
-              <option value="all">All Suppliers</option>
-              {supplierNames.map(s => <option key={s} value={s}>{s}</option>)}
-            </select>
-            <select value={weekFilter} onChange={e => setWeekFilter(e.target.value)}
-              style={{ ...IS(false), width: "auto", minWidth: 120 }}>
-              <option value="any">Any Week</option>
-              {allWeekKeys.map(k => <option key={k} value={k}>{weekLabel(k)}</option>)}
-            </select>
-            <div style={{ fontSize: 13, color: "#7a8c74", fontWeight: 600 }}>
-              {filtered.length} result{filtered.length !== 1 ? "s" : ""}
-            </div>
+          <div style={{ display: "flex", gap: 0, borderBottom: "2px solid #e0ead8", marginBottom: 16, overflowX: "auto" }}>
+            <button onClick={() => setActiveTab(null)}
+              style={{
+                padding: "10px 18px", fontSize: 13, fontWeight: activeTab === null ? 800 : 600,
+                color: activeTab === null ? "#1e2d1a" : "#7a8c74", background: "none", border: "none",
+                borderBottom: activeTab === null ? "3px solid #7fb069" : "3px solid transparent",
+                cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap",
+              }}>
+              Summary
+            </button>
+            {supplierNames.map(name => {
+              const count = supplierCounts[name] || 0;
+              const hasOrders = (ordersBySupplier[name]?.length || 0) > 0;
+              const dimmed = searchQ && count === 0;
+              return (
+                <button key={name} onClick={() => !dimmed && setActiveTab(name)}
+                  style={{
+                    padding: "10px 14px", fontSize: 12, fontWeight: activeTab === name ? 800 : 600,
+                    color: dimmed ? "#c8d8c0" : activeTab === name ? "#1e2d1a" : "#7a8c74",
+                    background: "none", border: "none",
+                    borderBottom: activeTab === name ? "3px solid #7fb069" : "3px solid transparent",
+                    cursor: dimmed ? "default" : "pointer", fontFamily: "inherit", whiteSpace: "nowrap",
+                    display: "flex", alignItems: "center", gap: 4,
+                  }}>
+                  {name}
+                  {searchQ && count > 0 && <span style={{ background: "#e0f0d8", color: "#4a7a35", borderRadius: 10, padding: "1px 6px", fontSize: 10, fontWeight: 700 }}>{count}</span>}
+                  {hasOrders && <span style={{ width: 6, height: 6, borderRadius: 3, background: "#7fb069", flexShrink: 0 }} />}
+                </button>
+              );
+            })}
           </div>
 
-          {/* Results */}
-          {availability.length === 0 ? (
-            <div style={{ ...card, textAlign: "center", padding: "60px 40px", border: "1.5px dashed #c8d8c0" }}>
-              <div style={{ fontSize: 40, marginBottom: 12 }}>🌿</div>
-              <div style={{ fontSize: 18, fontWeight: 800, color: "#1a2a1a", marginBottom: 6 }}>No availability loaded</div>
-              <div style={{ fontSize: 13, color: "#7a8c74", marginBottom: 20, maxWidth: 400, margin: "0 auto 20px" }}>
-                Upload an Express Seed availability spreadsheet to get started. All tabs will be parsed and searchable.
-              </div>
-              <label style={{ ...BTN, display: "inline-flex", alignItems: "center", gap: 8, cursor: xlsxReady ? "pointer" : "wait" }}>
-                Upload Availability File
-                <input type="file" accept=".xlsx,.xlsm,.xls" onChange={handleFileUpload}
-                  disabled={!xlsxReady} style={{ display: "none" }} />
-              </label>
-            </div>
-          ) : (
-            <AvailabilityTable rows={filtered} weekLabel={weekLabel} />
+          {/* Summary view */}
+          {activeTab === null && (
+            <SummaryView
+              supplierNames={supplierNames}
+              bySupplier={searchFiltered}
+              ordersBySupplier={ordersBySupplier}
+              onSelectSupplier={setActiveTab}
+              onDownload={downloadOrders}
+              xlsxReady={xlsxReady}
+              handleFileUpload={handleFileUpload}
+              totalAvailability={availability.length}
+            />
+          )}
+
+          {/* Supplier tab view */}
+          {activeTab && (
+            <SupplierTab
+              supplierName={activeTab}
+              rows={searchFiltered[activeTab] || []}
+              orders={ordersBySupplier[activeTab] || []}
+              getPrice={getPrice}
+              getOrderQty={getOrderQty}
+              setOrderQty={setOrderQty}
+              onDownload={() => downloadOrders(activeTab)}
+              weekLabel={weekLabel}
+            />
           )}
         </>
       )}
+
+      {/* Empty state */}
+      {availability.length === 0 && !uploadState && (
+        <div style={{ ...card, textAlign: "center", padding: "60px 40px", border: "1.5px dashed #c8d8c0" }}>
+          <div style={{ fontSize: 40, marginBottom: 12 }}>🌿</div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: "#1a2a1a", marginBottom: 6 }}>No availability loaded</div>
+          <div style={{ fontSize: 13, color: "#7a8c74", marginBottom: 20 }}>
+            Upload an Express Seed availability spreadsheet to get started.
+          </div>
+          <label style={{ ...BTN, display: "inline-flex", cursor: xlsxReady ? "pointer" : "wait" }}>
+            Upload Availability File
+            <input type="file" accept=".xlsx,.xlsm,.xls" onChange={handleFileUpload} disabled={!xlsxReady} style={{ display: "none" }} />
+          </label>
+        </div>
+      )}
     </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ── SUMMARY VIEW ──────────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+function SummaryView({ supplierNames, bySupplier, ordersBySupplier, onSelectSupplier, onDownload, totalAvailability }) {
+  return (
+    <div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 12 }}>
+        {supplierNames.map(name => {
+          const rows = bySupplier[name] || [];
+          const orders = ordersBySupplier[name] || [];
+          const orderTotal = orders.reduce((sum, o) => sum + (o.quantity * (parseFloat(o.unitPrice) || 0)), 0);
+          return (
+            <div key={name} onClick={() => onSelectSupplier(name)}
+              style={{ background: "#fff", border: "1.5px solid #e0ead8", borderRadius: 14, padding: "16px 18px", cursor: "pointer", transition: "all .15s" }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = "#7fb069"; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = "#e0ead8"; }}>
+              <div style={{ fontWeight: 800, fontSize: 15, color: "#1e2d1a", marginBottom: 4 }}>{name}</div>
+              <div style={{ fontSize: 12, color: "#7a8c74" }}>{rows.length} items available</div>
+              {orders.length > 0 && (
+                <div style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "center" }}>
+                  <span style={{ background: "#e0f0d8", color: "#4a7a35", borderRadius: 10, padding: "2px 10px", fontSize: 11, fontWeight: 700 }}>
+                    {orders.length} ordered
+                  </span>
+                  {orderTotal > 0 && (
+                    <span style={{ fontSize: 12, color: "#4a7a35", fontWeight: 700 }}>
+                      ${orderTotal.toFixed(2)}
+                    </span>
+                  )}
+                </div>
+              )}
+              {rows.length > 0 && (
+                <div style={{ fontSize: 11, color: "#aabba0", marginTop: 6 }}>
+                  {rows.slice(0, 4).map(r => r.plantName).join(", ")}{rows.length > 4 ? "..." : ""}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ── SUPPLIER TAB ──────────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+function SupplierTab({ supplierName, rows, orders, getPrice, getOrderQty, setOrderQty, onDownload, weekLabel }) {
+  const [page, setPage] = useState(0);
+  const PER_PAGE = 50;
+
+  useEffect(() => setPage(0), [supplierName, rows]);
+
+  // Get all week keys for this supplier
+  const weekKeys = useMemo(() => {
+    const keys = new Set();
+    rows.forEach(r => Object.keys(r.availability || {}).forEach(k => keys.add(k)));
+    const arr = Array.from(keys);
+    arr.sort((a, b) => {
+      const numA = parseInt(a.replace(/\D/g, "")) || 0;
+      const numB = parseInt(b.replace(/\D/g, "")) || 0;
+      return numA - numB;
+    });
+    return arr;
+  }, [rows]);
+
+  // Check if any rows have text-only availability (no week keys)
+  const isTextOnly = weekKeys.length === 0 && rows.some(r => r.availabilityText);
+
+  const paged = rows.slice(page * PER_PAGE, (page + 1) * PER_PAGE);
+  const totalPages = Math.ceil(rows.length / PER_PAGE);
+
+  const orderCount = orders.length;
+
+  const thStyle = { padding: "8px 10px", textAlign: "left", fontSize: 10, fontWeight: 800,
+    color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5,
+    borderBottom: "2px solid #e0ead8", whiteSpace: "nowrap", position: "sticky", top: 0, background: "#fff", zIndex: 1 };
+  const tdStyle = { padding: "7px 10px", fontSize: 12, color: "#1e2d1a", borderBottom: "1px solid #f0f5ee" };
+
+  return (
+    <div>
+      {/* Supplier header */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <div>
+          <span style={{ fontSize: 16, fontWeight: 800, color: "#1e2d1a" }}>{supplierName}</span>
+          <span style={{ fontSize: 13, color: "#7a8c74", marginLeft: 10 }}>{rows.length} items</span>
+        </div>
+        {orderCount > 0 && (
+          <button onClick={onDownload} style={BTN}>
+            Download Order ({orderCount} items)
+          </button>
+        )}
+      </div>
+
+      {rows.length === 0 ? (
+        <div style={{ ...card, textAlign: "center", padding: 40, color: "#7a8c74" }}>
+          No matching items
+        </div>
+      ) : (
+        <div style={{ overflowX: "auto", background: "#fff", borderRadius: 14, border: "1.5px solid #e0ead8" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 600 }}>
+            <thead>
+              <tr>
+                <th style={{ ...thStyle, minWidth: 180 }}>Plant</th>
+                {rows.some(r => r.variety) && <th style={thStyle}>Variety</th>}
+                {rows.some(r => r.commonName) && <th style={thStyle}>Common Name</th>}
+                {rows.some(r => r.size) && <th style={thStyle}>Size</th>}
+                {rows.some(r => r.form) && <th style={thStyle}>Form</th>}
+                {rows.some(r => r.location) && <th style={thStyle}>Location</th>}
+                {rows.some(r => r.productId) && <th style={thStyle}>ID</th>}
+                {isTextOnly && <th style={thStyle}>Availability</th>}
+                {weekKeys.map(k => (
+                  <WeekHeaderGroup key={k} weekKey={k} weekLabel={weekLabel} thStyle={thStyle} />
+                ))}
+                {rows.some(r => r.comments) && <th style={thStyle}>Notes</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {paged.map((row, i) => (
+                <tr key={row.id || i} style={{ background: i % 2 === 0 ? "#fff" : "#fafcf8" }}>
+                  <td style={{ ...tdStyle, fontWeight: 700 }}>{row.plantName}</td>
+                  {rows.some(r => r.variety) && <td style={tdStyle}>{row.variety || ""}</td>}
+                  {rows.some(r => r.commonName) && <td style={tdStyle}>{row.commonName || ""}</td>}
+                  {rows.some(r => r.size) && <td style={{ ...tdStyle, fontSize: 11 }}>{row.size || ""}</td>}
+                  {rows.some(r => r.form) && <td style={{ ...tdStyle, fontSize: 11 }}>{row.form || ""}</td>}
+                  {rows.some(r => r.location) && <td style={{ ...tdStyle, fontSize: 11 }}>{row.location || ""}</td>}
+                  {rows.some(r => r.productId) && <td style={{ ...tdStyle, fontSize: 11 }}>{row.productId || ""}</td>}
+                  {isTextOnly && <td style={{ ...tdStyle, fontSize: 11 }}>{row.availabilityText || ""}</td>}
+                  {weekKeys.map(k => {
+                    const avail = (row.availability || {})[k];
+                    const orderQty = getOrderQty(row.supplierName, row.plantName, row.variety, k);
+                    const price = getPrice(row.supplierName, row.plantName, row.variety);
+                    const cost = orderQty * price;
+                    return (
+                      <WeekCellGroup key={k} avail={avail} orderQty={orderQty} price={price} cost={cost}
+                        onOrderChange={(qty) => setOrderQty(row, k, qty)} tdStyle={tdStyle} />
+                    );
+                  })}
+                  {rows.some(r => r.comments) && (
+                    <td style={{ ...tdStyle, fontSize: 11, color: "#7a8c74", maxWidth: 150 }}>
+                      {row.comments || ""}
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {totalPages > 1 && (
+        <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 12, marginTop: 16 }}>
+          <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}
+            style={{ ...BTN_SEC, padding: "6px 14px", fontSize: 13, opacity: page === 0 ? 0.4 : 1 }}>{"\u2190"} Prev</button>
+          <span style={{ fontSize: 13, color: "#7a8c74" }}>Page {page + 1} of {totalPages}</span>
+          <button onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1}
+            style={{ ...BTN_SEC, padding: "6px 14px", fontSize: 13, opacity: page >= totalPages - 1 ? 0.4 : 1 }}>Next {"\u2192"}</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Week column header group (Avail | Order | Cost) ──────────────────────────
+function WeekHeaderGroup({ weekKey, weekLabel: wl, thStyle }) {
+  return (
+    <>
+      <th style={{ ...thStyle, textAlign: "right", minWidth: 50, borderRight: "none" }}>{wl(weekKey)}</th>
+      <th style={{ ...thStyle, textAlign: "center", minWidth: 55, background: "#f8fcf6", color: "#4a7a35", borderRight: "none" }}>Order</th>
+      <th style={{ ...thStyle, textAlign: "right", minWidth: 55, background: "#f8fcf6", color: "#4a7a35", borderRight: "1px solid #e0ead8" }}>Cost</th>
+    </>
+  );
+}
+
+// ── Week cell group (Avail value | Order input | Cost calc) ──────────────────
+function WeekCellGroup({ avail, orderQty, price, cost, onOrderChange, tdStyle }) {
+  return (
+    <>
+      <td style={{ ...tdStyle, textAlign: "right", fontVariantNumeric: "tabular-nums",
+        color: avail ? "#1e2d1a" : "#d0d8cc", fontWeight: avail ? 600 : 400, borderRight: "none" }}>
+        {avail ? Number(avail).toLocaleString() : "\u2014"}
+      </td>
+      <td style={{ ...tdStyle, padding: "4px 4px", background: orderQty > 0 ? "#f0f8eb" : undefined, borderRight: "none" }}>
+        <input
+          type="number"
+          value={orderQty || ""}
+          onChange={e => onOrderChange(parseInt(e.target.value) || 0)}
+          placeholder=""
+          style={{
+            width: 50, padding: "4px 6px", borderRadius: 6, fontSize: 12, textAlign: "right",
+            border: orderQty > 0 ? "1.5px solid #7fb069" : "1px solid #e0ead8",
+            background: orderQty > 0 ? "#fff" : "#fafcf8",
+            color: "#1e2d1a", outline: "none", fontFamily: "inherit",
+          }}
+        />
+      </td>
+      <td style={{ ...tdStyle, textAlign: "right", fontSize: 11, fontVariantNumeric: "tabular-nums",
+        color: cost > 0 ? "#4a7a35" : "#d0d8cc", fontWeight: cost > 0 ? 600 : 400,
+        borderRight: "1px solid #e0ead8" }}>
+        {cost > 0 ? `$${cost.toFixed(2)}` : price > 0 ? "$0" : "\u2014"}
+      </td>
+    </>
   );
 }
 
@@ -413,14 +670,13 @@ export default function HouseplantAvailability() {
 // ══════════════════════════════════════════════════════════════════════════════
 function UploadPreview({ state, onConfirm, onCancel, onEditMapping }) {
   const totalRows = state.parsed.reduce((sum, t) => sum + t.rowCount, 0);
-
   return (
     <div style={{ ...card, borderColor: "#7fb069", padding: 24 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
         <div>
           <div style={{ fontSize: 18, fontWeight: 800, color: "#1e2d1a" }}>Upload Preview — {state.broker}</div>
           <div style={{ fontSize: 13, color: "#7a8c74", marginTop: 4 }}>
-            {state.parsed.length} supplier tabs / {totalRows.toLocaleString()} total items parsed
+            {state.parsed.length} supplier tabs / {totalRows.toLocaleString()} total items
           </div>
           <div style={{ fontSize: 12, color: "#c8791a", fontWeight: 600, marginTop: 4 }}>
             This will replace ALL existing {state.broker} availability.
@@ -431,21 +687,16 @@ function UploadPreview({ state, onConfirm, onCancel, onEditMapping }) {
           <button onClick={onCancel} style={BTN_SEC}>Cancel</button>
         </div>
       </div>
-
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 10 }}>
         {state.parsed.map(tab => (
           <div key={tab.tabName} style={{
-            background: tab.matched ? "#f8fcf6" : "#fff8f0",
-            borderRadius: 10, border: `1.5px solid ${tab.matched ? "#b8d8a0" : "#e8d0a0"}`,
-            padding: "12px 14px",
+            background: tab.matched ? "#f8fcf6" : "#fff8f0", borderRadius: 10,
+            border: `1.5px solid ${tab.matched ? "#b8d8a0" : "#e8d0a0"}`, padding: "12px 14px",
           }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <div style={{ fontWeight: 700, fontSize: 14, color: "#1e2d1a" }}>{tab.supplierKey}</div>
-              <span style={{
-                fontSize: 11, fontWeight: 700, borderRadius: 12, padding: "2px 8px",
-                background: tab.matched ? "#e0f0d8" : "#fde8d0",
-                color: tab.matched ? "#4a7a35" : "#c87a1a",
-              }}>
+              <span style={{ fontSize: 11, fontWeight: 700, borderRadius: 12, padding: "2px 8px",
+                background: tab.matched ? "#e0f0d8" : "#fde8d0", color: tab.matched ? "#4a7a35" : "#c87a1a" }}>
                 {tab.matched ? "Auto-mapped" : "Needs mapping"}
               </span>
             </div>
@@ -454,7 +705,7 @@ function UploadPreview({ state, onConfirm, onCancel, onEditMapping }) {
             </div>
             {tab.rows.length > 0 && (
               <div style={{ fontSize: 11, color: "#aabba0", marginTop: 6 }}>
-                Sample: {tab.rows.slice(0, 3).map(r => r.plantName).join(", ")}
+                {tab.rows.slice(0, 3).map(r => r.plantName).join(", ")}
               </div>
             )}
             <button onClick={() => onEditMapping(tab)}
@@ -470,134 +721,17 @@ function UploadPreview({ state, onConfirm, onCancel, onEditMapping }) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// ── AVAILABILITY TABLE ────────────────────────────────────────────────────────
-// ══════════════════════════════════════════════════════════════════════════════
-function AvailabilityTable({ rows, weekLabel }) {
-  const [sortCol, setSortCol] = useState("plantName");
-  const [sortDir, setSortDir] = useState("asc");
-  const [page, setPage] = useState(0);
-  const PER_PAGE = 50;
-
-  const sorted = useMemo(() => {
-    const copy = [...rows];
-    copy.sort((a, b) => {
-      const av = (a[sortCol] || "").toLowerCase();
-      const bv = (b[sortCol] || "").toLowerCase();
-      return sortDir === "asc" ? av.localeCompare(bv) : bv.localeCompare(av);
-    });
-    return copy;
-  }, [rows, sortCol, sortDir]);
-
-  const paged = sorted.slice(page * PER_PAGE, (page + 1) * PER_PAGE);
-  const totalPages = Math.ceil(sorted.length / PER_PAGE);
-
-  const toggleSort = (col) => {
-    if (sortCol === col) setSortDir(d => d === "asc" ? "desc" : "asc");
-    else { setSortCol(col); setSortDir("asc"); }
-  };
-
-  useEffect(() => setPage(0), [rows]);
-
-  const thStyle = { padding: "10px 12px", textAlign: "left", fontSize: 11, fontWeight: 800,
-    color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5, cursor: "pointer",
-    borderBottom: "2px solid #e0ead8", userSelect: "none", whiteSpace: "nowrap" };
-  const tdStyle = { padding: "10px 12px", fontSize: 13, color: "#1e2d1a", borderBottom: "1px solid #f0f5ee" };
-
-  const visibleWeekKeys = useMemo(() => {
-    const keys = new Set();
-    paged.forEach(r => Object.keys(r.availability || {}).forEach(k => keys.add(k)));
-    const arr = Array.from(keys);
-    arr.sort((a, b) => {
-      const numA = parseInt(a.replace(/\D/g, "")) || 0;
-      const numB = parseInt(b.replace(/\D/g, "")) || 0;
-      return numA - numB;
-    });
-    return arr.slice(0, 12);
-  }, [paged]);
-
-  return (
-    <div>
-      <div style={{ overflowX: "auto", background: "#fff", borderRadius: 14, border: "1.5px solid #e0ead8" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 800 }}>
-          <thead>
-            <tr>
-              <th onClick={() => toggleSort("plantName")} style={thStyle}>
-                Plant {sortCol === "plantName" ? (sortDir === "asc" ? "\u2191" : "\u2193") : ""}
-              </th>
-              <th onClick={() => toggleSort("variety")} style={thStyle}>
-                Variety {sortCol === "variety" ? (sortDir === "asc" ? "\u2191" : "\u2193") : ""}
-              </th>
-              <th onClick={() => toggleSort("supplierName")} style={thStyle}>
-                Supplier {sortCol === "supplierName" ? (sortDir === "asc" ? "\u2191" : "\u2193") : ""}
-              </th>
-              <th style={thStyle}>Size</th>
-              <th style={thStyle}>Form</th>
-              {visibleWeekKeys.map(k => (
-                <th key={k} style={{ ...thStyle, textAlign: "right", minWidth: 55 }}>{weekLabel(k)}</th>
-              ))}
-              <th style={thStyle}>Notes</th>
-            </tr>
-          </thead>
-          <tbody>
-            {paged.map((row, i) => (
-              <tr key={row.id || i} style={{ background: i % 2 === 0 ? "#fff" : "#fafcf8" }}>
-                <td style={{ ...tdStyle, fontWeight: 700 }}>{row.plantName}</td>
-                <td style={tdStyle}>{row.variety || ""}</td>
-                <td style={{ ...tdStyle, fontSize: 12, color: "#7a8c74" }}>{row.supplierName}</td>
-                <td style={{ ...tdStyle, fontSize: 12 }}>{row.size || ""}</td>
-                <td style={{ ...tdStyle, fontSize: 12 }}>{row.form || ""}</td>
-                {visibleWeekKeys.map(k => {
-                  const val = (row.availability || {})[k];
-                  return (
-                    <td key={k} style={{ ...tdStyle, textAlign: "right", fontVariantNumeric: "tabular-nums",
-                      color: val ? "#1e2d1a" : "#d0d8cc", fontWeight: val ? 600 : 400 }}>
-                      {val ? val.toLocaleString() : "\u2014"}
-                    </td>
-                  );
-                })}
-                <td style={{ ...tdStyle, fontSize: 12, color: "#7a8c74", maxWidth: 200 }}>
-                  {row.availabilityText || row.comments || ""}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {totalPages > 1 && (
-        <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 12, marginTop: 16 }}>
-          <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}
-            style={{ ...BTN_SEC, padding: "6px 14px", fontSize: 13, opacity: page === 0 ? 0.4 : 1 }}>{"\u2190"} Prev</button>
-          <span style={{ fontSize: 13, color: "#7a8c74" }}>
-            Page {page + 1} of {totalPages}
-          </span>
-          <button onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1}
-            style={{ ...BTN_SEC, padding: "6px 14px", fontSize: 13, opacity: page >= totalPages - 1 ? 0.4 : 1 }}>Next {"\u2192"}</button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
 // ── MAPPING EDITOR ────────────────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════════════
 function MappingEditor({ tab, sheets, onSave, onCancel }) {
   const sheetData = sheets?.[tab.tabName] || [];
   const [cfg, setCfg] = useState({ ...tab.config });
   const upd = (k, v) => setCfg(prev => ({ ...prev, [k]: v }));
-
   const previewRows = sheetData.slice(0, 8);
   const parsed = useMemo(() => parseSheet(sheetData, cfg), [sheetData, cfg]);
 
   function save() {
-    onSave({
-      ...tab,
-      config: cfg,
-      rows: parsed,
-      rowCount: parsed.length,
-      matched: true,
-    });
+    onSave({ ...tab, config: cfg, rows: parsed, rowCount: parsed.length, matched: true });
   }
 
   return (
@@ -613,7 +747,6 @@ function MappingEditor({ tab, sheets, onSave, onCancel }) {
         </div>
       </div>
 
-      {/* Raw data preview */}
       <SH>Raw Data Preview</SH>
       <div style={{ overflowX: "auto", marginBottom: 20 }}>
         <table style={{ borderCollapse: "collapse", fontSize: 11, fontFamily: "monospace" }}>
@@ -632,91 +765,44 @@ function MappingEditor({ tab, sheets, onSave, onCancel }) {
           </tbody>
         </table>
       </div>
-      <div style={{ fontSize: 11, color: "#aabba0", marginBottom: 16 }}>
-        Green row = header row. Green column = plant name. Blue column = variety.
-      </div>
 
-      {/* Config fields */}
       <SH>Column Mapping</SH>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 16 }}>
-        <div>
-          <FL>Header Row (0-indexed)</FL>
-          <input type="number" value={cfg.headerRow ?? 0} onChange={e => upd("headerRow", parseInt(e.target.value) || 0)} style={IS(false)} />
-        </div>
-        <div>
-          <FL>Data Start Row</FL>
-          <input type="number" value={cfg.dataStartRow ?? 1} onChange={e => upd("dataStartRow", parseInt(e.target.value) || 1)} style={IS(false)} />
-        </div>
-        <div>
-          <FL>Plant Name Col</FL>
-          <input type="number" value={cfg.plantCol ?? 0} onChange={e => upd("plantCol", parseInt(e.target.value) || 0)} style={IS(false)} />
-        </div>
-        <div>
-          <FL>Variety Col</FL>
-          <input type="number" value={cfg.varietyCol ?? ""} onChange={e => upd("varietyCol", e.target.value === "" ? null : parseInt(e.target.value))} style={IS(false)} placeholder="—" />
-        </div>
-        <div>
-          <FL>Common Name Col</FL>
-          <input type="number" value={cfg.commonNameCol ?? ""} onChange={e => upd("commonNameCol", e.target.value === "" ? null : parseInt(e.target.value))} style={IS(false)} placeholder="—" />
-        </div>
-        <div>
-          <FL>Size Col</FL>
-          <input type="number" value={cfg.sizeCol ?? ""} onChange={e => upd("sizeCol", e.target.value === "" ? null : parseInt(e.target.value))} style={IS(false)} placeholder="—" />
-        </div>
-        <div>
-          <FL>Form Col</FL>
-          <input type="number" value={cfg.formCol ?? ""} onChange={e => upd("formCol", e.target.value === "" ? null : parseInt(e.target.value))} style={IS(false)} placeholder="—" />
-        </div>
-        <div>
-          <FL>Product ID Col</FL>
-          <input type="number" value={cfg.productIdCol ?? ""} onChange={e => upd("productIdCol", e.target.value === "" ? null : parseInt(e.target.value))} style={IS(false)} placeholder="—" />
-        </div>
+        <div><FL>Header Row (0-indexed)</FL><input type="number" value={cfg.headerRow ?? 0} onChange={e => upd("headerRow", parseInt(e.target.value) || 0)} style={IS(false)} /></div>
+        <div><FL>Data Start Row</FL><input type="number" value={cfg.dataStartRow ?? 1} onChange={e => upd("dataStartRow", parseInt(e.target.value) || 1)} style={IS(false)} /></div>
+        <div><FL>Plant Name Col</FL><input type="number" value={cfg.plantCol ?? 0} onChange={e => upd("plantCol", parseInt(e.target.value) || 0)} style={IS(false)} /></div>
+        <div><FL>Variety Col</FL><input type="number" value={cfg.varietyCol ?? ""} onChange={e => upd("varietyCol", e.target.value === "" ? null : parseInt(e.target.value))} style={IS(false)} placeholder="\u2014" /></div>
+        <div><FL>Common Name Col</FL><input type="number" value={cfg.commonNameCol ?? ""} onChange={e => upd("commonNameCol", e.target.value === "" ? null : parseInt(e.target.value))} style={IS(false)} placeholder="\u2014" /></div>
+        <div><FL>Size Col</FL><input type="number" value={cfg.sizeCol ?? ""} onChange={e => upd("sizeCol", e.target.value === "" ? null : parseInt(e.target.value))} style={IS(false)} placeholder="\u2014" /></div>
+        <div><FL>Form Col</FL><input type="number" value={cfg.formCol ?? ""} onChange={e => upd("formCol", e.target.value === "" ? null : parseInt(e.target.value))} style={IS(false)} placeholder="\u2014" /></div>
+        <div><FL>Product ID Col</FL><input type="number" value={cfg.productIdCol ?? ""} onChange={e => upd("productIdCol", e.target.value === "" ? null : parseInt(e.target.value))} style={IS(false)} placeholder="\u2014" /></div>
       </div>
-
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 16 }}>
         <div>
           <FL>Availability Type</FL>
           <select value={cfg.weekType || "weekly"} onChange={e => upd("weekType", e.target.value)} style={IS(false)}>
-            <option value="weekly">Weekly (wk14, 15-2026, etc.)</option>
-            <option value="monthly">Monthly (MAR, APR, etc.)</option>
-            <option value="buckets">Buckets (Ready, 1 Month, Future)</option>
-            <option value="text">Text (lead times, descriptions)</option>
+            <option value="weekly">Weekly</option><option value="monthly">Monthly</option>
+            <option value="buckets">Buckets</option><option value="text">Text</option>
             <option value="simple_qty">Simple Quantity</option>
           </select>
         </div>
-        <div>
-          <FL>Week Start Col</FL>
-          <input type="number" value={cfg.weekStartCol ?? 2} onChange={e => upd("weekStartCol", parseInt(e.target.value) || 0)} style={IS(false)} />
-        </div>
-        <div>
-          <FL>Week End Col (blank = auto)</FL>
-          <input type="number" value={cfg.weekEndCol ?? ""} onChange={e => upd("weekEndCol", e.target.value === "" ? null : parseInt(e.target.value))} style={IS(false)} placeholder="Auto" />
-        </div>
-        <div>
-          <FL>Comments Col</FL>
-          <input type="number" value={cfg.commentsCol ?? ""} onChange={e => upd("commentsCol", e.target.value === "" ? null : parseInt(e.target.value))} style={IS(false)} placeholder="—" />
-        </div>
+        <div><FL>Week Start Col</FL><input type="number" value={cfg.weekStartCol ?? 2} onChange={e => upd("weekStartCol", parseInt(e.target.value) || 0)} style={IS(false)} /></div>
+        <div><FL>Week End Col</FL><input type="number" value={cfg.weekEndCol ?? ""} onChange={e => upd("weekEndCol", e.target.value === "" ? null : parseInt(e.target.value))} style={IS(false)} placeholder="Auto" /></div>
+        <div><FL>Comments Col</FL><input type="number" value={cfg.commentsCol ?? ""} onChange={e => upd("commentsCol", e.target.value === "" ? null : parseInt(e.target.value))} style={IS(false)} placeholder="\u2014" /></div>
       </div>
+      <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "#1e2d1a", marginBottom: 16 }}>
+        <input type="checkbox" checked={cfg.twoColumnLayout || false} onChange={e => upd("twoColumnLayout", e.target.checked)} />
+        Two-column layout (side-by-side plant lists)
+      </label>
 
-      <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 16 }}>
-        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "#1e2d1a" }}>
-          <input type="checkbox" checked={cfg.twoColumnLayout || false}
-            onChange={e => upd("twoColumnLayout", e.target.checked)} />
-          Two-column layout (side-by-side plant lists)
-        </label>
-      </div>
-
-      {/* Parsed preview */}
       <SH>Parsed Preview ({parsed.length} items)</SH>
       <div style={{ overflowX: "auto" }}>
         <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12 }}>
           <thead>
             <tr>
-              <th style={{ padding: "6px 10px", textAlign: "left", borderBottom: "2px solid #e0ead8", color: "#7a8c74", fontSize: 11 }}>Plant</th>
-              <th style={{ padding: "6px 10px", textAlign: "left", borderBottom: "2px solid #e0ead8", color: "#7a8c74", fontSize: 11 }}>Variety</th>
-              <th style={{ padding: "6px 10px", textAlign: "left", borderBottom: "2px solid #e0ead8", color: "#7a8c74", fontSize: 11 }}>Size</th>
-              <th style={{ padding: "6px 10px", textAlign: "left", borderBottom: "2px solid #e0ead8", color: "#7a8c74", fontSize: 11 }}>Availability</th>
-              <th style={{ padding: "6px 10px", textAlign: "left", borderBottom: "2px solid #e0ead8", color: "#7a8c74", fontSize: 11 }}>Notes</th>
+              {["Plant", "Variety", "Size", "Availability", "Notes"].map(h => (
+                <th key={h} style={{ padding: "6px 10px", textAlign: "left", borderBottom: "2px solid #e0ead8", color: "#7a8c74", fontSize: 11 }}>{h}</th>
+              ))}
             </tr>
           </thead>
           <tbody>

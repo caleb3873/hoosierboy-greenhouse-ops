@@ -432,3 +432,45 @@ CREATE INDEX idx_hp_avail_supplier ON hp_availability (supplier_id);
 
 ALTER TABLE hp_availability ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Allow all access to hp_availability" ON hp_availability FOR ALL USING (true);
+
+-- Per-supplier plant pricing (uploaded separately)
+CREATE TABLE hp_pricing (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  supplier_id UUID REFERENCES hp_suppliers(id) ON DELETE CASCADE,
+  broker TEXT NOT NULL,
+  supplier_name TEXT NOT NULL,
+  plant_name TEXT NOT NULL,
+  variety TEXT,
+  unit_price NUMERIC(10,4),
+  notes TEXT,
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE UNIQUE INDEX idx_hp_pricing_lookup
+  ON hp_pricing (supplier_name, plant_name, COALESCE(variety, ''));
+
+ALTER TABLE hp_pricing ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow all access to hp_pricing" ON hp_pricing FOR ALL USING (true);
+
+-- Shared order items (persisted so multiple users see same order)
+CREATE TABLE hp_order_items (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  broker TEXT NOT NULL,
+  supplier_name TEXT NOT NULL,
+  plant_name TEXT NOT NULL,
+  variety TEXT,
+  size TEXT,
+  form TEXT,
+  week_key TEXT NOT NULL,
+  quantity INTEGER NOT NULL DEFAULT 0,
+  unit_price NUMERIC(10,4),
+  created_by TEXT,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX idx_hp_orders_supplier ON hp_order_items (supplier_name);
+CREATE INDEX idx_hp_orders_broker ON hp_order_items (broker);
+
+ALTER TABLE hp_order_items ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow all access to hp_order_items" ON hp_order_items FOR ALL USING (true);

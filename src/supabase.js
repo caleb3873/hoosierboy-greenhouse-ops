@@ -246,6 +246,8 @@ export const useSeasonTargets = () => useTable("season_targets", { orderBy: "tar
 export const usePlanningEods  = () => useTable("planning_eods",  { orderBy: "due_date",    localKey: "gh_planning_eods_v1" });
 export const useHpSuppliers    = () => useTable("hp_suppliers",    { orderBy: "name",        localKey: "gh_hp_suppliers_v1" });
 export const useHpAvailability = () => useTable("hp_availability", { orderBy: "plant_name",  localKey: "gh_hp_availability_v1" });
+export const useHpPricing      = () => useTable("hp_pricing",      { orderBy: "plant_name",  localKey: "gh_hp_pricing_v1" });
+export const useHpOrderItems   = () => useTable("hp_order_items",  { orderBy: "created_at",  localKey: "gh_hp_order_items_v1" });
 
 // ── AUTH HELPERS ──────────────────────────────────────────────────────────────
 export async function sendPasswordReset(email) {
