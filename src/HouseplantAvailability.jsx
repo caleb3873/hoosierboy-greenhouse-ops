@@ -157,26 +157,41 @@ export default function HouseplantAvailability() {
         }
       }
 
-      // 2. Upsert supplier records
+      // 2. Upsert supplier records and track their IDs
+      const supplierIdMap = {}; // supplierKey → id
       for (const tab of uploadState.parsed) {
         const supplierId = tab.existing?.id || crypto.randomUUID();
-        await upsertSupplier({
-          id: supplierId,
-          broker,
-          name: tab.supplierKey,
-          tabName: tab.tabName,
-          formatConfig: tab.config,
-        });
+        supplierIdMap[tab.supplierKey] = supplierId;
+
+        if (useDirectDb) {
+          const { error } = await sb.from("hp_suppliers").upsert({
+            id: supplierId,
+            broker,
+            name: tab.supplierKey,
+            tab_name: tab.tabName,
+            format_config: tab.config,
+          }, { onConflict: "broker,name" });
+          if (error) {
+            // If upsert conflict, fetch the existing ID
+            const { data } = await sb.from("hp_suppliers")
+              .select("id").eq("broker", broker).eq("name", tab.supplierKey).single();
+            if (data) supplierIdMap[tab.supplierKey] = data.id;
+          }
+        } else {
+          await upsertSupplier({
+            id: supplierId,
+            broker,
+            name: tab.supplierKey,
+            tabName: tab.tabName,
+            formatConfig: tab.config,
+          });
+        }
       }
 
-      await refreshSuppliers();
-
-      // 3. Build all availability rows
+      // 3. Build all availability rows using tracked IDs
       const allRows = [];
       for (const tab of uploadState.parsed) {
-        const supplierId = tab.existing?.id
-          || suppliers.find(s => s.name === tab.supplierKey)?.id
-          || crypto.randomUUID();
+        const supplierId = supplierIdMap[tab.supplierKey];
         for (const row of tab.rows) {
           allRows.push({
             id: crypto.randomUUID(),
