@@ -474,3 +474,25 @@ CREATE INDEX idx_hp_orders_broker ON hp_order_items (broker);
 
 ALTER TABLE hp_order_items ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Allow all access to hp_order_items" ON hp_order_items FOR ALL USING (true);
+
+-- ══════════════════════════════════════════════════════════════════════════════
+-- SPRAY COST SUMMARY (2024-2025 chemical cost tracking by facility)
+-- ══════════════════════════════════════════════════════════════════════════════
+CREATE TABLE spray_cost_summary (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  year INTEGER NOT NULL,
+  product TEXT NOT NULL,
+  cost_per_oz NUMERIC(10,4),
+  cost_per_container NUMERIC(10,2),
+  container_size TEXT,
+  sprague_oz NUMERIC(10,2) DEFAULT 0,
+  sprague_cost NUMERIC(10,2) DEFAULT 0,
+  bluff_oz NUMERIC(10,2) DEFAULT 0,
+  bluff_cost NUMERIC(10,2) DEFAULT 0,
+  total_oz NUMERIC(10,2) DEFAULT 0,
+  total_cost NUMERIC(10,2) DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+ALTER TABLE spray_cost_summary ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow all access to spray_cost_summary" ON spray_cost_summary FOR ALL USING (true);
