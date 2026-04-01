@@ -87,22 +87,28 @@ export function parseSheet(sheetData, formatConfig) {
 
   const dataStart = cfg.dataStartRow ?? ((cfg.headerRow ?? 0) + 1);
 
-  // Handle two-column layout (AG 2 style)
+  // Handle two-column layout (AG 2 style) — preserve section headers
   if (cfg.twoColumnLayout) {
+    let leftSection = null;
+    let rightSection = null;
     for (let i = dataStart; i < sheetData.length; i++) {
       const row = sheetData[i];
       // Left pair
       const leftPlant = cellStr(row[cfg.plantCol ?? 0]);
       const leftQty = cellStr(row[(cfg.plantCol ?? 0) + 1]);
-      if (leftPlant && !isCategoryHeader(leftPlant)) {
-        rows.push(makeRow(leftPlant, null, leftQty));
+      if (leftPlant && isCategoryHeader(leftPlant)) {
+        leftSection = leftPlant;
+      } else if (leftPlant) {
+        rows.push({ ...makeRow(leftPlant, null, leftQty), section: leftSection });
       }
       // Right pair
       if (cfg.rightPlantCol != null) {
         const rightPlant = cellStr(row[cfg.rightPlantCol]);
         const rightQty = cellStr(row[cfg.rightQtyCol ?? (cfg.rightPlantCol + 1)]);
-        if (rightPlant && !isCategoryHeader(rightPlant)) {
-          rows.push(makeRow(rightPlant, null, rightQty));
+        if (rightPlant && isCategoryHeader(rightPlant)) {
+          rightSection = rightPlant;
+        } else if (rightPlant) {
+          rows.push({ ...makeRow(rightPlant, null, rightQty), section: rightSection });
         }
       }
     }

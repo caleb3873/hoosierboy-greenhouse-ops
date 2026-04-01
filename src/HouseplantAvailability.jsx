@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { useHpSuppliers, useHpAvailability, useHpPricing, useHpOrderItems, getSupabase } from "./supabase";
 import { readWorkbook, parseSheet } from "./hpParsers";
 import { matchSupplierConfig } from "./hpDefaultConfigs";
@@ -63,7 +63,7 @@ export default function HouseplantAvailability() {
   const xlsxReady = useXLSX();
   const { rows: suppliers, upsert: upsertSupplier, refresh: refreshSuppliers } = useHpSuppliers();
   const { rows: availability, insert: insertAvail, remove: removeAvail, refresh: refreshAvail } = useHpAvailability();
-  const { rows: pricing } = useHpPricing();
+  const { rows: pricing, upsert: upsertPrice } = useHpPricing();
   const { rows: orderItems, upsert: upsertOrder, remove: removeOrder } = useHpOrderItems();
 
   const [activeTab, setActiveTab] = useState(null); // null = summary
@@ -159,6 +159,25 @@ export default function HouseplantAvailability() {
       weekKey,
       quantity: qty,
       unitPrice: price || null,
+    });
+  }
+
+  // ── Price setter (saves to hp_pricing) ────────────────────────────────────
+  function setPrice(row, unitPrice) {
+    const key = `${row.supplierName}||${row.plantName}||${row.variety || ""}`;
+    const existing = pricing.find(p =>
+      p.supplierName === row.supplierName && p.plantName === row.plantName && (p.variety || "") === (row.variety || "")
+    );
+    if (unitPrice <= 0 && existing) {
+      // Could remove, but just set to 0
+    }
+    upsertPrice({
+      id: existing?.id || crypto.randomUUID(),
+      broker: row.broker,
+      supplierName: row.supplierName,
+      plantName: row.plantName,
+      variety: row.variety || null,
+      unitPrice: unitPrice || 0,
     });
   }
 
@@ -275,8 +294,8 @@ export default function HouseplantAvailability() {
     if (items.length === 0) return;
 
     const wb = XLSX.utils.book_new();
+    const broker = "Express Seed"; // TODO: dynamic when multi-broker
 
-    // Group by supplier for multi-sheet download
     const grouped = {};
     items.forEach(o => {
       if (!grouped[o.supplierName]) grouped[o.supplierName] = [];
@@ -284,24 +303,53 @@ export default function HouseplantAvailability() {
     });
 
     for (const [sup, rows] of Object.entries(grouped)) {
-      const data = rows.map(r => ({
-        "Plant": r.plantName,
-        "Variety": r.variety || "",
-        "Size": r.size || "",
-        "Form": r.form || "",
-        "Week": r.weekKey,
-        "Quantity": r.quantity,
-        "Unit Price": r.unitPrice ? parseFloat(r.unitPrice) : "",
-        "Total": r.unitPrice ? r.quantity * parseFloat(r.unitPrice) : "",
-      }));
-      const ws = XLSX.utils.json_to_sheet(data);
-      ws["!cols"] = [{ wch: 30 }, { wch: 25 }, { wch: 10 }, { wch: 8 }, { wch: 8 }, { wch: 10 }, { wch: 12 }, { wch: 12 }];
+      // Get unique weeks ordered, sorted
+      const weeks = [...new Set(rows.map(r => r.weekKey))].sort((a, b) => {
+        const na = parseInt(a.replace(/\D/g, "")) || 0;
+        const nb = parseInt(b.replace(/\D/g, "")) || 0;
+        return na - nb;
+      });
+
+      // Group by plant+variety
+      const byPlant = {};
+      rows.forEach(r => {
+        const key = `${r.plantName}||${r.variety || ""}`;
+        if (!byPlant[key]) byPlant[key] = { ...r, weekOrders: {} };
+        byPlant[key].weekOrders[r.weekKey] = r.quantity;
+      });
+
+      // Header rows
+      const headerRow1 = ["Broker", "Supplier", "", "", "", ""];
+      const headerRow2 = [broker, sup, "", "", "", ""];
+      const headerRow3 = [];
+      const colHeaders = ["Plant", "Variety", "Size", "Form", "Unit Price", "Notes"];
+      weeks.forEach(wk => { colHeaders.push(weekLabel(wk) + " (Arrival)"); colHeaders.push("Order Qty"); colHeaders.push("Cost"); });
+      colHeaders.push("Total Cost");
+
+      const dataRows = Object.values(byPlant).map(r => {
+        const price = getPrice(r.supplierName, r.plantName, r.variety) || parseFloat(r.unitPrice) || 0;
+        const row = [r.plantName, r.variety || "", r.size || "", r.form || "", price || "", ""];
+        let rowTotal = 0;
+        weeks.forEach(wk => {
+          const qty = r.weekOrders[wk] || 0;
+          const cost = qty * price;
+          rowTotal += cost;
+          row.push(""); // arrival week placeholder
+          row.push(qty || "");
+          row.push(cost || "");
+        });
+        row.push(rowTotal || "");
+        return row;
+      });
+
+      const sheetData = [headerRow1, headerRow2, [], colHeaders, ...dataRows];
+      const ws = XLSX.utils.aoa_to_sheet(sheetData);
       XLSX.utils.book_append_sheet(wb, ws, sup.slice(0, 31));
     }
 
     const filename = supplierName
-      ? `Order_${supplierName.replace(/\s+/g, "_")}_${new Date().toISOString().slice(0, 10)}.xlsx`
-      : `Orders_All_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      ? `Order_${broker}_${supplierName.replace(/\s+/g, "_")}_${new Date().toISOString().slice(0, 10)}.xlsx`
+      : `Orders_${broker}_All_${new Date().toISOString().slice(0, 10)}.xlsx`;
     XLSX.writeFile(wb, filename);
   }
 
@@ -436,6 +484,7 @@ export default function HouseplantAvailability() {
               getPrice={getPrice}
               getOrderQty={getOrderQty}
               setOrderQty={setOrderQty}
+              setPrice={setPrice}
               onDownload={() => downloadOrders(activeTab)}
               weekLabel={weekLabel}
             />
@@ -506,14 +555,15 @@ function SummaryView({ supplierNames, bySupplier, ordersBySupplier, onSelectSupp
 
 // ══════════════════════════════════════════════════════════════════════════════
 // ── SUPPLIER TAB ──────────────────────────────────────────────────────────────
+// Layout: Identifying cols → Price (editable) → [Avail | Order] per week
+// AG 2 gets section headers. Text-only suppliers get order+price at far right.
 // ══════════════════════════════════════════════════════════════════════════════
-function SupplierTab({ supplierName, rows, orders, getPrice, getOrderQty, setOrderQty, onDownload, weekLabel }) {
+function SupplierTab({ supplierName, rows, orders, getPrice, getOrderQty, setOrderQty, setPrice, onDownload, weekLabel }) {
   const [page, setPage] = useState(0);
   const PER_PAGE = 50;
 
   useEffect(() => setPage(0), [supplierName, rows]);
 
-  // Get all week keys for this supplier
   const weekKeys = useMemo(() => {
     const keys = new Set();
     rows.forEach(r => Object.keys(r.availability || {}).forEach(k => keys.add(k)));
@@ -526,22 +576,41 @@ function SupplierTab({ supplierName, rows, orders, getPrice, getOrderQty, setOrd
     return arr;
   }, [rows]);
 
-  // Check if any rows have text-only availability (no week keys)
   const isTextOnly = weekKeys.length === 0 && rows.some(r => r.availabilityText);
+  const isSimpleQty = weekKeys.length > 0 && weekKeys.every(k => k === "total");
+  const hasSections = rows.some(r => r.section);
+  const hasVariety = rows.some(r => r.variety);
+  const hasCommonName = rows.some(r => r.commonName);
+  const hasSize = rows.some(r => r.size);
+  const hasForm = rows.some(r => r.form);
+  const hasLocation = rows.some(r => r.location);
+  const hasProductId = rows.some(r => r.productId);
+  const hasComments = rows.some(r => r.comments);
 
   const paged = rows.slice(page * PER_PAGE, (page + 1) * PER_PAGE);
   const totalPages = Math.ceil(rows.length / PER_PAGE);
-
   const orderCount = orders.length;
 
-  const thStyle = { padding: "8px 10px", textAlign: "left", fontSize: 10, fontWeight: 800,
+  const thStyle = { padding: "8px 8px", textAlign: "left", fontSize: 10, fontWeight: 800,
     color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5,
     borderBottom: "2px solid #e0ead8", whiteSpace: "nowrap", position: "sticky", top: 0, background: "#fff", zIndex: 1 };
-  const tdStyle = { padding: "7px 10px", fontSize: 12, color: "#1e2d1a", borderBottom: "1px solid #f0f5ee" };
+  const tdStyle = { padding: "6px 8px", fontSize: 12, color: "#1e2d1a", borderBottom: "1px solid #f0f5ee" };
+  const orderInputStyle = (hasVal) => ({
+    width: 50, padding: "3px 5px", borderRadius: 5, fontSize: 11, textAlign: "right",
+    border: hasVal ? "1.5px solid #7fb069" : "1px solid #e0ead8",
+    background: hasVal ? "#fff" : "#fafcf8", color: "#1e2d1a", outline: "none", fontFamily: "inherit",
+  });
+  const priceInputStyle = (hasVal) => ({
+    width: 58, padding: "3px 5px", borderRadius: 5, fontSize: 11, textAlign: "right",
+    border: hasVal ? "1.5px solid #4a90d9" : "1px solid #e0ead8",
+    background: hasVal ? "#f0f4ff" : "#fafcf8", color: "#1e2d1a", outline: "none", fontFamily: "inherit",
+  });
+
+  // Track current section for section headers
+  let lastSection = null;
 
   return (
     <div>
-      {/* Supplier header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
         <div>
           <span style={{ fontSize: 16, fontWeight: 800, color: "#1e2d1a" }}>{supplierName}</span>
@@ -555,56 +624,122 @@ function SupplierTab({ supplierName, rows, orders, getPrice, getOrderQty, setOrd
       </div>
 
       {rows.length === 0 ? (
-        <div style={{ ...card, textAlign: "center", padding: 40, color: "#7a8c74" }}>
-          No matching items
-        </div>
+        <div style={{ ...card, textAlign: "center", padding: 40, color: "#7a8c74" }}>No matching items</div>
       ) : (
         <div style={{ overflowX: "auto", background: "#fff", borderRadius: 14, border: "1.5px solid #e0ead8" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 600 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 500 }}>
             <thead>
               <tr>
-                <th style={{ ...thStyle, minWidth: 180 }}>Plant</th>
-                {rows.some(r => r.variety) && <th style={thStyle}>Variety</th>}
-                {rows.some(r => r.commonName) && <th style={thStyle}>Common Name</th>}
-                {rows.some(r => r.size) && <th style={thStyle}>Size</th>}
-                {rows.some(r => r.form) && <th style={thStyle}>Form</th>}
-                {rows.some(r => r.location) && <th style={thStyle}>Location</th>}
-                {rows.some(r => r.productId) && <th style={thStyle}>ID</th>}
-                {isTextOnly && <th style={thStyle}>Availability</th>}
-                {weekKeys.map(k => (
-                  <WeekHeaderGroup key={k} weekKey={k} weekLabel={weekLabel} thStyle={thStyle} />
+                <th style={{ ...thStyle, minWidth: 160 }}>Plant</th>
+                {hasVariety && <th style={thStyle}>Variety</th>}
+                {hasCommonName && <th style={thStyle}>Common Name</th>}
+                {hasSize && <th style={thStyle}>Size</th>}
+                {hasForm && <th style={thStyle}>Form</th>}
+                {hasLocation && <th style={thStyle}>Location</th>}
+                {hasProductId && <th style={thStyle}>ID</th>}
+                <th style={{ ...thStyle, textAlign: "right", background: "#f0f4ff", color: "#4a6a9a", minWidth: 65 }}>Price</th>
+                {isTextOnly && (
+                  <>
+                    <th style={thStyle}>Availability</th>
+                    <th style={{ ...thStyle, background: "#f8fcf6", color: "#4a7a35", minWidth: 55 }}>Order</th>
+                  </>
+                )}
+                {isSimpleQty && (
+                  <>
+                    <th style={{ ...thStyle, textAlign: "right", minWidth: 50 }}>Qty</th>
+                    <th style={{ ...thStyle, background: "#f8fcf6", color: "#4a7a35", minWidth: 55 }}>Order</th>
+                  </>
+                )}
+                {!isTextOnly && !isSimpleQty && weekKeys.map(k => (
+                  <React.Fragment key={k}>
+                    <th style={{ ...thStyle, textAlign: "right", minWidth: 50 }}>{weekLabel(k)}</th>
+                    <th style={{ ...thStyle, background: "#f8fcf6", color: "#4a7a35", minWidth: 55, textAlign: "center" }}>Order</th>
+                  </React.Fragment>
                 ))}
-                {rows.some(r => r.comments) && <th style={thStyle}>Notes</th>}
+                {hasComments && <th style={thStyle}>Notes</th>}
               </tr>
             </thead>
             <tbody>
-              {paged.map((row, i) => (
-                <tr key={row.id || i} style={{ background: i % 2 === 0 ? "#fff" : "#fafcf8" }}>
-                  <td style={{ ...tdStyle, fontWeight: 700 }}>{row.plantName}</td>
-                  {rows.some(r => r.variety) && <td style={tdStyle}>{row.variety || ""}</td>}
-                  {rows.some(r => r.commonName) && <td style={tdStyle}>{row.commonName || ""}</td>}
-                  {rows.some(r => r.size) && <td style={{ ...tdStyle, fontSize: 11 }}>{row.size || ""}</td>}
-                  {rows.some(r => r.form) && <td style={{ ...tdStyle, fontSize: 11 }}>{row.form || ""}</td>}
-                  {rows.some(r => r.location) && <td style={{ ...tdStyle, fontSize: 11 }}>{row.location || ""}</td>}
-                  {rows.some(r => r.productId) && <td style={{ ...tdStyle, fontSize: 11 }}>{row.productId || ""}</td>}
-                  {isTextOnly && <td style={{ ...tdStyle, fontSize: 11 }}>{row.availabilityText || ""}</td>}
-                  {weekKeys.map(k => {
-                    const avail = (row.availability || {})[k];
-                    const orderQty = getOrderQty(row.supplierName, row.plantName, row.variety, k);
-                    const price = getPrice(row.supplierName, row.plantName, row.variety);
-                    const cost = orderQty * price;
-                    return (
-                      <WeekCellGroup key={k} avail={avail} orderQty={orderQty} price={price} cost={cost}
-                        onOrderChange={(qty) => setOrderQty(row, k, qty)} tdStyle={tdStyle} />
-                    );
-                  })}
-                  {rows.some(r => r.comments) && (
-                    <td style={{ ...tdStyle, fontSize: 11, color: "#7a8c74", maxWidth: 150 }}>
-                      {row.comments || ""}
-                    </td>
-                  )}
-                </tr>
-              ))}
+              {paged.map((row, i) => {
+                const price = getPrice(row.supplierName, row.plantName, row.variety);
+                const sectionChanged = hasSections && row.section && row.section !== lastSection;
+                if (hasSections && row.section) lastSection = row.section;
+                const totalCols = 1 + (hasVariety?1:0) + (hasCommonName?1:0) + (hasSize?1:0) + (hasForm?1:0) + (hasLocation?1:0) + (hasProductId?1:0) + 1 + (isTextOnly?2:0) + (isSimpleQty?2:0) + (!isTextOnly&&!isSimpleQty ? weekKeys.length*2 : 0) + (hasComments?1:0);
+
+                return (
+                  <React.Fragment key={row.id || i}>
+                    {sectionChanged && (
+                      <tr>
+                        <td colSpan={totalCols} style={{ padding: "10px 10px 6px", fontSize: 11, fontWeight: 800, color: "#7fb069", letterSpacing: 1, textTransform: "uppercase", background: "#f8faf6", borderBottom: "2px solid #e0ead8" }}>
+                          {row.section}
+                        </td>
+                      </tr>
+                    )}
+                    <tr style={{ background: i % 2 === 0 ? "#fff" : "#fafcf8" }}>
+                      <td style={{ ...tdStyle, fontWeight: 700 }}>{row.plantName}</td>
+                      {hasVariety && <td style={tdStyle}>{row.variety || ""}</td>}
+                      {hasCommonName && <td style={tdStyle}>{row.commonName || ""}</td>}
+                      {hasSize && <td style={{ ...tdStyle, fontSize: 11 }}>{row.size || ""}</td>}
+                      {hasForm && <td style={{ ...tdStyle, fontSize: 11 }}>{row.form || ""}</td>}
+                      {hasLocation && <td style={{ ...tdStyle, fontSize: 11 }}>{row.location || ""}</td>}
+                      {hasProductId && <td style={{ ...tdStyle, fontSize: 11 }}>{row.productId || ""}</td>}
+                      {/* Price column — editable */}
+                      <td style={{ ...tdStyle, padding: "4px 4px", background: price > 0 ? "#f0f4ff" : undefined }}>
+                        <input type="number" step="0.01"
+                          value={price || ""}
+                          onChange={e => setPrice(row, parseFloat(e.target.value) || 0)}
+                          placeholder="$"
+                          style={priceInputStyle(price > 0)} />
+                      </td>
+                      {/* Text-only: availability text + order */}
+                      {isTextOnly && (
+                        <>
+                          <td style={{ ...tdStyle, fontSize: 11 }}>{row.availabilityText || ""}</td>
+                          <td style={{ ...tdStyle, padding: "4px 4px" }}>
+                            <input type="number"
+                              value={getOrderQty(row.supplierName, row.plantName, row.variety, "total") || ""}
+                              onChange={e => setOrderQty(row, "total", parseInt(e.target.value) || 0)}
+                              style={orderInputStyle(getOrderQty(row.supplierName, row.plantName, row.variety, "total") > 0)} />
+                          </td>
+                        </>
+                      )}
+                      {/* Simple qty: total + order */}
+                      {isSimpleQty && (
+                        <>
+                          <td style={{ ...tdStyle, textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>
+                            {(row.availability || {}).total ? Number((row.availability || {}).total).toLocaleString() : "\u2014"}
+                          </td>
+                          <td style={{ ...tdStyle, padding: "4px 4px" }}>
+                            <input type="number"
+                              value={getOrderQty(row.supplierName, row.plantName, row.variety, "total") || ""}
+                              onChange={e => setOrderQty(row, "total", parseInt(e.target.value) || 0)}
+                              style={orderInputStyle(getOrderQty(row.supplierName, row.plantName, row.variety, "total") > 0)} />
+                          </td>
+                        </>
+                      )}
+                      {/* Weekly/monthly columns: avail + order */}
+                      {!isTextOnly && !isSimpleQty && weekKeys.map(k => {
+                        const avail = (row.availability || {})[k];
+                        const oq = getOrderQty(row.supplierName, row.plantName, row.variety, k);
+                        return (
+                          <React.Fragment key={k}>
+                            <td style={{ ...tdStyle, textAlign: "right", fontVariantNumeric: "tabular-nums",
+                              color: avail ? "#1e2d1a" : "#d0d8cc", fontWeight: avail ? 600 : 400 }}>
+                              {avail ? Number(avail).toLocaleString() : "\u2014"}
+                            </td>
+                            <td style={{ ...tdStyle, padding: "4px 3px", background: oq > 0 ? "#f0f8eb" : undefined }}>
+                              <input type="number" value={oq || ""}
+                                onChange={e => setOrderQty(row, k, parseInt(e.target.value) || 0)}
+                                style={orderInputStyle(oq > 0)} />
+                            </td>
+                          </React.Fragment>
+                        );
+                      })}
+                      {hasComments && <td style={{ ...tdStyle, fontSize: 11, color: "#7a8c74", maxWidth: 150 }}>{row.comments || ""}</td>}
+                    </tr>
+                  </React.Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -620,48 +755,6 @@ function SupplierTab({ supplierName, rows, orders, getPrice, getOrderQty, setOrd
         </div>
       )}
     </div>
-  );
-}
-
-// ── Week column header group (Avail | Order | Cost) ──────────────────────────
-function WeekHeaderGroup({ weekKey, weekLabel: wl, thStyle }) {
-  return (
-    <>
-      <th style={{ ...thStyle, textAlign: "right", minWidth: 50, borderRight: "none" }}>{wl(weekKey)}</th>
-      <th style={{ ...thStyle, textAlign: "center", minWidth: 55, background: "#f8fcf6", color: "#4a7a35", borderRight: "none" }}>Order</th>
-      <th style={{ ...thStyle, textAlign: "right", minWidth: 55, background: "#f8fcf6", color: "#4a7a35", borderRight: "1px solid #e0ead8" }}>Cost</th>
-    </>
-  );
-}
-
-// ── Week cell group (Avail value | Order input | Cost calc) ──────────────────
-function WeekCellGroup({ avail, orderQty, price, cost, onOrderChange, tdStyle }) {
-  return (
-    <>
-      <td style={{ ...tdStyle, textAlign: "right", fontVariantNumeric: "tabular-nums",
-        color: avail ? "#1e2d1a" : "#d0d8cc", fontWeight: avail ? 600 : 400, borderRight: "none" }}>
-        {avail ? Number(avail).toLocaleString() : "\u2014"}
-      </td>
-      <td style={{ ...tdStyle, padding: "4px 4px", background: orderQty > 0 ? "#f0f8eb" : undefined, borderRight: "none" }}>
-        <input
-          type="number"
-          value={orderQty || ""}
-          onChange={e => onOrderChange(parseInt(e.target.value) || 0)}
-          placeholder=""
-          style={{
-            width: 50, padding: "4px 6px", borderRadius: 6, fontSize: 12, textAlign: "right",
-            border: orderQty > 0 ? "1.5px solid #7fb069" : "1px solid #e0ead8",
-            background: orderQty > 0 ? "#fff" : "#fafcf8",
-            color: "#1e2d1a", outline: "none", fontFamily: "inherit",
-          }}
-        />
-      </td>
-      <td style={{ ...tdStyle, textAlign: "right", fontSize: 11, fontVariantNumeric: "tabular-nums",
-        color: cost > 0 ? "#4a7a35" : "#d0d8cc", fontWeight: cost > 0 ? 600 : 400,
-        borderRight: "1px solid #e0ead8" }}>
-        {cost > 0 ? `$${cost.toFixed(2)}` : price > 0 ? "$0" : "\u2014"}
-      </td>
-    </>
   );
 }
 
