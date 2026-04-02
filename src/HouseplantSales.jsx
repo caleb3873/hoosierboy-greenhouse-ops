@@ -15,6 +15,9 @@ export default function HouseplantSales() {
   const [sizeFilter, setSizeFilter] = useState("all");
   const [sortCol, setSortCol] = useState("total_sales");
   const [sortDir, setSortDir] = useState("desc");
+  const [datePreset, setDatePreset] = useState("all"); // all | custom | preset keys
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
   const [uploading, setUploading] = useState(false);
   const [showImports, setShowImports] = useState(false);
   const [pendingUpload, setPendingUpload] = useState(null); // { rows, fileName }
@@ -114,6 +117,71 @@ export default function HouseplantSales() {
     setUploading(false);
   }, [pendingUpload, dateFrom, dateTo, uploadNotes, refresh]);
 
+  // ── Date range presets ──────────────────────────────────────────────────
+  const datePresets = useMemo(() => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const dow = now.getDay();
+
+    function fmt(d) { return d.toISOString().slice(0, 10); }
+    function weekStart(d) { const r = new Date(d); r.setDate(r.getDate() - ((r.getDay() + 6) % 7)); return r; } // Monday
+    function weekEnd(d) { const r = weekStart(d); r.setDate(r.getDate() + 6); return r; } // Sunday
+
+    const thisWeekMon = weekStart(now);
+    const lastWeekMon = new Date(thisWeekMon); lastWeekMon.setDate(lastWeekMon.getDate() - 7);
+    const lastWeekSun = new Date(lastWeekMon); lastWeekSun.setDate(lastWeekSun.getDate() + 6);
+
+    // Same week last year
+    const lastYearNow = new Date(now); lastYearNow.setFullYear(y - 1);
+    const sameWeekLYMon = weekStart(lastYearNow);
+    const sameWeekLYSun = weekEnd(lastYearNow);
+
+    // Next week last year
+    const nextWeekLYMon = new Date(sameWeekLYMon); nextWeekLYMon.setDate(nextWeekLYMon.getDate() + 7);
+    const nextWeekLYSun = new Date(nextWeekLYMon); nextWeekLYSun.setDate(nextWeekLYMon.getDate() + 6);
+
+    // Quarters
+    const q = Math.floor(now.getMonth() / 3);
+    const qStart = new Date(y, q * 3, 1);
+    const qEnd = new Date(y, q * 3 + 3, 0);
+    const prevQStart = new Date(y, (q - 1) * 3, 1);
+    const prevQEnd = new Date(y, q * 3, 0);
+
+    return [
+      { id: "all", label: "All Time" },
+      { id: "this_week", label: "This Week", from: fmt(thisWeekMon), to: fmt(now) },
+      { id: "last_week", label: "Last Week", from: fmt(lastWeekMon), to: fmt(lastWeekSun) },
+      { id: "same_week_ly", label: "This Week Last Year", from: fmt(sameWeekLYMon), to: fmt(sameWeekLYSun) },
+      { id: "next_week_ly", label: "Next Week Last Year", from: fmt(nextWeekLYMon), to: fmt(nextWeekLYSun) },
+      { id: "this_quarter", label: `Q${q + 1} ${y}`, from: fmt(qStart), to: fmt(qEnd) },
+      { id: "last_quarter", label: `Q${q} ${y}`, from: fmt(prevQStart), to: fmt(prevQEnd) },
+      { id: "this_year", label: `${y}`, from: `${y}-01-01`, to: `${y}-12-31` },
+      { id: "last_year", label: `${y - 1}`, from: `${y - 1}-01-01`, to: `${y - 1}-12-31` },
+      { id: "custom", label: "Custom Range" },
+    ];
+  }, []);
+
+  // Parse report_period "YYYY-MM-DD to YYYY-MM-DD" into dates for filtering
+  function periodOverlaps(reportPeriod, fromStr, toStr) {
+    if (!reportPeriod || !fromStr) return true;
+    const parts = reportPeriod.split(" to ");
+    const pFrom = parts[0] || reportPeriod;
+    const pTo = parts[1] || pFrom;
+    const filterFrom = fromStr;
+    const filterTo = toStr || fromStr;
+    // Overlap check: period starts before filter ends AND period ends after filter starts
+    return pFrom <= filterTo && pTo >= filterFrom;
+  }
+
+  const dateFilteredSales = useMemo(() => {
+    if (datePreset === "all") return sales;
+    const preset = datePresets.find(p => p.id === datePreset);
+    const from = datePreset === "custom" ? customFrom : preset?.from;
+    const to = datePreset === "custom" ? customTo : preset?.to;
+    if (!from) return sales;
+    return sales.filter(r => periodOverlaps(r.reportPeriod, from, to));
+  }, [sales, datePreset, datePresets, customFrom, customTo]);
+
   // Group imports by report_period for management
   const imports = useMemo(() => {
     const map = {};
@@ -140,10 +208,10 @@ export default function HouseplantSales() {
     refresh();
   }
 
-  const sizes = useMemo(() => [...new Set(sales.map(r => r.size).filter(Boolean))].sort(), [sales]);
+  const sizes = useMemo(() => [...new Set(dateFilteredSales.map(r => r.size).filter(Boolean))].sort(), [dateFilteredSales]);
 
   const filtered = useMemo(() => {
-    let items = sales;
+    let items = dateFilteredSales;
     if (sizeFilter !== "all") items = items.filter(r => r.size === sizeFilter);
     if (searchQ.trim()) {
       const q = searchQ.toLowerCase();
@@ -156,7 +224,7 @@ export default function HouseplantSales() {
       return sortDir === "asc" ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av));
     });
     return copy;
-  }, [sales, searchQ, sizeFilter, sortCol, sortDir]);
+  }, [dateFilteredSales, searchQ, sizeFilter, sortCol, sortDir]);
 
   const totalRev = filtered.reduce((s, r) => s + (r.totalSales || 0), 0);
   const totalQty = filtered.reduce((s, r) => s + (r.qtySold || 0), 0);
@@ -256,6 +324,38 @@ export default function HouseplantSales() {
         </div>
       )}
 
+      {/* Date filter */}
+      {sales.length > 0 && (
+        <div style={{ ...card, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", padding: "12px 18px" }}>
+          {datePresets.map(p => (
+            <button key={p.id} onClick={() => setDatePreset(p.id)}
+              style={{
+                padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: datePreset === p.id ? 700 : 500,
+                background: datePreset === p.id ? "#1e2d1a" : "#fff",
+                color: datePreset === p.id ? "#c8e6b8" : "#7a8c74",
+                border: `1.5px solid ${datePreset === p.id ? "#1e2d1a" : "#e0ead8"}`,
+                cursor: "pointer", fontFamily: "inherit",
+              }}>
+              {p.label}
+            </button>
+          ))}
+          {datePreset === "custom" && (
+            <div style={{ display: "flex", gap: 6, alignItems: "center", marginLeft: 8 }}>
+              <input type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)}
+                style={{ padding: "4px 8px", borderRadius: 6, border: "1.5px solid #c8d8c0", fontSize: 12, fontFamily: "inherit" }} />
+              <span style={{ color: "#7a8c74", fontSize: 12 }}>to</span>
+              <input type="date" value={customTo} onChange={e => setCustomTo(e.target.value)}
+                style={{ padding: "4px 8px", borderRadius: 6, border: "1.5px solid #c8d8c0", fontSize: 12, fontFamily: "inherit" }} />
+            </div>
+          )}
+          {datePreset !== "all" && (
+            <span style={{ fontSize: 12, color: "#7a8c74", marginLeft: 8 }}>
+              {dateFilteredSales.length} of {sales.length} records
+            </span>
+          )}
+        </div>
+      )}
+
       {/* View toggle */}
       {sales.length > 0 && (
         <div style={{ display: "flex", gap: 0, marginBottom: 16 }}>
@@ -278,7 +378,7 @@ export default function HouseplantSales() {
           <div style={{ fontSize: 13, color: "#7a8c74", marginBottom: 20 }}>Upload an AR Sales report to start tracking</div>
         </div>
       ) : salesView === "dashboard" ? (
-        <SalesDashboard sales={sales} filtered={filtered} />
+        <SalesDashboard sales={dateFilteredSales} />
       ) : (
         <>
           {/* Filters */}
