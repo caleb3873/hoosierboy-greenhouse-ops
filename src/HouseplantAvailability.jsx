@@ -2,6 +2,9 @@ import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { useHpSuppliers, useHpAvailability, useHpPricing, useHpOrderItems, getSupabase } from "./supabase";
 import { readWorkbook, parseSheet } from "./hpParsers";
 import { matchSupplierConfig } from "./hpDefaultConfigs";
+import HouseplantSales from "./HouseplantSales";
+import HouseplantProductLines from "./HouseplantProductLines";
+import HouseplantLibrary from "./HouseplantLibrary";
 
 // ── Design tokens ────────────────────────────────────────────────────────────
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
@@ -66,6 +69,7 @@ export default function HouseplantAvailability() {
   const { rows: pricing, upsert: upsertPrice } = useHpPricing();
   const { rows: orderItems, upsert: upsertOrder, remove: removeOrder } = useHpOrderItems();
 
+  const [section, setSection] = useState("availability"); // availability | sales | products | library
   const [activeTab, setActiveTab] = useState(null); // null = summary
   const [searchQ, setSearchQ] = useState("");
   const [uploadState, setUploadState] = useState(null);
@@ -356,15 +360,40 @@ export default function HouseplantAvailability() {
   // ═══════════════════════════════════════════════════════════════════════════
   // ── RENDER ──────────────────────────────────────────────────────────────
   // ═══════════════════════════════════════════════════════════════════════════
+  const SECTIONS = [
+    { id: "availability", label: "Availability" },
+    { id: "sales", label: "Sales" },
+    { id: "products", label: "Product Lines" },
+    { id: "library", label: "Culture Guide" },
+  ];
+
   return (
     <div style={FONT}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
 
+      {/* Section tabs */}
+      <div style={{ display: "flex", gap: 0, borderBottom: "2px solid #e0ead8", marginBottom: 20 }}>
+        {SECTIONS.map(s => (
+          <button key={s.id} onClick={() => setSection(s.id)}
+            style={{ padding: "12px 22px", fontSize: 14, fontWeight: section === s.id ? 800 : 600,
+              color: section === s.id ? "#1e2d1a" : "#7a8c74", background: "none", border: "none",
+              borderBottom: section === s.id ? "3px solid #7fb069" : "3px solid transparent",
+              cursor: "pointer", fontFamily: "inherit" }}>
+            {s.label}
+          </button>
+        ))}
+      </div>
+
+      {section === "sales" && <HouseplantSales />}
+      {section === "products" && <HouseplantProductLines />}
+      {section === "library" && <HouseplantLibrary />}
+
+      {section === "availability" && <>
       {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
         <div>
           <div style={{ fontFamily: "'DM Serif Display',Georgia,serif", fontSize: 26, fontWeight: 400, color: "#1a2a1a" }}>
-            Houseplant Availability
+            Availability
           </div>
           <div style={{ fontSize: 13, color: "#7a8c74", marginTop: 4 }}>
             {availability.length} items / {supplierNames.length} suppliers
@@ -506,6 +535,7 @@ export default function HouseplantAvailability() {
           </label>
         </div>
       )}
+      </>}
     </div>
   );
 }

@@ -496,3 +496,103 @@ CREATE TABLE spray_cost_summary (
 
 ALTER TABLE spray_cost_summary ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Allow all access to spray_cost_summary" ON spray_cost_summary FOR ALL USING (true);
+
+-- ══════════════════════════════════════════════════════════════════════════════
+-- HOUSEPLANT SALES, PRODUCT LINES, CULTURE GUIDES, COMPETITOR PRICING
+-- ══════════════════════════════════════════════════════════════════════════════
+
+CREATE TABLE hp_sales (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  product_id TEXT,
+  description TEXT NOT NULL,
+  size TEXT,
+  product_type TEXT,
+  category TEXT DEFAULT 'HOUSEPLANTS',
+  class TEXT,
+  qty_sold NUMERIC(10,2) DEFAULT 0,
+  total_sales NUMERIC(10,2) DEFAULT 0,
+  price_per NUMERIC(10,4),
+  report_period TEXT,
+  uploaded_at TIMESTAMPTZ DEFAULT now()
+);
+
+ALTER TABLE hp_sales ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow all access to hp_sales" ON hp_sales FOR ALL USING (true);
+
+CREATE TABLE hp_product_lines (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  name TEXT NOT NULL,
+  plant_name TEXT NOT NULL,
+  variety TEXT,
+  pot_size TEXT,
+  plants_per_pot INTEGER DEFAULT 1,
+  liner_cost NUMERIC(10,4),
+  liner_supplier TEXT,
+  soil_mix TEXT,
+  soil_cost_per_unit NUMERIC(10,4),
+  pot_cost NUMERIC(10,4),
+  labor_minutes INTEGER,
+  labor_cost NUMERIC(10,4),
+  chemical_cost NUMERIC(10,4),
+  other_cost NUMERIC(10,4),
+  total_cost NUMERIC(10,4),
+  wholesale_price NUMERIC(10,4),
+  retail_at_markup NUMERIC(10,4),
+  markup_factor NUMERIC(4,2) DEFAULT 2.5,
+  margin_pct NUMERIC(5,2),
+  grow_weeks INTEGER,
+  status TEXT DEFAULT 'exploring',
+  target_customer TEXT,
+  notes TEXT,
+  competitor_retail NUMERIC(10,4),
+  competitor_source TEXT,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+ALTER TABLE hp_product_lines ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow all access to hp_product_lines" ON hp_product_lines FOR ALL USING (true);
+
+CREATE TABLE hp_culture_guides (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  genus TEXT NOT NULL,
+  common_name TEXT,
+  prop_time TEXT,
+  prop_temp TEXT,
+  prop_light TEXT,
+  prop_humidity TEXT,
+  prop_notes TEXT,
+  finish_time TEXT,
+  finish_temp TEXT,
+  finish_light TEXT,
+  finish_ph TEXT,
+  finish_ec TEXT,
+  finish_feed TEXT,
+  finish_pgr TEXT,
+  height TEXT,
+  width TEXT,
+  pests TEXT,
+  diseases TEXT,
+  notes TEXT,
+  source TEXT,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+ALTER TABLE hp_culture_guides ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow all access to hp_culture_guides" ON hp_culture_guides FOR ALL USING (true);
+
+CREATE TABLE hp_competitor_prices (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  plant_name TEXT NOT NULL,
+  variety TEXT,
+  pot_size TEXT,
+  competitor TEXT NOT NULL,
+  retail_price NUMERIC(10,2),
+  source_url TEXT,
+  notes TEXT,
+  observed_at TIMESTAMPTZ DEFAULT now(),
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+ALTER TABLE hp_competitor_prices ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow all access to hp_competitor_prices" ON hp_competitor_prices FOR ALL USING (true);
