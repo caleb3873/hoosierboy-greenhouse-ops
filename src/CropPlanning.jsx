@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useCropRuns, useHouses, usePads, useContainers, useSpacingProfiles, useVarieties, useBrokerCatalogs, getNextCropRunCode, getBrokerSubCode, useCropRunTemplates2 } from "./supabase";
 import { ViewToolbar, GanttView, BoardView, LaborView, CalendarView } from "./CropPlanningViews";
 import { CatalogPicker } from "./Libraries";
+import { getSalesSeasonStatus } from "./shared";
 
 // ── CONSTANTS ─────────────────────────────────────────────────────────────────
 const SENSITIVITY = [
@@ -3311,6 +3312,48 @@ export default function App() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [yearFilter,   setYearFilter  ] = useState(currentYear);
 
+  // ── Sales season lockout ──────────────────────────────────────────────────
+  const seasonStatus = getSalesSeasonStatus();
+  const [lockoutBypassed, setLockoutBypassed] = useState(false);
+  const [showCodeEntry, setShowCodeEntry] = useState(false);
+  const [codeInput, setCodeInput] = useState("");
+  const [codeStatus, setCodeStatus] = useState(""); // "" | "sending" | "sent" | "verifying" | "error"
+  const [codeMessage, setCodeMessage] = useState("");
+  const isLocked = seasonStatus.locked && !lockoutBypassed;
+
+  async function requestCode() {
+    setCodeStatus("sending");
+    try {
+      const resp = await fetch("/api/send-lockout-code", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "generate" }),
+      });
+      const data = await resp.json();
+      if (resp.ok) { setCodeStatus("sent"); setCodeMessage("Code sent to Caleb. Ask him for it."); }
+      else { setCodeStatus("error"); setCodeMessage(data.error || "Failed to send"); }
+    } catch (e) { setCodeStatus("error"); setCodeMessage(e.message); }
+  }
+
+  async function verifyCode() {
+    setCodeStatus("verifying");
+    try {
+      const resp = await fetch("/api/send-lockout-code", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "verify", code: codeInput }),
+      });
+      const data = await resp.json();
+      if (data.valid) {
+        setLockoutBypassed(true);
+        setShowCodeEntry(false);
+        setCodeInput("");
+        setCodeStatus("");
+      } else {
+        setCodeStatus("error");
+        setCodeMessage(data.message || "Invalid code");
+      }
+    } catch (e) { setCodeStatus("error"); setCodeMessage(e.message); }
+  }
+
   async function saveRun(r) {
     let runToSave = r;
     if (!r.cropRunCode) {
@@ -3354,6 +3397,57 @@ export default function App() {
     <div style={{ fontFamily: "'DM Sans','Segoe UI',sans-serif", background: "#f2f5ef", minHeight: "100vh" }}>
       <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=DM+Sans:wght@400;600;700;800&display=swap" rel="stylesheet" />
 
+      {/* SALES SEASON BANNER */}
+      {seasonStatus.warning && !seasonStatus.locked && (
+        <div style={{ background: "linear-gradient(90deg, #c8791a, #e0952a)", padding: "10px 32px", display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ fontSize: 13, color: "#fff", fontWeight: 700, flex: 1 }}>
+            {seasonStatus.season} sales season starts {seasonStatus.locksLabel} — planning locks in {seasonStatus.daysUntilLock} day{seasonStatus.daysUntilLock !== 1 ? "s" : ""}
+          </div>
+          <div style={{ fontSize: 11, color: "#ffe8c8" }}>Finish crop planning before lockout</div>
+        </div>
+      )}
+      {isLocked && (
+        <div style={{ background: "linear-gradient(90deg, #8a2020, #b03030)", padding: "12px 32px", display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ fontSize: 14, color: "#fff", fontWeight: 800, flex: 1 }}>
+            Planning is closed for {seasonStatus.season} sales season — opens {seasonStatus.opensLabel}
+          </div>
+          <button onClick={() => setShowCodeEntry(true)}
+            style={{ background: "rgba(255,255,255,0.15)", color: "#ffd8d8", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 8, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+            Enter Access Code
+          </button>
+        </div>
+      )}
+
+      {/* CODE ENTRY MODAL */}
+      {showCodeEntry && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center" }}
+          onClick={() => setShowCodeEntry(false)}>
+          <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 16, padding: "32px", maxWidth: 400, width: "90%" }}>
+            <div style={{ fontSize: 18, fontWeight: 800, color: "#1e2d1a", marginBottom: 8 }}>Access Code Required</div>
+            <div style={{ fontSize: 13, color: "#7a8c74", marginBottom: 20 }}>
+              Planning is locked during {seasonStatus.season} sales season. Enter the access code to continue.
+            </div>
+            {codeStatus !== "sent" && codeStatus !== "verifying" && (
+              <button onClick={requestCode} disabled={codeStatus === "sending"}
+                style={{ background: "#1e2d1a", color: "#c8e6b8", border: "none", borderRadius: 8, padding: "10px 18px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", marginBottom: 16, width: "100%", opacity: codeStatus === "sending" ? 0.6 : 1 }}>
+                {codeStatus === "sending" ? "Sending..." : "Request Code (sends to Caleb)"}
+              </button>
+            )}
+            {codeMessage && <div style={{ fontSize: 12, color: codeStatus === "error" ? "#d94f3d" : "#7fb069", marginBottom: 12 }}>{codeMessage}</div>}
+            <div style={{ display: "flex", gap: 8 }}>
+              <input type="text" value={codeInput} onChange={e => setCodeInput(e.target.value)}
+                placeholder="Enter 6-digit code" maxLength={6}
+                style={{ flex: 1, padding: "10px 14px", borderRadius: 8, border: "1.5px solid #c8d8c0", fontSize: 16, letterSpacing: 4, textAlign: "center", fontFamily: "inherit", color: "#1e2d1a" }}
+                onKeyDown={e => e.key === "Enter" && codeInput.length === 6 && verifyCode()} />
+              <button onClick={verifyCode} disabled={codeInput.length !== 6 || codeStatus === "verifying"}
+                style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 8, padding: "10px 18px", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", opacity: codeInput.length !== 6 ? 0.5 : 1 }}>
+                {codeStatus === "verifying" ? "..." : "Verify"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* NAV */}
       <div style={{ background: "#1e2d1a", padding: "12px 32px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
@@ -3363,10 +3457,12 @@ export default function App() {
         </div>
         {view === "list"
           ? <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={() => setShowCopyModal(true)} style={{ background: "none", color: "#c8e6b8", border: "1px solid #4a6a3a", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>📋 Copy Existing</button>
-            <button onClick={() => { setEditingId(null); setView("add"); }} style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 8, padding: "8px 20px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>+ New Crop Run</button>
+            <button onClick={() => !isLocked && setShowCopyModal(true)} disabled={isLocked}
+              style={{ background: "none", color: isLocked ? "#4a6a3a" : "#c8e6b8", border: `1px solid ${isLocked ? "#2a3a25" : "#4a6a3a"}`, borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: isLocked ? "not-allowed" : "pointer", fontFamily: "inherit", opacity: isLocked ? 0.5 : 1 }}>Copy Existing</button>
+            <button onClick={() => !isLocked && (() => { setEditingId(null); setView("add"); })()} disabled={isLocked}
+              style={{ background: isLocked ? "#4a5a3a" : "#7fb069", color: "#fff", border: "none", borderRadius: 8, padding: "8px 20px", fontSize: 13, fontWeight: 700, cursor: isLocked ? "not-allowed" : "pointer", fontFamily: "inherit", opacity: isLocked ? 0.5 : 1 }}>+ New Crop Run</button>
           </div>
-          : <button onClick={() => { setView("list"); setEditingId(null); }} style={{ background: "none", color: "#c8e6b8", border: "1px solid #4a6a3a", borderRadius: 8, padding: "8px 16px", fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>← Back</button>
+          : <button onClick={() => { setView("list"); setEditingId(null); }} style={{ background: "none", color: "#c8e6b8", border: "1px solid #4a6a3a", borderRadius: 8, padding: "8px 16px", fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>&larr; Back</button>
         }
       </div>
 
@@ -3405,16 +3501,16 @@ export default function App() {
               </div>
             )}
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              {filtered.map(run => <CropRunCard key={run.id} run={run} onEdit={r => { setEditingId(r.id); setView("edit"); }} onDelete={deleteRun} onStatusChange={statusChange} currentYear={currentYear} spacingProfiles={spacingProfiles} containers={containers} />)}
+              {filtered.map(run => <CropRunCard key={run.id} run={run} onEdit={r => { if (isLocked) { setShowCodeEntry(true); return; } setEditingId(r.id); setView("edit"); }} onDelete={deleteRun} onStatusChange={statusChange} currentYear={currentYear} spacingProfiles={spacingProfiles} containers={containers} />)}
             </div>
           </>)}
 
           {tabView === "gantt" && (
-            <GanttView runs={filtered} currentYear={yearFilter} onEdit={r => { setEditingId(r.id); setView("edit"); }} />
+            <GanttView runs={filtered} currentYear={yearFilter} onEdit={r => { if (isLocked) { setShowCodeEntry(true); return; } setEditingId(r.id); setView("edit"); }} />
           )}
 
           {tabView === "board" && (
-            <BoardView runs={filtered} onEdit={r => { setEditingId(r.id); setView("edit"); }} onStatusChange={statusChange} />
+            <BoardView runs={filtered} onEdit={r => { if (isLocked) { setShowCodeEntry(true); return; } setEditingId(r.id); setView("edit"); }} onStatusChange={statusChange} />
           )}
 
           {tabView === "labor" && (

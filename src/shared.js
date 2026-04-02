@@ -122,6 +122,60 @@ export function getCurrentWeek() {
   return Math.ceil((now - s) / (7 * 86400000));
 }
 
+// ── SALES SEASON LOCKOUT ─────────────────────────────────────────────────────
+// Three sales windows per year when crop run planning is locked
+const SALES_SEASONS = [
+  { name: "Spring",  startMonth: 3,  startDay: 1,  endMonth: 5,  endDay: 31 },
+  { name: "Fall",    startMonth: 8,  startDay: 1,  endMonth: 9,  endDay: 21 },
+  { name: "Holiday", startMonth: 11, startDay: 15, endMonth: 12, endDay: 10 },
+];
+
+const WARNING_DAYS = 14; // Show countdown banner this many days before lockout
+
+export function getSalesSeasonStatus(now) {
+  if (!now) now = new Date();
+  const m = now.getMonth() + 1; // 1-12
+  const d = now.getDate();
+  const y = now.getFullYear();
+
+  // Check if currently in a sales season
+  for (const season of SALES_SEASONS) {
+    const start = new Date(y, season.startMonth - 1, season.startDay);
+    const end = new Date(y, season.endMonth - 1, season.endDay, 23, 59, 59);
+    if (now >= start && now <= end) {
+      // Find next open date
+      let opens = new Date(end);
+      opens.setDate(opens.getDate() + 1);
+      return {
+        locked: true,
+        season: season.name,
+        opensAt: opens,
+        opensLabel: opens.toLocaleDateString("en-US", { month: "long", day: "numeric" }),
+      };
+    }
+  }
+
+  // Check if approaching a sales season (warning period)
+  for (const season of SALES_SEASONS) {
+    const start = new Date(y, season.startMonth - 1, season.startDay);
+    const warningStart = new Date(start);
+    warningStart.setDate(warningStart.getDate() - WARNING_DAYS);
+    if (now >= warningStart && now < start) {
+      const daysLeft = Math.ceil((start - now) / 86400000);
+      return {
+        locked: false,
+        warning: true,
+        season: season.name,
+        daysUntilLock: daysLeft,
+        locksAt: start,
+        locksLabel: start.toLocaleDateString("en-US", { month: "long", day: "numeric" }),
+      };
+    }
+  }
+
+  return { locked: false, warning: false };
+}
+
 export function weekLabel(week, year, currentYear) {
   return year !== currentYear
     ? `Wk ${week} '${String(year).slice(2)}`
