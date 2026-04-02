@@ -13,14 +13,16 @@ export default function HouseplantSales() {
   const [sortCol, setSortCol] = useState("total_sales");
   const [sortDir, setSortDir] = useState("desc");
   const [uploading, setUploading] = useState(false);
+  const [pendingUpload, setPendingUpload] = useState(null); // { rows, fileName }
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [uploadNotes, setUploadNotes] = useState("");
 
-  // Upload .xls sales report
+  // Step 1: Parse file, show context form
   const handleUpload = useCallback(async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    setUploading(true);
 
-    // Load xlrd-like parsing via XLSX
     if (!window.XLSX) {
       const s = document.createElement("script");
       s.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
@@ -28,31 +30,25 @@ export default function HouseplantSales() {
     }
 
     const reader = new FileReader();
-    reader.onload = async (ev) => {
+    reader.onload = (ev) => {
       try {
         const wb = window.XLSX.read(ev.target.result, { type: "array" });
         const ws = wb.Sheets[wb.SheetNames[0]];
         const data = window.XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
 
-        // Find header row
         let headerIdx = 0;
         for (let i = 0; i < Math.min(5, data.length); i++) {
-          const row = data[i] || [];
-          if (row.some(c => String(c).toLowerCase().includes("sum qty") || String(c).toLowerCase().includes("total sales"))) {
+          if ((data[i] || []).some(c => String(c).toLowerCase().includes("sum qty") || String(c).toLowerCase().includes("total sales"))) {
             headerIdx = i; break;
           }
         }
 
-        const period = new Date().toISOString().slice(0, 7); // YYYY-MM
-        const sb = getSupabase();
         const rows = [];
-
         for (let i = headerIdx + 1; i < data.length; i++) {
           const r = data[i] || [];
           const desc = r[2] ? String(r[2]).trim() : null;
           if (!desc) continue;
           rows.push({
-            id: crypto.randomUUID(),
             product_id: r[0] ? String(r[0]).trim() : null,
             description: desc,
             size: r[3] ? String(r[3]).trim() : null,
@@ -62,24 +58,50 @@ export default function HouseplantSales() {
             qty_sold: parseFloat(r[7]) || 0,
             total_sales: parseFloat(r[8]) || 0,
             price_per: parseFloat(r[9]) || null,
-            report_period: period,
           });
         }
 
-        if (sb && rows.length > 0) {
-          for (let i = 0; i < rows.length; i += 200) {
-            await sb.from("hp_sales").insert(rows.slice(i, i + 200));
-          }
-        }
-        refresh();
+        const totalRev = rows.reduce((s, r) => s + r.total_sales, 0);
+        const totalQty = rows.reduce((s, r) => s + r.qty_sold, 0);
+        setPendingUpload({ rows, fileName: file.name, totalRev, totalQty });
+        setDateFrom("");
+        setDateTo("");
+        setUploadNotes("");
       } catch (err) {
-        console.error("Upload error:", err);
+        console.error("Parse error:", err);
       }
-      setUploading(false);
     };
     reader.readAsArrayBuffer(file);
     e.target.value = "";
-  }, [refresh]);
+  }, []);
+
+  // Step 2: Confirm with context
+  const confirmUpload = useCallback(async () => {
+    if (!pendingUpload) return;
+    setUploading(true);
+
+    const period = dateFrom && dateTo ? `${dateFrom} to ${dateTo}` : dateFrom || new Date().toISOString().slice(0, 7);
+    const sb = getSupabase();
+    const rows = pendingUpload.rows.map(r => ({
+      id: crypto.randomUUID(),
+      ...r,
+      report_period: period,
+      notes: uploadNotes || null,
+    }));
+
+    try {
+      if (sb && rows.length > 0) {
+        for (let i = 0; i < rows.length; i += 200) {
+          await sb.from("hp_sales").insert(rows.slice(i, i + 200));
+        }
+      }
+      refresh();
+    } catch (err) {
+      console.error("Upload error:", err);
+    }
+    setPendingUpload(null);
+    setUploading(false);
+  }, [pendingUpload, dateFrom, dateTo, uploadNotes, refresh]);
 
   const sizes = useMemo(() => [...new Set(sales.map(r => r.size).filter(Boolean))].sort(), [sales]);
 
@@ -132,6 +154,42 @@ export default function HouseplantSales() {
           </label>
         </div>
       </div>
+
+      {/* Upload context modal */}
+      {pendingUpload && (
+        <div style={{ ...card, borderColor: "#7fb069", padding: 24 }}>
+          <div style={{ fontSize: 16, fontWeight: 800, color: "#1e2d1a", marginBottom: 4 }}>Upload: {pendingUpload.fileName}</div>
+          <div style={{ fontSize: 13, color: "#7a8c74", marginBottom: 16 }}>
+            {pendingUpload.rows.length} products / {pendingUpload.totalQty.toLocaleString()} units / ${pendingUpload.totalRev.toLocaleString(undefined, { maximumFractionDigits: 0 })} revenue
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#1e2d1a", marginBottom: 6 }}>Date range</div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+                  style={{ ...IS(!!dateFrom), flex: 1 }} />
+                <span style={{ color: "#7a8c74", fontSize: 13 }}>to</span>
+                <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+                  style={{ ...IS(!!dateTo), flex: 1 }} />
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#1e2d1a", marginBottom: 6 }}>Variables to consider</div>
+              <input value={uploadNotes} onChange={e => setUploadNotes(e.target.value)}
+                style={IS(!!uploadNotes)}
+                placeholder="e.g. Snowstorm week 3, crop failure on Hoya, holiday weekend..." />
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={confirmUpload} disabled={!dateFrom} style={{ ...BTN, opacity: dateFrom ? 1 : 0.5 }}>
+              {uploading ? "Importing..." : "Import Sales Data"}
+            </button>
+            <button onClick={() => setPendingUpload(null)} style={{ ...BTN, background: "#fff", color: "#7a8c74", border: "1.5px solid #c8d8c0" }}>Cancel</button>
+          </div>
+        </div>
+      )}
 
       {/* Filters */}
       <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
