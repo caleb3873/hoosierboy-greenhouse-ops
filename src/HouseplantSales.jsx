@@ -1,18 +1,22 @@
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { useHpSales, getSupabase } from "./supabase";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from "recharts";
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
 const card = { background: "#fff", borderRadius: 14, border: "1.5px solid #e0ead8", padding: "18px 20px", marginBottom: 12 };
 const IS = (f) => ({ width: "100%", padding: "9px 12px", borderRadius: 8, border: `1.5px solid ${f ? "#7fb069" : "#c8d8c0"}`, background: "#fff", fontSize: 14, color: "#1e2d1a", outline: "none", boxSizing: "border-box", fontFamily: "inherit" });
 const BTN = { background: "#7fb069", color: "#fff", border: "none", borderRadius: 10, padding: "10px 20px", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" };
+const CHART_COLORS = ["#7fb069", "#4a90d9", "#8e44ad", "#c8791a", "#d94f3d", "#2e7d9e", "#1e2d1a", "#c03030", "#e07b39", "#4a7a35"];
 
 export default function HouseplantSales() {
-  const { rows: sales, refresh } = useHpSales();
+  const { rows: sales, remove, refresh } = useHpSales();
+  const [salesView, setSalesView] = useState("dashboard"); // dashboard | table
   const [searchQ, setSearchQ] = useState("");
   const [sizeFilter, setSizeFilter] = useState("all");
   const [sortCol, setSortCol] = useState("total_sales");
   const [sortDir, setSortDir] = useState("desc");
   const [uploading, setUploading] = useState(false);
+  const [showImports, setShowImports] = useState(false);
   const [pendingUpload, setPendingUpload] = useState(null); // { rows, fileName }
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -64,8 +68,15 @@ export default function HouseplantSales() {
         const totalRev = rows.reduce((s, r) => s + r.total_sales, 0);
         const totalQty = rows.reduce((s, r) => s + r.qty_sold, 0);
         setPendingUpload({ rows, fileName: file.name, totalRev, totalQty });
-        setDateFrom("");
-        setDateTo("");
+        // Default to previous calendar week (Mon–Sun)
+        const now = new Date();
+        const dayOfWeek = now.getDay(); // 0=Sun, 1=Mon
+        const lastSun = new Date(now);
+        lastSun.setDate(now.getDate() - dayOfWeek);
+        const lastMon = new Date(lastSun);
+        lastMon.setDate(lastSun.getDate() - 6);
+        setDateFrom(lastMon.toISOString().slice(0, 10));
+        setDateTo(lastSun.toISOString().slice(0, 10));
         setUploadNotes("");
       } catch (err) {
         console.error("Parse error:", err);
@@ -102,6 +113,32 @@ export default function HouseplantSales() {
     setPendingUpload(null);
     setUploading(false);
   }, [pendingUpload, dateFrom, dateTo, uploadNotes, refresh]);
+
+  // Group imports by report_period for management
+  const imports = useMemo(() => {
+    const map = {};
+    sales.forEach(r => {
+      const period = r.reportPeriod || "Unknown";
+      if (!map[period]) map[period] = { period, count: 0, revenue: 0, qty: 0, notes: r.notes || "", ids: [] };
+      map[period].count++;
+      map[period].revenue += r.totalSales || 0;
+      map[period].qty += r.qtySold || 0;
+      map[period].ids.push(r.id);
+    });
+    return Object.values(map).sort((a, b) => b.period.localeCompare(a.period));
+  }, [sales]);
+
+  async function deleteImport(period) {
+    if (!window.confirm(`Delete all sales data for "${period}"? This cannot be undone.`)) return;
+    const sb = getSupabase();
+    if (sb) {
+      await sb.from("hp_sales").delete().eq("report_period", period);
+    } else {
+      const matching = sales.filter(r => r.reportPeriod === period);
+      for (const r of matching) await remove(r.id);
+    }
+    refresh();
+  }
 
   const sizes = useMemo(() => [...new Set(sales.map(r => r.size).filter(Boolean))].sort(), [sales]);
 
@@ -147,13 +184,41 @@ export default function HouseplantSales() {
           <div style={{ fontSize: 11, color: "#7a8c74", fontWeight: 700, textTransform: "uppercase" }}>Products</div>
           <div style={{ fontSize: 24, fontWeight: 800, color: "#4a90d9" }}>{filtered.length}</div>
         </div>
-        <div style={{ marginLeft: "auto" }}>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+          {imports.length > 0 && (
+            <button onClick={() => setShowImports(s => !s)}
+              style={{ ...BTN, background: "#fff", color: "#7a8c74", border: "1.5px solid #c8d8c0", fontSize: 12 }}>
+              {showImports ? "Hide" : "Manage"} Imports ({imports.length})
+            </button>
+          )}
           <label style={{ ...BTN, display: "inline-flex", gap: 8, background: "#1e2d1a", opacity: uploading ? 0.5 : 1 }}>
             {uploading ? "Uploading..." : "Upload Sales Report"}
             <input type="file" accept=".xls,.xlsx" onChange={handleUpload} disabled={uploading} style={{ display: "none" }} />
           </label>
         </div>
       </div>
+
+      {/* Import history */}
+      {showImports && (
+        <div style={{ ...card, padding: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: "#1e2d1a", marginBottom: 10 }}>Past Imports</div>
+          {imports.map(imp => (
+            <div key={imp.period} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 0", borderBottom: "1px solid #f0f5ee" }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#1e2d1a" }}>{imp.period}</div>
+                <div style={{ fontSize: 12, color: "#7a8c74" }}>
+                  {imp.count} products / {imp.qty.toLocaleString()} units / ${imp.revenue.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                  {imp.notes ? ` — ${imp.notes}` : ""}
+                </div>
+              </div>
+              <button onClick={() => deleteImport(imp.period)}
+                style={{ padding: "5px 12px", borderRadius: 8, border: "1.5px solid #f0c8c0", background: "#fff", color: "#d94f3d", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                Delete
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Upload context modal */}
       {pendingUpload && (
@@ -191,52 +256,287 @@ export default function HouseplantSales() {
         </div>
       )}
 
-      {/* Filters */}
-      <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
-        <input value={searchQ} onChange={e => setSearchQ(e.target.value)} placeholder="Search products..." style={{ ...IS(!!searchQ), maxWidth: 300 }} />
-        <select value={sizeFilter} onChange={e => setSizeFilter(e.target.value)} style={{ ...IS(false), width: "auto", minWidth: 120 }}>
-          <option value="all">All Sizes</option>
-          {sizes.map(s => <option key={s} value={s}>{s}</option>)}
-        </select>
-      </div>
+      {/* View toggle */}
+      {sales.length > 0 && (
+        <div style={{ display: "flex", gap: 0, marginBottom: 16 }}>
+          {[{ id: "dashboard", label: "Dashboard" }, { id: "table", label: "Table" }].map(v => (
+            <button key={v.id} onClick={() => setSalesView(v.id)}
+              style={{ padding: "8px 20px", fontSize: 13, fontWeight: salesView === v.id ? 800 : 600,
+                color: salesView === v.id ? "#1e2d1a" : "#7a8c74", background: salesView === v.id ? "#fff" : "none",
+                border: salesView === v.id ? "1.5px solid #e0ead8" : "1.5px solid transparent",
+                borderRadius: 8, cursor: "pointer", fontFamily: "inherit" }}>
+              {v.label}
+            </button>
+          ))}
+        </div>
+      )}
 
-      {/* Table */}
       {sales.length === 0 ? (
         <div style={{ ...card, textAlign: "center", padding: "60px 40px", border: "1.5px dashed #c8d8c0" }}>
           <div style={{ fontSize: 40, marginBottom: 12 }}>📊</div>
           <div style={{ fontSize: 18, fontWeight: 800, color: "#1a2a1a", marginBottom: 6 }}>No sales data loaded</div>
           <div style={{ fontSize: 13, color: "#7a8c74", marginBottom: 20 }}>Upload an AR Sales report to start tracking</div>
         </div>
+      ) : salesView === "dashboard" ? (
+        <SalesDashboard sales={sales} filtered={filtered} />
       ) : (
-        <div style={{ overflowX: "auto", background: "#fff", borderRadius: 14, border: "1.5px solid #e0ead8" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr>
-                <th onClick={() => toggleSort("description")} style={{ ...thStyle, minWidth: 200 }}>Product {sortCol === "description" ? (sortDir === "asc" ? "\u2191" : "\u2193") : ""}</th>
-                <th onClick={() => toggleSort("size")} style={thStyle}>Size</th>
-                <th onClick={() => toggleSort("qtySold")} style={{ ...thStyle, textAlign: "right" }}>Qty {sortCol === "qtySold" ? (sortDir === "asc" ? "\u2191" : "\u2193") : ""}</th>
-                <th onClick={() => toggleSort("totalSales")} style={{ ...thStyle, textAlign: "right" }}>Revenue {sortCol === "totalSales" ? (sortDir === "asc" ? "\u2191" : "\u2193") : ""}</th>
-                <th onClick={() => toggleSort("pricePer")} style={{ ...thStyle, textAlign: "right" }}>Price {sortCol === "pricePer" ? (sortDir === "asc" ? "\u2191" : "\u2193") : ""}</th>
-                <th style={{ ...thStyle, textAlign: "right" }}>Retail @2.5x</th>
-                <th style={thStyle}>Type</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((r, i) => (
-                <tr key={r.id || i} style={{ background: i % 2 === 0 ? "#fff" : "#fafcf8" }}>
-                  <td style={{ padding: "8px 10px", fontSize: 13, fontWeight: 700, color: "#1e2d1a", borderBottom: "1px solid #f0f5ee" }}>{r.description}</td>
-                  <td style={{ padding: "8px 10px", fontSize: 12, color: "#7a8c74", borderBottom: "1px solid #f0f5ee" }}>{r.size || ""}</td>
-                  <td style={{ padding: "8px 10px", fontSize: 13, textAlign: "right", fontWeight: 600, borderBottom: "1px solid #f0f5ee" }}>{r.qtySold}</td>
-                  <td style={{ padding: "8px 10px", fontSize: 13, textAlign: "right", fontWeight: 700, color: "#4a7a35", borderBottom: "1px solid #f0f5ee" }}>${(r.totalSales || 0).toFixed(2)}</td>
-                  <td style={{ padding: "8px 10px", fontSize: 13, textAlign: "right", borderBottom: "1px solid #f0f5ee" }}>${(r.pricePer || 0).toFixed(2)}</td>
-                  <td style={{ padding: "8px 10px", fontSize: 13, textAlign: "right", color: "#4a90d9", fontWeight: 600, borderBottom: "1px solid #f0f5ee" }}>${((r.pricePer || 0) * 2.5).toFixed(2)}</td>
-                  <td style={{ padding: "8px 10px", fontSize: 11, color: "#aabba0", borderBottom: "1px solid #f0f5ee" }}>{r.productType || ""}</td>
+        <>
+          {/* Filters */}
+          <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
+            <input value={searchQ} onChange={e => setSearchQ(e.target.value)} placeholder="Search products..." style={{ ...IS(!!searchQ), maxWidth: 300 }} />
+            <select value={sizeFilter} onChange={e => setSizeFilter(e.target.value)} style={{ ...IS(false), width: "auto", minWidth: 120 }}>
+              <option value="all">All Sizes</option>
+              {sizes.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+
+          <div style={{ overflowX: "auto", background: "#fff", borderRadius: 14, border: "1.5px solid #e0ead8" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr>
+                  <th onClick={() => toggleSort("description")} style={{ ...thStyle, minWidth: 200 }}>Product {sortCol === "description" ? (sortDir === "asc" ? "\u2191" : "\u2193") : ""}</th>
+                  <th onClick={() => toggleSort("size")} style={thStyle}>Size</th>
+                  <th onClick={() => toggleSort("qtySold")} style={{ ...thStyle, textAlign: "right" }}>Qty {sortCol === "qtySold" ? (sortDir === "asc" ? "\u2191" : "\u2193") : ""}</th>
+                  <th onClick={() => toggleSort("totalSales")} style={{ ...thStyle, textAlign: "right" }}>Revenue {sortCol === "totalSales" ? (sortDir === "asc" ? "\u2191" : "\u2193") : ""}</th>
+                  <th onClick={() => toggleSort("pricePer")} style={{ ...thStyle, textAlign: "right" }}>Price {sortCol === "pricePer" ? (sortDir === "asc" ? "\u2191" : "\u2193") : ""}</th>
+                  <th style={{ ...thStyle, textAlign: "right" }}>Retail @2.5x</th>
+                  <th style={thStyle}>Type</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {filtered.map((r, i) => (
+                  <tr key={r.id || i} style={{ background: i % 2 === 0 ? "#fff" : "#fafcf8" }}>
+                    <td style={{ padding: "8px 10px", fontSize: 13, fontWeight: 700, color: "#1e2d1a", borderBottom: "1px solid #f0f5ee" }}>{r.description}</td>
+                    <td style={{ padding: "8px 10px", fontSize: 12, color: "#7a8c74", borderBottom: "1px solid #f0f5ee" }}>{r.size || ""}</td>
+                    <td style={{ padding: "8px 10px", fontSize: 13, textAlign: "right", fontWeight: 600, borderBottom: "1px solid #f0f5ee" }}>{r.qtySold}</td>
+                    <td style={{ padding: "8px 10px", fontSize: 13, textAlign: "right", fontWeight: 700, color: "#4a7a35", borderBottom: "1px solid #f0f5ee" }}>${(r.totalSales || 0).toFixed(2)}</td>
+                    <td style={{ padding: "8px 10px", fontSize: 13, textAlign: "right", borderBottom: "1px solid #f0f5ee" }}>${(r.pricePer || 0).toFixed(2)}</td>
+                    <td style={{ padding: "8px 10px", fontSize: 13, textAlign: "right", color: "#4a90d9", fontWeight: 600, borderBottom: "1px solid #f0f5ee" }}>${((r.pricePer || 0) * 2.5).toFixed(2)}</td>
+                    <td style={{ padding: "8px 10px", fontSize: 11, color: "#aabba0", borderBottom: "1px solid #f0f5ee" }}>{r.productType || ""}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ── SALES DASHBOARD ──────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+function SalesDashboard({ sales }) {
+  const topByRevenue = useMemo(() => {
+    const map = {};
+    sales.forEach(r => {
+      const key = r.description || "Unknown";
+      if (!map[key]) map[key] = { name: key, revenue: 0, qty: 0, price: r.pricePer || 0, size: r.size || "" };
+      map[key].revenue += r.totalSales || 0;
+      map[key].qty += r.qtySold || 0;
+    });
+    return Object.values(map).sort((a, b) => b.revenue - a.revenue).slice(0, 12);
+  }, [sales]);
+
+  const topByVolume = useMemo(() => {
+    const map = {};
+    sales.forEach(r => {
+      const key = r.description || "Unknown";
+      if (!map[key]) map[key] = { name: key, revenue: 0, qty: 0, price: r.pricePer || 0, size: r.size || "" };
+      map[key].revenue += r.totalSales || 0;
+      map[key].qty += r.qtySold || 0;
+    });
+    return Object.values(map).sort((a, b) => b.qty - a.qty).slice(0, 12);
+  }, [sales]);
+
+  const bySize = useMemo(() => {
+    const map = {};
+    sales.forEach(r => {
+      const size = r.size || "Other";
+      if (!map[size]) map[size] = { name: size, revenue: 0, qty: 0, products: 0 };
+      map[size].revenue += r.totalSales || 0;
+      map[size].qty += r.qtySold || 0;
+      map[size].products++;
+    });
+    return Object.values(map).sort((a, b) => b.revenue - a.revenue);
+  }, [sales]);
+
+  const byPeriod = useMemo(() => {
+    const map = {};
+    sales.forEach(r => {
+      const period = r.reportPeriod || "Unknown";
+      if (!map[period]) map[period] = { name: period, revenue: 0, qty: 0, notes: r.notes || "" };
+      map[period].revenue += r.totalSales || 0;
+      map[period].qty += r.qtySold || 0;
+    });
+    return Object.values(map).sort((a, b) => a.name.localeCompare(b.name));
+  }, [sales]);
+
+  // Price tier analysis
+  const byPriceTier = useMemo(() => {
+    const tiers = [
+      { name: "Under $2", min: 0, max: 2, revenue: 0, qty: 0, count: 0 },
+      { name: "$2-$4", min: 2, max: 4, revenue: 0, qty: 0, count: 0 },
+      { name: "$4-$8", min: 4, max: 8, revenue: 0, qty: 0, count: 0 },
+      { name: "$8-$15", min: 8, max: 15, revenue: 0, qty: 0, count: 0 },
+      { name: "$15+", min: 15, max: 9999, revenue: 0, qty: 0, count: 0 },
+    ];
+    sales.forEach(r => {
+      const price = r.pricePer || 0;
+      const tier = tiers.find(t => price >= t.min && price < t.max);
+      if (tier) {
+        tier.revenue += r.totalSales || 0;
+        tier.qty += r.qtySold || 0;
+        tier.count++;
+      }
+    });
+    return tiers.filter(t => t.revenue > 0);
+  }, [sales]);
+
+  // Highest margin opportunities (highest price per unit)
+  const highMargin = useMemo(() => {
+    const map = {};
+    sales.forEach(r => {
+      const key = r.description || "Unknown";
+      if (!map[key]) map[key] = { name: key, price: r.pricePer || 0, qty: 0, revenue: 0, size: r.size || "", retail: (r.pricePer || 0) * 2.5 };
+      map[key].qty += r.qtySold || 0;
+      map[key].revenue += r.totalSales || 0;
+    });
+    return Object.values(map).filter(r => r.qty >= 3).sort((a, b) => b.price - a.price).slice(0, 8);
+  }, [sales]);
+
+  const fmt$ = (n) => "$" + n.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  const shortName = (n) => n.length > 28 ? n.slice(0, 26) + "..." : n;
+
+  const CustomTooltip = ({ active, payload, label }) => {
+    if (!active || !payload?.length) return null;
+    return (
+      <div style={{ background: "#1e2d1a", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "#c8e6b8" }}>
+        <div style={{ fontWeight: 700, marginBottom: 4 }}>{label}</div>
+        {payload.map((p, i) => (
+          <div key={i} style={{ color: p.color }}>{p.name}: {typeof p.value === "number" && p.name.toLowerCase().includes("rev") ? fmt$(p.value) : p.value.toLocaleString()}</div>
+        ))}
+      </div>
+    );
+  };
+
+  return (
+    <div>
+      {/* Top row: Revenue by product + Revenue by size */}
+      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12, marginBottom: 12 }}>
+        {/* Top 12 by Revenue */}
+        <div style={card}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: "#1e2d1a", marginBottom: 16 }}>Top Products by Revenue</div>
+          <ResponsiveContainer width="100%" height={320}>
+            <BarChart data={topByRevenue} layout="vertical" margin={{ left: 120, right: 20, top: 0, bottom: 0 }}>
+              <XAxis type="number" tickFormatter={v => fmt$(v)} tick={{ fontSize: 11, fill: "#7a8c74" }} />
+              <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: "#1e2d1a" }} width={120} tickFormatter={shortName} />
+              <Tooltip content={<CustomTooltip />} />
+              <Bar dataKey="revenue" name="Revenue" fill="#7fb069" radius={[0, 6, 6, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+
+        {/* Revenue by Size (Pie) */}
+        <div style={card}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: "#1e2d1a", marginBottom: 16 }}>Revenue by Pot Size</div>
+          <ResponsiveContainer width="100%" height={320}>
+            <PieChart>
+              <Pie data={bySize} dataKey="revenue" nameKey="name" cx="50%" cy="45%" outerRadius={90} label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`} labelLine={false}
+                style={{ fontSize: 10 }}>
+                {bySize.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
+              </Pie>
+              <Tooltip formatter={(v) => fmt$(v)} />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      {/* Second row: Volume chart + Price tier */}
+      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12, marginBottom: 12 }}>
+        {/* Top 12 by Volume */}
+        <div style={card}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: "#1e2d1a", marginBottom: 16 }}>Top Products by Volume</div>
+          <ResponsiveContainer width="100%" height={320}>
+            <BarChart data={topByVolume} layout="vertical" margin={{ left: 120, right: 20, top: 0, bottom: 0 }}>
+              <XAxis type="number" tick={{ fontSize: 11, fill: "#7a8c74" }} />
+              <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: "#1e2d1a" }} width={120} tickFormatter={shortName} />
+              <Tooltip content={<CustomTooltip />} />
+              <Bar dataKey="qty" name="Units Sold" fill="#4a90d9" radius={[0, 6, 6, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+
+        {/* Price Tier Breakdown */}
+        <div style={card}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: "#1e2d1a", marginBottom: 16 }}>Revenue by Price Tier</div>
+          <ResponsiveContainer width="100%" height={200}>
+            <BarChart data={byPriceTier} margin={{ left: 10, right: 10 }}>
+              <XAxis dataKey="name" tick={{ fontSize: 11, fill: "#7a8c74" }} />
+              <YAxis tickFormatter={v => fmt$(v)} tick={{ fontSize: 10, fill: "#7a8c74" }} />
+              <Tooltip content={<CustomTooltip />} />
+              <Bar dataKey="revenue" name="Revenue" fill="#8e44ad" radius={[6, 6, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+          <div style={{ marginTop: 12 }}>
+            {byPriceTier.map((t, i) => (
+              <div key={t.name} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: 12, borderBottom: "1px solid #f0f5ee" }}>
+                <span style={{ color: "#1e2d1a", fontWeight: 600 }}>{t.name}</span>
+                <span style={{ color: "#7a8c74" }}>{t.count} products / {t.qty} units</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Third row: High value items + Period trend */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        {/* High-value products */}
+        <div style={card}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: "#1e2d1a", marginBottom: 12 }}>Highest Wholesale Price (3+ sold)</div>
+          {highMargin.map((r, i) => (
+            <div key={r.name} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid #f0f5ee" }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#1e2d1a" }}>{r.name}</div>
+                <div style={{ fontSize: 11, color: "#7a8c74" }}>{r.size} / {r.qty} sold / {fmt$(r.revenue)}</div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: 15, fontWeight: 800, color: "#4a7a35" }}>${r.price.toFixed(2)}</div>
+                <div style={{ fontSize: 11, color: "#4a90d9" }}>Retail: ${r.retail.toFixed(2)}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Period summary */}
+        <div style={card}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: "#1e2d1a", marginBottom: 12 }}>Sales by Period</div>
+          {byPeriod.length > 1 && (
+            <ResponsiveContainer width="100%" height={160}>
+              <BarChart data={byPeriod} margin={{ left: 10, right: 10 }}>
+                <XAxis dataKey="name" tick={{ fontSize: 10, fill: "#7a8c74" }} />
+                <YAxis tickFormatter={v => fmt$(v)} tick={{ fontSize: 10, fill: "#7a8c74" }} />
+                <Tooltip content={<CustomTooltip />} />
+                <Bar dataKey="revenue" name="Revenue" fill="#7fb069" radius={[6, 6, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+          {byPeriod.map((p, i) => (
+            <div key={p.name} style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", padding: "8px 0", borderBottom: "1px solid #f0f5ee" }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#1e2d1a" }}>{p.name}</div>
+                {p.notes && <div style={{ fontSize: 11, color: "#c8791a", marginTop: 2 }}>{p.notes}</div>}
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: 14, fontWeight: 800, color: "#4a7a35" }}>{fmt$(p.revenue)}</div>
+                <div style={{ fontSize: 11, color: "#7a8c74" }}>{p.qty.toLocaleString()} units</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
