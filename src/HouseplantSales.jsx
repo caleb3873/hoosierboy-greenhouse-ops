@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useRef } from "react";
 import { useHpSales, getSupabase } from "./supabase";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
 
@@ -7,6 +7,60 @@ const card = { background: "#fff", borderRadius: 14, border: "1.5px solid #e0ead
 const IS = (f) => ({ width: "100%", padding: "9px 12px", borderRadius: 8, border: `1.5px solid ${f ? "#7fb069" : "#c8d8c0"}`, background: "#fff", fontSize: 14, color: "#1e2d1a", outline: "none", boxSizing: "border-box", fontFamily: "inherit" });
 const BTN = { background: "#7fb069", color: "#fff", border: "none", borderRadius: 10, padding: "10px 20px", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" };
 const CHART_COLORS = ["#7fb069", "#4a90d9", "#8e44ad", "#c8791a", "#d94f3d", "#2e7d9e", "#1e2d1a", "#c03030", "#e07b39", "#4a7a35"];
+
+// ── Expandable + Printable chart wrapper ─────────────────────────────────────
+function ChartCard({ title, children, height }) {
+  const [expanded, setExpanded] = useState(false);
+  const ref = useRef(null);
+
+  function handlePrint() {
+    const el = ref.current;
+    if (!el) return;
+    const win = window.open("", "_blank", "width=900,height=700");
+    win.document.write(`
+      <html><head><title>${title}</title>
+      <style>body{font-family:'DM Sans',sans-serif;padding:24px;} @media print{body{padding:0;}}</style>
+      </head><body>
+      <h2 style="color:#1e2d1a;margin-bottom:16px;">${title}</h2>
+      ${el.innerHTML}
+      <script>setTimeout(()=>window.print(),300);<\/script>
+      </body></html>
+    `);
+    win.document.close();
+  }
+
+  if (expanded) {
+    return (
+      <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}
+        onClick={() => setExpanded(false)}>
+        <div onClick={e => e.stopPropagation()} ref={ref}
+          style={{ background: "#fff", borderRadius: 16, padding: 28, width: "90vw", maxWidth: 1100, maxHeight: "90vh", overflow: "auto" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+            <div style={{ fontSize: 18, fontWeight: 800, color: "#1e2d1a" }}>{title}</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={handlePrint} style={{ background: "none", border: "1.5px solid #c8d8c0", borderRadius: 8, padding: "6px 14px", fontSize: 12, fontWeight: 700, color: "#7a8c74", cursor: "pointer", fontFamily: "inherit" }}>Print</button>
+              <button onClick={() => setExpanded(false)} style={{ background: "none", border: "1.5px solid #c8d8c0", borderRadius: 8, padding: "6px 14px", fontSize: 12, fontWeight: 700, color: "#7a8c74", cursor: "pointer", fontFamily: "inherit" }}>Close</button>
+            </div>
+          </div>
+          <div style={{ height: "70vh" }}>{children(true)}</div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={card} ref={ref}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <div style={{ fontSize: 13, fontWeight: 800, color: "#1e2d1a" }}>{title}</div>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button onClick={handlePrint} title="Print" style={{ background: "none", border: "none", color: "#aabba0", cursor: "pointer", fontSize: 14, padding: "2px 4px" }}>&#9113;</button>
+          <button onClick={() => setExpanded(true)} title="Expand" style={{ background: "none", border: "none", color: "#aabba0", cursor: "pointer", fontSize: 14, padding: "2px 4px" }}>&#9723;</button>
+        </div>
+      </div>
+      <div style={{ height: height || 320 }}>{children(false)}</div>
+    </div>
+  );
+}
 
 // Get Monday of ISO week
 function weekToMonday(week, year) {
@@ -40,8 +94,8 @@ function buildWeekOptions() {
       const monthDay = (d) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
       options.push({
         week: w, year: y, from: fromStr, to: toStr,
-        label: `Week ${w} (${monthDay(mon)} – ${monthDay(sun)})`,
-        period: `Wk${w} ${y}`,
+        label: `Wk${String(w).padStart(2, "0")} (${monthDay(mon)} – ${monthDay(sun)})`,
+        period: `Wk${String(w).padStart(2, "0")} ${y}`,
       });
     }
   }
@@ -626,117 +680,123 @@ function SalesDashboard({ sales }) {
 
       {/* Top row: Revenue by product + Revenue by size */}
       <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12, marginBottom: 12 }}>
-        {/* Top 12 by Revenue */}
-        <div style={card}>
-          <div style={{ fontSize: 13, fontWeight: 800, color: "#1e2d1a", marginBottom: 16 }}>Top Products by Revenue</div>
-          <ResponsiveContainer width="100%" height={320}>
-            <BarChart data={topByRevenue} layout="vertical" margin={{ left: 120, right: 20, top: 0, bottom: 0 }}>
-              <XAxis type="number" tickFormatter={v => fmt$(v)} tick={{ fontSize: 11, fill: "#7a8c74" }} />
-              <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: "#1e2d1a" }} width={120} tickFormatter={shortName} />
-              <Tooltip content={<CustomTooltip />} />
-              <Bar dataKey="revenue" name="Revenue" fill="#7fb069" radius={[0, 6, 6, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
+        <ChartCard title="Top Products by Revenue">
+          {(exp) => (
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={topByRevenue} layout="vertical" margin={{ left: exp ? 180 : 120, right: 20, top: 0, bottom: 0 }}>
+                <XAxis type="number" tickFormatter={v => fmt$(v)} tick={{ fontSize: 11, fill: "#7a8c74" }} />
+                <YAxis type="category" dataKey="name" tick={{ fontSize: exp ? 13 : 11, fill: "#1e2d1a" }} width={exp ? 180 : 120} tickFormatter={exp ? undefined : shortName} />
+                <Tooltip content={<CustomTooltip />} />
+                <Bar dataKey="revenue" name="Revenue" fill="#7fb069" radius={[0, 6, 6, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </ChartCard>
 
-        {/* Revenue by Size (Pie) */}
-        <div style={card}>
-          <div style={{ fontSize: 13, fontWeight: 800, color: "#1e2d1a", marginBottom: 16 }}>Revenue by Pot Size</div>
-          <ResponsiveContainer width="100%" height={320}>
-            <BarChart data={bySize} layout="vertical" margin={{ left: 80, right: 20, top: 0, bottom: 0 }}>
-              <XAxis type="number" tickFormatter={v => fmt$(v)} tick={{ fontSize: 11, fill: "#7a8c74" }} />
-              <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: "#1e2d1a" }} width={80} />
-              <Tooltip content={<CustomTooltip />} />
-              <Bar dataKey="revenue" name="Revenue" radius={[0, 6, 6, 0]}>
-                {bySize.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
+        <ChartCard title="Revenue by Pot Size">
+          {(exp) => (
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={bySize} layout="vertical" margin={{ left: 80, right: 20, top: 0, bottom: 0 }}>
+                <XAxis type="number" tickFormatter={v => fmt$(v)} tick={{ fontSize: 11, fill: "#7a8c74" }} />
+                <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: "#1e2d1a" }} width={80} />
+                <Tooltip content={<CustomTooltip />} />
+                <Bar dataKey="revenue" name="Revenue" radius={[0, 6, 6, 0]}>
+                  {bySize.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </ChartCard>
       </div>
 
       {/* Second row: Volume chart + Price tier */}
       <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12, marginBottom: 12 }}>
-        {/* Top 12 by Volume */}
-        <div style={card}>
-          <div style={{ fontSize: 13, fontWeight: 800, color: "#1e2d1a", marginBottom: 16 }}>Top Products by Volume</div>
-          <ResponsiveContainer width="100%" height={320}>
-            <BarChart data={topByVolume} layout="vertical" margin={{ left: 120, right: 20, top: 0, bottom: 0 }}>
-              <XAxis type="number" tick={{ fontSize: 11, fill: "#7a8c74" }} />
-              <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: "#1e2d1a" }} width={120} tickFormatter={shortName} />
-              <Tooltip content={<CustomTooltip />} />
-              <Bar dataKey="qty" name="Units Sold" fill="#4a90d9" radius={[0, 6, 6, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
+        <ChartCard title="Top Products by Volume">
+          {(exp) => (
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={topByVolume} layout="vertical" margin={{ left: exp ? 180 : 120, right: 20, top: 0, bottom: 0 }}>
+                <XAxis type="number" tick={{ fontSize: 11, fill: "#7a8c74" }} />
+                <YAxis type="category" dataKey="name" tick={{ fontSize: exp ? 13 : 11, fill: "#1e2d1a" }} width={exp ? 180 : 120} tickFormatter={exp ? undefined : shortName} />
+                <Tooltip content={<CustomTooltip />} />
+                <Bar dataKey="qty" name="Units Sold" fill="#4a90d9" radius={[0, 6, 6, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </ChartCard>
 
-        {/* Price Tier Breakdown */}
-        <div style={card}>
-          <div style={{ fontSize: 13, fontWeight: 800, color: "#1e2d1a", marginBottom: 16 }}>Revenue by Price Tier</div>
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={byPriceTier} margin={{ left: 10, right: 10 }}>
-              <XAxis dataKey="name" tick={{ fontSize: 11, fill: "#7a8c74" }} />
-              <YAxis tickFormatter={v => fmt$(v)} tick={{ fontSize: 10, fill: "#7a8c74" }} />
-              <Tooltip content={<CustomTooltip />} />
-              <Bar dataKey="revenue" name="Revenue" fill="#8e44ad" radius={[6, 6, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-          <div style={{ marginTop: 12 }}>
-            {byPriceTier.map((t, i) => (
-              <div key={t.name} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: 12, borderBottom: "1px solid #f0f5ee" }}>
-                <span style={{ color: "#1e2d1a", fontWeight: 600 }}>{t.name}</span>
-                <span style={{ color: "#7a8c74" }}>{t.count} products / {t.qty} units</span>
+        <ChartCard title="Revenue by Price Tier" height={320}>
+          {() => (
+            <div>
+              <ResponsiveContainer width="100%" height={180}>
+                <BarChart data={byPriceTier} margin={{ left: 10, right: 10 }}>
+                  <XAxis dataKey="name" tick={{ fontSize: 11, fill: "#7a8c74" }} />
+                  <YAxis tickFormatter={v => fmt$(v)} tick={{ fontSize: 10, fill: "#7a8c74" }} />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Bar dataKey="revenue" name="Revenue" fill="#8e44ad" radius={[6, 6, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+              <div style={{ marginTop: 12 }}>
+                {byPriceTier.map((t) => (
+                  <div key={t.name} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: 12, borderBottom: "1px solid #f0f5ee" }}>
+                    <span style={{ color: "#1e2d1a", fontWeight: 600 }}>{t.name}</span>
+                    <span style={{ color: "#7a8c74" }}>{t.count} products / {t.qty} units</span>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-        </div>
+            </div>
+          )}
+        </ChartCard>
       </div>
 
       {/* Third row: High value items + Period trend */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        {/* High-value products */}
-        <div style={card}>
-          <div style={{ fontSize: 13, fontWeight: 800, color: "#1e2d1a", marginBottom: 12 }}>Highest Wholesale Price (3+ sold)</div>
-          {highMargin.map((r, i) => (
-            <div key={r.name} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid #f0f5ee" }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: "#1e2d1a" }}>{r.name}</div>
-                <div style={{ fontSize: 11, color: "#7a8c74" }}>{r.size} / {r.qty} sold / {fmt$(r.revenue)}</div>
-              </div>
-              <div style={{ textAlign: "right" }}>
-                <div style={{ fontSize: 15, fontWeight: 800, color: "#4a7a35" }}>${r.price.toFixed(2)}</div>
-                <div style={{ fontSize: 11, color: "#4a90d9" }}>Retail: ${r.retail.toFixed(2)}</div>
-              </div>
+        <ChartCard title="Highest Wholesale Price (3+ sold)" height={320}>
+          {() => (
+            <div>
+              {highMargin.map((r) => (
+                <div key={r.name} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid #f0f5ee" }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "#1e2d1a" }}>{r.name}</div>
+                    <div style={{ fontSize: 11, color: "#7a8c74" }}>{r.size} / {r.qty} sold / {fmt$(r.revenue)}</div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: 15, fontWeight: 800, color: "#4a7a35" }}>${r.price.toFixed(2)}</div>
+                    <div style={{ fontSize: 11, color: "#4a90d9" }}>Retail: ${r.retail.toFixed(2)}</div>
+                  </div>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-
-        {/* Period summary */}
-        <div style={card}>
-          <div style={{ fontSize: 13, fontWeight: 800, color: "#1e2d1a", marginBottom: 12 }}>Sales by Period</div>
-          {byPeriod.length > 1 && (
-            <ResponsiveContainer width="100%" height={160}>
-              <BarChart data={byPeriod} margin={{ left: 10, right: 10 }}>
-                <XAxis dataKey="name" tick={{ fontSize: 10, fill: "#7a8c74" }} />
-                <YAxis tickFormatter={v => fmt$(v)} tick={{ fontSize: 10, fill: "#7a8c74" }} />
-                <Tooltip content={<CustomTooltip />} />
-                <Bar dataKey="revenue" name="Revenue" fill="#7fb069" radius={[6, 6, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
           )}
-          {byPeriod.map((p, i) => (
-            <div key={p.name} style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", padding: "8px 0", borderBottom: "1px solid #f0f5ee" }}>
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: "#1e2d1a" }}>{p.name}</div>
-                {p.notes && <div style={{ fontSize: 11, color: "#c8791a", marginTop: 2 }}>{p.notes}</div>}
-              </div>
-              <div style={{ textAlign: "right" }}>
-                <div style={{ fontSize: 14, fontWeight: 800, color: "#4a7a35" }}>{fmt$(p.revenue)}</div>
-                <div style={{ fontSize: 11, color: "#7a8c74" }}>{p.qty.toLocaleString()} units</div>
-              </div>
+        </ChartCard>
+
+        <ChartCard title="Sales by Week" height={byPeriod.length > 1 ? 400 : 320}>
+          {(exp) => (
+            <div>
+              {byPeriod.length > 1 && (
+                <ResponsiveContainer width="100%" height={exp ? 300 : 160}>
+                  <BarChart data={byPeriod} margin={{ left: 10, right: 10 }}>
+                    <XAxis dataKey="name" tick={{ fontSize: 10, fill: "#7a8c74" }} />
+                    <YAxis tickFormatter={v => fmt$(v)} tick={{ fontSize: 10, fill: "#7a8c74" }} />
+                    <Tooltip content={<CustomTooltip />} />
+                    <Bar dataKey="revenue" name="Revenue" fill="#7fb069" radius={[6, 6, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+              {byPeriod.map((p) => (
+                <div key={p.name} style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", padding: "8px 0", borderBottom: "1px solid #f0f5ee" }}>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "#1e2d1a" }}>{p.name}</div>
+                    {p.notes && <div style={{ fontSize: 11, color: "#c8791a", marginTop: 2 }}>{p.notes}</div>}
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: 14, fontWeight: 800, color: "#4a7a35" }}>{fmt$(p.revenue)}</div>
+                    <div style={{ fontSize: 11, color: "#7a8c74" }}>{p.qty.toLocaleString()} units</div>
+                  </div>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          )}
+        </ChartCard>
       </div>
     </div>
   );
