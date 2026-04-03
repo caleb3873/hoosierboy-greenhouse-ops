@@ -428,32 +428,48 @@ export default function HouseplantSales() {
 // ── SALES DASHBOARD ──────────────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════════════
 function SalesDashboard({ sales }) {
+  const [dashSearch, setDashSearch] = useState("");
+
+  const dashFiltered = useMemo(() => {
+    if (!dashSearch.trim()) return sales;
+    const q = dashSearch.toLowerCase();
+    return sales.filter(r =>
+      (r.description || "").toLowerCase().includes(q) ||
+      (r.productType || "").toLowerCase().includes(q) ||
+      (r.size || "").toLowerCase().includes(q)
+    );
+  }, [sales, dashSearch]);
+
+  const s = dashFiltered; // alias for brevity in memos
+
+  const totalRev = useMemo(() => s.reduce((sum, r) => sum + (r.totalSales || 0), 0), [s]);
+  const totalQty = useMemo(() => s.reduce((sum, r) => sum + (r.qtySold || 0), 0), [s]);
+
   const topByRevenue = useMemo(() => {
     const map = {};
-    sales.forEach(r => {
+    s.forEach(r => {
       const key = r.description || "Unknown";
       if (!map[key]) map[key] = { name: key, revenue: 0, qty: 0, price: r.pricePer || 0, size: r.size || "" };
       map[key].revenue += r.totalSales || 0;
       map[key].qty += r.qtySold || 0;
     });
     return Object.values(map).sort((a, b) => b.revenue - a.revenue).slice(0, 12);
-  }, [sales]);
+  }, [s]);
 
   const topByVolume = useMemo(() => {
     const map = {};
-    sales.forEach(r => {
+    s.forEach(r => {
       const key = r.description || "Unknown";
       if (!map[key]) map[key] = { name: key, revenue: 0, qty: 0, price: r.pricePer || 0, size: r.size || "" };
       map[key].revenue += r.totalSales || 0;
       map[key].qty += r.qtySold || 0;
     });
     return Object.values(map).sort((a, b) => b.qty - a.qty).slice(0, 12);
-  }, [sales]);
+  }, [s]);
 
   const bySize = useMemo(() => {
     const map = {};
-    sales.forEach(r => {
-      // Normalize size: extract just the number + POT/HB
+    s.forEach(r => {
       let size = r.size || "Other";
       const m = size.match(/^(\d+\.?\d*)["\u201d\u2019\s]*\s*(POT|HB)/i);
       if (m) size = `${m[1]}" ${m[2].toUpperCase()}`;
@@ -464,20 +480,19 @@ function SalesDashboard({ sales }) {
       map[size].products++;
     });
     return Object.values(map).sort((a, b) => b.revenue - a.revenue);
-  }, [sales]);
+  }, [s]);
 
   const byPeriod = useMemo(() => {
     const map = {};
-    sales.forEach(r => {
+    s.forEach(r => {
       const period = r.reportPeriod || "Unknown";
       if (!map[period]) map[period] = { name: period, revenue: 0, qty: 0, notes: r.notes || "" };
       map[period].revenue += r.totalSales || 0;
       map[period].qty += r.qtySold || 0;
     });
     return Object.values(map).sort((a, b) => a.name.localeCompare(b.name));
-  }, [sales]);
+  }, [s]);
 
-  // Price tier analysis
   const byPriceTier = useMemo(() => {
     const tiers = [
       { name: "Under $2", min: 0, max: 2, revenue: 0, qty: 0, count: 0 },
@@ -486,29 +501,24 @@ function SalesDashboard({ sales }) {
       { name: "$8-$15", min: 8, max: 15, revenue: 0, qty: 0, count: 0 },
       { name: "$15+", min: 15, max: 9999, revenue: 0, qty: 0, count: 0 },
     ];
-    sales.forEach(r => {
+    s.forEach(r => {
       const price = r.pricePer || 0;
       const tier = tiers.find(t => price >= t.min && price < t.max);
-      if (tier) {
-        tier.revenue += r.totalSales || 0;
-        tier.qty += r.qtySold || 0;
-        tier.count++;
-      }
+      if (tier) { tier.revenue += r.totalSales || 0; tier.qty += r.qtySold || 0; tier.count++; }
     });
     return tiers.filter(t => t.revenue > 0);
-  }, [sales]);
+  }, [s]);
 
-  // Highest margin opportunities (highest price per unit)
   const highMargin = useMemo(() => {
     const map = {};
-    sales.forEach(r => {
+    s.forEach(r => {
       const key = r.description || "Unknown";
       if (!map[key]) map[key] = { name: key, price: r.pricePer || 0, qty: 0, revenue: 0, size: r.size || "", retail: (r.pricePer || 0) * 2.5 };
       map[key].qty += r.qtySold || 0;
       map[key].revenue += r.totalSales || 0;
     });
     return Object.values(map).filter(r => r.qty >= 3).sort((a, b) => b.price - a.price).slice(0, 8);
-  }, [sales]);
+  }, [s]);
 
   const fmt$ = (n) => "$" + n.toLocaleString(undefined, { maximumFractionDigits: 0 });
   const shortName = (n) => n.length > 28 ? n.slice(0, 26) + "..." : n;
@@ -527,6 +537,21 @@ function SalesDashboard({ sales }) {
 
   return (
     <div>
+      {/* Search + summary */}
+      <div style={{ ...card, display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap", padding: "14px 18px" }}>
+        <input value={dashSearch} onChange={e => setDashSearch(e.target.value)}
+          placeholder="Search products... (e.g. Philodendron, Hoya, Ficus)"
+          style={{ ...IS(!!dashSearch), maxWidth: 350, fontSize: 14 }} />
+        {dashSearch && (
+          <div style={{ display: "flex", gap: 16 }}>
+            <div><span style={{ fontSize: 11, color: "#7a8c74" }}>Matches:</span> <span style={{ fontWeight: 800, color: "#1e2d1a" }}>{s.length}</span></div>
+            <div><span style={{ fontSize: 11, color: "#7a8c74" }}>Revenue:</span> <span style={{ fontWeight: 800, color: "#4a7a35" }}>${totalRev.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span></div>
+            <div><span style={{ fontSize: 11, color: "#7a8c74" }}>Units:</span> <span style={{ fontWeight: 800, color: "#4a90d9" }}>{totalQty.toLocaleString()}</span></div>
+            <button onClick={() => setDashSearch("")} style={{ background: "none", border: "none", color: "#7a8c74", cursor: "pointer", fontSize: 12, fontFamily: "inherit" }}>Clear</button>
+          </div>
+        )}
+      </div>
+
       {/* Top row: Revenue by product + Revenue by size */}
       <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12, marginBottom: 12 }}>
         {/* Top 12 by Revenue */}
