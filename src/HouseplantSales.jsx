@@ -8,6 +8,57 @@ const IS = (f) => ({ width: "100%", padding: "9px 12px", borderRadius: 8, border
 const BTN = { background: "#7fb069", color: "#fff", border: "none", borderRadius: 10, padding: "10px 20px", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" };
 const CHART_COLORS = ["#7fb069", "#4a90d9", "#8e44ad", "#c8791a", "#d94f3d", "#2e7d9e", "#1e2d1a", "#c03030", "#e07b39", "#4a7a35"];
 
+// Get Monday of ISO week
+function weekToMonday(week, year) {
+  const jan4 = new Date(year, 0, 4);
+  const mon = new Date(jan4);
+  mon.setDate(jan4.getDate() - ((jan4.getDay() + 6) % 7) + (week - 1) * 7);
+  return mon;
+}
+
+function getISOWeek(d) {
+  const date = new Date(d);
+  const jan4 = new Date(date.getFullYear(), 0, 4);
+  const start = new Date(jan4);
+  start.setDate(jan4.getDate() - ((jan4.getDay() + 6) % 7));
+  return Math.ceil(((date - start) / 86400000 + 1) / 7);
+}
+
+function buildWeekOptions() {
+  const now = new Date();
+  const thisYear = now.getFullYear();
+  const options = [];
+  // 5 years back through 5 years forward
+  for (let y = thisYear - 5; y <= thisYear + 5; y++) {
+    const weeksInYear = y === thisYear ? 53 : 52; // safe upper bound
+    for (let w = 1; w <= weeksInYear; w++) {
+      const mon = weekToMonday(w, y);
+      if (mon.getFullYear() !== y && w > 50) continue; // skip overflow weeks
+      const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
+      const fromStr = mon.toISOString().slice(0, 10);
+      const toStr = sun.toISOString().slice(0, 10);
+      const monthDay = (d) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      options.push({
+        week: w, year: y, from: fromStr, to: toStr,
+        label: `Week ${w} (${monthDay(mon)} – ${monthDay(sun)})`,
+        period: `Wk${w} ${y}`,
+      });
+    }
+  }
+  return options;
+}
+
+// Group week options by year for the dropdown
+function buildWeekOptionsByYear() {
+  const all = buildWeekOptions();
+  const byYear = {};
+  all.forEach(w => {
+    if (!byYear[w.year]) byYear[w.year] = [];
+    byYear[w.year].push(w);
+  });
+  return byYear;
+}
+
 export default function HouseplantSales() {
   const { rows: sales, remove, refresh } = useHpSales();
   const [salesView, setSalesView] = useState("dashboard"); // dashboard | table
@@ -21,8 +72,7 @@ export default function HouseplantSales() {
   const [uploading, setUploading] = useState(false);
   const [showImports, setShowImports] = useState(false);
   const [pendingUpload, setPendingUpload] = useState(null); // { rows, fileName }
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  const [selectedWeek, setSelectedWeek] = useState(null); // { week, year, from, to, label }
   const [uploadNotes, setUploadNotes] = useState("");
 
   // Step 1: Parse file, show context form
@@ -71,15 +121,9 @@ export default function HouseplantSales() {
         const totalRev = rows.reduce((s, r) => s + r.total_sales, 0);
         const totalQty = rows.reduce((s, r) => s + r.qty_sold, 0);
         setPendingUpload({ rows, fileName: file.name, totalRev, totalQty });
-        // Default to previous calendar week (Mon–Sun)
-        const now = new Date();
-        const dayOfWeek = now.getDay(); // 0=Sun, 1=Mon
-        const lastSun = new Date(now);
-        lastSun.setDate(now.getDate() - dayOfWeek);
-        const lastMon = new Date(lastSun);
-        lastMon.setDate(lastSun.getDate() - 6);
-        setDateFrom(lastMon.toISOString().slice(0, 10));
-        setDateTo(lastSun.toISOString().slice(0, 10));
+        // Default to previous week
+        const weeks = buildWeekOptions();
+        setSelectedWeek(weeks[weeks.length - 2]); // second to last = last week
         setUploadNotes("");
       } catch (err) {
         console.error("Parse error:", err);
@@ -94,7 +138,7 @@ export default function HouseplantSales() {
     if (!pendingUpload) return;
     setUploading(true);
 
-    const period = dateFrom && dateTo ? `${dateFrom} to ${dateTo}` : dateFrom || new Date().toISOString().slice(0, 7);
+    const period = selectedWeek ? selectedWeek.period : "Unknown";
     const sb = getSupabase();
     const rows = pendingUpload.rows.map(r => ({
       id: crypto.randomUUID(),
@@ -163,16 +207,28 @@ export default function HouseplantSales() {
     ];
   }, []);
 
-  // Parse report_period "YYYY-MM-DD to YYYY-MM-DD" into dates for filtering
+  // Parse report_period into date range for filtering
+  // Handles both "Wk14 2026" and legacy "YYYY-MM-DD to YYYY-MM-DD" formats
+  function periodToDateRange(reportPeriod) {
+    if (!reportPeriod) return null;
+    // "Wk14 2026" format
+    const wkMatch = reportPeriod.match(/^Wk(\d+)\s+(\d{4})$/);
+    if (wkMatch) {
+      const mon = weekToMonday(parseInt(wkMatch[1]), parseInt(wkMatch[2]));
+      const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
+      return { from: mon.toISOString().slice(0, 10), to: sun.toISOString().slice(0, 10) };
+    }
+    // "YYYY-MM-DD to YYYY-MM-DD" format
+    const parts = reportPeriod.split(" to ");
+    return { from: parts[0] || reportPeriod, to: parts[1] || parts[0] };
+  }
+
   function periodOverlaps(reportPeriod, fromStr, toStr) {
     if (!reportPeriod || !fromStr) return true;
-    const parts = reportPeriod.split(" to ");
-    const pFrom = parts[0] || reportPeriod;
-    const pTo = parts[1] || pFrom;
-    const filterFrom = fromStr;
+    const range = periodToDateRange(reportPeriod);
+    if (!range) return true;
     const filterTo = toStr || fromStr;
-    // Overlap check: period starts before filter ends AND period ends after filter starts
-    return pFrom <= filterTo && pTo >= filterFrom;
+    return range.from <= filterTo && range.to >= fromStr;
   }
 
   const dateFilteredSales = useMemo(() => {
@@ -300,25 +356,39 @@ export default function HouseplantSales() {
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
             <div>
-              <div style={{ fontSize: 12, fontWeight: 700, color: "#1e2d1a", marginBottom: 6 }}>Date range</div>
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
-                  style={{ ...IS(!!dateFrom), flex: 1 }} />
-                <span style={{ color: "#7a8c74", fontSize: 13 }}>to</span>
-                <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
-                  style={{ ...IS(!!dateTo), flex: 1 }} />
-              </div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#1e2d1a", marginBottom: 6 }}>Week</div>
+              <select value={selectedWeek?.period || ""} onChange={e => {
+                const weeks = buildWeekOptions();
+                setSelectedWeek(weeks.find(w => w.period === e.target.value) || null);
+              }} style={IS(!!selectedWeek)}>
+                <option value="">Select week...</option>
+                {Object.entries(buildWeekOptionsByYear()).reverse().map(([year, weeks]) => (
+                  <optgroup key={year} label={year}>
+                    {weeks.map(w => (
+                      <option key={w.period} value={w.period}>{w.label}</option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+              {selectedWeek && (
+                <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 4 }}>
+                  {selectedWeek.from} to {selectedWeek.to}
+                  {sales.some(r => r.reportPeriod === selectedWeek.period) && (
+                    <span style={{ color: "#c8791a", fontWeight: 700, marginLeft: 8 }}>Existing data will be replaced</span>
+                  )}
+                </div>
+              )}
             </div>
             <div>
               <div style={{ fontSize: 12, fontWeight: 700, color: "#1e2d1a", marginBottom: 6 }}>Variables to consider</div>
               <input value={uploadNotes} onChange={e => setUploadNotes(e.target.value)}
                 style={IS(!!uploadNotes)}
-                placeholder="e.g. Snowstorm week 3, crop failure on Hoya, holiday weekend..." />
+                placeholder="e.g. Snowstorm, crop failure on Hoya, holiday weekend..." />
             </div>
           </div>
 
           <div style={{ display: "flex", gap: 10 }}>
-            <button onClick={confirmUpload} disabled={!dateFrom} style={{ ...BTN, opacity: dateFrom ? 1 : 0.5 }}>
+            <button onClick={confirmUpload} disabled={!selectedWeek} style={{ ...BTN, opacity: selectedWeek ? 1 : 0.5 }}>
               {uploading ? "Importing..." : "Import Sales Data"}
             </button>
             <button onClick={() => setPendingUpload(null)} style={{ ...BTN, background: "#fff", color: "#7a8c74", border: "1.5px solid #c8d8c0" }}>Cancel</button>
