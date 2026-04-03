@@ -161,7 +161,7 @@ export default function HouseplantSales() {
     }
     setPendingUpload(null);
     setUploading(false);
-  }, [pendingUpload, dateFrom, dateTo, uploadNotes, refresh]);
+  }, [pendingUpload, selectedWeek, uploadNotes, refresh]);
 
   // ── Date range presets ──────────────────────────────────────────────────
   const datePresets = useMemo(() => {
