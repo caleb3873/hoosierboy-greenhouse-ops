@@ -69,7 +69,7 @@ export default function HouseplantAvailability() {
   const { rows: pricing, upsert: upsertPrice } = useHpPricing();
   const { rows: orderItems, upsert: upsertOrder, remove: removeOrder } = useHpOrderItems();
 
-  const [section, setSection] = useState("availability"); // availability | sales | products | library
+  const [section, setSection] = useState("sales"); // sales | availability | products | library
   const [activeTab, setActiveTab] = useState(null); // null = summary
   const [searchQ, setSearchQ] = useState("");
   const [uploadState, setUploadState] = useState(null);
@@ -475,8 +475,8 @@ export default function HouseplantAvailability() {
   // ── RENDER ──────────────────────────────────────────────────────────────
   // ═══════════════════════════════════════════════════════════════════════════
   const SECTIONS = [
-    { id: "availability", label: "Availability" },
     { id: "sales", label: "Sales" },
+    { id: "availability", label: "Availability" },
     { id: "products", label: "Product Lines" },
     { id: "library", label: "Culture Guide" },
   ];

@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback } from "react";
 import { useHpSales, getSupabase } from "./supabase";
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from "recharts";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
 const card = { background: "#fff", borderRadius: 14, border: "1.5px solid #e0ead8", padding: "18px 20px", marginBottom: 12 };
@@ -571,14 +571,14 @@ function SalesDashboard({ sales }) {
         <div style={card}>
           <div style={{ fontSize: 13, fontWeight: 800, color: "#1e2d1a", marginBottom: 16 }}>Revenue by Pot Size</div>
           <ResponsiveContainer width="100%" height={320}>
-            <PieChart>
-              <Pie data={bySize} dataKey="revenue" nameKey="name" cx="50%" cy="45%" outerRadius={90} label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`} labelLine={false}
-                style={{ fontSize: 10 }}>
+            <BarChart data={bySize} layout="vertical" margin={{ left: 80, right: 20, top: 0, bottom: 0 }}>
+              <XAxis type="number" tickFormatter={v => fmt$(v)} tick={{ fontSize: 11, fill: "#7a8c74" }} />
+              <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: "#1e2d1a" }} width={80} />
+              <Tooltip content={<CustomTooltip />} />
+              <Bar dataKey="revenue" name="Revenue" radius={[0, 6, 6, 0]}>
                 {bySize.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
-              </Pie>
-              <Tooltip formatter={(v) => fmt$(v)} />
-              <Legend wrapperStyle={{ fontSize: 11 }} />
-            </PieChart>
+              </Bar>
+            </BarChart>
           </ResponsiveContainer>
         </div>
       </div>
