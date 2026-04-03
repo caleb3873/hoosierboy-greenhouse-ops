@@ -105,6 +105,8 @@ export default function HouseplantSales() {
 
     try {
       if (sb && rows.length > 0) {
+        // Delete existing data for this period before inserting
+        await sb.from("hp_sales").delete().eq("report_period", period);
         for (let i = 0; i < rows.length; i += 200) {
           await sb.from("hp_sales").insert(rows.slice(i, i + 200));
         }
