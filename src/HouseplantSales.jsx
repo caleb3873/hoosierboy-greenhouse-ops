@@ -453,7 +453,11 @@ function SalesDashboard({ sales }) {
   const bySize = useMemo(() => {
     const map = {};
     sales.forEach(r => {
-      const size = r.size || "Other";
+      // Normalize size: extract just the number + POT/HB
+      let size = r.size || "Other";
+      const m = size.match(/^(\d+\.?\d*)["\u201d\u2019\s]*\s*(POT|HB)/i);
+      if (m) size = `${m[1]}" ${m[2].toUpperCase()}`;
+      else if (!/POT|HB|PACK|AIR|MERCH/i.test(size)) size = "Other";
       if (!map[size]) map[size] = { name: size, revenue: 0, qty: 0, products: 0 };
       map[size].revenue += r.totalSales || 0;
       map[size].qty += r.qtySold || 0;
