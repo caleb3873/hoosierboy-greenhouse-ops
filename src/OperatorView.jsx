@@ -50,9 +50,30 @@ function getAutoTasks(run) {
 
 function TaskCard({ task, onComplete }) {
   const [done, setDone] = useState(false);
+  const [mode, setMode] = useState(null); // null | "complete" | "handoff"
+  const [photo, setPhoto] = useState(null);
+  const [handoffNotes, setHandoffNotes] = useState("");
   const tc = TASK_COLORS[task.type] || TASK_COLORS.manual;
   const timing = task.diff === 0 ? "THIS WEEK" : task.diff < 0 ? "OVERDUE" : "NEXT WEEK";
   const timingColor = task.diff < 0 ? "#c03030" : task.diff === 0 ? "#2e7a2e" : "#8a9a80";
+
+  function handlePhoto(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => setPhoto(ev.target.result);
+    reader.readAsDataURL(file);
+  }
+
+  function submitComplete() {
+    setDone(true);
+    setTimeout(() => onComplete?.(task.id, { status: "complete", photo, ts: new Date().toISOString() }), 400);
+  }
+
+  function submitHandoff() {
+    setDone(true);
+    setTimeout(() => onComplete?.(task.id, { status: "handoff", photo, handoffNotes, ts: new Date().toISOString() }), 400);
+  }
 
   return (
     <div style={{ background: done ? "#f0f5ee" : tc.bg, border: `1.5px solid ${done ? "#c8d8c0" : tc.border}`, borderRadius: 16, padding: "16px 18px", opacity: done ? .5 : 1, transition: "all .3s" }}>
@@ -75,10 +96,82 @@ function TaskCard({ task, onComplete }) {
           ))}
         </div>
       )}
-      <button onClick={() => { setDone(true); setTimeout(() => onComplete?.(task.id), 400); }} disabled={done}
-        style={{ width: "100%", padding: "12px 0", borderRadius: 10, border: "none", background: done ? "#c8d8c0" : "#1a2a1a", color: done ? "#8a9a80" : "#c8e6b8", fontSize: 14, fontWeight: 800, cursor: done ? "default" : "pointer", fontFamily: "inherit" }}>
-        {done ? "Done" : "Mark Complete"}
-      </button>
+
+      {/* Handoff notes from previous shift */}
+      {task.handoffNotes && (
+        <div style={{ background: "#fff4e8", border: "1px solid #e8d0a0", borderRadius: 10, padding: "10px 12px", marginBottom: 12 }}>
+          <div style={{ fontSize: 10, fontWeight: 800, color: "#c8791a", textTransform: "uppercase", letterSpacing: .8, marginBottom: 4 }}>Handoff Note</div>
+          <div style={{ fontSize: 13, color: "#6a4a20" }}>{task.handoffNotes}</div>
+          {task.handoffPhoto && <img src={task.handoffPhoto} alt="Handoff" style={{ width: "100%", borderRadius: 8, marginTop: 8, maxHeight: 150, objectFit: "cover" }} />}
+        </div>
+      )}
+
+      {!mode && !done && (
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => setMode("complete")}
+            style={{ flex: 1, padding: "12px 0", borderRadius: 10, border: "none", background: "#1a2a1a", color: "#c8e6b8", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+            Complete
+          </button>
+          <button onClick={() => setMode("handoff")}
+            style={{ flex: 1, padding: "12px 0", borderRadius: 10, border: "1.5px solid #c8791a", background: "#fff4e8", color: "#c8791a", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+            Hand Off
+          </button>
+        </div>
+      )}
+
+      {mode === "complete" && !done && (
+        <div>
+          <div style={{ marginBottom: 10 }}>
+            {photo ? (
+              <div style={{ position: "relative" }}>
+                <img src={photo} alt="Done" style={{ width: "100%", borderRadius: 10, maxHeight: 160, objectFit: "cover" }} />
+                <button onClick={() => setPhoto(null)} style={{ position: "absolute", top: 6, right: 6, background: "rgba(0,0,0,0.6)", color: "#fff", border: "none", borderRadius: 20, width: 26, height: 26, cursor: "pointer", fontSize: 13 }}>&times;</button>
+              </div>
+            ) : (
+              <label style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "12px 0", borderRadius: 10, border: "1.5px dashed #c8d8c0", background: "#fafcf8", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700, color: "#7a8c74" }}>
+                Photo of completed work
+                <input type="file" accept="image/*" capture="environment" onChange={handlePhoto} style={{ display: "none" }} />
+              </label>
+            )}
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={submitComplete} style={{ flex: 1, padding: "12px 0", borderRadius: 10, border: "none", background: "#2e7a2e", color: "#fff", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+              Submit Complete
+            </button>
+            <button onClick={() => { setMode(null); setPhoto(null); }} style={{ padding: "12px 16px", borderRadius: 10, border: "1.5px solid #c8d8c0", background: "#fff", color: "#7a8c74", fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {mode === "handoff" && !done && (
+        <div>
+          <textarea value={handoffNotes} onChange={e => setHandoffNotes(e.target.value)}
+            placeholder="Where did you leave off? What does the next person need to know?"
+            style={{ width: "100%", padding: "12px", borderRadius: 10, border: "1.5px solid #e8d0a0", background: "#fffcf6", fontSize: 14, fontFamily: "inherit", minHeight: 70, resize: "vertical", boxSizing: "border-box", marginBottom: 10 }} />
+          <div style={{ marginBottom: 10 }}>
+            {photo ? (
+              <div style={{ position: "relative" }}>
+                <img src={photo} alt="Progress" style={{ width: "100%", borderRadius: 10, maxHeight: 160, objectFit: "cover" }} />
+                <button onClick={() => setPhoto(null)} style={{ position: "absolute", top: 6, right: 6, background: "rgba(0,0,0,0.6)", color: "#fff", border: "none", borderRadius: 20, width: 26, height: 26, cursor: "pointer", fontSize: 13 }}>&times;</button>
+              </div>
+            ) : (
+              <label style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "12px 0", borderRadius: 10, border: "1.5px dashed #e8d0a0", background: "#fffcf6", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700, color: "#c8791a" }}>
+                Photo of current progress
+                <input type="file" accept="image/*" capture="environment" onChange={handlePhoto} style={{ display: "none" }} />
+              </label>
+            )}
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={submitHandoff} disabled={!handoffNotes.trim()}
+              style={{ flex: 1, padding: "12px 0", borderRadius: 10, border: "none", background: handoffNotes.trim() ? "#c8791a" : "#e0d0c0", color: "#fff", fontSize: 14, fontWeight: 800, cursor: handoffNotes.trim() ? "pointer" : "default", fontFamily: "inherit" }}>
+              Submit Handoff
+            </button>
+            <button onClick={() => { setMode(null); setPhoto(null); setHandoffNotes(""); }} style={{ padding: "12px 16px", borderRadius: 10, border: "1.5px solid #c8d8c0", background: "#fff", color: "#7a8c74", fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {done && <div style={{ textAlign: "center", padding: "12px 0", fontSize: 14, fontWeight: 800, color: "#8a9a80" }}>{mode === "handoff" ? "Handed off" : "Done"}</div>}
     </div>
   );
 }
@@ -88,7 +181,16 @@ function FlagForm({ runs, onSubmit, onCancel }) {
   const [runId, setRunId]  = useState("");
   const [location, setLoc] = useState("");
   const [notes, setNotes]  = useState("");
+  const [photo, setPhoto]  = useState(null);
   const ft = FLAG_TYPES.find(f => f.id === type);
+
+  function handlePhoto(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => setPhoto(ev.target.result);
+    reader.readAsDataURL(file);
+  }
 
   return (
     <div style={{ background: "#fff", borderRadius: 20, padding: "24px 20px" }}>
@@ -110,8 +212,22 @@ function FlagForm({ runs, onSubmit, onCancel }) {
       <input value={location} onChange={e => setLoc(e.target.value)} placeholder="Location (e.g. House 1, Bench A)"
         style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: "1.5px solid #e4eed8", background: "#fafcf8", fontSize: 14, color: "#1a2a1a", marginBottom: 12, fontFamily: "inherit", boxSizing: "border-box" }} />
       <textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder="Describe what you're seeing..."
-        style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: "1.5px solid #e4eed8", background: "#fafcf8", fontSize: 14, color: "#1a2a1a", marginBottom: 20, fontFamily: "inherit", minHeight: 80, resize: "vertical", boxSizing: "border-box" }} />
-      <button onClick={() => onSubmit({ id: uid(), type, runId, location, notes, ts: new Date().toISOString(), resolved: false })}
+        style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: "1.5px solid #e4eed8", background: "#fafcf8", fontSize: 14, color: "#1a2a1a", marginBottom: 12, fontFamily: "inherit", minHeight: 80, resize: "vertical", boxSizing: "border-box" }} />
+      {/* Photo capture */}
+      <div style={{ marginBottom: 20 }}>
+        {photo ? (
+          <div style={{ position: "relative" }}>
+            <img src={photo} alt="Flag" style={{ width: "100%", borderRadius: 12, maxHeight: 200, objectFit: "cover" }} />
+            <button onClick={() => setPhoto(null)} style={{ position: "absolute", top: 8, right: 8, background: "rgba(0,0,0,0.6)", color: "#fff", border: "none", borderRadius: 20, width: 28, height: 28, cursor: "pointer", fontSize: 14 }}>&times;</button>
+          </div>
+        ) : (
+          <label style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "14px 0", borderRadius: 12, border: "1.5px dashed #c8d8c0", background: "#fafcf8", cursor: "pointer", fontFamily: "inherit", fontSize: 14, fontWeight: 700, color: "#7a8c74" }}>
+            Take Photo
+            <input type="file" accept="image/*" capture="environment" onChange={handlePhoto} style={{ display: "none" }} />
+          </label>
+        )}
+      </div>
+      <button onClick={() => onSubmit({ id: uid(), type, runId, location, notes, photo, ts: new Date().toISOString(), resolved: false })}
         style={{ width: "100%", padding: "15px 0", borderRadius: 12, border: "none", background: ft?.color || "#1a2a1a", color: "#fff", fontSize: 16, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", marginBottom: 10 }}>
         Submit Flag
       </button>
@@ -559,6 +675,20 @@ function SimpleHouseForm({ onSave, onCancel }) {
       </div>
       <textarea value={f.notes} onChange={e => upd("notes", e.target.value)} placeholder="Notes (optional)" rows={3}
         style={{ ...IS, resize: "vertical" }} />
+      {/* Photo */}
+      <div style={{ marginBottom: 12 }}>
+        {f.photo ? (
+          <div style={{ position: "relative" }}>
+            <img src={f.photo} alt="House" style={{ width: "100%", borderRadius: 10, maxHeight: 180, objectFit: "cover" }} />
+            <button onClick={() => upd("photo", null)} style={{ position: "absolute", top: 6, right: 6, background: "rgba(0,0,0,0.6)", color: "#fff", border: "none", borderRadius: 20, width: 26, height: 26, cursor: "pointer", fontSize: 13 }}>&times;</button>
+          </div>
+        ) : (
+          <label style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "12px 0", borderRadius: 10, border: "1.5px dashed #c8d8c0", background: "#fafcf8", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700, color: "#7a8c74" }}>
+            Take Photo
+            <input type="file" accept="image/*" capture="environment" onChange={e => { const file = e.target.files?.[0]; if (!file) return; const r = new FileReader(); r.onload = ev => upd("photo", ev.target.result); r.readAsDataURL(file); }} style={{ display: "none" }} />
+          </label>
+        )}
+      </div>
       <button onClick={() => f.name.trim() && onSave({ ...f, id: uid() })} disabled={!f.name.trim()}
         style={{ width: "100%", padding: "14px", borderRadius: 10, border: "none", background: "#7fb069", color: "#fff", fontWeight: 800, fontSize: 15, cursor: "pointer", fontFamily: "inherit", opacity: f.name.trim() ? 1 : 0.5 }}>
         Save House
@@ -594,6 +724,20 @@ function SimplePadForm({ onSave, onCancel }) {
       </select>
       <textarea value={f.notes} onChange={e => upd("notes", e.target.value)} placeholder="Notes (optional)" rows={3}
         style={{ ...IS, resize: "vertical" }} />
+      {/* Photo */}
+      <div style={{ marginBottom: 12 }}>
+        {f.photo ? (
+          <div style={{ position: "relative" }}>
+            <img src={f.photo} alt="Pad" style={{ width: "100%", borderRadius: 10, maxHeight: 180, objectFit: "cover" }} />
+            <button onClick={() => upd("photo", null)} style={{ position: "absolute", top: 6, right: 6, background: "rgba(0,0,0,0.6)", color: "#fff", border: "none", borderRadius: 20, width: 26, height: 26, cursor: "pointer", fontSize: 13 }}>&times;</button>
+          </div>
+        ) : (
+          <label style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "12px 0", borderRadius: 10, border: "1.5px dashed #c8d8c0", background: "#fafcf8", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700, color: "#7a8c74" }}>
+            Take Photo
+            <input type="file" accept="image/*" capture="environment" onChange={e => { const file = e.target.files?.[0]; if (!file) return; const r = new FileReader(); r.onload = ev => upd("photo", ev.target.result); r.readAsDataURL(file); }} style={{ display: "none" }} />
+          </label>
+        )}
+      </div>
       <button onClick={() => f.name.trim() && onSave({ ...f, id: uid() })} disabled={!f.name.trim()}
         style={{ width: "100%", padding: "14px", borderRadius: 10, border: "none", background: "#c8791a", color: "#fff", fontWeight: 800, fontSize: 15, cursor: "pointer", fontFamily: "inherit", opacity: f.name.trim() ? 1 : 0.5 }}>
         Save Pad

@@ -218,6 +218,7 @@ export default function SprayLog({ embedded }) {
     productCost:       "",
     laborMinutes:      "",
     notes:             "",
+    photo:             null,
   });
 
   const [form, setForm] = useState(blankForm);
@@ -267,6 +268,7 @@ export default function SprayLog({ embedded }) {
         product_cost:       form.productCost !== "" ? Number(form.productCost) : null,
         labor_minutes:      form.laborMinutes !== "" ? Number(form.laborMinutes) : null,
         notes:              form.notes.trim() || null,
+        photo:              form.photo || null,
       });
       setForm(blankForm());
       setView("log");
@@ -660,6 +662,21 @@ export default function SprayLog({ embedded }) {
               onFocus={() => setFocus("notes")} onBlur={() => setFocus(null)}
               rows={3} placeholder="Additional observations..."
               style={{ ...inputStyle(focus, "notes"), resize: "vertical", minHeight: 80 }} />
+          </Field>
+
+          {/* Photo */}
+          <Field label="Photo">
+            {form.photo ? (
+              <div style={{ position: "relative", display: "inline-block" }}>
+                <img src={form.photo} alt="Spray" style={{ maxWidth: "100%", borderRadius: 10, maxHeight: 200, objectFit: "cover" }} />
+                <button onClick={() => set("photo", null)} style={{ position: "absolute", top: 6, right: 6, background: "rgba(0,0,0,0.6)", color: "#fff", border: "none", borderRadius: 20, width: 28, height: 28, cursor: "pointer", fontSize: 14 }}>&times;</button>
+              </div>
+            ) : (
+              <label style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "14px 0", borderRadius: 10, border: "1.5px dashed #c8d8c0", background: "#fafcf8", cursor: "pointer", fontFamily: "inherit", fontSize: 14, fontWeight: 700, color: "#7a8c74" }}>
+                Take Photo
+                <input type="file" accept="image/*" capture="environment" onChange={e => { const file = e.target.files?.[0]; if (!file) return; const r = new FileReader(); r.onload = ev => set("photo", ev.target.result); r.readAsDataURL(file); }} style={{ display: "none" }} />
+              </label>
+            )}
           </Field>
 
           {/* Actions */}
