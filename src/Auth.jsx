@@ -5,8 +5,8 @@ import { getSupabase, sendPasswordReset, updatePassword } from "./supabase";
 // Floor access codes — change these to whatever you want
 // These are stored in localStorage and checked against the floor_codes table
 export const FLOOR_CODES = {
-  operator:    "2026100",   // All floor operators / growers
-  maintenance: "2026200",   // Maintenance person
+  operator:    "1111111",   // All floor operators / growers
+  maintenance: "1111111",   // Maintenance person
 };
 
 const LOGO_WHITE = "https://cdn.prod.website-files.com/63b5c78a53ecb12c888ba09a/63b5d5e281aa6766b5cb8ace_HOO-Boy%20Logo%20Reversed-White.png";
