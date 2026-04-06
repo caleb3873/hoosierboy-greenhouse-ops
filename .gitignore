@@ -7,3 +7,6 @@ build/
 
 .vercel
 .env*.local
+.claude/
+supabase/.temp/
+agent-harness/
