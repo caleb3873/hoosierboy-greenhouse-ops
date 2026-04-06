@@ -1,5 +1,8 @@
 // api/send-lockout-code.js
 // Generates a 6-digit access code for sales season lockout and emails it to Caleb
+// Requires authenticated user (lockout only applies to logged-in planners)
+
+const { requireAuth } = require("./_auth");
 
 const RESEND_KEY = process.env.RESEND_API_KEY;
 const RECIPIENT = "caleb@schlegelgreenhouse.com";
@@ -17,10 +20,13 @@ let codeExpiry = null;
 module.exports = async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   if (req.method === "OPTIONS") return res.status(200).end();
 
   if (req.method === "POST") {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+
     const { action } = req.body || {};
 
     // ── Generate + send code ──────────────────────────────────────────────

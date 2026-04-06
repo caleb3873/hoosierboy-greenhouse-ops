@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
-import { useHpSuppliers, useHpAvailability, useHpPricing, useHpOrderItems, getSupabase } from "./supabase";
+import { useHpSuppliers, useHpAvailability, useHpPricing, useHpOrderItems, getSupabase, authFetch } from "./supabase";
 import { readWorkbook, parseSheet } from "./hpParsers";
 import { matchSupplierConfig } from "./hpDefaultConfigs";
 import HouseplantSales from "./HouseplantSales";
@@ -448,7 +448,7 @@ export default function HouseplantAvailability() {
     }
 
     try {
-      const resp = await fetch("/api/send-order", {
+      const resp = await authFetch("/api/send-order", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

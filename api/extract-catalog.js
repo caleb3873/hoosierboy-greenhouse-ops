@@ -1,5 +1,6 @@
 // api/extract-catalog.js
 const Anthropic = require("@anthropic-ai/sdk").default;
+const { requireAuth } = require("./_auth");
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -94,13 +95,9 @@ module.exports = async function handler(req, res) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  // Auth check
-  const authHeader = req.headers.authorization;
-  const appToken = req.headers["x-app-token"];
-  const validAppToken = process.env.APP_SECRET_TOKEN || "greenhouse-ops";
-  if (!authHeader && (!appToken || appToken !== validAppToken)) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
+  // Auth check — require valid Supabase session
+  const user = await requireAuth(req, res);
+  if (!user) return;
 
   if (!process.env.ANTHROPIC_API_KEY) {
     return res.status(500).json({ error: "ANTHROPIC_API_KEY not configured on server" });

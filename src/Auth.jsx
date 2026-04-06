@@ -127,6 +127,25 @@ export function AuthProvider({ children }) {
   // Floor code sign in
   const signInWithCode = useCallback(async (raw) => {
     const code = (raw || "").trim().toUpperCase();
+
+    // 1. Try database floor_codes table first (preferred)
+    try {
+      const { data: fc } = await sb.from("floor_codes")
+        .select("*")
+        .eq("code", code)
+        .eq("active", true)
+        .single();
+      if (fc) {
+        const session = { mode: fc.role, expires: Date.now() + 12 * 60 * 60 * 1000 };
+        localStorage.setItem(FLOOR_SESSION_KEY, JSON.stringify(session));
+        setFloorMode(fc.role);
+        setRole(fc.role);
+        setGrowerProfile(null);
+        return true;
+      }
+    } catch (e) { /* offline or no match — fall through */ }
+
+    // 2. Fall back to hardcoded codes (for offline mode)
     const matchedRole = Object.entries(FLOOR_CODES).find(([, v]) => v === code)?.[0];
     if (matchedRole) {
       const session = { mode: matchedRole, expires: Date.now() + 12 * 60 * 60 * 1000 };
@@ -136,6 +155,8 @@ export function AuthProvider({ children }) {
       setGrowerProfile(null);
       return true;
     }
+
+    // 3. Try grower profile lookup
     try {
       const { data, error } = await sb.from("grower_profiles")
         .select("*")

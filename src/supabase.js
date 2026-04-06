@@ -244,6 +244,43 @@ export const useWateringTasks = () => useTable("watering_tasks", { orderBy: "sor
 export const useSprayRecords = () => useTable("spray_records", { orderBy: "applied_at", localKey: "gh_spray_records_v1" });
 export const useSeasonTargets = () => useTable("season_targets", { orderBy: "target_date", localKey: "gh_season_targets_v1" });
 export const usePlanningEods  = () => useTable("planning_eods",  { orderBy: "due_date",    localKey: "gh_planning_eods_v1" });
+// ── Audit logging ─────────────────────────────────────────────────────────────
+// Records significant actions for security/troubleshooting
+export async function auditLog(action, { table, recordId, details } = {}) {
+  const sb = getSupabase();
+  if (!sb) return;
+  try {
+    const { data: sessionData } = await sb.auth.getSession();
+    const user = sessionData?.session?.user || null;
+    await sb.from("audit_log").insert({
+      user_id: user?.id || null,
+      user_email: user?.email || "anon",
+      action,
+      table_name: table || null,
+      record_id: recordId || null,
+      details: details || null,
+    });
+  } catch { /* logging is best-effort */ }
+}
+
+// ── Authenticated fetch helper ────────────────────────────────────────────────
+// Adds the current user's Supabase JWT to API requests
+export async function authFetch(url, options = {}) {
+  const sb = getSupabase();
+  let token = null;
+  if (sb) {
+    const { data } = await sb.auth.getSession();
+    token = data?.session?.access_token || null;
+  }
+  return fetch(url, {
+    ...options,
+    headers: {
+      ...(options.headers || {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+}
+
 export const useHpSuppliers    = () => useTable("hp_suppliers",    { orderBy: "name",        localKey: "gh_hp_suppliers_v1" });
 export const useHpAvailability = () => useTable("hp_availability", { orderBy: "plant_name",  localKey: "gh_hp_availability_v1" });
 export const useHpPricing        = () => useTable("hp_pricing",        { orderBy: "plant_name",  localKey: "gh_hp_pricing_v1" });

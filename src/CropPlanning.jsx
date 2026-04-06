@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { useCropRuns, useHouses, usePads, useContainers, useSpacingProfiles, useVarieties, useBrokerCatalogs, getNextCropRunCode, getBrokerSubCode, useCropRunTemplates2 } from "./supabase";
+import { useCropRuns, useHouses, usePads, useContainers, useSpacingProfiles, useVarieties, useBrokerCatalogs, getNextCropRunCode, getBrokerSubCode, useCropRunTemplates2, authFetch } from "./supabase";
 import { ViewToolbar, GanttView, BoardView, LaborView, CalendarView } from "./CropPlanningViews";
 import { CatalogPicker } from "./Libraries";
 import { getSalesSeasonStatus } from "./shared";
@@ -3324,7 +3324,7 @@ export default function App() {
   async function requestCode() {
     setCodeStatus("sending");
     try {
-      const resp = await fetch("/api/send-lockout-code", {
+      const resp = await authFetch("/api/send-lockout-code", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "generate" }),
       });
@@ -3337,7 +3337,7 @@ export default function App() {
   async function verifyCode() {
     setCodeStatus("verifying");
     try {
-      const resp = await fetch("/api/send-lockout-code", {
+      const resp = await authFetch("/api/send-lockout-code", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "verify", code: codeInput }),
       });

@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { BREEDERS } from "./Libraries";
 import { useExtraction } from "./ExtractionContext";
+import { authFetch } from "./supabase";
 
 // ── STYLES ───────────────────────────────────────────────────────────────────
 const font = "'DM Sans','Segoe UI',sans-serif";
@@ -626,7 +627,7 @@ export default function PdfCatalogImport({ existingLibrary = [], onSave, onCance
         }
 
         // Call API
-        const res = await fetch("/api/extract-catalog", {
+        const res = await authFetch("/api/extract-catalog", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -712,7 +713,7 @@ export default function PdfCatalogImport({ existingLibrary = [], onSave, onCance
 
     try {
       const image = await renderPageToBase64(pdfDoc, pageNum);
-      const res = await fetch("/api/extract-catalog", {
+      const res = await authFetch("/api/extract-catalog", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
