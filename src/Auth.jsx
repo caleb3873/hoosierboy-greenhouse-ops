@@ -181,6 +181,9 @@ export function AuthProvider({ children }) {
     sessionStorage.removeItem("gh_recovery_mode");
   }, []);
 
+  // Owner is hardcoded to Caleb's email — only he can access the owner dashboard
+  const OWNER_EMAIL = "caleb@schlegelgreenhouse.com";
+  const isOwner       = !!user && user.email?.toLowerCase() === OWNER_EMAIL.toLowerCase();
   const isAdmin       = role === "admin";
   const isOperator    = role === "operator" || role === "maintenance";
   const isGrower      = role === "grower";
@@ -188,7 +191,7 @@ export function AuthProvider({ children }) {
 
   const value = {
     user, role, floorMode, loading, initialized,
-    isAdmin, isOperator, isGrower, isAuthenticated,
+    isAdmin, isOperator, isGrower, isOwner, isAuthenticated,
     growerProfile,
     signIn, signOut, signInWithCode,
     recoveryMode, clearRecovery,

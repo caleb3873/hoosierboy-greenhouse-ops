@@ -281,6 +281,12 @@ export async function authFetch(url, options = {}) {
   });
 }
 
+// Owner dashboard hooks
+export const useOwnerProjects = () => useTable("owner_projects", { orderBy: "created_at", localKey: "gh_owner_projects_v1" });
+export const useOwnerBills    = () => useTable("owner_bills",    { orderBy: "due_date",   localKey: "gh_owner_bills_v1" });
+export const useOwnerNotes    = () => useTable("owner_notes",    { orderBy: "created_at", localKey: "gh_owner_notes_v1" });
+export const useAppUsers      = () => useTable("app_users",      { orderBy: "email",       localKey: "gh_app_users_v1" });
+
 export const useHpSuppliers    = () => useTable("hp_suppliers",    { orderBy: "name",        localKey: "gh_hp_suppliers_v1" });
 export const useHpAvailability = () => useTable("hp_availability", { orderBy: "plant_name",  localKey: "gh_hp_availability_v1" });
 export const useHpPricing        = () => useTable("hp_pricing",        { orderBy: "plant_name",  localKey: "gh_hp_pricing_v1" });

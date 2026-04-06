@@ -23,6 +23,7 @@ import ComboDesigner       from "./ComboDesigner";
 import SeasonDeadlines     from "./SeasonDeadlines";
 import SoilCalculator      from "./SoilCalculator";
 import HouseplantAvailability from "./HouseplantAvailability";
+import OwnerDashboard       from "./OwnerDashboard";
 
 // ── PLANNER SHELL ─────────────────────────────────────────────────────────────
 // Nav grouped by category
@@ -90,13 +91,16 @@ const LOGO_WHITE = "https://cdn.prod.website-files.com/63b5c78a53ecb12c888ba09a/
 
 function PlannerShell() {
   const [page, setPage] = useState("home");
-  const { signOut, displayName, floorMode } = useAuth();
+  const { signOut, displayName, floorMode, isOwner } = useAuth();
   const { extractionState } = useExtraction();
 
-  const activeGroup = pageGroup(page) || page;
+  // Build nav groups dynamically — Owner sees an extra "Owner" group
+  const navGroups = isOwner
+    ? [...NAV_GROUPS, { id: "owner", label: "Owner", icon: "👑", solo: true }]
+    : NAV_GROUPS;
 
-  // Sub-items for current group
-  const currentGroup = NAV_GROUPS.find(g => g.id === activeGroup);
+  const activeGroup = pageGroup(page) || page;
+  const currentGroup = navGroups.find(g => g.id === activeGroup);
   const subItems = currentGroup?.items || null;
 
   return (
@@ -109,7 +113,7 @@ function PlannerShell() {
         <div style={{ padding: "0 20px", display: "flex", alignItems: "center", gap: 0 }}>
           <img src={LOGO_WHITE} alt="Hoosier Boy" style={{ height: 40, objectFit: "contain", marginRight: 20, flexShrink: 0 }} />
           <div style={{ display: "flex", flex: 1, overflowX: "auto", scrollbarWidth: "none" }}>
-            {NAV_GROUPS.map(g => {
+            {navGroups.map(g => {
               const isActive = activeGroup === g.id;
               const firstPage = g.solo ? g.id : (g.items?.[0]?.id || g.id);
               return (
@@ -191,6 +195,7 @@ function PlannerShell() {
         {page === "deadlines"  && <SeasonDeadlines />}
         {page === "soil"       && <SoilCalculator />}
         {page === "houseplants" && <HouseplantAvailability />}
+        {page === "owner" && isOwner && <OwnerDashboard />}
       </div>
     </div>
   );
