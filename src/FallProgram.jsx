@@ -372,11 +372,11 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
     return result;
   }, [items, categoryFilter, colorFilters, weekFilter, statusFilter, timingFilter, searchQ]);
 
-  // Consolidate by category + variety
+  // Consolidate by category + variety + plant week (different plant weeks = different items)
   const consolidated = useMemo(() => {
     const map = {};
     filtered.forEach(i => {
-      const key = `${i.category || ""}||${i.variety || ""}`;
+      const key = `${i.category || ""}||${i.variety || ""}||${i.plantWeek || ""}`;
       if (!map[key]) {
         map[key] = {
           key,
@@ -388,6 +388,7 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
           status: i.status,
           vigor: i.vigor,
           flowerWeek: i.flowerWeek,
+          plantWeek: i.plantWeek,
           totalQty: 0,
           totalCost: 0,
           locations: [],
@@ -403,7 +404,24 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
       if (i.orderNumber) map[key].confirmed++;
       else map[key].unconfirmed++;
     });
-    return Object.values(map).sort((a, b) => b.totalQty - a.totalQty);
+
+    // Assign group numbers per variety based on plant week order (earliest = 1)
+    const all = Object.values(map);
+    const byVariety = {};
+    all.forEach(c => {
+      const k = `${c.category || ""}||${c.variety || ""}`;
+      if (!byVariety[k]) byVariety[k] = [];
+      byVariety[k].push(c);
+    });
+    Object.values(byVariety).forEach(group => {
+      // Sort by plant week ascending, assign group #
+      group.sort((a, b) => (a.plantWeek || "").localeCompare(b.plantWeek || ""));
+      if (group.length > 1) {
+        group.forEach((c, i) => { c.groupNum = i + 1; c.totalGroups = group.length; });
+      }
+    });
+
+    return all.sort((a, b) => b.totalQty - a.totalQty);
   }, [filtered]);
 
   const totals = useMemo(() => ({
@@ -502,15 +520,15 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
       </div>
 
       <div style={{ background: "#fff", borderRadius: 14, border: "1.5px solid #e0ead8", overflow: "hidden" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "30px 1fr 100px 130px 70px 90px 90px 110px", padding: "12px 16px", background: "#fafcf8", borderBottom: "2px solid #e0ead8", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "30px 1fr 90px 100px 1.4fr 90px 90px 100px", padding: "12px 16px", background: "#fafcf8", borderBottom: "2px solid #e0ead8", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5 }}>
           <div></div>
-          <div>Variety</div>
+          <div>Variety / Plant Wk</div>
           <div>Color</div>
-          <div>Ship Weeks</div>
-          <div style={{ textAlign: "center" }}>Locations</div>
-          <div style={{ textAlign: "right" }}>Total Qty</div>
-          <div style={{ textAlign: "right" }}>Total Cost</div>
-          <div style={{ textAlign: "center" }}>Order Status</div>
+          <div>Ship</div>
+          <div>Locations</div>
+          <div style={{ textAlign: "right" }}>Qty</div>
+          <div style={{ textAlign: "right" }}>Cost</div>
+          <div style={{ textAlign: "center" }}>Status</div>
         </div>
         {consolidated.map((c, idx) => {
           const isOpen = expandedKey === c.key;
@@ -519,11 +537,18 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
           return (
             <div key={c.key}>
               <div onClick={() => setExpandedKey(isOpen ? null : c.key)}
-                style={{ display: "grid", gridTemplateColumns: "30px 1fr 100px 130px 70px 90px 90px 110px", padding: "10px 16px", borderBottom: "1px solid #f0f5ee", cursor: "pointer", alignItems: "center", background: idx % 2 === 0 ? "#fff" : "#fafcf8" }}>
+                style={{ display: "grid", gridTemplateColumns: "30px 1fr 90px 100px 1.4fr 90px 90px 100px", padding: "10px 16px", borderBottom: "1px solid #f0f5ee", cursor: "pointer", alignItems: "center", background: idx % 2 === 0 ? "#fff" : "#fafcf8" }}>
                 <div style={{ color: "#7a8c74", fontSize: 14 }}>{isOpen ? "▼" : "▶"}</div>
                 <div>
-                  <div style={{ fontSize: 13, fontWeight: 800, color: "#1e2d1a" }}>{c.variety}</div>
-                  <div style={{ fontSize: 10, color: "#aabba0" }}>{c.category} • {c.breeder}</div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: "#1e2d1a" }}>
+                    {c.variety}
+                    {c.groupNum && (
+                      <span style={{ marginLeft: 8, background: "#f0f8eb", color: "#4a7a35", borderRadius: 10, padding: "1px 8px", fontSize: 10, fontWeight: 700 }}>
+                        Group {c.groupNum}
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 10, color: "#aabba0" }}>{c.category} • {c.breeder} {c.plantWeek && `• Plant ${c.plantWeek}`}</div>
                 </div>
                 <div style={{ fontSize: 11 }}>
                   {c.color && (
@@ -534,7 +559,11 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
                   )}
                 </div>
                 <div style={{ fontSize: 10, color: "#c8791a", fontWeight: 700 }}>{[...c.shipWeeks].sort().join(", ")}</div>
-                <div style={{ textAlign: "center", fontSize: 12, color: "#7a8c74" }}>{c.locations.length}</div>
+                <div style={{ fontSize: 10, color: "#7a8c74", lineHeight: 1.4 }}>
+                  {[...new Set(c.locations.map(l => l.location).filter(Boolean))].slice(0, 4).join(", ")}
+                  {[...new Set(c.locations.map(l => l.location).filter(Boolean))].length > 4 && ` +${[...new Set(c.locations.map(l => l.location).filter(Boolean))].length - 4} more`}
+                  <span style={{ color: "#aabba0", marginLeft: 4 }}>({c.locations.length} rows)</span>
+                </div>
                 <div style={{ textAlign: "right", fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{fmtN(c.totalQty)}</div>
                 <div style={{ textAlign: "right", fontSize: 12, color: "#4a7a35", fontWeight: 600 }}>{c.totalCost > 0 ? fmt$(c.totalCost) : "—"}</div>
                 <div style={{ textAlign: "center", fontSize: 10 }}>
