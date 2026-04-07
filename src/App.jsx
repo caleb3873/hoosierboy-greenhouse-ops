@@ -24,6 +24,7 @@ import SeasonDeadlines     from "./SeasonDeadlines";
 import SoilCalculator      from "./SoilCalculator";
 import HouseplantAvailability from "./HouseplantAvailability";
 import OwnerDashboard       from "./OwnerDashboard";
+import FallProgram          from "./FallProgram";
 
 // ── PLANNER SHELL ─────────────────────────────────────────────────────────────
 // Nav grouped by category
@@ -36,6 +37,7 @@ const NAV_GROUPS = [
     items: [
       { id: "preseason", label: "Preseason" },
       { id: "crops",     label: "Crop Planning" },
+      { id: "fall",      label: "Fall Program" },
       { id: "orders",    label: "Orders" },
       { id: "receiving", label: "Receiving" },
       { id: "deadlines", label: "Deadlines" },
@@ -194,6 +196,7 @@ function PlannerShell() {
         {page === "combos"     && <ComboDesigner   />}
         {page === "deadlines"  && <SeasonDeadlines />}
         {page === "soil"       && <SoilCalculator />}
+        {page === "fall"       && <FallProgram />}
         {page === "houseplants" && <HouseplantAvailability />}
         {page === "owner" && isOwner && <OwnerDashboard />}
       </div>

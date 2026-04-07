@@ -281,6 +281,9 @@ export async function authFetch(url, options = {}) {
   });
 }
 
+// Fall program (mums, asters, kale, fall annuals)
+export const useFallProgramItems = () => useTable("fall_program_items", { orderBy: "created_at", localKey: "gh_fall_program_v1" });
+
 // Owner dashboard hooks
 export const useOwnerProjects = () => useTable("owner_projects", { orderBy: "created_at", localKey: "gh_owner_projects_v1" });
 export const useOwnerBills    = () => useTable("owner_bills",    { orderBy: "due_date",   localKey: "gh_owner_bills_v1" });
