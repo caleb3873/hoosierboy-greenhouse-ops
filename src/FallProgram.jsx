@@ -43,9 +43,8 @@ function volumeToCuFt(val, unit) {
 function pickContainerForCategory(category, containers) {
   if (!category) return null;
   const c = category.toUpperCase();
-  // Mum category → matching pot
-  if (c.includes('9"') && c.includes('MUM'))   return containers.find(x => x.sku === "XAM09001");
-  if (c.includes('9"') && c.includes('ASTER')) return containers.find(x => x.sku === "XAM09001");
+  // All 9" items (Mum, Aster, Kale) use the same 9" pot
+  if (c.includes('9"') || c.includes("09\"")) return containers.find(x => x.sku === "XAM09001");
   if (c.includes('12"') && c.includes('MUM'))  return containers.find(x => x.sku === "PA.12000" && (x.name || "").includes("Cl"));
   if (c.includes('14"'))                       return containers.find(x => x.sku === "PA.14000");
   return null;
