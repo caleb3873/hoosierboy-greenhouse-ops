@@ -26,6 +26,7 @@ const SECTIONS = [
   { id: "schedule", label: "Schedule" },
   { id: "sowing", label: "Sowing & Prop" },
   { id: "cost", label: "Cost Estimate" },
+  { id: "shortfalls", label: "Shortfalls" },
 ];
 
 // Volume conversion to cu ft
@@ -167,6 +168,7 @@ export default function FallProgram() {
           {section === "schedule" && <ScheduleTab items={yearItems} />}
           {section === "sowing" && <SowingTab items={yearItems} />}
           {section === "cost" && <CostTab items={yearItems} containers={containers} soilMixes={soilMixes} />}
+          {section === "shortfalls" && <ShortfallsTab items={yearItems} />}
         </>
       )}
     </div>
@@ -483,9 +485,16 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
   const [statusFilter, setStatusFilter] = useState("all"); // all | confirmed | unconfirmed
   const [timingFilter, setTimingFilter] = useState("all");
   const [expandedKey, setExpandedKey] = useState(null);
+  const [sortCol, setSortCol] = useState("totalQty");
+  const [sortDir, setSortDir] = useState("desc");
 
   function toggleColor(c) {
     setColorFilters(curr => curr.includes(c) ? curr.filter(x => x !== c) : [...curr, c]);
+  }
+
+  function toggleSort(col) {
+    if (sortCol === col) setSortDir(d => d === "asc" ? "desc" : "asc");
+    else { setSortCol(col); setSortDir("desc"); }
   }
 
   // Build a "display category" that breaks 8" Annual / 10" Premium Annual into genus subcategories
@@ -621,8 +630,29 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
       }
     });
 
-    return all.sort((a, b) => b.totalQty - a.totalQty);
+    return all;
   }, [filtered]);
+
+  // Apply sort
+  const sortedConsolidated = useMemo(() => {
+    const copy = [...consolidated];
+    copy.sort((a, b) => {
+      let av, bv;
+      switch (sortCol) {
+        case "variety":    av = (a.variety || "").toLowerCase(); bv = (b.variety || "").toLowerCase(); break;
+        case "color":      av = (a.color || "").toLowerCase(); bv = (b.color || "").toLowerCase(); break;
+        case "shipWeek":   av = (a.shipWeeks && [...a.shipWeeks].sort()[0]) || ""; bv = (b.shipWeeks && [...b.shipWeeks].sort()[0]) || ""; break;
+        case "plantWeek":  av = a.plantWeek || ""; bv = b.plantWeek || ""; break;
+        case "timing":     av = (a.timing || "").toLowerCase(); bv = (b.timing || "").toLowerCase(); break;
+        case "totalCost":  av = a.totalCost || 0; bv = b.totalCost || 0; break;
+        case "totalQty":
+        default:           av = a.totalQty || 0; bv = b.totalQty || 0; break;
+      }
+      if (typeof av === "number") return sortDir === "desc" ? bv - av : av - bv;
+      return sortDir === "desc" ? String(bv).localeCompare(String(av)) : String(av).localeCompare(String(bv));
+    });
+    return copy;
+  }, [consolidated, sortCol, sortDir]);
 
   const totals = useMemo(() => ({
     qty: consolidated.reduce((s, c) => s + c.totalQty, 0),
@@ -720,25 +750,26 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
       </div>
 
       <div style={{ background: "#fff", borderRadius: 14, border: "1.5px solid #e0ead8", overflow: "hidden" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "30px 1fr 90px 100px 100px 1.4fr 90px 90px 100px", padding: "12px 16px", background: "#fafcf8", borderBottom: "2px solid #e0ead8", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "30px 1fr 85px 90px 90px 100px 1.2fr 80px 85px 95px", padding: "12px 16px", background: "#fafcf8", borderBottom: "2px solid #e0ead8", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5 }}>
           <div></div>
-          <div>Variety</div>
-          <div>Color</div>
-          <div>Ship Week</div>
-          <div>Plant Week</div>
+          <div onClick={() => toggleSort("variety")} style={{ cursor: "pointer", userSelect: "none" }}>Variety {sortCol === "variety" ? (sortDir === "asc" ? "↑" : "↓") : ""}</div>
+          <div onClick={() => toggleSort("color")} style={{ cursor: "pointer", userSelect: "none" }}>Color {sortCol === "color" ? (sortDir === "asc" ? "↑" : "↓") : ""}</div>
+          <div onClick={() => toggleSort("shipWeek")} style={{ cursor: "pointer", userSelect: "none" }}>Ship Wk {sortCol === "shipWeek" ? (sortDir === "asc" ? "↑" : "↓") : ""}</div>
+          <div onClick={() => toggleSort("plantWeek")} style={{ cursor: "pointer", userSelect: "none" }}>Plant Wk {sortCol === "plantWeek" ? (sortDir === "asc" ? "↑" : "↓") : ""}</div>
+          <div onClick={() => toggleSort("timing")} style={{ cursor: "pointer", userSelect: "none" }}>Response {sortCol === "timing" ? (sortDir === "asc" ? "↑" : "↓") : ""}</div>
           <div>Locations</div>
-          <div style={{ textAlign: "right" }}>Qty</div>
-          <div style={{ textAlign: "right" }}>Cost</div>
+          <div onClick={() => toggleSort("totalQty")} style={{ textAlign: "right", cursor: "pointer", userSelect: "none" }}>Qty {sortCol === "totalQty" ? (sortDir === "asc" ? "↑" : "↓") : ""}</div>
+          <div onClick={() => toggleSort("totalCost")} style={{ textAlign: "right", cursor: "pointer", userSelect: "none" }}>Cost {sortCol === "totalCost" ? (sortDir === "asc" ? "↑" : "↓") : ""}</div>
           <div style={{ textAlign: "center" }}>Status</div>
         </div>
-        {consolidated.map((c, idx) => {
+        {sortedConsolidated.map((c, idx) => {
           const isOpen = expandedKey === c.key;
           const allConfirmed = c.unconfirmed === 0;
           const noneConfirmed = c.confirmed === 0;
           return (
             <div key={c.key}>
               <div onClick={() => setExpandedKey(isOpen ? null : c.key)}
-                style={{ display: "grid", gridTemplateColumns: "30px 1fr 90px 100px 100px 1.4fr 90px 90px 100px", padding: "10px 16px", borderBottom: "1px solid #f0f5ee", cursor: "pointer", alignItems: "center", background: idx % 2 === 0 ? "#fff" : "#fafcf8" }}>
+                style={{ display: "grid", gridTemplateColumns: "30px 1fr 85px 90px 90px 100px 1.2fr 80px 85px 95px", padding: "10px 16px", borderBottom: "1px solid #f0f5ee", cursor: "pointer", alignItems: "center", background: idx % 2 === 0 ? "#fff" : "#fafcf8" }}>
                 <div style={{ color: "#7a8c74", fontSize: 14 }}>{isOpen ? "▼" : "▶"}</div>
                 <div>
                   <div style={{ fontSize: 13, fontWeight: 800, color: "#1e2d1a" }}>
@@ -767,6 +798,7 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
                 </div>
                 <div style={{ fontSize: 10, color: "#c8791a", fontWeight: 700 }}>{[...c.shipWeeks].sort().join(", ")}</div>
                 <div style={{ fontSize: 10, color: "#4a90d9", fontWeight: 700 }}>{c.plantWeek || ""}</div>
+                <div style={{ fontSize: 10, color: "#7a8c74" }}>{c.timing || ""}</div>
                 <div style={{ fontSize: 10, color: "#7a8c74", lineHeight: 1.4 }}>
                   {[...new Set(c.locations.map(l => l.location).filter(Boolean))].slice(0, 4).join(", ")}
                   {[...new Set(c.locations.map(l => l.location).filter(Boolean))].length > 4 && ` +${[...new Set(c.locations.map(l => l.location).filter(Boolean))].length - 4} more`}
@@ -810,6 +842,20 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
         })}
         {consolidated.length === 0 && (
           <div style={{ padding: "40px", textAlign: "center", color: "#7a8c74" }}>No items match these filters</div>
+        )}
+        {sortedConsolidated.length > 0 && (
+          <div style={{ display: "grid", gridTemplateColumns: "30px 1fr 85px 90px 90px 100px 1.2fr 80px 85px 95px", padding: "14px 16px", background: "#1e2d1a", color: "#c8e6b8", fontWeight: 800, fontSize: 12, alignItems: "center" }}>
+            <div></div>
+            <div>TOTALS ({sortedConsolidated.length} {sortedConsolidated.length === 1 ? "variety" : "varieties"})</div>
+            <div></div>
+            <div></div>
+            <div></div>
+            <div></div>
+            <div style={{ fontSize: 11, color: "#7a9a6a" }}>{filtered.length} rows / {new Set(filtered.map(f => f.location).filter(Boolean)).size} locations</div>
+            <div style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtN(totals.qty)}</div>
+            <div style={{ textAlign: "right", color: "#7fb069", fontVariantNumeric: "tabular-nums" }}>{fmt$(totals.cost)}</div>
+            <div></div>
+          </div>
         )}
       </div>
     </div>
@@ -1070,3 +1116,166 @@ function CostTab({ items, containers, soilMixes }) {
 }
 
 const fmt$2 = (n) => "$" + Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ── SHORTFALLS & SUBSTITUTIONS ──────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+function ShortfallsTab({ items }) {
+  const shortfalls = useMemo(() => {
+    const unconfirmed = items.filter(i => !i.orderNumber);
+    const map = {};
+    unconfirmed.forEach(i => {
+      const key = `${i.variety || ""}||${i.shipWeek || ""}`;
+      if (!map[key]) {
+        map[key] = {
+          variety: i.variety,
+          category: i.category,
+          color: i.color,
+          shipWeek: i.shipWeek,
+          plantWeek: i.plantWeek,
+          breeder: i.breeder,
+          timing: i.timing,
+          totalQty: 0,
+          locations: [],
+        };
+      }
+      map[key].totalQty += parseFloat(i.qty) || 0;
+      map[key].locations.push(i);
+    });
+    return Object.values(map).sort((a, b) => b.totalQty - a.totalQty);
+  }, [items]);
+
+  function findSubstitutes(shortfall) {
+    const candidates = items.filter(i =>
+      i.orderNumber &&
+      i.color === shortfall.color &&
+      i.category === shortfall.category &&
+      i.variety !== shortfall.variety &&
+      i.shipWeek === shortfall.shipWeek
+    );
+    const subMap = {};
+    candidates.forEach(c => {
+      const k = c.variety;
+      if (!subMap[k]) {
+        subMap[k] = { variety: k, breeder: c.breeder, totalQty: 0, orderNumber: c.orderNumber };
+      }
+      subMap[k].totalQty += parseFloat(c.qty) || 0;
+    });
+    return Object.values(subMap).sort((a, b) => b.totalQty - a.totalQty);
+  }
+
+  const totalShortQty = shortfalls.reduce((s, sh) => s + sh.totalQty, 0);
+
+  const colorShortages = useMemo(() => {
+    const map = {};
+    shortfalls.forEach(s => {
+      const k = `${s.category || ""}||${s.shipWeek || ""}||${s.color || "Unknown"}`;
+      if (!map[k]) {
+        map[k] = { category: s.category, shipWeek: s.shipWeek, color: s.color || "Unknown", shortQty: 0, shortVarieties: 0 };
+      }
+      map[k].shortQty += s.totalQty;
+      map[k].shortVarieties++;
+    });
+    return Object.values(map).sort((a, b) => b.shortQty - a.shortQty);
+  }, [shortfalls]);
+
+  if (shortfalls.length === 0) {
+    return (
+      <div style={{ ...card, textAlign: "center", padding: "60px 40px" }}>
+        <div style={{ fontSize: 40, marginBottom: 12 }}>✓</div>
+        <div style={{ fontSize: 18, fontWeight: 800, color: "#4a7a35", marginBottom: 6 }}>All items confirmed</div>
+        <div style={{ fontSize: 13, color: "#7a8c74" }}>No shortfalls found</div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div style={{ background: "#fde8e8", border: "1.5px solid #f0c8c0", borderRadius: 10, padding: "12px 16px", marginBottom: 16, fontSize: 13, color: "#7a3535" }}>
+        ⚠ <strong>{shortfalls.length}</strong> unconfirmed varieties totaling <strong>{fmtN(totalShortQty)}</strong> items.
+        Substitutes below match same color, category, and ship week of already-confirmed items.
+      </div>
+
+      <div style={card}>
+        <div style={{ fontSize: 13, fontWeight: 800, color: "#1e2d1a", marginBottom: 12 }}>Shortage Summary</div>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr style={{ background: "#fafcf8" }}>
+              <th style={{ padding: "8px 10px", textAlign: "left", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", borderBottom: "1px solid #e0ead8" }}>Category</th>
+              <th style={{ padding: "8px 10px", textAlign: "left", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", borderBottom: "1px solid #e0ead8" }}>Ship Wk</th>
+              <th style={{ padding: "8px 10px", textAlign: "left", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", borderBottom: "1px solid #e0ead8" }}>Color</th>
+              <th style={{ padding: "8px 10px", textAlign: "right", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", borderBottom: "1px solid #e0ead8" }}>Short Qty</th>
+              <th style={{ padding: "8px 10px", textAlign: "right", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", borderBottom: "1px solid #e0ead8" }}>Varieties</th>
+            </tr>
+          </thead>
+          <tbody>
+            {colorShortages.map((cs, i) => (
+              <tr key={i} style={{ borderBottom: "1px solid #f0f5ee" }}>
+                <td style={{ padding: "8px 10px", fontSize: 12, color: "#1e2d1a", fontWeight: 600 }}>{cs.category}</td>
+                <td style={{ padding: "8px 10px", fontSize: 12, color: "#c8791a", fontWeight: 700 }}>{cs.shipWeek}</td>
+                <td style={{ padding: "8px 10px", fontSize: 12 }}>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ width: 12, height: 12, borderRadius: 3, background: COLOR_PALETTE[cs.color] || "#7a8c74" }}></span>
+                    <span>{cs.color}</span>
+                  </span>
+                </td>
+                <td style={{ padding: "8px 10px", textAlign: "right", fontSize: 13, fontWeight: 700, color: "#d94f3d", fontVariantNumeric: "tabular-nums" }}>{fmtN(cs.shortQty)}</td>
+                <td style={{ padding: "8px 10px", textAlign: "right", fontSize: 12, color: "#7a8c74" }}>{cs.shortVarieties}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div style={{ fontSize: 13, fontWeight: 800, color: "#1e2d1a", margin: "20px 0 12px 0" }}>Shortfall Detail & Suggested Substitutes</div>
+      {shortfalls.map((s, idx) => {
+        const subs = findSubstitutes(s);
+        return (
+          <div key={idx} style={card}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 800, color: "#1e2d1a" }}>{s.variety}</div>
+                <div style={{ fontSize: 11, color: "#7a8c74" }}>
+                  {s.category} • {s.shipWeek} • Plant {s.plantWeek} • {s.breeder}
+                </div>
+              </div>
+              {s.color && (
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ width: 18, height: 18, borderRadius: 4, background: COLOR_PALETTE[s.color] || "#7a8c74", border: "1px solid #e0ead8" }}></span>
+                  <span style={{ fontSize: 12, color: "#1e2d1a", fontWeight: 600 }}>{s.color}</span>
+                </div>
+              )}
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: 11, color: "#7a8c74", textTransform: "uppercase", fontWeight: 700 }}>Short</div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: "#d94f3d" }}>{fmtN(s.totalQty)}</div>
+              </div>
+            </div>
+
+            {subs.length === 0 ? (
+              <div style={{ fontSize: 12, color: "#aabba0", fontStyle: "italic", padding: "10px 0" }}>
+                No matching substitutes (same color + category + ship week) found. Try nearby ship weeks or similar colors.
+              </div>
+            ) : (
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#4a7a35", textTransform: "uppercase", marginBottom: 6 }}>
+                  ✓ {subs.length} potential substitute{subs.length !== 1 ? "s" : ""}
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {subs.map(sub => (
+                    <div key={sub.variety} style={{ border: "1.5px solid #c8e0b8", background: "#f0f8eb", borderRadius: 10, padding: "8px 12px", minWidth: 200 }}>
+                      <div style={{ fontSize: 12, fontWeight: 800, color: "#1e2d1a" }}>{sub.variety}</div>
+                      <div style={{ fontSize: 10, color: "#7a8c74" }}>{sub.breeder} • Order #{sub.orderNumber}</div>
+                      <div style={{ fontSize: 11, color: "#4a7a35", marginTop: 4 }}>
+                        Current: <strong>{fmtN(sub.totalQty)}</strong>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
