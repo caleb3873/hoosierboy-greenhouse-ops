@@ -12,7 +12,8 @@ const BTN_SEC = { background: "#fff", color: "#7a8c74", border: "1.5px solid #c8
 const COLOR_PALETTE = {
   PURPLE: "#8e44ad", RED: "#c03030", WHITE: "#d8d8d8", ORANGE: "#e07b39",
   BRONZE: "#a0612a", PINK: "#e89bb0", CORAL: "#ff7f50", YELLOW: "#f0c020",
-  GOLD: "#d4a017", LAVENDER: "#b48ce0",
+  GOLD: "#d4a017", LAVENDER: "#b48ce0", BLUE: "#4a90d9",
+  TRICOLOR: "linear-gradient(90deg, #c03030 0%, #f0c020 50%, #8e44ad 100%)",
 };
 
 const fmt$ = (n) => "$" + Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
@@ -372,23 +373,58 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
     return result;
   }, [items, categoryFilter, colorFilters, weekFilter, statusFilter, timingFilter, searchQ]);
 
-  // Consolidate by category + variety + plant week (different plant weeks = different items)
+  // Consolidate by category + variety + plant week, with tricolor detection
   const consolidated = useMemo(() => {
+    // First pass: identify tricolor groups (3+ varieties sharing row+category+plant_week)
+    const rowGroups = {};
+    filtered.forEach(i => {
+      if (!i.rowId) return;
+      const k = `${i.rowId}||${i.category || ""}||${i.plantWeek || ""}`;
+      if (!rowGroups[k]) rowGroups[k] = new Set();
+      rowGroups[k].add(i.variety);
+    });
+    const tricolorRows = new Set(
+      Object.entries(rowGroups).filter(([_, varieties]) => varieties.size >= 3).map(([k]) => k)
+    );
+
+    // Helper: find common prefix across variety names (e.g. "BRACTEANTHA SUNBRERO ORANGE/RED/YELLOW" -> "BRACTEANTHA SUNBRERO")
+    function commonPrefix(varieties) {
+      if (varieties.length < 2) return varieties[0] || "";
+      const words = varieties.map(v => (v || "").split(" "));
+      const minLen = Math.min(...words.map(w => w.length));
+      const prefix = [];
+      for (let i = 0; i < minLen; i++) {
+        const w = words[0][i];
+        if (words.every(ws => ws[i] === w)) prefix.push(w);
+        else break;
+      }
+      return prefix.join(" ");
+    }
+
     const map = {};
     filtered.forEach(i => {
-      const key = `${i.category || ""}||${i.variety || ""}||${i.plantWeek || ""}`;
+      const rowKey = i.rowId ? `${i.rowId}||${i.category || ""}||${i.plantWeek || ""}` : null;
+      const isTricolor = rowKey && tricolorRows.has(rowKey);
+
+      // Tricolor items group by row instead of variety
+      const key = isTricolor
+        ? `TRI||${i.category || ""}||${i.rowId || ""}||${i.plantWeek || ""}`
+        : `${i.category || ""}||${i.variety || ""}||${i.plantWeek || ""}`;
+
       if (!map[key]) {
         map[key] = {
           key,
           category: i.category,
           variety: i.variety,
-          color: i.color,
+          color: isTricolor ? "TRICOLOR" : i.color,
           breeder: i.breeder,
           timing: i.timing,
           status: i.status,
           vigor: i.vigor,
           flowerWeek: i.flowerWeek,
           plantWeek: i.plantWeek,
+          isTricolor,
+          tricolorVarieties: isTricolor ? new Set() : null,
           totalQty: 0,
           totalCost: 0,
           locations: [],
@@ -397,12 +433,22 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
           unconfirmed: 0,
         };
       }
+      if (isTricolor) map[key].tricolorVarieties.add(i.variety);
       map[key].totalQty += parseFloat(i.qty) || 0;
       map[key].totalCost += parseFloat(i.cost) || 0;
       map[key].locations.push(i);
       if (i.shipWeek) map[key].shipWeeks.add(i.shipWeek);
       if (i.orderNumber) map[key].confirmed++;
       else map[key].unconfirmed++;
+    });
+
+    // Re-name tricolor items with common prefix
+    Object.values(map).forEach(c => {
+      if (c.isTricolor && c.tricolorVarieties) {
+        const list = [...c.tricolorVarieties];
+        const prefix = commonPrefix(list);
+        c.variety = prefix ? `${prefix} (Tricolor)` : `Mix: ${list.slice(0, 3).join(" / ")}`;
+      }
     });
 
     // Assign group numbers per variety based on plant week order (earliest = 1)
