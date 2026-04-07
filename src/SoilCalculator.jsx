@@ -230,7 +230,9 @@ export default function SoilCalculator() {
     });
 
     return Object.values(byMix).map((entry) => {
-      const bagSizeCuFt = bagSizeToCuFt(entry.mix.bagSize, entry.mix.bagUnit);
+      // Use fluffed volume if set (compressed bales expand when opened)
+      const fluffed = Number(entry.mix.fluffedVolume) || 0;
+      const bagSizeCuFt = fluffed > 0 ? fluffed : bagSizeToCuFt(entry.mix.bagSize, entry.mix.bagUnit);
       const bagsNeeded = bagSizeCuFt > 0 ? Math.ceil(entry.totalVolCuFt / bagSizeCuFt) : 0;
       const bagsPerPallet = Number(entry.mix.bagsPerPallet) || 1;
       const palletsNeeded = Math.ceil(bagsNeeded / bagsPerPallet);

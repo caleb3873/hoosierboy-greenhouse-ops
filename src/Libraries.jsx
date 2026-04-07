@@ -3556,16 +3556,21 @@ const BAG_UNITS = ["cu ft", "gal", "L", "qt", "lbs"];
 
 
 function SoilForm({ initial, onSave, onCancel }) {
-  const blank = { id: null, name: "", category: "annual", vendor: "", productName: "", sku: "", bagSize: "", bagUnit: "cu ft", costPerBag: "", bagsPerPallet: "", notes: "" };
+  const blank = { id: null, name: "", category: "annual", vendor: "", productName: "", sku: "", bagSize: "", bagUnit: "cu ft", fluffedVolume: "", costPerBag: "", bagsPerPallet: "", notes: "" };
   const [f, setF] = useState(initial ? { ...blank, ...initial } : blank);
   const [focus, setFocus] = useState(null);
   const upd = (k, v) => setF(p => ({ ...p, [k]: v }));
 
   const costPerCuFt = () => {
-    if (!f.costPerBag || !f.bagSize) return null;
+    if (!f.costPerBag) return null;
     const cost = Number(f.costPerBag);
+    if (!cost) return null;
+    // Use fluffed volume if set (compressed bales expand when opened)
+    const fluffed = Number(f.fluffedVolume);
+    if (fluffed > 0) return (cost / fluffed).toFixed(3);
+    if (!f.bagSize) return null;
     const size = Number(f.bagSize);
-    if (!cost || !size) return null;
+    if (!size) return null;
     if (f.bagUnit === "cu ft") return (cost / size).toFixed(3);
     if (f.bagUnit === "gal")   return (cost / (size * 0.134)).toFixed(3);
     if (f.bagUnit === "L")     return (cost / (size * 0.0353)).toFixed(3);
@@ -3627,6 +3632,11 @@ function SoilForm({ initial, onSave, onCancel }) {
               {BAG_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
             </select>
           </div>
+        </div>
+        <div>
+          <FL c="Fluffed Volume (cu ft)" />
+          <input type="number" step="0.1" style={IS(focus === "fluffed")} value={f.fluffedVolume} onChange={e => upd("fluffedVolume", e.target.value)}
+            onFocus={() => setFocus("fluffed")} onBlur={() => setFocus(null)} placeholder="e.g. 8.0 (if compressed)" />
         </div>
         <div>
           <FL c="Cost per Bag ($)" />

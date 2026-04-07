@@ -4,11 +4,21 @@
 
 /**
  * Soil cost per cubic foot from a soil mix record.
+ * Uses fluffedVolume (in cu ft) when set — for compressed bales that expand
+ * when opened (e.g. Berger 3.8 cf compressed → ~7.0 cf fluffed).
  */
 export function soilCostPerCuFt(mix) {
-  if (!mix?.costPerBag || !mix?.bagSize) return null;
-  const cost = Number(mix.costPerBag), size = Number(mix.bagSize);
-  if (!cost || !size) return null;
+  if (!mix?.costPerBag) return null;
+  const cost = Number(mix.costPerBag);
+  if (!cost) return null;
+
+  // If fluffed volume is set, use it (assumed cu ft)
+  const fluffed = Number(mix.fluffedVolume);
+  if (fluffed > 0) return cost / fluffed;
+
+  if (!mix.bagSize) return null;
+  const size = Number(mix.bagSize);
+  if (!size) return null;
   if (mix.bagUnit === "cu ft") return cost / size;
   if (mix.bagUnit === "gal")   return cost / (size * 0.134);
   if (mix.bagUnit === "L")     return cost / (size * 0.0353);
