@@ -348,15 +348,27 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
     setColorFilters(curr => curr.includes(c) ? curr.filter(x => x !== c) : [...curr, c]);
   }
 
-  const categories = useMemo(() => [...new Set(items.map(i => i.category).filter(Boolean))].sort(), [items]);
+  // Build a "display category" that breaks 8" Annual / 10" Premium Annual into genus subcategories
+  // since those have multiple plant families. Mums/Asters stay grouped.
+  function displayCategoryFor(item) {
+    if (!item.category) return null;
+    const SPLIT_BY_GENUS = ['8" ANNUAL', '10" PREMIUM ANNUAL'];
+    if (SPLIT_BY_GENUS.includes(item.category) && item.genus) {
+      const g = item.genus.charAt(0) + item.genus.slice(1).toLowerCase();
+      return `${item.category} — ${g}`;
+    }
+    return item.category;
+  }
+  const itemsWithDisplay = useMemo(() => items.map(i => ({ ...i, displayCategory: displayCategoryFor(i) })), [items]);
+  const categories = useMemo(() => [...new Set(itemsWithDisplay.map(i => i.displayCategory).filter(Boolean))].sort(), [itemsWithDisplay]);
   const colors = useMemo(() => [...new Set(items.map(i => i.color).filter(Boolean))].sort(), [items]);
   const weeks = useMemo(() => [...new Set(items.map(i => i.shipWeek).filter(Boolean))].sort(), [items]);
   const timings = useMemo(() => [...new Set(items.map(i => i.timing).filter(Boolean))].sort(), [items]);
 
   // Filter raw items first
   const filtered = useMemo(() => {
-    let result = items;
-    if (categoryFilter !== "all") result = result.filter(i => i.category === categoryFilter);
+    let result = itemsWithDisplay;
+    if (categoryFilter !== "all") result = result.filter(i => i.displayCategory === categoryFilter);
     if (colorFilters.length > 0) result = result.filter(i => colorFilters.includes(i.color));
     if (weekFilter !== "all") result = result.filter(i => i.shipWeek === weekFilter);
     if (statusFilter === "confirmed") result = result.filter(i => i.orderNumber);
@@ -371,7 +383,7 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
       );
     }
     return result;
-  }, [items, categoryFilter, colorFilters, weekFilter, statusFilter, timingFilter, searchQ]);
+  }, [itemsWithDisplay, categoryFilter, colorFilters, weekFilter, statusFilter, timingFilter, searchQ]);
 
   // Consolidate by category + variety + plant week, with tricolor detection
   const consolidated = useMemo(() => {
@@ -408,13 +420,13 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
 
       // Tricolor items group by row instead of variety
       const key = isTricolor
-        ? `TRI||${i.category || ""}||${i.rowId || ""}||${i.plantWeek || ""}`
-        : `${i.category || ""}||${i.variety || ""}||${i.plantWeek || ""}`;
+        ? `TRI||${i.displayCategory || i.category || ""}||${i.rowId || ""}||${i.plantWeek || ""}`
+        : `${i.displayCategory || i.category || ""}||${i.variety || ""}||${i.plantWeek || ""}`;
 
       if (!map[key]) {
         map[key] = {
           key,
-          category: i.category,
+          category: i.displayCategory || i.category,
           variety: i.variety,
           color: isTricolor ? "TRICOLOR" : i.color,
           breeder: i.breeder,
