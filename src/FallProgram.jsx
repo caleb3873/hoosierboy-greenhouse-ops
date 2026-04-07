@@ -115,7 +115,13 @@ export default function FallProgram() {
   }, [items]);
 
   const [year, setYear] = useState(allYears[0] || new Date().getFullYear());
-  const [section, setSection] = useState("overview");
+  const [section, setSectionState] = useState(() => {
+    try { return localStorage.getItem("gh_fall_section") || "overview"; } catch { return "overview"; }
+  });
+  const setSection = (s) => {
+    setSectionState(s);
+    try { localStorage.setItem("gh_fall_section", s); } catch {}
+  };
 
   const yearItems = useMemo(() => items.filter(i => i.year === year), [items, year]);
 

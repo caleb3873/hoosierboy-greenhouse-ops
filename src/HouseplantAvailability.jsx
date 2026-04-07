@@ -69,7 +69,13 @@ export default function HouseplantAvailability() {
   const { rows: pricing, upsert: upsertPrice } = useHpPricing();
   const { rows: orderItems, upsert: upsertOrder, remove: removeOrder } = useHpOrderItems();
 
-  const [section, setSection] = useState("sales"); // sales | availability | products | library
+  const [section, setSectionState] = useState(() => {
+    try { return localStorage.getItem("gh_hp_section") || "sales"; } catch { return "sales"; }
+  });
+  const setSection = (s) => {
+    setSectionState(s);
+    try { localStorage.setItem("gh_hp_section", s); } catch {}
+  };
   const [activeTab, setActiveTab] = useState(null); // null = summary
   const [searchQ, setSearchQ] = useState("");
   const [uploadState, setUploadState] = useState(null);

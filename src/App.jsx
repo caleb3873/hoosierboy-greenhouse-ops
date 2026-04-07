@@ -92,7 +92,13 @@ function pageGroup(pageId) {
 const LOGO_WHITE = "https://cdn.prod.website-files.com/63b5c78a53ecb12c888ba09a/63b5d5e281aa6766b5cb8ace_HOO-Boy%20Logo%20Reversed-White.png";
 
 function PlannerShell() {
-  const [page, setPage] = useState("home");
+  const [page, setPageState] = useState(() => {
+    try { return localStorage.getItem("gh_current_page") || "home"; } catch { return "home"; }
+  });
+  const setPage = (p) => {
+    setPageState(p);
+    try { localStorage.setItem("gh_current_page", p); } catch {}
+  };
   const { signOut, displayName, floorMode, isOwner } = useAuth();
   const { extractionState } = useExtraction();
 
