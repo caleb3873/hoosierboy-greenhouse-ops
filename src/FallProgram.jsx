@@ -24,7 +24,42 @@ const SECTIONS = [
   { id: "items", label: "Items" },
   { id: "color", label: "Color Mix" },
   { id: "schedule", label: "Schedule" },
+  { id: "sowing", label: "Sowing & Prop" },
 ];
+
+// Compute effective sow week from ship_week + plant_week
+// "SOW 4 WKS BEFORE" + "WEEK 25" → "WEEK 21"
+// "DIRECT SOW" → returns the plant week (sown when planted)
+function computeSowWeek(item) {
+  const sw = (item.shipWeek || "").trim().toUpperCase();
+  const pw = (item.plantWeek || "").trim().toUpperCase();
+
+  if (sw.startsWith("DIRECT SOW")) return pw || "Direct sow";
+
+  const sowMatch = sw.match(/^SOW\s+(\d+)\s+WKS?\s+BEFORE/i);
+  if (sowMatch && pw) {
+    const wks = parseInt(sowMatch[1]);
+    const pwMatch = pw.match(/WEEK\s+(\d+)/);
+    if (pwMatch) {
+      const wkNum = parseInt(pwMatch[1]) - wks;
+      return `WEEK ${wkNum}`;
+    }
+  }
+  return null;
+}
+
+function isSeedSow(item) {
+  const pm = (item.propMethod || "").toUpperCase();
+  if (pm === "SEED" || pm === "URC") return true;
+  const sw = (item.shipWeek || "").toUpperCase();
+  return sw.includes("SOW") || (item.breeder || "").toUpperCase() === "SEED";
+}
+
+const PROP_BADGE = {
+  SEED:  { bg: "#fff4e8", color: "#c8791a", label: "SEED" },
+  URC:   { bg: "#f5f0ff", color: "#8e44ad", label: "URC" },
+  LINER: { bg: "#f0f8eb", color: "#4a7a35", label: "LINER" },
+};
 
 export default function FallProgram() {
   const { rows: items, upsert, remove } = useFallProgramItems();
@@ -89,6 +124,7 @@ export default function FallProgram() {
           {section === "items" && <ItemsTab items={yearItems} soilMixes={soilMixes} containers={containers} upsert={upsert} remove={remove} />}
           {section === "color" && <ColorTab items={yearItems} />}
           {section === "schedule" && <ScheduleTab items={yearItems} />}
+          {section === "sowing" && <SowingTab items={yearItems} />}
         </>
       )}
     </div>
@@ -99,14 +135,32 @@ export default function FallProgram() {
 // ── OVERVIEW ─────────────────────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════════════
 function OverviewTab({ items, year }) {
+  const [shipFilter, setShipFilter] = useState("all");
+  const [plantFilter, setPlantFilter] = useState("all");
+  const [timingFilter, setTimingFilter] = useState("all");
+
+  const shipWeeks = useMemo(() => [...new Set(items.map(i => i.shipWeek).filter(Boolean))].sort(), [items]);
+  const plantWeeks = useMemo(() => [...new Set(items.map(i => i.plantWeek).filter(Boolean))].sort(), [items]);
+  const timings = useMemo(() => [...new Set(items.map(i => i.timing).filter(Boolean))].sort(), [items]);
+
+  const filtered = useMemo(() => {
+    let r = items;
+    if (shipFilter !== "all") r = r.filter(i => i.shipWeek === shipFilter);
+    if (plantFilter !== "all") r = r.filter(i => i.plantWeek === plantFilter);
+    if (timingFilter !== "all") r = r.filter(i => i.timing === timingFilter);
+    return r;
+  }, [items, shipFilter, plantFilter, timingFilter]);
+
   const stats = useMemo(() => {
-    const totalQty = items.reduce((s, i) => s + (parseFloat(i.qty) || 0), 0);
-    const totalCost = items.reduce((s, i) => s + (parseFloat(i.cost) || 0), 0);
-    const varieties = new Set(items.map(i => i.variety)).size;
-    const locations = new Set(items.map(i => i.location).filter(Boolean)).size;
+    // qty = items being produced (finished pots), ord_qty = liners needed
+    const itemsProducing = filtered.reduce((s, i) => s + (parseFloat(i.qty) || 0), 0);
+    const linersNeeded = filtered.reduce((s, i) => s + (parseFloat(i.ordQty) || 0), 0);
+    const totalCost = filtered.reduce((s, i) => s + (parseFloat(i.cost) || 0), 0);
+    const varieties = new Set(filtered.map(i => i.variety)).size;
+    const locations = new Set(filtered.map(i => i.location).filter(Boolean)).size;
 
     const byCategory = {};
-    items.forEach(i => {
+    filtered.forEach(i => {
       const c = i.category || "Other";
       if (!byCategory[c]) byCategory[c] = { name: c, qty: 0, cost: 0 };
       byCategory[c].qty += parseFloat(i.qty) || 0;
@@ -115,7 +169,7 @@ function OverviewTab({ items, year }) {
     const cats = Object.values(byCategory).sort((a, b) => b.qty - a.qty);
 
     const byBreeder = {};
-    items.forEach(i => {
+    filtered.forEach(i => {
       const b = i.breeder || "Unknown";
       if (!byBreeder[b]) byBreeder[b] = { name: b, qty: 0, cost: 0 };
       byBreeder[b].qty += parseFloat(i.qty) || 0;
@@ -123,8 +177,8 @@ function OverviewTab({ items, year }) {
     });
     const breeders = Object.values(byBreeder).sort((a, b) => b.qty - a.qty);
 
-    return { totalQty, totalCost, varieties, locations, cats, breeders };
-  }, [items]);
+    return { itemsProducing, linersNeeded, totalCost, varieties, locations, cats, breeders };
+  }, [filtered]);
 
   const KPI = ({ label, value, color, sub }) => (
     <div style={{ ...card, padding: "16px 20px", margin: 0 }}>
@@ -136,12 +190,46 @@ function OverviewTab({ items, year }) {
 
   return (
     <div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 16 }}>
-        <KPI label="Total Liners" value={fmtN(stats.totalQty)} color="#7fb069" />
+      {/* Filter chips */}
+      <div style={{ ...card, padding: "12px 18px" }}>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
+          <span style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", marginRight: 6 }}>Ship Week:</span>
+          <button onClick={() => setShipFilter("all")}
+            style={chipStyle(shipFilter === "all", "#c8791a")}>All</button>
+          {shipWeeks.map(w => (
+            <button key={w} onClick={() => setShipFilter(w)}
+              style={chipStyle(shipFilter === w, "#c8791a")}>{w}</button>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
+          <span style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", marginRight: 6 }}>Plant Week:</span>
+          <button onClick={() => setPlantFilter("all")}
+            style={chipStyle(plantFilter === "all", "#4a90d9")}>All</button>
+          {plantWeeks.map(w => (
+            <button key={w} onClick={() => setPlantFilter(w)}
+              style={chipStyle(plantFilter === w, "#4a90d9")}>{w}</button>
+          ))}
+        </div>
+        {timings.length > 0 && (
+          <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+            <span style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", marginRight: 6 }}>Response Time:</span>
+            <button onClick={() => setTimingFilter("all")}
+              style={chipStyle(timingFilter === "all", "#7fb069")}>All</button>
+            {timings.map(t => (
+              <button key={t} onClick={() => setTimingFilter(t)}
+                style={chipStyle(timingFilter === t, "#7fb069")}>{t}</button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 16 }}>
+        <KPI label="Items Producing" value={fmtN(stats.itemsProducing)} color="#7fb069" sub="finished pots" />
+        <KPI label="Liners Needed" value={fmtN(stats.linersNeeded)} color="#4a90d9" />
         <KPI label="Liner Cost" value={fmt$(stats.totalCost)} color="#4a7a35" />
-        <KPI label="Varieties" value={stats.varieties} color="#4a90d9" />
-        <KPI label="Locations" value={stats.locations} color="#8e44ad" />
-        <KPI label="Order Lines" value={items.length} color="#1e2d1a" />
+        <KPI label="Varieties" value={stats.varieties} color="#8e44ad" />
+        <KPI label="Locations" value={stats.locations} color="#c8791a" />
+        <KPI label="Rows" value={filtered.length} color="#1e2d1a" />
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
@@ -152,7 +240,7 @@ function OverviewTab({ items, year }) {
               <XAxis type="number" tick={{ fontSize: 11, fill: "#7a8c74" }} />
               <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: "#1e2d1a" }} width={140} />
               <Tooltip formatter={v => fmtN(v)} />
-              <Bar dataKey="qty" name="Liners" fill="#7fb069" radius={[0, 6, 6, 0]} />
+              <Bar dataKey="qty" name="Items" fill="#7fb069" radius={[0, 6, 6, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -163,13 +251,23 @@ function OverviewTab({ items, year }) {
               <XAxis type="number" tick={{ fontSize: 11, fill: "#7a8c74" }} />
               <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: "#1e2d1a" }} width={100} />
               <Tooltip formatter={v => fmtN(v)} />
-              <Bar dataKey="qty" name="Liners" fill="#4a90d9" radius={[0, 6, 6, 0]} />
+              <Bar dataKey="qty" name="Items" fill="#4a90d9" radius={[0, 6, 6, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
       </div>
     </div>
   );
+}
+
+function chipStyle(active, color) {
+  return {
+    padding: "4px 12px", borderRadius: 16, fontSize: 11, fontWeight: active ? 800 : 600,
+    background: active ? color : "#fff",
+    color: active ? "#fff" : "#7a8c74",
+    border: `1.5px solid ${active ? color : "#c8d8c0"}`,
+    cursor: "pointer", fontFamily: "inherit",
+  };
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -608,6 +706,12 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
                         Group {c.groupNum}
                       </span>
                     )}
+                    {(() => {
+                      const propBadge = PROP_BADGE[c.locations[0]?.propMethod];
+                      return propBadge ? (
+                        <span style={{ marginLeft: 6, background: propBadge.bg, color: propBadge.color, borderRadius: 10, padding: "1px 8px", fontSize: 10, fontWeight: 700 }}>{propBadge.label}</span>
+                      ) : null;
+                    })()}
                   </div>
                   <div style={{ fontSize: 10, color: "#aabba0" }}>{c.category} • {c.breeder}</div>
                 </div>
@@ -666,6 +770,101 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
           <div style={{ padding: "40px", textAlign: "center", color: "#7a8c74" }}>No items match these filters</div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ── SOWING & PROP TAB ────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+function SowingTab({ items }) {
+  // Filter to only items that are seed-sown or need prop
+  const seedItems = useMemo(() => items.filter(isSeedSow), [items]);
+
+  // Group by sow week
+  const bySowWeek = useMemo(() => {
+    const map = {};
+    seedItems.forEach(i => {
+      const sowWk = computeSowWeek(i) || "Unknown";
+      if (!map[sowWk]) map[sowWk] = [];
+      map[sowWk].push(i);
+    });
+    return Object.entries(map).sort(([a], [b]) => {
+      const na = parseInt((a.match(/\d+/) || [0])[0]) || 999;
+      const nb = parseInt((b.match(/\d+/) || [0])[0]) || 999;
+      return na - nb;
+    });
+  }, [seedItems]);
+
+  const totalSeed = seedItems.reduce((s, i) => s + (parseFloat(i.qty) || 0), 0);
+
+  return (
+    <div>
+      <div style={{ background: "#fff4e8", border: "1.5px solid #e8d0a0", borderRadius: 10, padding: "12px 16px", marginBottom: 16, fontSize: 13, color: "#6a4a20" }}>
+        🌱 This tab shows items that need to be sown from seed or propagated from cuttings before planting.
+        "SOW X WKS BEFORE" entries are auto-calculated based on the plant week.
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 16 }}>
+        <div style={{ ...card, padding: "16px 20px", margin: 0 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase" }}>Sowing/Prop Items</div>
+          <div style={{ fontSize: 28, fontWeight: 800, color: "#7fb069", marginTop: 4 }}>{seedItems.length}</div>
+        </div>
+        <div style={{ ...card, padding: "16px 20px", margin: 0 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase" }}>Total Quantity</div>
+          <div style={{ fontSize: 28, fontWeight: 800, color: "#4a90d9", marginTop: 4 }}>{fmtN(totalSeed)}</div>
+        </div>
+        <div style={{ ...card, padding: "16px 20px", margin: 0 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase" }}>Sow Weeks</div>
+          <div style={{ fontSize: 28, fontWeight: 800, color: "#c8791a", marginTop: 4 }}>{bySowWeek.length}</div>
+        </div>
+      </div>
+
+      {seedItems.length === 0 ? (
+        <div style={{ ...card, textAlign: "center", padding: "60px 40px", border: "1.5px dashed #c8d8c0" }}>
+          <div style={{ fontSize: 13, color: "#7a8c74" }}>No seed-sown or prop items in this year</div>
+        </div>
+      ) : (
+        bySowWeek.map(([sowWeek, sowItems]) => {
+          const wkQty = sowItems.reduce((s, i) => s + (parseFloat(i.qty) || 0), 0);
+          return (
+            <div key={sowWeek} style={card}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <div>
+                  <span style={{ fontSize: 16, fontWeight: 800, color: "#1e2d1a" }}>{sowWeek}</span>
+                  <span style={{ fontSize: 12, color: "#7a8c74", marginLeft: 10 }}>{sowItems.length} items / {fmtN(wkQty)} qty</span>
+                </div>
+              </div>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 700 }}>
+                  <thead>
+                    <tr style={{ background: "#fafcf8", borderBottom: "1px solid #e0ead8" }}>
+                      <th style={{ padding: "8px 10px", textAlign: "left", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Variety</th>
+                      <th style={{ padding: "8px 10px", textAlign: "left", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Category</th>
+                      <th style={{ padding: "8px 10px", textAlign: "left", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Original</th>
+                      <th style={{ padding: "8px 10px", textAlign: "left", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Plant Wk</th>
+                      <th style={{ padding: "8px 10px", textAlign: "left", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Location</th>
+                      <th style={{ padding: "8px 10px", textAlign: "right", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Qty</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sowItems.map((i, idx) => (
+                      <tr key={i.id} style={{ borderBottom: "1px solid #f0f5ee", background: idx % 2 === 0 ? "#fff" : "#fafcf8" }}>
+                        <td style={{ padding: "8px 10px", fontSize: 13, fontWeight: 700, color: "#1e2d1a" }}>{i.variety}</td>
+                        <td style={{ padding: "8px 10px", fontSize: 11, color: "#7a8c74" }}>{i.category}</td>
+                        <td style={{ padding: "8px 10px", fontSize: 11, color: "#aabba0", fontStyle: "italic" }}>{i.shipWeek}</td>
+                        <td style={{ padding: "8px 10px", fontSize: 11, color: "#4a90d9", fontWeight: 700 }}>{i.plantWeek}</td>
+                        <td style={{ padding: "8px 10px", fontSize: 11, color: "#7a8c74" }}>{i.location}</td>
+                        <td style={{ padding: "8px 10px", textAlign: "right", fontSize: 13, fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{fmtN(i.qty)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        })
+      )}
     </div>
   );
 }
