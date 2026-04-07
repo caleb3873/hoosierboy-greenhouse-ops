@@ -337,11 +337,15 @@ function ScheduleTab({ items }) {
 function ItemsTab({ items, soilMixes, containers, upsert }) {
   const [searchQ, setSearchQ] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
-  const [colorFilter, setColorFilter] = useState("all");
+  const [colorFilters, setColorFilters] = useState([]); // multi-select
   const [weekFilter, setWeekFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all"); // all | confirmed | unconfirmed
   const [timingFilter, setTimingFilter] = useState("all");
   const [expandedKey, setExpandedKey] = useState(null);
+
+  function toggleColor(c) {
+    setColorFilters(curr => curr.includes(c) ? curr.filter(x => x !== c) : [...curr, c]);
+  }
 
   const categories = useMemo(() => [...new Set(items.map(i => i.category).filter(Boolean))].sort(), [items]);
   const colors = useMemo(() => [...new Set(items.map(i => i.color).filter(Boolean))].sort(), [items]);
@@ -352,7 +356,7 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
   const filtered = useMemo(() => {
     let result = items;
     if (categoryFilter !== "all") result = result.filter(i => i.category === categoryFilter);
-    if (colorFilter !== "all") result = result.filter(i => i.color === colorFilter);
+    if (colorFilters.length > 0) result = result.filter(i => colorFilters.includes(i.color));
     if (weekFilter !== "all") result = result.filter(i => i.shipWeek === weekFilter);
     if (statusFilter === "confirmed") result = result.filter(i => i.orderNumber);
     if (statusFilter === "unconfirmed") result = result.filter(i => !i.orderNumber);
@@ -366,7 +370,7 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
       );
     }
     return result;
-  }, [items, categoryFilter, colorFilter, weekFilter, statusFilter, timingFilter, searchQ]);
+  }, [items, categoryFilter, colorFilters, weekFilter, statusFilter, timingFilter, searchQ]);
 
   // Consolidate by category + variety
   const consolidated = useMemo(() => {
@@ -410,40 +414,90 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
 
   return (
     <div>
-      <div style={{ ...card, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-        <input value={searchQ} onChange={e => setSearchQ(e.target.value)} placeholder="Search variety, location, breeder..."
-          style={{ ...IS(!!searchQ), maxWidth: 240, fontSize: 14 }} />
-        <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)}
-          style={{ ...IS(false), width: "auto", fontSize: 13 }}>
-          <option value="all">All Items</option>
-          {categories.map(c => <option key={c} value={c}>{c}</option>)}
-        </select>
-        <select value={colorFilter} onChange={e => setColorFilter(e.target.value)}
-          style={{ ...IS(false), width: "auto", fontSize: 13 }}>
-          <option value="all">All Colors</option>
-          {colors.map(c => <option key={c} value={c}>{c}</option>)}
-        </select>
-        <select value={weekFilter} onChange={e => setWeekFilter(e.target.value)}
-          style={{ ...IS(false), width: "auto", fontSize: 13 }}>
-          <option value="all">All Weeks</option>
-          {weeks.map(w => <option key={w} value={w}>{w}</option>)}
-        </select>
-        <select value={timingFilter} onChange={e => setTimingFilter(e.target.value)}
-          style={{ ...IS(false), width: "auto", fontSize: 13 }}>
-          <option value="all">All Response Times</option>
-          {timings.map(t => <option key={t} value={t}>{t}</option>)}
-        </select>
-        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
-          style={{ ...IS(false), width: "auto", fontSize: 13 }}>
-          <option value="all">All Status</option>
-          <option value="confirmed">Confirmed Only</option>
-          <option value="unconfirmed">Unconfirmed Only</option>
-        </select>
-        <div style={{ marginLeft: "auto", fontSize: 12, color: "#7a8c74", display: "flex", gap: 16 }}>
-          <span><strong>{consolidated.length}</strong> varieties</span>
-          <span><strong>{fmtN(totals.qty)}</strong> liners</span>
-          <span style={{ color: "#4a7a35" }}><strong>{fmt$(totals.cost)}</strong></span>
-          {totals.unconfirmedLines > 0 && <span style={{ color: "#d94f3d", fontWeight: 700 }}>⚠ {totals.unconfirmedLines} unconfirmed</span>}
+      {/* Filter section with chips */}
+      <div style={{ ...card, padding: "14px 18px" }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 10, flexWrap: "wrap" }}>
+          <input value={searchQ} onChange={e => setSearchQ(e.target.value)} placeholder="Search variety, location, breeder..."
+            style={{ ...IS(!!searchQ), maxWidth: 280, fontSize: 14 }} />
+          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
+            style={{ ...IS(false), width: "auto", fontSize: 13 }}>
+            <option value="all">All Status</option>
+            <option value="confirmed">Confirmed Only</option>
+            <option value="unconfirmed">Unconfirmed Only</option>
+          </select>
+          <select value={weekFilter} onChange={e => setWeekFilter(e.target.value)}
+            style={{ ...IS(false), width: "auto", fontSize: 13 }}>
+            <option value="all">All Ship Weeks</option>
+            {weeks.map(w => <option key={w} value={w}>{w}</option>)}
+          </select>
+          <div style={{ marginLeft: "auto", fontSize: 12, color: "#7a8c74", display: "flex", gap: 16 }}>
+            <span><strong>{consolidated.length}</strong> varieties</span>
+            <span><strong>{fmtN(totals.qty)}</strong> liners</span>
+            <span style={{ color: "#4a7a35" }}><strong>{fmt$(totals.cost)}</strong></span>
+            {totals.unconfirmedLines > 0 && <span style={{ color: "#d94f3d", fontWeight: 700 }}>⚠ {totals.unconfirmedLines} unconfirmed</span>}
+          </div>
+        </div>
+
+        {/* Item type chips */}
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+          <span style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", marginRight: 6, alignSelf: "center" }}>Item:</span>
+          <button onClick={() => setCategoryFilter("all")}
+            style={{ padding: "4px 12px", borderRadius: 16, fontSize: 11, fontWeight: categoryFilter === "all" ? 800 : 600,
+              background: categoryFilter === "all" ? "#1e2d1a" : "#fff",
+              color: categoryFilter === "all" ? "#c8e6b8" : "#7a8c74",
+              border: `1.5px solid ${categoryFilter === "all" ? "#1e2d1a" : "#c8d8c0"}`,
+              cursor: "pointer", fontFamily: "inherit" }}>All</button>
+          {categories.map(c => (
+            <button key={c} onClick={() => setCategoryFilter(c)}
+              style={{ padding: "4px 12px", borderRadius: 16, fontSize: 11, fontWeight: categoryFilter === c ? 800 : 600,
+                background: categoryFilter === c ? "#1e2d1a" : "#fff",
+                color: categoryFilter === c ? "#c8e6b8" : "#7a8c74",
+                border: `1.5px solid ${categoryFilter === c ? "#1e2d1a" : "#c8d8c0"}`,
+                cursor: "pointer", fontFamily: "inherit" }}>{c}</button>
+          ))}
+        </div>
+
+        {/* Color chips - multi-select */}
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+          <span style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", marginRight: 6, alignSelf: "center" }}>Color:</span>
+          {colors.map(c => {
+            const active = colorFilters.includes(c);
+            const cc = COLOR_PALETTE[c] || "#7a8c74";
+            return (
+              <button key={c} onClick={() => toggleColor(c)}
+                style={{ padding: "4px 12px", borderRadius: 16, fontSize: 11, fontWeight: active ? 800 : 600,
+                  background: active ? cc + "20" : "#fff",
+                  color: active ? cc : "#7a8c74",
+                  border: `1.5px solid ${active ? cc : "#c8d8c0"}`,
+                  cursor: "pointer", fontFamily: "inherit", display: "inline-flex", alignItems: "center", gap: 5 }}>
+                <span style={{ width: 10, height: 10, borderRadius: 2, background: cc, border: "1px solid #00000022" }}></span>
+                {c}
+              </button>
+            );
+          })}
+          {colorFilters.length > 0 && (
+            <button onClick={() => setColorFilters([])}
+              style={{ padding: "4px 10px", borderRadius: 16, fontSize: 11, fontWeight: 600, background: "none", color: "#7a8c74", border: "1.5px solid #e0ead8", cursor: "pointer", fontFamily: "inherit" }}>Clear</button>
+          )}
+        </div>
+
+        {/* Timing/response time chips */}
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", marginRight: 6, alignSelf: "center" }}>Response Time:</span>
+          <button onClick={() => setTimingFilter("all")}
+            style={{ padding: "4px 12px", borderRadius: 16, fontSize: 11, fontWeight: timingFilter === "all" ? 800 : 600,
+              background: timingFilter === "all" ? "#1e2d1a" : "#fff",
+              color: timingFilter === "all" ? "#c8e6b8" : "#7a8c74",
+              border: `1.5px solid ${timingFilter === "all" ? "#1e2d1a" : "#c8d8c0"}`,
+              cursor: "pointer", fontFamily: "inherit" }}>All</button>
+          {timings.map(t => (
+            <button key={t} onClick={() => setTimingFilter(t)}
+              style={{ padding: "4px 12px", borderRadius: 16, fontSize: 11, fontWeight: timingFilter === t ? 800 : 600,
+                background: timingFilter === t ? "#1e2d1a" : "#fff",
+                color: timingFilter === t ? "#c8e6b8" : "#7a8c74",
+                border: `1.5px solid ${timingFilter === t ? "#1e2d1a" : "#c8d8c0"}`,
+                cursor: "pointer", fontFamily: "inherit" }}>{t}</button>
+          ))}
         </div>
       </div>
 
@@ -494,9 +548,15 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
 
               {/* Drill-down rows */}
               {isOpen && (
-                <div style={{ background: "#fafcf8", padding: "8px 16px 14px 56px", borderBottom: "1px solid #e0ead8" }}>
+                <div style={{ background: "#fafcf8", padding: "10px 16px 14px 56px", borderBottom: "1px solid #e0ead8" }}>
+                  <div style={{ display: "flex", gap: 16, marginBottom: 10, padding: "6px 10px", background: "#fff", borderRadius: 8, fontSize: 11 }}>
+                    <div><span style={{ color: "#aabba0" }}>Response Time:</span> <strong style={{ color: "#1e2d1a" }}>{c.timing || "—"}</strong></div>
+                    <div><span style={{ color: "#aabba0" }}>Status:</span> <strong style={{ color: "#1e2d1a" }}>{c.status || "—"}</strong></div>
+                    <div><span style={{ color: "#aabba0" }}>Vigor:</span> <strong style={{ color: "#1e2d1a" }}>{c.vigor || "—"}</strong></div>
+                    <div><span style={{ color: "#aabba0" }}>Flower Wk:</span> <strong style={{ color: "#1e2d1a" }}>{c.flowerWeek || "—"}</strong></div>
+                  </div>
                   {c.locations.map(loc => (
-                    <div key={loc.id} style={{ display: "grid", gridTemplateColumns: "150px 60px 90px 90px 90px 1fr 90px 90px", padding: "6px 0", borderBottom: "1px solid #f0f5ee", alignItems: "center", fontSize: 11 }}>
+                    <div key={loc.id} style={{ display: "grid", gridTemplateColumns: "150px 60px 90px 100px 100px 1fr 90px 90px", padding: "6px 0", borderBottom: "1px solid #f0f5ee", alignItems: "center", fontSize: 11 }}>
                       <div style={{ fontWeight: 700, color: "#1e2d1a" }}>{loc.location}</div>
                       <div style={{ color: "#7a8c74" }}>{loc.rowId}</div>
                       <div style={{ color: "#7a8c74" }}>{loc.direction}</div>
