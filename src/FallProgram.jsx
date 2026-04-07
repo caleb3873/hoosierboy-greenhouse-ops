@@ -919,10 +919,26 @@ function CostTab({ items, containers, soilMixes }) {
   const defaultSoil = pickDefaultSoil(soilMixes);
   const soilCpf = soilCostPerCuFt(defaultSoil);
 
+  const [shipFilter, setShipFilter] = useState("all");
+  const [plantFilter, setPlantFilter] = useState("all");
+  const [categoryFilter, setCategoryFilter] = useState("all");
+
+  const shipWeeks = useMemo(() => [...new Set(items.map(i => i.shipWeek).filter(Boolean))].sort(), [items]);
+  const plantWeeks = useMemo(() => [...new Set(items.map(i => i.plantWeek).filter(Boolean))].sort(), [items]);
+  const categories = useMemo(() => [...new Set(items.map(i => i.category).filter(Boolean))].sort(), [items]);
+
+  const filteredItems = useMemo(() => {
+    let r = items;
+    if (shipFilter !== "all") r = r.filter(i => i.shipWeek === shipFilter);
+    if (plantFilter !== "all") r = r.filter(i => i.plantWeek === plantFilter);
+    if (categoryFilter !== "all") r = r.filter(i => i.category === categoryFilter);
+    return r;
+  }, [items, shipFilter, plantFilter, categoryFilter]);
+
   // Compute per-row cost: liner + soil + pot
   const costRows = useMemo(() => {
     const map = {};
-    items.forEach(i => {
+    filteredItems.forEach(i => {
       const key = `${i.category || "Other"}`;
       const container = pickContainerForCategory(i.category, containers);
       const potCost = container ? parseFloat(container.costPerUnit) || 0 : 0;
@@ -957,7 +973,7 @@ function CostTab({ items, containers, soilMixes }) {
       e.totalPotCost = e.potCost * e.totalQty;
     });
     return Object.values(map).sort((a, b) => b.totalProductionCost - a.totalProductionCost);
-  }, [items, containers, soilCpf]);
+  }, [filteredItems, containers, soilCpf]);
 
   const grand = useMemo(() => ({
     qty: costRows.reduce((s, r) => s + r.totalQty, 0),
@@ -982,8 +998,34 @@ function CostTab({ items, containers, soilMixes }) {
         {defaultSoil && ` — $${soilCpf.toFixed(2)}/cu ft (fluffed ${defaultSoil.fluffedVolume} cu ft per ${defaultSoil.bagSize} ${defaultSoil.bagUnit} bag at $${defaultSoil.costPerBag})`}
       </div>
 
+      {/* Filter chips */}
+      <div style={{ ...card, padding: "12px 18px" }}>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
+          <span style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", marginRight: 6 }}>Item:</span>
+          <button onClick={() => setCategoryFilter("all")} style={chipStyle(categoryFilter === "all", "#1e2d1a")}>All</button>
+          {categories.map(c => (
+            <button key={c} onClick={() => setCategoryFilter(c)} style={chipStyle(categoryFilter === c, "#1e2d1a")}>{c}</button>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
+          <span style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", marginRight: 6 }}>Ship Week:</span>
+          <button onClick={() => setShipFilter("all")} style={chipStyle(shipFilter === "all", "#c8791a")}>All</button>
+          {shipWeeks.map(w => (
+            <button key={w} onClick={() => setShipFilter(w)} style={chipStyle(shipFilter === w, "#c8791a")}>{w}</button>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", marginRight: 6 }}>Plant Week:</span>
+          <button onClick={() => setPlantFilter("all")} style={chipStyle(plantFilter === "all", "#4a90d9")}>All</button>
+          {plantWeeks.map(w => (
+            <button key={w} onClick={() => setPlantFilter(w)} style={chipStyle(plantFilter === w, "#4a90d9")}>{w}</button>
+          ))}
+        </div>
+      </div>
+
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 16 }}>
         <KPI label="Total Items" value={fmtN(grand.qty)} color="#7fb069" sub="finished pots" />
+        <KPI label="Avg Cost / Pot" value={grand.qty > 0 ? fmt$2(grand.total / grand.qty) : "—"} color="#1e2d1a" sub="liner + soil + pot" />
         <KPI label="Liner Cost" value={fmt$(grand.liner)} color="#4a90d9" />
         <KPI label="Soil Cost" value={fmt$(grand.soil)} color="#8e44ad" />
         <KPI label="Pot Cost" value={fmt$(grand.pot)} color="#c8791a" />
