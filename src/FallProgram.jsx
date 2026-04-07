@@ -175,9 +175,17 @@ function OverviewTab({ items, year }) {
 // ── COLOR MIX ────────────────────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════════════
 function ColorTab({ items }) {
+  const [categoryFilter, setCategoryFilter] = useState("all");
+
+  const categories = useMemo(() => [...new Set(items.map(i => i.category).filter(Boolean))].sort(), [items]);
+
+  const filteredItems = useMemo(() =>
+    categoryFilter === "all" ? items : items.filter(i => i.category === categoryFilter)
+  , [items, categoryFilter]);
+
   const colorStats = useMemo(() => {
     const byColor = {};
-    items.forEach(i => {
+    filteredItems.forEach(i => {
       const c = i.color || "UNKNOWN";
       if (!byColor[c]) byColor[c] = { name: c, qty: 0, varieties: new Set(), cost: 0 };
       byColor[c].qty += parseFloat(i.qty) || 0;
@@ -187,14 +195,37 @@ function ColorTab({ items }) {
     return Object.values(byColor)
       .map(c => ({ ...c, varietyCount: c.varieties.size }))
       .sort((a, b) => b.qty - a.qty);
-  }, [items]);
+  }, [filteredItems]);
 
   const totalQty = colorStats.reduce((s, c) => s + c.qty, 0);
 
   return (
     <div>
+      <div style={{ ...card, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", padding: "12px 18px" }}>
+        <button onClick={() => setCategoryFilter("all")}
+          style={{ padding: "6px 14px", borderRadius: 20, fontSize: 12, fontWeight: categoryFilter === "all" ? 800 : 600,
+            background: categoryFilter === "all" ? "#1e2d1a" : "#fff",
+            color: categoryFilter === "all" ? "#c8e6b8" : "#7a8c74",
+            border: `1.5px solid ${categoryFilter === "all" ? "#1e2d1a" : "#c8d8c0"}`,
+            cursor: "pointer", fontFamily: "inherit" }}>
+          All Items
+        </button>
+        {categories.map(c => (
+          <button key={c} onClick={() => setCategoryFilter(c)}
+            style={{ padding: "6px 14px", borderRadius: 20, fontSize: 12, fontWeight: categoryFilter === c ? 800 : 600,
+              background: categoryFilter === c ? "#1e2d1a" : "#fff",
+              color: categoryFilter === c ? "#c8e6b8" : "#7a8c74",
+              border: `1.5px solid ${categoryFilter === c ? "#1e2d1a" : "#c8d8c0"}`,
+              cursor: "pointer", fontFamily: "inherit" }}>
+            {c}
+          </button>
+        ))}
+      </div>
+
       <div style={card}>
-        <div style={{ fontSize: 13, fontWeight: 800, color: "#1e2d1a", marginBottom: 16 }}>Color Distribution by Liner Count</div>
+        <div style={{ fontSize: 13, fontWeight: 800, color: "#1e2d1a", marginBottom: 16 }}>
+          Color Distribution by Liner Count {categoryFilter !== "all" && <span style={{ color: "#7a8c74", fontWeight: 600 }}>— {categoryFilter}</span>}
+        </div>
         <ResponsiveContainer width="100%" height={300}>
           <BarChart data={colorStats} margin={{ left: 10, right: 10, top: 10 }}>
             <XAxis dataKey="name" tick={{ fontSize: 11, fill: "#1e2d1a" }} />
@@ -301,23 +332,31 @@ function ScheduleTab({ items }) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// ── ITEMS LIST ──────────────────────────────────────────────────────────────
+// ── ITEMS LIST (consolidated by variety with drill-down) ────────────────────
 // ══════════════════════════════════════════════════════════════════════════════
 function ItemsTab({ items, soilMixes, containers, upsert }) {
   const [searchQ, setSearchQ] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [colorFilter, setColorFilter] = useState("all");
   const [weekFilter, setWeekFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all"); // all | confirmed | unconfirmed
+  const [timingFilter, setTimingFilter] = useState("all");
+  const [expandedKey, setExpandedKey] = useState(null);
 
   const categories = useMemo(() => [...new Set(items.map(i => i.category).filter(Boolean))].sort(), [items]);
   const colors = useMemo(() => [...new Set(items.map(i => i.color).filter(Boolean))].sort(), [items]);
   const weeks = useMemo(() => [...new Set(items.map(i => i.shipWeek).filter(Boolean))].sort(), [items]);
+  const timings = useMemo(() => [...new Set(items.map(i => i.timing).filter(Boolean))].sort(), [items]);
 
+  // Filter raw items first
   const filtered = useMemo(() => {
     let result = items;
     if (categoryFilter !== "all") result = result.filter(i => i.category === categoryFilter);
     if (colorFilter !== "all") result = result.filter(i => i.color === colorFilter);
     if (weekFilter !== "all") result = result.filter(i => i.shipWeek === weekFilter);
+    if (statusFilter === "confirmed") result = result.filter(i => i.orderNumber);
+    if (statusFilter === "unconfirmed") result = result.filter(i => !i.orderNumber);
+    if (timingFilter !== "all") result = result.filter(i => i.timing === timingFilter);
     if (searchQ.trim()) {
       const q = searchQ.toLowerCase();
       result = result.filter(i =>
@@ -327,16 +366,56 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
       );
     }
     return result;
-  }, [items, categoryFilter, colorFilter, weekFilter, searchQ]);
+  }, [items, categoryFilter, colorFilter, weekFilter, statusFilter, timingFilter, searchQ]);
+
+  // Consolidate by category + variety
+  const consolidated = useMemo(() => {
+    const map = {};
+    filtered.forEach(i => {
+      const key = `${i.category || ""}||${i.variety || ""}`;
+      if (!map[key]) {
+        map[key] = {
+          key,
+          category: i.category,
+          variety: i.variety,
+          color: i.color,
+          breeder: i.breeder,
+          timing: i.timing,
+          status: i.status,
+          vigor: i.vigor,
+          flowerWeek: i.flowerWeek,
+          totalQty: 0,
+          totalCost: 0,
+          locations: [],
+          shipWeeks: new Set(),
+          confirmed: 0,
+          unconfirmed: 0,
+        };
+      }
+      map[key].totalQty += parseFloat(i.qty) || 0;
+      map[key].totalCost += parseFloat(i.cost) || 0;
+      map[key].locations.push(i);
+      if (i.shipWeek) map[key].shipWeeks.add(i.shipWeek);
+      if (i.orderNumber) map[key].confirmed++;
+      else map[key].unconfirmed++;
+    });
+    return Object.values(map).sort((a, b) => b.totalQty - a.totalQty);
+  }, [filtered]);
+
+  const totals = useMemo(() => ({
+    qty: consolidated.reduce((s, c) => s + c.totalQty, 0),
+    cost: consolidated.reduce((s, c) => s + c.totalCost, 0),
+    unconfirmedLines: filtered.filter(i => !i.orderNumber).length,
+  }), [consolidated, filtered]);
 
   return (
     <div>
       <div style={{ ...card, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
         <input value={searchQ} onChange={e => setSearchQ(e.target.value)} placeholder="Search variety, location, breeder..."
-          style={{ ...IS(!!searchQ), maxWidth: 280, fontSize: 14 }} />
+          style={{ ...IS(!!searchQ), maxWidth: 240, fontSize: 14 }} />
         <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)}
           style={{ ...IS(false), width: "auto", fontSize: 13 }}>
-          <option value="all">All Categories</option>
+          <option value="all">All Items</option>
           {categories.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
         <select value={colorFilter} onChange={e => setColorFilter(e.target.value)}
@@ -349,49 +428,94 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
           <option value="all">All Weeks</option>
           {weeks.map(w => <option key={w} value={w}>{w}</option>)}
         </select>
-        <div style={{ marginLeft: "auto", fontSize: 12, color: "#7a8c74" }}>
-          {filtered.length} of {items.length}
+        <select value={timingFilter} onChange={e => setTimingFilter(e.target.value)}
+          style={{ ...IS(false), width: "auto", fontSize: 13 }}>
+          <option value="all">All Response Times</option>
+          {timings.map(t => <option key={t} value={t}>{t}</option>)}
+        </select>
+        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
+          style={{ ...IS(false), width: "auto", fontSize: 13 }}>
+          <option value="all">All Status</option>
+          <option value="confirmed">Confirmed Only</option>
+          <option value="unconfirmed">Unconfirmed Only</option>
+        </select>
+        <div style={{ marginLeft: "auto", fontSize: 12, color: "#7a8c74", display: "flex", gap: 16 }}>
+          <span><strong>{consolidated.length}</strong> varieties</span>
+          <span><strong>{fmtN(totals.qty)}</strong> liners</span>
+          <span style={{ color: "#4a7a35" }}><strong>{fmt$(totals.cost)}</strong></span>
+          {totals.unconfirmedLines > 0 && <span style={{ color: "#d94f3d", fontWeight: 700 }}>⚠ {totals.unconfirmedLines} unconfirmed</span>}
         </div>
       </div>
 
-      <div style={{ background: "#fff", borderRadius: 14, border: "1.5px solid #e0ead8", overflow: "hidden", overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 900 }}>
-          <thead>
-            <tr style={{ background: "#fafcf8", borderBottom: "2px solid #e0ead8" }}>
-              <th style={{ padding: "10px", textAlign: "left", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Category</th>
-              <th style={{ padding: "10px", textAlign: "left", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Variety</th>
-              <th style={{ padding: "10px", textAlign: "left", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Color</th>
-              <th style={{ padding: "10px", textAlign: "left", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Location</th>
-              <th style={{ padding: "10px", textAlign: "left", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Ship Wk</th>
-              <th style={{ padding: "10px", textAlign: "right", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Qty</th>
-              <th style={{ padding: "10px", textAlign: "right", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Cost</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.slice(0, 200).map((i, idx) => (
-              <tr key={i.id} style={{ borderBottom: "1px solid #f0f5ee", background: idx % 2 === 0 ? "#fff" : "#fafcf8" }}>
-                <td style={{ padding: "8px 10px", fontSize: 11, color: "#7a8c74" }}>{i.category}</td>
-                <td style={{ padding: "8px 10px", fontSize: 13, fontWeight: 700, color: "#1e2d1a" }}>{i.variety}</td>
-                <td style={{ padding: "8px 10px", fontSize: 12 }}>
-                  {i.color && (
+      <div style={{ background: "#fff", borderRadius: 14, border: "1.5px solid #e0ead8", overflow: "hidden" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "30px 1fr 100px 80px 90px 70px 90px 90px 110px", padding: "12px 16px", background: "#fafcf8", borderBottom: "2px solid #e0ead8", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5 }}>
+          <div></div>
+          <div>Variety</div>
+          <div>Color</div>
+          <div>Timing</div>
+          <div>Status</div>
+          <div style={{ textAlign: "center" }}>Locations</div>
+          <div style={{ textAlign: "right" }}>Total Qty</div>
+          <div style={{ textAlign: "right" }}>Total Cost</div>
+          <div style={{ textAlign: "center" }}>Order Status</div>
+        </div>
+        {consolidated.map((c, idx) => {
+          const isOpen = expandedKey === c.key;
+          const allConfirmed = c.unconfirmed === 0;
+          const noneConfirmed = c.confirmed === 0;
+          return (
+            <div key={c.key}>
+              <div onClick={() => setExpandedKey(isOpen ? null : c.key)}
+                style={{ display: "grid", gridTemplateColumns: "30px 1fr 100px 80px 90px 70px 90px 90px 110px", padding: "10px 16px", borderBottom: "1px solid #f0f5ee", cursor: "pointer", alignItems: "center", background: idx % 2 === 0 ? "#fff" : "#fafcf8" }}>
+                <div style={{ color: "#7a8c74", fontSize: 14 }}>{isOpen ? "▼" : "▶"}</div>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: "#1e2d1a" }}>{c.variety}</div>
+                  <div style={{ fontSize: 10, color: "#aabba0" }}>{c.category} • {c.breeder}</div>
+                </div>
+                <div style={{ fontSize: 11 }}>
+                  {c.color && (
                     <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                      <span style={{ width: 12, height: 12, borderRadius: 3, background: COLOR_PALETTE[i.color] || "#7a8c74" }}></span>
-                      <span style={{ color: "#1e2d1a" }}>{i.color}</span>
+                      <span style={{ width: 12, height: 12, borderRadius: 3, background: COLOR_PALETTE[c.color] || "#7a8c74" }}></span>
+                      <span style={{ color: "#1e2d1a" }}>{c.color}</span>
                     </span>
                   )}
-                </td>
-                <td style={{ padding: "8px 10px", fontSize: 11, color: "#7a8c74" }}>{i.location}</td>
-                <td style={{ padding: "8px 10px", fontSize: 11, color: "#c8791a", fontWeight: 700 }}>{i.shipWeek}</td>
-                <td style={{ padding: "8px 10px", textAlign: "right", fontSize: 13, fontVariantNumeric: "tabular-nums" }}>{fmtN(i.qty)}</td>
-                <td style={{ padding: "8px 10px", textAlign: "right", fontSize: 12, color: "#4a7a35", fontWeight: 600 }}>{i.cost > 0 ? fmt$(i.cost) : ""}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {filtered.length > 200 && (
-          <div style={{ padding: "12px", textAlign: "center", fontSize: 12, color: "#aabba0", background: "#fafcf8" }}>
-            Showing first 200 of {filtered.length} — refine filters to see more
-          </div>
+                </div>
+                <div style={{ fontSize: 10, color: "#7a8c74" }}>{c.timing || ""}</div>
+                <div style={{ fontSize: 10, color: c.status === "TOP PERFORMER" ? "#4a7a35" : "#7a8c74", fontWeight: c.status === "TOP PERFORMER" ? 700 : 400 }}>{c.status || ""}</div>
+                <div style={{ textAlign: "center", fontSize: 12, color: "#7a8c74" }}>{c.locations.length}</div>
+                <div style={{ textAlign: "right", fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{fmtN(c.totalQty)}</div>
+                <div style={{ textAlign: "right", fontSize: 12, color: "#4a7a35", fontWeight: 600 }}>{c.totalCost > 0 ? fmt$(c.totalCost) : "—"}</div>
+                <div style={{ textAlign: "center", fontSize: 10 }}>
+                  {allConfirmed ? <span style={{ background: "#e8f5e0", color: "#4a7a35", borderRadius: 10, padding: "2px 8px", fontWeight: 700 }}>✓ All</span>
+                    : noneConfirmed ? <span style={{ background: "#fde8e8", color: "#d94f3d", borderRadius: 10, padding: "2px 8px", fontWeight: 700 }}>⚠ None</span>
+                    : <span style={{ background: "#fff4e8", color: "#c8791a", borderRadius: 10, padding: "2px 8px", fontWeight: 700 }}>{c.confirmed}/{c.locations.length}</span>}
+                </div>
+              </div>
+
+              {/* Drill-down rows */}
+              {isOpen && (
+                <div style={{ background: "#fafcf8", padding: "8px 16px 14px 56px", borderBottom: "1px solid #e0ead8" }}>
+                  {c.locations.map(loc => (
+                    <div key={loc.id} style={{ display: "grid", gridTemplateColumns: "150px 60px 90px 90px 90px 1fr 90px 90px", padding: "6px 0", borderBottom: "1px solid #f0f5ee", alignItems: "center", fontSize: 11 }}>
+                      <div style={{ fontWeight: 700, color: "#1e2d1a" }}>{loc.location}</div>
+                      <div style={{ color: "#7a8c74" }}>{loc.rowId}</div>
+                      <div style={{ color: "#7a8c74" }}>{loc.direction}</div>
+                      <div style={{ color: "#c8791a", fontWeight: 700 }}>Ship: {loc.shipWeek}</div>
+                      <div style={{ color: "#7a8c74" }}>Plant: {loc.plantWeek}</div>
+                      <div style={{ color: loc.orderNumber ? "#4a7a35" : "#d94f3d", fontWeight: 700 }}>
+                        {loc.orderNumber ? `Order #${loc.orderNumber}` : "⚠ Not confirmed"}
+                      </div>
+                      <div style={{ textAlign: "right", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{fmtN(loc.qty)}</div>
+                      <div style={{ textAlign: "right", color: "#4a7a35" }}>{loc.cost > 0 ? fmt$(loc.cost) : "—"}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {consolidated.length === 0 && (
+          <div style={{ padding: "40px", textAlign: "center", color: "#7a8c74" }}>No items match these filters</div>
         )}
       </div>
     </div>
