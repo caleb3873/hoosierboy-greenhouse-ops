@@ -387,10 +387,12 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
 
   // Consolidate by category + variety + plant week, with tricolor detection
   const consolidated = useMemo(() => {
-    // First pass: identify tricolor groups (3+ varieties sharing row+category+plant_week)
+    // First pass: identify tricolor groups — ONLY for 12" mums
+    // (3+ varieties sharing the same row + plant_week within 12" mum category)
     const rowGroups = {};
     filtered.forEach(i => {
       if (!i.rowId) return;
+      if (!(i.category || "").includes('12"')) return; // tricolor only for 12" mums
       const k = `${i.rowId}||${i.category || ""}||${i.plantWeek || ""}`;
       if (!rowGroups[k]) rowGroups[k] = new Set();
       rowGroups[k].add(i.variety);
@@ -578,11 +580,12 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
       </div>
 
       <div style={{ background: "#fff", borderRadius: 14, border: "1.5px solid #e0ead8", overflow: "hidden" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "30px 1fr 90px 100px 1.4fr 90px 90px 100px", padding: "12px 16px", background: "#fafcf8", borderBottom: "2px solid #e0ead8", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "30px 1fr 90px 100px 100px 1.4fr 90px 90px 100px", padding: "12px 16px", background: "#fafcf8", borderBottom: "2px solid #e0ead8", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5 }}>
           <div></div>
-          <div>Variety / Plant Wk</div>
+          <div>Variety</div>
           <div>Color</div>
-          <div>Ship</div>
+          <div>Ship Week</div>
+          <div>Plant Week</div>
           <div>Locations</div>
           <div style={{ textAlign: "right" }}>Qty</div>
           <div style={{ textAlign: "right" }}>Cost</div>
@@ -595,7 +598,7 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
           return (
             <div key={c.key}>
               <div onClick={() => setExpandedKey(isOpen ? null : c.key)}
-                style={{ display: "grid", gridTemplateColumns: "30px 1fr 90px 100px 1.4fr 90px 90px 100px", padding: "10px 16px", borderBottom: "1px solid #f0f5ee", cursor: "pointer", alignItems: "center", background: idx % 2 === 0 ? "#fff" : "#fafcf8" }}>
+                style={{ display: "grid", gridTemplateColumns: "30px 1fr 90px 100px 100px 1.4fr 90px 90px 100px", padding: "10px 16px", borderBottom: "1px solid #f0f5ee", cursor: "pointer", alignItems: "center", background: idx % 2 === 0 ? "#fff" : "#fafcf8" }}>
                 <div style={{ color: "#7a8c74", fontSize: 14 }}>{isOpen ? "▼" : "▶"}</div>
                 <div>
                   <div style={{ fontSize: 13, fontWeight: 800, color: "#1e2d1a" }}>
@@ -606,7 +609,7 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
                       </span>
                     )}
                   </div>
-                  <div style={{ fontSize: 10, color: "#aabba0" }}>{c.category} • {c.breeder} {c.plantWeek && `• Plant ${c.plantWeek}`}</div>
+                  <div style={{ fontSize: 10, color: "#aabba0" }}>{c.category} • {c.breeder}</div>
                 </div>
                 <div style={{ fontSize: 11 }}>
                   {c.color && (
@@ -617,6 +620,7 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
                   )}
                 </div>
                 <div style={{ fontSize: 10, color: "#c8791a", fontWeight: 700 }}>{[...c.shipWeeks].sort().join(", ")}</div>
+                <div style={{ fontSize: 10, color: "#4a90d9", fontWeight: 700 }}>{c.plantWeek || ""}</div>
                 <div style={{ fontSize: 10, color: "#7a8c74", lineHeight: 1.4 }}>
                   {[...new Set(c.locations.map(l => l.location).filter(Boolean))].slice(0, 4).join(", ")}
                   {[...new Set(c.locations.map(l => l.location).filter(Boolean))].length > 4 && ` +${[...new Set(c.locations.map(l => l.location).filter(Boolean))].length - 4} more`}
