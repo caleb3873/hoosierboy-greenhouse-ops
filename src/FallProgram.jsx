@@ -502,12 +502,11 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
       </div>
 
       <div style={{ background: "#fff", borderRadius: 14, border: "1.5px solid #e0ead8", overflow: "hidden" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "30px 1fr 100px 80px 90px 70px 90px 90px 110px", padding: "12px 16px", background: "#fafcf8", borderBottom: "2px solid #e0ead8", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "30px 1fr 100px 130px 70px 90px 90px 110px", padding: "12px 16px", background: "#fafcf8", borderBottom: "2px solid #e0ead8", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5 }}>
           <div></div>
           <div>Variety</div>
           <div>Color</div>
-          <div>Timing</div>
-          <div>Status</div>
+          <div>Ship Weeks</div>
           <div style={{ textAlign: "center" }}>Locations</div>
           <div style={{ textAlign: "right" }}>Total Qty</div>
           <div style={{ textAlign: "right" }}>Total Cost</div>
@@ -520,7 +519,7 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
           return (
             <div key={c.key}>
               <div onClick={() => setExpandedKey(isOpen ? null : c.key)}
-                style={{ display: "grid", gridTemplateColumns: "30px 1fr 100px 80px 90px 70px 90px 90px 110px", padding: "10px 16px", borderBottom: "1px solid #f0f5ee", cursor: "pointer", alignItems: "center", background: idx % 2 === 0 ? "#fff" : "#fafcf8" }}>
+                style={{ display: "grid", gridTemplateColumns: "30px 1fr 100px 130px 70px 90px 90px 110px", padding: "10px 16px", borderBottom: "1px solid #f0f5ee", cursor: "pointer", alignItems: "center", background: idx % 2 === 0 ? "#fff" : "#fafcf8" }}>
                 <div style={{ color: "#7a8c74", fontSize: 14 }}>{isOpen ? "▼" : "▶"}</div>
                 <div>
                   <div style={{ fontSize: 13, fontWeight: 800, color: "#1e2d1a" }}>{c.variety}</div>
@@ -534,8 +533,7 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
                     </span>
                   )}
                 </div>
-                <div style={{ fontSize: 10, color: "#7a8c74" }}>{c.timing || ""}</div>
-                <div style={{ fontSize: 10, color: c.status === "TOP PERFORMER" ? "#4a7a35" : "#7a8c74", fontWeight: c.status === "TOP PERFORMER" ? 700 : 400 }}>{c.status || ""}</div>
+                <div style={{ fontSize: 10, color: "#c8791a", fontWeight: 700 }}>{[...c.shipWeeks].sort().join(", ")}</div>
                 <div style={{ textAlign: "center", fontSize: 12, color: "#7a8c74" }}>{c.locations.length}</div>
                 <div style={{ textAlign: "right", fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{fmtN(c.totalQty)}</div>
                 <div style={{ textAlign: "right", fontSize: 12, color: "#4a7a35", fontWeight: 600 }}>{c.totalCost > 0 ? fmt$(c.totalCost) : "—"}</div>
@@ -550,10 +548,9 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
               {isOpen && (
                 <div style={{ background: "#fafcf8", padding: "10px 16px 14px 56px", borderBottom: "1px solid #e0ead8" }}>
                   <div style={{ display: "flex", gap: 16, marginBottom: 10, padding: "6px 10px", background: "#fff", borderRadius: 8, fontSize: 11 }}>
-                    <div><span style={{ color: "#aabba0" }}>Response Time:</span> <strong style={{ color: "#1e2d1a" }}>{c.timing || "—"}</strong></div>
-                    <div><span style={{ color: "#aabba0" }}>Status:</span> <strong style={{ color: "#1e2d1a" }}>{c.status || "—"}</strong></div>
                     <div><span style={{ color: "#aabba0" }}>Vigor:</span> <strong style={{ color: "#1e2d1a" }}>{c.vigor || "—"}</strong></div>
                     <div><span style={{ color: "#aabba0" }}>Flower Wk:</span> <strong style={{ color: "#1e2d1a" }}>{c.flowerWeek || "—"}</strong></div>
+                    <div><span style={{ color: "#aabba0" }}>Breeder:</span> <strong style={{ color: "#1e2d1a" }}>{c.breeder || "—"}</strong></div>
                   </div>
                   {c.locations.map(loc => (
                     <div key={loc.id} style={{ display: "grid", gridTemplateColumns: "150px 60px 90px 100px 100px 1fr 90px 90px", padding: "6px 0", borderBottom: "1px solid #f0f5ee", alignItems: "center", fontSize: 11 }}>
