@@ -1525,6 +1525,7 @@ function ContainerLibrary() {
   }
   const [kindFilter, setKindFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
+  const [supplierFilter, setSupplierFilter] = useState("all");
   const [search,     setSearch   ] = useState("");
 
   async function save(c) {
@@ -1565,11 +1566,17 @@ function ContainerLibrary() {
   const finished     = containers.filter(c => c.kind === "finished");
   const propagation  = containers.filter(c => c.kind === "propagation");
 
+  const allSuppliers = [...new Set(containers.flatMap(c => [c.primarySupplier, c.supplier, c.supplier2]).filter(Boolean))].sort();
+
   const filtered = containers.filter(c => {
     if (kindFilter !== "all" && c.kind !== kindFilter) return false;
     if (typeFilter !== "all") {
       const t = c.kind === "finished" ? c.type : c.trayType;
       if (t !== typeFilter) return false;
+    }
+    if (supplierFilter !== "all") {
+      const supps = [c.primarySupplier, c.supplier, c.supplier2].filter(Boolean);
+      if (!supps.includes(supplierFilter)) return false;
     }
     if (search && !c.name.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
@@ -1622,6 +1629,22 @@ function ContainerLibrary() {
                 {[["all","All"],["finished","🛒 Finished"],["propagation","🌱 Propagation"]].map(([id, label]) => (
                   <button key={id} onClick={() => setKindFilter(id)} style={{ background: kindFilter === id ? "#1e2d1a" : "#fff", color: kindFilter === id ? "#c8e6b8" : "#7a8c74", border: `1.5px solid ${kindFilter === id ? "#1e2d1a" : "#c8d8c0"}`, borderRadius: 20, padding: "6px 14px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{label}</button>
                 ))}
+              </div>
+              {allSuppliers.length > 0 && (
+                <select value={supplierFilter} onChange={e => setSupplierFilter(e.target.value)}
+                  style={{ ...IS(false), width: "auto", minWidth: 160, flexShrink: 0 }}>
+                  <option value="all">All Suppliers</option>
+                  {allSuppliers.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              )}
+              {(supplierFilter !== "all" || search || kindFilter !== "all") && (
+                <button onClick={() => { setSupplierFilter("all"); setSearch(""); setKindFilter("all"); }}
+                  style={{ background: "none", color: "#7a8c74", border: "1.5px solid #c8d8c0", borderRadius: 8, padding: "6px 12px", fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>
+                  Clear filters
+                </button>
+              )}
+              <div style={{ marginLeft: "auto", fontSize: 12, color: "#7a8c74" }}>
+                {filtered.length} of {containers.length}
               </div>
             </div>
           )}
