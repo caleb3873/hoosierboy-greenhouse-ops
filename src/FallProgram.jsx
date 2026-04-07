@@ -25,7 +25,49 @@ const SECTIONS = [
   { id: "color", label: "Color Mix" },
   { id: "schedule", label: "Schedule" },
   { id: "sowing", label: "Sowing & Prop" },
+  { id: "cost", label: "Cost Estimate" },
 ];
+
+// Volume conversion to cu ft
+function volumeToCuFt(val, unit) {
+  if (!val) return 0;
+  const v = Number(val);
+  if (unit === "cu ft") return v;
+  if (unit === "gal")   return v * 0.134;
+  if (unit === "qt")    return v * 0.0334;
+  if (unit === "L")     return v * 0.0353;
+  return 0;
+}
+
+// Map category to a container (which pot to use for which item type)
+function pickContainerForCategory(category, containers) {
+  if (!category) return null;
+  const c = category.toUpperCase();
+  // Mum category → matching pot
+  if (c.includes('9"') && c.includes('MUM'))   return containers.find(x => x.sku === "XAM09001");
+  if (c.includes('9"') && c.includes('ASTER')) return containers.find(x => x.sku === "XAM09001");
+  if (c.includes('12"') && c.includes('MUM'))  return containers.find(x => x.sku === "PA.12000" && (x.name || "").includes("Cl"));
+  if (c.includes('14"'))                       return containers.find(x => x.sku === "PA.14000");
+  return null;
+}
+
+// Pick the default soil mix (BM5HP Compressed)
+function pickDefaultSoil(soilMixes) {
+  return soilMixes.find(s => (s.name || "").toLowerCase().includes("bm5hp compressed"))
+      || soilMixes.find(s => (s.name || "").toLowerCase().includes("bm5 hp"));
+}
+
+function soilCostPerCuFt(mix) {
+  if (!mix) return 0;
+  const fluffed = parseFloat(mix.fluffedVolume);
+  const cost = parseFloat(mix.costPerBag);
+  if (fluffed > 0) return cost / fluffed;
+  if (mix.bagSize && mix.bagUnit) {
+    const cf = volumeToCuFt(mix.bagSize, mix.bagUnit);
+    if (cf > 0) return cost / cf;
+  }
+  return 0;
+}
 
 // Compute effective sow week from ship_week + plant_week
 // "SOW 4 WKS BEFORE" + "WEEK 25" → "WEEK 21"
@@ -125,6 +167,7 @@ export default function FallProgram() {
           {section === "color" && <ColorTab items={yearItems} />}
           {section === "schedule" && <ScheduleTab items={yearItems} />}
           {section === "sowing" && <SowingTab items={yearItems} />}
+          {section === "cost" && <CostTab items={yearItems} containers={containers} soilMixes={soilMixes} />}
         </>
       )}
     </div>
@@ -868,3 +911,121 @@ function SowingTab({ items }) {
     </div>
   );
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ── COST ESTIMATE TAB ────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+function CostTab({ items, containers, soilMixes }) {
+  const defaultSoil = pickDefaultSoil(soilMixes);
+  const soilCpf = soilCostPerCuFt(defaultSoil);
+
+  // Compute per-row cost: liner + soil + pot
+  const costRows = useMemo(() => {
+    const map = {};
+    items.forEach(i => {
+      const key = `${i.category || "Other"}`;
+      const container = pickContainerForCategory(i.category, containers);
+      const potCost = container ? parseFloat(container.costPerUnit) || 0 : 0;
+      const potCuFt = container ? volumeToCuFt(container.volumeVal, container.volumeUnit) : 0;
+      const soilCostPerPot = potCuFt * soilCpf;
+      const linerCostPerPot = (parseFloat(i.qty) || 0) > 0 ? (parseFloat(i.cost) || 0) / parseFloat(i.qty) : 0;
+
+      if (!map[key]) {
+        map[key] = {
+          category: i.category,
+          container,
+          potCost,
+          potCuFt,
+          soilCostPerPot,
+          linerCostPerPot: 0,
+          totalQty: 0,
+          totalLinerCost: 0,
+          rows: 0,
+        };
+      }
+      const e = map[key];
+      e.totalQty += parseFloat(i.qty) || 0;
+      e.totalLinerCost += parseFloat(i.cost) || 0;
+      e.rows++;
+    });
+    // Compute averages
+    Object.values(map).forEach(e => {
+      e.linerCostPerPot = e.totalQty > 0 ? e.totalLinerCost / e.totalQty : 0;
+      e.totalCostPerPot = e.linerCostPerPot + e.soilCostPerPot + e.potCost;
+      e.totalProductionCost = e.totalCostPerPot * e.totalQty;
+      e.totalSoilCost = e.soilCostPerPot * e.totalQty;
+      e.totalPotCost = e.potCost * e.totalQty;
+    });
+    return Object.values(map).sort((a, b) => b.totalProductionCost - a.totalProductionCost);
+  }, [items, containers, soilCpf]);
+
+  const grand = useMemo(() => ({
+    qty: costRows.reduce((s, r) => s + r.totalQty, 0),
+    liner: costRows.reduce((s, r) => s + r.totalLinerCost, 0),
+    soil: costRows.reduce((s, r) => s + r.totalSoilCost, 0),
+    pot: costRows.reduce((s, r) => s + r.totalPotCost, 0),
+    total: costRows.reduce((s, r) => s + r.totalProductionCost, 0),
+  }), [costRows]);
+
+  const KPI = ({ label, value, color, sub }) => (
+    <div style={{ ...card, padding: "16px 20px", margin: 0 }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .7 }}>{label}</div>
+      <div style={{ fontSize: 24, fontWeight: 800, color: color || "#1e2d1a", marginTop: 4 }}>{value}</div>
+      {sub && <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2 }}>{sub}</div>}
+    </div>
+  );
+
+  return (
+    <div>
+      <div style={{ background: "#f0f8eb", border: "1.5px solid #c8e0b8", borderRadius: 10, padding: "12px 16px", marginBottom: 16, fontSize: 12, color: "#2e5c1e" }}>
+        Soil cost based on <strong>{defaultSoil?.name || "BM5HP Compressed (not found)"}</strong>
+        {defaultSoil && ` — $${soilCpf.toFixed(2)}/cu ft (fluffed ${defaultSoil.fluffedVolume} cu ft per ${defaultSoil.bagSize} ${defaultSoil.bagUnit} bag at $${defaultSoil.costPerBag})`}
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 16 }}>
+        <KPI label="Total Items" value={fmtN(grand.qty)} color="#7fb069" sub="finished pots" />
+        <KPI label="Liner Cost" value={fmt$(grand.liner)} color="#4a90d9" />
+        <KPI label="Soil Cost" value={fmt$(grand.soil)} color="#8e44ad" />
+        <KPI label="Pot Cost" value={fmt$(grand.pot)} color="#c8791a" />
+        <KPI label="Total Production Cost" value={fmt$(grand.total)} color="#4a7a35" />
+      </div>
+
+      <div style={{ background: "#fff", borderRadius: 14, border: "1.5px solid #e0ead8", overflow: "hidden", overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 900 }}>
+          <thead>
+            <tr style={{ background: "#fafcf8", borderBottom: "2px solid #e0ead8" }}>
+              <th style={{ padding: "10px", textAlign: "left", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Category</th>
+              <th style={{ padding: "10px", textAlign: "left", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Container</th>
+              <th style={{ padding: "10px", textAlign: "right", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Pot $/ea</th>
+              <th style={{ padding: "10px", textAlign: "right", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Soil cu ft</th>
+              <th style={{ padding: "10px", textAlign: "right", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Soil $/ea</th>
+              <th style={{ padding: "10px", textAlign: "right", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Liner $/ea</th>
+              <th style={{ padding: "10px", textAlign: "right", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Cost / pot</th>
+              <th style={{ padding: "10px", textAlign: "right", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Qty</th>
+              <th style={{ padding: "10px", textAlign: "right", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {costRows.map((r, idx) => (
+              <tr key={r.category} style={{ borderBottom: "1px solid #f0f5ee", background: idx % 2 === 0 ? "#fff" : "#fafcf8" }}>
+                <td style={{ padding: "10px", fontSize: 13, fontWeight: 700, color: "#1e2d1a" }}>{r.category}</td>
+                <td style={{ padding: "10px", fontSize: 11, color: r.container ? "#7a8c74" : "#d94f3d" }}>
+                  {r.container ? r.container.name : "⚠ No container assigned"}
+                </td>
+                <td style={{ padding: "10px", textAlign: "right", fontSize: 12, color: "#c8791a", fontVariantNumeric: "tabular-nums" }}>{r.potCost > 0 ? fmt$2(r.potCost) : "—"}</td>
+                <td style={{ padding: "10px", textAlign: "right", fontSize: 12, color: "#7a8c74", fontVariantNumeric: "tabular-nums" }}>{r.potCuFt > 0 ? r.potCuFt.toFixed(3) : "—"}</td>
+                <td style={{ padding: "10px", textAlign: "right", fontSize: 12, color: "#8e44ad", fontVariantNumeric: "tabular-nums" }}>{r.soilCostPerPot > 0 ? fmt$2(r.soilCostPerPot) : "—"}</td>
+                <td style={{ padding: "10px", textAlign: "right", fontSize: 12, color: "#4a90d9", fontVariantNumeric: "tabular-nums" }}>{r.linerCostPerPot > 0 ? fmt$2(r.linerCostPerPot) : "—"}</td>
+                <td style={{ padding: "10px", textAlign: "right", fontSize: 13, color: "#4a7a35", fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{r.totalCostPerPot > 0 ? fmt$2(r.totalCostPerPot) : "—"}</td>
+                <td style={{ padding: "10px", textAlign: "right", fontSize: 13, fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{fmtN(r.totalQty)}</td>
+                <td style={{ padding: "10px", textAlign: "right", fontSize: 13, color: "#1e2d1a", fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{fmt$(r.totalProductionCost)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+const fmt$2 = (n) => "$" + Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
