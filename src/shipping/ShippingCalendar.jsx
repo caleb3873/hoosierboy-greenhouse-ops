@@ -418,20 +418,27 @@ function CalendarCell({ dateISO, slot, items, capacity, conflicts, teams, cartEl
 
 // ── Delivery chip (draggable) ───────────────────────────────────────────────
 function DeliveryChip({ delivery: d, team, conflict, cartEligibleIds, setDragging, tapSelected, setTapSelected, onUnschedule }) {
+  const [expanded, setExpanded] = useState(false);
   const pr = PRIORITY[d.priority || "normal"];
   const cust = d.customerSnapshot || {};
   const isSelected = tapSelected?.id === d.id;
   const name = cust.company_name || cust.companyName || "—";
   const carts = d.cartCount || 0;
-  // Check live customer list first (fresh), fall back to snapshot
   const cartEligible = (cartEligibleIds && cartEligibleIds.has(d.customerId)) || cust.allow_carts || cust.allowCarts;
+  const addr = [cust.address1, cust.city, cust.state, cust.zip].filter(Boolean).join(", ");
+  const phone = cust.phone;
+  const isCOD = (cust.terms || "").toUpperCase().includes("C.O.D");
 
   return (
     <div
       draggable
       onDragStart={() => setDragging(d)}
       onDragEnd={() => setDragging(null)}
-      onClick={(e) => { e.stopPropagation(); setTapSelected(isSelected ? null : d); }}
+      onClick={(e) => {
+        e.stopPropagation();
+        if (tapSelected) setTapSelected(isSelected ? null : d);
+        else setExpanded(v => !v);
+      }}
       style={{
         background: isSelected ? DARK : "#fff",
         color: isSelected ? CREAM : DARK,
@@ -439,32 +446,52 @@ function DeliveryChip({ delivery: d, team, conflict, cartEligibleIds, setDraggin
         borderLeft: `4px solid ${team?.color || pr.bg}`,
         borderRadius: 6, padding: "5px 7px",
         cursor: "grab",
-        display: "flex", alignItems: "flex-start", gap: 4,
         overflow: "hidden",
       }}
-      title={`${name} • ${fmtMoney(d.orderValueCents)}${carts ? ` • ${carts} carts` : ''}${cartEligible ? ' • cart-eligible' : ''}${d.truckId ? ' • has truck' : ''}`}>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 11, fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", lineHeight: 1.2, display: "flex", alignItems: "center", gap: 4 }}>
-          {cartEligible && (
-            <span title="Carts allowed at this customer" style={{
-              background: "#4a7a35", color: "#fff", borderRadius: 4,
-              padding: "1px 4px", fontSize: 9, fontWeight: 800, flexShrink: 0,
-            }}>🛒</span>
-          )}
-          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</span>
+      title={`${name} • ${fmtMoney(d.orderValueCents)}${carts ? ` • ${carts} carts` : ''}${cartEligible ? ' • cart-eligible' : ''}`}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 4 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 11, fontWeight: 800, lineHeight: 1.2, display: "flex", alignItems: "center", gap: 4 }}>
+            {cartEligible && (
+              <span title="Carts allowed" style={{
+                background: "#4a7a35", color: "#fff", borderRadius: 4,
+                padding: "1px 4px", fontSize: 9, fontWeight: 800, flexShrink: 0,
+              }}>🛒</span>
+            )}
+            {isCOD && (
+              <span style={{ background: "#c03030", color: "#fff", borderRadius: 4, padding: "1px 4px", fontSize: 9, fontWeight: 800, flexShrink: 0 }}>COD</span>
+            )}
+            <span style={{ overflow: "hidden", textOverflow: expanded ? "clip" : "ellipsis", whiteSpace: expanded ? "normal" : "nowrap", wordBreak: expanded ? "break-word" : "normal" }}>{name}</span>
+          </div>
+          <div style={{ fontSize: 10, fontWeight: 600, opacity: 0.85, display: "flex", gap: 6, flexWrap: "wrap", marginTop: 1 }}>
+            {d.orderValueCents > 0 && <span>{fmtMoney(d.orderValueCents)}</span>}
+            {carts > 0 && <span style={{ color: isSelected ? GREEN : "#4a7a35", fontWeight: 800 }}>🛒 {carts}</span>}
+            {d.deliveryTime && !/^(AM|PM)$/.test(d.deliveryTime) && <span>🕒 {d.deliveryTime}</span>}
+          </div>
         </div>
-        <div style={{ fontSize: 10, fontWeight: 600, opacity: 0.85, display: "flex", gap: 6, flexWrap: "wrap", marginTop: 1 }}>
-          {d.orderValueCents > 0 && <span>{fmtMoney(d.orderValueCents)}</span>}
-          {carts > 0 && <span style={{ color: isSelected ? GREEN : "#4a7a35", fontWeight: 800 }}>🛒 {carts} dropping</span>}
-        </div>
+        {onUnschedule && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onUnschedule(d); }}
+            title="Move back to unscheduled"
+            style={{ background: "none", border: "none", color: isSelected ? CREAM : "#7a8c74", fontSize: 12, cursor: "pointer", padding: 0, lineHeight: 1, flexShrink: 0 }}>
+            ↩
+          </button>
+        )}
       </div>
-      {onUnschedule && (
-        <button
-          onClick={(e) => { e.stopPropagation(); onUnschedule(d); }}
-          title="Move back to unscheduled"
-          style={{ background: "none", border: "none", color: isSelected ? CREAM : "#7a8c74", fontSize: 12, cursor: "pointer", padding: 0, lineHeight: 1, flexShrink: 0 }}>
-          ↩
-        </button>
+
+      {/* Expanded detail section */}
+      {expanded && (
+        <div style={{ marginTop: 6, paddingTop: 6, borderTop: `1px solid ${isSelected ? GREEN + "66" : "#e0ead8"}`, fontSize: 10, lineHeight: 1.5 }}
+          onClick={e => e.stopPropagation()}>
+          {addr && <div><b>📍</b> {addr}</div>}
+          {phone && <div><b>📞</b> <a href={`tel:${phone}`} style={{ color: "inherit", textDecoration: "underline" }}>{phone}</a></div>}
+          {Array.isArray(d.orderNumbers) && d.orderNumbers.length > 0 && <div><b>#</b> {d.orderNumbers.join(", ")}</div>}
+          {d.miles != null && <div><b>🧭</b> {d.miles} mi / {d.driveMinutes || "?"} min</div>}
+          {d.notes && <div style={{ fontStyle: "italic", marginTop: 3 }}>📝 {d.notes}</div>}
+          {d.status === "delivered" && d.deliveredAt && (
+            <div style={{ color: "#4a7a35", fontWeight: 800, marginTop: 3 }}>✓ Delivered</div>
+          )}
+        </div>
       )}
     </div>
   );
