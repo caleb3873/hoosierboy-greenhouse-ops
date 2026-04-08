@@ -50,7 +50,7 @@ function toSnake(obj) {
 
 // ── GENERIC TABLE HOOK ────────────────────────────────────────────────────────
 // useTable("crop_runs") → { rows, loading, error, insert, update, remove, refresh }
-export function useTable(tableName, { orderBy = "created_at", localKey = null } = {}) {
+export function useTable(tableName, { orderBy = "created_at", ascending = false, localKey = null } = {}) {
   const [rows, setRows]       = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState(null);
@@ -79,7 +79,7 @@ export function useTable(tableName, { orderBy = "created_at", localKey = null } 
       const { data, error: err } = await db
         .from(tableName)
         .select("*")
-        .order(orderBy, { ascending: false });
+        .order(orderBy, { ascending });
       if (err) throw err;
       if (mounted.current) setRows(toCamel(data || []));
     } catch (e) {
@@ -87,7 +87,7 @@ export function useTable(tableName, { orderBy = "created_at", localKey = null } 
     } finally {
       if (mounted.current) setLoading(false);
     }
-  }, [db, tableName, orderBy]);
+  }, [db, tableName, orderBy, ascending]);
 
   useEffect(() => {
     if (hasDb) refresh();
@@ -301,6 +301,9 @@ export const useHpSales          = () => useTable("hp_sales",          { orderBy
 export const useHpProductLines   = () => useTable("hp_product_lines",  { orderBy: "name",        localKey: "gh_hp_product_lines_v1" });
 export const useHpCultureGuides  = () => useTable("hp_culture_guides", { orderBy: "genus",       localKey: "gh_hp_culture_guides_v1" });
 export const useHpCompetitorPrices = () => useTable("hp_competitor_prices", { orderBy: "plant_name", localKey: "gh_hp_competitor_v1" });
+
+// ── SHIPPING ──────────────────────────────────────────────────────────────────
+export const useShippingCustomers = () => useTable("shipping_customers", { orderBy: "company_name", ascending: true, localKey: "gh_shipping_customers_v1" });
 
 // ── AUTH HELPERS ──────────────────────────────────────────────────────────────
 export async function sendPasswordReset(email) {

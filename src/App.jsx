@@ -27,6 +27,7 @@ import SoilCalculator      from "./SoilCalculator";
 import HouseplantAvailability from "./HouseplantAvailability";
 import OwnerDashboard       from "./OwnerDashboard";
 import FallProgram          from "./FallProgram";
+import ShippingCustomers    from "./shipping/ShippingCustomers";
 
 // ── PLANNER SHELL ─────────────────────────────────────────────────────────────
 // Nav grouped by category
@@ -76,6 +77,12 @@ const NAV_GROUPS = [
   },
   {
     id: "houseplants", label: "Houseplants", icon: "🌿", solo: true,
+  },
+  {
+    id: "shipping", label: "Shipping", icon: "🚚",
+    items: [
+      { id: "ship-customers", label: "Customers" },
+    ],
   },
 ];
 
@@ -206,6 +213,7 @@ function PlannerShell() {
         {page === "soil"       && <SoilCalculator />}
         {page === "fall"       && <FallProgram />}
         {page === "houseplants" && <HouseplantAvailability />}
+        {page === "ship-customers" && <ShippingCustomers />}
         {page === "owner" && isOwner && <OwnerDashboard />}
       </div>
     </div>
