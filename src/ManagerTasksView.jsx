@@ -445,11 +445,14 @@ function VoiceRecorderModal({ onSave, onCancel }) {
   const [isListening, setIsListening] = useState(false);
   const [error, setError] = useState("");
   const recognitionRef = useRef(null);
+  const textareaRef = useRef(null);
 
   useEffect(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      setError("Voice input not supported on this browser. Type your task below.");
+      // iOS Safari / PWA: fall back to the system keyboard dictation mic
+      setError("Tap the 🎤 on your keyboard to dictate, or type your task below.");
+      setTimeout(() => textareaRef.current?.focus(), 150);
       return;
     }
 
@@ -521,7 +524,7 @@ function VoiceRecorderModal({ onSave, onCancel }) {
 
         {error && <div style={{ background: "#fde8e8", color: "#d94f3d", padding: "10px 12px", borderRadius: 8, fontSize: 12, marginBottom: 12 }}>{error}</div>}
 
-        <textarea value={transcript} onChange={e => setTranscript(e.target.value)}
+        <textarea ref={textareaRef} value={transcript} onChange={e => setTranscript(e.target.value)}
           placeholder={isListening ? "Listening... speak now" : "Tap mic to dictate or type here"}
           style={{
             width: "100%", minHeight: 120, padding: "14px", borderRadius: 12,
@@ -551,14 +554,16 @@ function VoiceRecorderModal({ onSave, onCancel }) {
         </div>
 
         <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
-          <button onClick={toggleListening}
-            style={{
-              padding: "14px 18px", borderRadius: 12, border: "none",
-              background: isListening ? "#d94f3d" : "#7fb069", color: "#fff",
-              fontSize: 20, fontWeight: 800, cursor: "pointer", fontFamily: "inherit",
-            }}>
-            {isListening ? "⏸" : "🎤"}
-          </button>
+          {recognitionRef.current && (
+            <button onClick={toggleListening}
+              style={{
+                padding: "14px 18px", borderRadius: 12, border: "none",
+                background: isListening ? "#d94f3d" : "#7fb069", color: "#fff",
+                fontSize: 20, fontWeight: 800, cursor: "pointer", fontFamily: "inherit",
+              }}>
+              {isListening ? "⏸" : "🎤"}
+            </button>
+          )}
           <button onClick={save} disabled={!transcript.trim()}
             style={{
               flex: 1, padding: "14px 0", borderRadius: 12, border: "none",
