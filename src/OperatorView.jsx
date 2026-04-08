@@ -303,8 +303,8 @@ export default function OperatorView({ onSwitchMode }) {
         </div>
         {/* Drawer footer */}
         <div style={{ padding: "14px 20px", borderTop: "1px solid #2a3a2a" }}>
-          <button onClick={onSwitchMode} style={{ width: "100%", background: "#2a3a2a", border: "1px solid #3a4a3a", borderRadius: 8, padding: "10px 0", color: "#8a9a80", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
-            ← Switch to Planner
+          <button onClick={onSwitchMode} style={{ width: "100%", background: "#d94f3d", border: "none", borderRadius: 8, padding: "12px 0", color: "#fff", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+            Sign out
           </button>
         </div>
       </div>
@@ -329,9 +329,15 @@ export default function OperatorView({ onSwitchMode }) {
             </div>
           </div>
         </div>
-        <div style={{ textAlign: "right" }}>
-          <div style={{ fontSize: 11, color: "#6a8a5a" }}>Wk {CURRENT_WEEK}</div>
-          <div style={{ fontSize: 12, color: "#c8e6b8", fontWeight: 700 }}>{new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" })}</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 11, color: "#6a8a5a" }}>Wk {CURRENT_WEEK}</div>
+            <div style={{ fontSize: 12, color: "#c8e6b8", fontWeight: 700 }}>{new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" })}</div>
+          </div>
+          <button onClick={onSwitchMode}
+            style={{ background: "#d94f3d", border: "none", borderRadius: 8, color: "#fff", padding: "8px 12px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+            Sign out
+          </button>
         </div>
       </div>
 

@@ -34,6 +34,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
   const [statusFilter, setStatusFilter] = useState("pending"); // all | pending | completed
   const [selectedTask, setSelectedTask] = useState(null);
   const [showRecorder, setShowRecorder] = useState(false);
+  const [showCodes, setShowCodes] = useState(false);
 
   // Filter + sort by priority (higher = more important = on top)
   const visibleTasks = useMemo(() => {
@@ -116,13 +117,17 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
             <div style={{ fontSize: 10, fontWeight: 800, color: "#7a9a6a", letterSpacing: 1.2, textTransform: "uppercase" }}>Floor View</div>
             <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif" }}>Manager Tasks</div>
           </div>
-          <div style={{ display: "flex", gap: 6 }}>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {onBackToApp && (
               <button onClick={onBackToApp}
                 style={{ background: "#7fb069", border: "none", borderRadius: 8, color: "#1e2d1a", padding: "6px 12px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
                 App →
               </button>
             )}
+            <button onClick={() => setShowCodes(true)}
+              style={{ background: "#c8e6b8", border: "none", borderRadius: 8, color: "#1e2d1a", padding: "6px 12px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+              Codes
+            </button>
             <button onClick={onSwitchMode}
               style={{ background: "none", border: "1px solid #4a6a3a", borderRadius: 8, color: "#c8e6b8", padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
               Log out
@@ -242,6 +247,47 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       )}
 
       {showRecorder && <VoiceRecorderModal onSave={createTask} onCancel={() => setShowRecorder(false)} />}
+      {showCodes && <CodesModal onClose={() => setShowCodes(false)} />}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ── CODES MODAL ─────────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+const FLOOR_CODE_LIST = [
+  { name: "Floor Manager",    code: "9999999", role: "Manager" },
+  { name: "Michael Papineau", code: "1111111", role: "Grower" },
+  { name: "Zack Stenz",       code: "2222222", role: "Grower" },
+  { name: "Colin O'Dell",     code: "3333333", role: "Grower" },
+  { name: "Reese Morris",     code: "4444444", role: "Grower + Tasks" },
+  { name: "Eulogio Martinez", code: "6666666", role: "Grower" },
+];
+
+function CodesModal({ onClose }) {
+  return (
+    <div onClick={onClose}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, ...FONT }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        background: "#fff", borderRadius: 16, padding: 22, width: "100%", maxWidth: 420,
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+          <div style={{ fontSize: 18, fontWeight: 800, color: "#1e2d1a", fontFamily: "'DM Serif Display',Georgia,serif" }}>Employee Codes</div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "#7a8c74", fontSize: 26, cursor: "pointer" }}>&times;</button>
+        </div>
+        {FLOOR_CODE_LIST.map(c => (
+          <div key={c.code} style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+            background: "#f2f5ef", borderRadius: 10, padding: "12px 14px", marginBottom: 8,
+          }}>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 800, color: "#1e2d1a" }}>{c.name}</div>
+              <div style={{ fontSize: 11, color: "#7a8c74" }}>{c.role}</div>
+            </div>
+            <div style={{ fontSize: 20, fontWeight: 900, color: "#1e2d1a", fontFamily: "monospace", letterSpacing: 2 }}>{c.code}</div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
