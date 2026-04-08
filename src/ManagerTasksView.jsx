@@ -30,7 +30,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
 
   const today = useMemo(() => getWeekInfo(), []);
   const [selectedWeek, setSelectedWeek] = useState(today);
-  const [category, setCategory] = useState(canCreateGrowing ? "production" : "production"); // production | growing
+  const [category, setCategory] = useState("growing"); // production | growing
   const [statusFilter, setStatusFilter] = useState("pending"); // all | pending | completed
   const [selectedTask, setSelectedTask] = useState(null);
   const [showRecorder, setShowRecorder] = useState(false);
