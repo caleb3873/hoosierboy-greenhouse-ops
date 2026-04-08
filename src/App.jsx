@@ -31,6 +31,7 @@ import ShippingCustomers    from "./shipping/ShippingCustomers";
 import ShippingDrivers      from "./shipping/ShippingDrivers";
 import ShippingTrucks       from "./shipping/ShippingTrucks";
 import ShipperTasksView     from "./shipping/ShipperTasksView";
+import ShippingSchedule     from "./shipping/ShippingSchedule";
 
 // ── PLANNER SHELL ─────────────────────────────────────────────────────────────
 // Nav grouped by category
@@ -84,6 +85,7 @@ const NAV_GROUPS = [
   {
     id: "shipping", label: "Shipping", icon: "🚚",
     items: [
+      { id: "ship-schedule",  label: "Schedule" },
       { id: "ship-customers", label: "Customers" },
       { id: "ship-drivers",   label: "Drivers" },
       { id: "ship-trucks",    label: "Trucks" },
@@ -218,6 +220,7 @@ function PlannerShell() {
         {page === "soil"       && <SoilCalculator />}
         {page === "fall"       && <FallProgram />}
         {page === "houseplants" && <HouseplantAvailability />}
+        {page === "ship-schedule"  && <ShippingSchedule />}
         {page === "ship-customers" && <ShippingCustomers />}
         {page === "ship-drivers"   && <ShippingDrivers />}
         {page === "ship-trucks"    && <ShippingTrucks />}

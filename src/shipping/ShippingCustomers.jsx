@@ -202,9 +202,13 @@ function CustomerRow({ customer: c, onClick, selected }) {
   );
 }
 
+const GREENHOUSE_ADDRESS = "4425 Bluff Road, Indianapolis, IN 46151";
+
 function CustomerDetailModal({ customer: c, onClose }) {
   const addrLine = [c.address1, c.city, c.state, c.zip].filter(Boolean).join(", ");
-  const mapsUrl = addrLine ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addrLine)}` : null;
+  const mapsUrl = addrLine
+    ? `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(GREENHOUSE_ADDRESS)}&destination=${encodeURIComponent(addrLine)}&travelmode=driving`
+    : null;
   const isCOD = (c.terms || "").toUpperCase().includes("C.O.D");
 
   return (
@@ -250,7 +254,7 @@ function CustomerDetailModal({ customer: c, onClose }) {
                   {mapsUrl && (
                     <a href={mapsUrl} target="_blank" rel="noopener noreferrer"
                       style={{ display: "inline-block", marginTop: 6, color: GREEN, fontSize: 12, fontWeight: 700, textDecoration: "none" }}>
-                      📍 Open in Google Maps
+                      🧭 Directions from 4425 Bluff Rd
                     </a>
                   )}
                 </div>
