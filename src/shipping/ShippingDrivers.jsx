@@ -108,6 +108,7 @@ function DriverForm({ driver, onSave, onCancel }) {
         </div>
         <Field label="Name" value={d.name || ""} onChange={v => upd("name", v)} />
         <Field label="Phone" value={d.phone || ""} onChange={v => upd("phone", v)} placeholder="317-555-1234" />
+        <Field label="Login Code" value={d.loginCode || ""} onChange={v => upd("loginCode", v)} placeholder="7-digit code for driver app" />
         <Field label="CDL / License" value={d.license || ""} onChange={v => upd("license", v)} />
         <Field label="Notes" value={d.notes || ""} onChange={v => upd("notes", v)} multiline />
         <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, fontSize: 13, color: DARK, fontWeight: 700 }}>

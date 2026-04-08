@@ -158,6 +158,24 @@ export function AuthProvider({ children }) {
       return true;
     }
 
+    // 2b. Try drivers table (shipping driver login)
+    try {
+      const { data: dr } = await sb.from("drivers")
+        .select("*")
+        .eq("login_code", code)
+        .eq("active", true)
+        .single();
+      if (dr) {
+        const profile = { id: dr.id, name: dr.name, role: "driver", code };
+        const session = { mode: "driver", growerProfile: profile, expires: Date.now() + 12 * 60 * 60 * 1000 };
+        localStorage.setItem(FLOOR_SESSION_KEY, JSON.stringify(session));
+        setFloorMode("driver");
+        setRole("driver");
+        setGrowerProfile(profile);
+        return true;
+      }
+    } catch (e) { /* fall through */ }
+
     // 3. Try grower profile lookup
     try {
       const { data, error } = await sb.from("grower_profiles")

@@ -118,6 +118,22 @@ export default function ShippingDashboard() {
     });
   }
 
+  async function computeRoutes() {
+    const missing = deliveries.filter(d => d.deliveryDate === activeDateISO && d.miles == null && d.customerSnapshot);
+    for (const del of missing) {
+      const c = del.customerSnapshot || {};
+      const destination = [c.address1, c.city, c.state, c.zip].filter(Boolean).join(", ");
+      if (!destination) continue;
+      try {
+        const r = await fetch("/api/shipping-distance", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ destination }) });
+        if (!r.ok) continue;
+        const { miles, minutes } = await r.json();
+        await updateDelivery(del.id, { miles, driveMinutes: minutes });
+      } catch {}
+    }
+    refreshDeliveries();
+  }
+
   async function saveFuelFill(form) {
     await insertFuel({
       fillDate: form.date,
@@ -269,6 +285,14 @@ export default function ShippingDashboard() {
         </div>
       )}
 
+      {/* Route compute footer */}
+      {dayDeliveries.some(d => d.miles == null) && (
+        <button onClick={computeRoutes}
+          style={{ marginTop: 16, padding: "12px 18px", borderRadius: 10, border: `1.5px solid ${GREEN}`, background: "#fff", color: DARK, fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+          🧭 Compute routes for this day
+        </button>
+      )}
+
       {/* Fuel entry footer */}
       <div style={{ marginTop: 24, padding: 16, background: "#fff", borderRadius: 14, border: `1.5px solid ${BORDER}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <div>
@@ -338,7 +362,10 @@ function DashDeliveryCard({ delivery: d, drivers, rank, onAssign, onMoveUp, onMo
           {d.deliveryTime && <span style={{ fontSize: 11, color: "#7a8c74" }}>🕒 {d.deliveryTime}</span>}
           {(cust.terms || "").toUpperCase().includes("C.O.D") && <span style={{ fontSize: 9, fontWeight: 800, background: "#c03030", color: "#fff", borderRadius: 999, padding: "2px 8px" }}>COD</span>}
         </div>
-        <div style={{ fontSize: 11, color: "#7a8c74" }}>{addr} • <b style={{ color: DARK }}>{formatCurrency(d.orderValueCents)}</b></div>
+        <div style={{ fontSize: 11, color: "#7a8c74" }}>
+          {addr} • <b style={{ color: DARK }}>{formatCurrency(d.orderValueCents)}</b>
+          {d.miles != null && <> • {d.miles} mi / {d.driveMinutes || "?"} min</>}
+        </div>
         {Array.isArray(d.orderNumbers) && d.orderNumbers.length > 0 && (
           <div style={{ fontSize: 10, color: "#7a8c74", marginTop: 2 }}>Orders: {d.orderNumbers.join(", ")}</div>
         )}

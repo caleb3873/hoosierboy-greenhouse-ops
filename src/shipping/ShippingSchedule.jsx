@@ -85,13 +85,34 @@ export default function ShippingSchedule() {
       status: "scheduled",
       createdBy,
     };
+    let saved;
     if (form.id) {
       await update(form.id, row);
+      saved = { id: form.id, ...row };
     } else {
-      await insert(row);
+      saved = await insert(row);
     }
+    // Fire-and-forget distance computation
+    computeDistance(saved).catch(() => {});
     setShowForm(false);
     setEditing(null);
+  }
+
+  async function computeDistance(delivery) {
+    if (!delivery?.id) return;
+    const c = delivery.customerSnapshot || {};
+    const destination = [c.address1, c.city, c.state, c.zip].filter(Boolean).join(", ");
+    if (!destination) return;
+    try {
+      const resp = await fetch("/api/shipping-distance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ destination }),
+      });
+      if (!resp.ok) return;
+      const { miles, minutes } = await resp.json();
+      await update(delivery.id, { miles, driveMinutes: minutes });
+    } catch {}
   }
 
   async function del(id) {
@@ -196,6 +217,7 @@ function DeliveryRow({ delivery: d, drivers, onEdit, onDelete }) {
         </div>
         <div style={{ fontSize: 12, color: "#7a8c74" }}>
           {cust.city}{cust.state ? `, ${cust.state}` : ""} • <b style={{ color: DARK }}>{formatCurrency(d.orderValueCents)}</b>
+          {d.miles != null && <> • {d.miles} mi / {d.driveMinutes || "?"} min</>}
           {driver && <> • Driver: <b style={{ color: DARK }}>{driver.name}</b></>}
         </div>
         {Array.isArray(d.orderNumbers) && d.orderNumbers.length > 0 && (
