@@ -669,7 +669,10 @@ export function TaskViewer({ task, onBack, onAppend, readOnly = true }) {
       <div style={{ padding: 16 }}>
         <div style={{ background: "#fff", borderRadius: 14, padding: 18, border: "1.5px solid #e0ead8", marginBottom: 14 }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", marginBottom: 4 }}>Title</div>
-          <div style={{ fontSize: 17, fontWeight: 800, color: "#1e2d1a", marginBottom: 12 }}>{task.title}</div>
+          <div style={{ fontSize: 17, fontWeight: 800, color: "#1e2d1a", marginBottom: 8 }}>{task.title}</div>
+          <div style={{ fontSize: 12, color: "#7a8c74", marginBottom: 14 }}>
+            Assigned by <span style={{ fontWeight: 700, color: "#1e2d1a" }}>{task.createdBy || "Manager"}</span>
+          </div>
           {task.description && <>
             <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", marginBottom: 4 }}>Details</div>
             <div style={{ fontSize: 14, color: "#1e2d1a", marginBottom: 12, whiteSpace: "pre-wrap" }}>{task.description}</div>
@@ -763,6 +766,9 @@ function TaskDetail({ task, onBack, onSave }) {
 
       <div style={{ padding: 16 }}>
         <div style={{ background: "#fff", borderRadius: 14, padding: 18, border: "1.5px solid #e0ead8" }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", marginBottom: 6 }}>Assigned by</div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: "#1e2d1a", marginBottom: 14 }}>{t.createdBy || "Manager"}</div>
+
           <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", marginBottom: 6 }}>Title</div>
           <input value={t.title || ""} onChange={e => upd("title", e.target.value)}
             style={{ width: "100%", padding: "12px", borderRadius: 10, border: "1.5px solid #c8d8c0", fontSize: 15, fontFamily: "inherit", boxSizing: "border-box", marginBottom: 14 }} />
