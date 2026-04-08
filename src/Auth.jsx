@@ -136,7 +136,8 @@ export function AuthProvider({ children }) {
         .eq("active", true)
         .single();
       if (fc) {
-        const profile = fc.workerName ? { id: null, name: fc.workerName, role: fc.role, code } : null;
+        const workerName = fc.worker_name || fc.workerName;
+        const profile = workerName ? { id: null, name: workerName, role: fc.role, code } : null;
         const session = { mode: fc.role, growerProfile: profile, expires: Date.now() + 12 * 60 * 60 * 1000 };
         localStorage.setItem(FLOOR_SESSION_KEY, JSON.stringify(session));
         setFloorMode(fc.role);
