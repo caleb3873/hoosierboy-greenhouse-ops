@@ -35,7 +35,7 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
   const [viewingTask, setViewingTask] = useState(null);
   const [flagging, setFlagging] = useState(false);
 
-  async function appendToTask({ note, photo }) {
+  async function appendToTask({ note, photo, rating }) {
     if (!viewingTask) return;
     const updated = { ...viewingTask };
     if (note) {
@@ -44,6 +44,9 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
     }
     if (photo) {
       updated.photos = [...(updated.photos || []), photo];
+    }
+    if (rating !== undefined) {
+      updated.rating = rating;
     }
     await upsert(updated);
     setViewingTask(updated);

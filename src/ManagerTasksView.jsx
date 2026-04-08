@@ -582,6 +582,33 @@ function VoiceRecorderModal({ onSave, onCancel }) {
 // ══════════════════════════════════════════════════════════════════════════════
 // ── TASK DETAIL ─────────────────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════════════
+export function RatingPicker({ value, onChange }) {
+  const OPTIONS = [
+    { id: "sad",     emoji: "😞", label: "Bad" },
+    { id: "neutral", emoji: "😐", label: "OK" },
+    { id: "happy",   emoji: "😊", label: "Good" },
+  ];
+  return (
+    <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+      {OPTIONS.map(o => {
+        const active = value === o.id;
+        return (
+          <button key={o.id} onClick={() => onChange(active ? null : o.id)}
+            style={{
+              flex: 1, padding: "12px 6px", borderRadius: 12,
+              border: `2px solid ${active ? "#7fb069" : "#c8d8c0"}`,
+              background: active ? "#f0f8eb" : "#fff",
+              cursor: "pointer", fontFamily: "inherit",
+            }}>
+            <div style={{ fontSize: 28, lineHeight: 1 }}>{o.emoji}</div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: active ? "#1e2d1a" : "#7a8c74", marginTop: 4 }}>{o.label}</div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function BenchNumbersEditor({ value, onChange }) {
   const [input, setInput] = useState("");
   const add = () => {
@@ -659,6 +686,10 @@ export function TaskViewer({ task, onBack, onAppend, readOnly = true }) {
               ))}
             </div>
           </>}
+          {task.rating && <>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", marginBottom: 4 }}>Rating</div>
+            <div style={{ fontSize: 32, marginBottom: 12 }}>{task.rating === "happy" ? "😊" : task.rating === "neutral" ? "😐" : "😞"}</div>
+          </>}
           {task.notes && <>
             <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", marginBottom: 4 }}>Notes</div>
             <div style={{ fontSize: 13, color: "#1e2d1a", marginBottom: 12, whiteSpace: "pre-wrap", background: "#f2f5ef", padding: 10, borderRadius: 8 }}>{task.notes}</div>
@@ -675,6 +706,8 @@ export function TaskViewer({ task, onBack, onAppend, readOnly = true }) {
 
         {/* Append-only controls for growers */}
         <div style={{ background: "#fff", borderRadius: 14, padding: 18, border: "1.5px solid #e0ead8" }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: "#7fb069", textTransform: "uppercase", marginBottom: 8 }}>How did it go?</div>
+          <RatingPicker value={task.rating || null} onChange={r => onAppend({ rating: r })} />
           <div style={{ fontSize: 11, fontWeight: 800, color: "#7fb069", textTransform: "uppercase", marginBottom: 8 }}>Add your update</div>
           <textarea value={note} onChange={e => setNote(e.target.value)}
             placeholder="Add a note…"
@@ -733,6 +766,15 @@ function TaskDetail({ task, onBack, onSave }) {
           <textarea value={t.description || ""} onChange={e => upd("description", e.target.value)}
             placeholder="Add more details..."
             style={{ width: "100%", minHeight: 100, padding: "12px", borderRadius: 10, border: "1.5px solid #c8d8c0", fontSize: 14, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box", marginBottom: 14 }} />
+
+          {t.rating && (
+            <>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", marginBottom: 6 }}>Grower Rating</div>
+              <div style={{ fontSize: 36, marginBottom: 14 }}>
+                {t.rating === "happy" ? "😊" : t.rating === "neutral" ? "😐" : "😞"}
+              </div>
+            </>
+          )}
 
           <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", marginBottom: 6 }}>House ID <span style={{ color: "#aabba0", fontWeight: 400 }}>(optional)</span></div>
           <input value={t.houseId || ""} onChange={e => upd("houseId", e.target.value)}
