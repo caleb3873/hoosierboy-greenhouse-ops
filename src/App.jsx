@@ -28,6 +28,9 @@ import HouseplantAvailability from "./HouseplantAvailability";
 import OwnerDashboard       from "./OwnerDashboard";
 import FallProgram          from "./FallProgram";
 import ShippingCustomers    from "./shipping/ShippingCustomers";
+import ShippingDrivers      from "./shipping/ShippingDrivers";
+import ShippingTrucks       from "./shipping/ShippingTrucks";
+import ShipperTasksView     from "./shipping/ShipperTasksView";
 
 // ── PLANNER SHELL ─────────────────────────────────────────────────────────────
 // Nav grouped by category
@@ -82,6 +85,8 @@ const NAV_GROUPS = [
     id: "shipping", label: "Shipping", icon: "🚚",
     items: [
       { id: "ship-customers", label: "Customers" },
+      { id: "ship-drivers",   label: "Drivers" },
+      { id: "ship-trucks",    label: "Trucks" },
     ],
   },
 ];
@@ -214,6 +219,8 @@ function PlannerShell() {
         {page === "fall"       && <FallProgram />}
         {page === "houseplants" && <HouseplantAvailability />}
         {page === "ship-customers" && <ShippingCustomers />}
+        {page === "ship-drivers"   && <ShippingDrivers />}
+        {page === "ship-trucks"    && <ShippingTrucks />}
         {page === "owner" && isOwner && <OwnerDashboard />}
       </div>
     </div>
@@ -288,6 +295,9 @@ function AppInner() {
   if (isManager || (isOperator && growerProfile?.name)) {
     return <FloorAppRouter role={role} isManager={isManager} growerProfile={growerProfile} signOut={signOut} />;
   }
+
+  // Shipping floor code → shipper task view
+  if (role === "shipping") return <ShipperTasksView onSwitchMode={signOut} />;
 
   // Operator / maintenance → operator view
   if (isOperator) return <OperatorView onSwitchMode={signOut} />;
