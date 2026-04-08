@@ -136,11 +136,12 @@ export function AuthProvider({ children }) {
         .eq("active", true)
         .single();
       if (fc) {
-        const session = { mode: fc.role, expires: Date.now() + 12 * 60 * 60 * 1000 };
+        const profile = fc.workerName ? { id: null, name: fc.workerName, role: fc.role, code } : null;
+        const session = { mode: fc.role, growerProfile: profile, expires: Date.now() + 12 * 60 * 60 * 1000 };
         localStorage.setItem(FLOOR_SESSION_KEY, JSON.stringify(session));
         setFloorMode(fc.role);
         setRole(fc.role);
-        setGrowerProfile(null);
+        setGrowerProfile(profile);
         return true;
       }
     } catch (e) { /* offline or no match — fall through */ }
@@ -185,13 +186,14 @@ export function AuthProvider({ children }) {
   const OWNER_EMAIL = "caleb@schlegelgreenhouse.com";
   const isOwner       = !!user && user.email?.toLowerCase() === OWNER_EMAIL.toLowerCase();
   const isAdmin       = role === "admin";
-  const isOperator    = role === "operator" || role === "maintenance";
+  const isOperator    = role === "operator" || role === "maintenance" || role === "manager";
+  const isManager     = role === "manager";
   const isGrower      = role === "grower";
   const isAuthenticated = !!role;
 
   const value = {
     user, role, floorMode, loading, initialized,
-    isAdmin, isOperator, isGrower, isOwner, isAuthenticated,
+    isAdmin, isOperator, isGrower, isOwner, isManager, isAuthenticated,
     growerProfile,
     signIn, signOut, signInWithCode,
     recoveryMode, clearRecovery,

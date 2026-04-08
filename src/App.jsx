@@ -10,6 +10,8 @@ import YoungPlantOrders from "./YoungPlantOrders";
 import SpaceManagement  from "./SpaceManagement";
 import Libraries        from "./Libraries";
 import OperatorView     from "./OperatorView";
+import ManagerTasksView from "./ManagerTasksView";
+import WorkerChecklistView from "./WorkerChecklistView";
 import GrowerView      from "./GrowerView";
 import Preseason        from "./Preseason";
 import { PlannerReceiving } from "./Receiving";
@@ -212,7 +214,7 @@ function PlannerShell() {
 
 // ── ROOT (auth-aware) ─────────────────────────────────────────────────────────
 function AppInner() {
-  const { isAuthenticated, isAdmin, isOperator, role, loading, signOut, recoveryMode } = useAuth();
+  const { isAuthenticated, isAdmin, isOperator, isManager, role, growerProfile, loading, signOut, recoveryMode } = useAuth();
 
   if (loading) return (
     <div style={{ minHeight: "100vh", background: "#1e2d1a", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans',sans-serif" }}>
@@ -231,6 +233,12 @@ function AppInner() {
 
   // Grower → grower mobile view
   if (role === "grower") return <GrowerView onSwitchMode={signOut} />;
+
+  // Manager → voice task manager
+  if (isManager) return <ManagerTasksView onSwitchMode={signOut} />;
+
+  // Worker (named operator) → simple checklist view
+  if (isOperator && growerProfile?.name) return <WorkerChecklistView onSwitchMode={signOut} />;
 
   // Operator / maintenance → operator view
   if (isOperator) return <OperatorView onSwitchMode={signOut} />;
