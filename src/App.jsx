@@ -35,6 +35,7 @@ import ShippingSchedule     from "./shipping/ShippingSchedule";
 import ShippingDashboard    from "./shipping/ShippingDashboard";
 import ShippingClaims       from "./shipping/ShippingClaims";
 import ShippingTeams        from "./shipping/ShippingTeams";
+import ShippingCalendar     from "./shipping/ShippingCalendar";
 import DriverView           from "./shipping/DriverView";
 
 // ── PLANNER SHELL ─────────────────────────────────────────────────────────────
@@ -90,6 +91,7 @@ const NAV_GROUPS = [
     id: "shipping", label: "Shipping", icon: "🚚",
     items: [
       { id: "ship-dashboard", label: "Dashboard" },
+      { id: "ship-calendar",  label: "Calendar" },
       { id: "ship-schedule",  label: "Schedule" },
       { id: "ship-claims",    label: "Claims" },
       { id: "ship-customers", label: "Customers" },
@@ -228,6 +230,7 @@ function PlannerShell() {
         {page === "fall"       && <FallProgram />}
         {page === "houseplants" && <HouseplantAvailability />}
         {page === "ship-dashboard" && <ShippingDashboard />}
+        {page === "ship-calendar"  && <ShippingCalendar />}
         {page === "ship-schedule"  && <ShippingSchedule />}
         {page === "ship-claims"    && <ShippingClaims />}
         {page === "ship-customers" && <ShippingCustomers />}
