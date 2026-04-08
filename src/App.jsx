@@ -217,8 +217,8 @@ function PlannerShell() {
 function FloorAppRouter({ role, isManager, growerProfile, signOut }) {
   const name = growerProfile?.name || "";
   const isReese = name === "Reese Morris";
-  // Manager starts in task creator. Workers (incl Reese) start in worker checklist.
-  const initial = isManager ? "creator" : "worker";
+  // Manager + Reese start in task creator. Other workers start in worker checklist.
+  const initial = isManager || isReese ? "creator" : "worker";
   const [view, setView] = useState(initial);
 
   if (view === "creator") {
@@ -240,7 +240,7 @@ function FloorAppRouter({ role, isManager, growerProfile, signOut }) {
     <div style={{ position: "relative" }}>
       <OperatorView onSwitchMode={signOut} />
       <button
-        onClick={() => setView(isManager ? "creator" : "worker")}
+        onClick={() => setView(isManager || isReese ? "creator" : "worker")}
         style={{
           position: "fixed", bottom: 20, left: 20, zIndex: 900,
           background: "#7fb069", color: "#1e2d1a", border: "3px solid #fff",
