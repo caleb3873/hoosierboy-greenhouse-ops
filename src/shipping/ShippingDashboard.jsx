@@ -7,6 +7,7 @@ import {
   useDeliveryClaims,
   useFuelFills,
   useShippingTeams,
+  useEmployeeAttendance,
 } from "../supabase";
 import { useAuth } from "../Auth";
 
@@ -35,6 +36,7 @@ export default function ShippingDashboard() {
   const { rows: drivers } = useDrivers();
   const { rows: trucks } = useTrucks();
   const { rows: teams }  = useShippingTeams();
+  const { rows: employeeAttendance, upsert: upsertEmpAttendance } = useEmployeeAttendance();
   const { rows: attendance, upsert: upsertAttendance } = useDriverAttendance();
   const { rows: claims } = useDeliveryClaims();
   const { rows: fuelFills, insert: insertFuel } = useFuelFills();
@@ -115,6 +117,26 @@ export default function ShippingDashboard() {
     const other = lane[swapIdx];
     await updateDelivery(delivery.id, { stopOrder: other.stopOrder });
     await updateDelivery(other.id, { stopOrder: delivery.stopOrder });
+  }
+
+  // Employee attendance (for team roster)
+  const empPresentMap = useMemo(() => {
+    const m = new Map();
+    for (const a of employeeAttendance) {
+      if (a.attendanceDate === activeDateISO) m.set(a.employeeName, a.present);
+    }
+    return m;
+  }, [employeeAttendance, activeDateISO]);
+
+  async function toggleEmpAttendance(name) {
+    const existing = employeeAttendance.find(a => a.employeeName === name && a.attendanceDate === activeDateISO);
+    const currentlyPresent = existing ? existing.present : true;
+    await upsertEmpAttendance({
+      id: existing?.id || crypto.randomUUID(),
+      employeeName: name,
+      attendanceDate: activeDateISO,
+      present: !currentlyPresent,
+    });
   }
 
   async function toggleAttendance(driver) {
@@ -247,6 +269,62 @@ export default function ShippingDashboard() {
           </div>
         )}
       </div>
+
+      {/* Team roster */}
+      {teams.length > 0 && (
+        <div style={{ background: "#fff", borderRadius: 14, border: `1.5px solid ${BORDER}`, padding: 14, marginBottom: 16 }}>
+          <div style={{ fontSize: 12, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>
+            Team Roster
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 10 }}>
+            {teams.filter(t => t.active !== false).map(team => {
+              const teamDeliveries = dayDeliveries.filter(d => d.teamId === team.id);
+              const teamValue = teamDeliveries.reduce((s, d) => s + (d.orderValueCents || 0), 0);
+              const delivered = teamDeliveries.filter(d => d.status === "delivered").length;
+              const present = (team.members || []).filter(m => empPresentMap.get(m.name) !== false).length;
+              const total = (team.members || []).length;
+              return (
+                <div key={team.id} style={{ background: "#fafcf8", borderRadius: 10, border: `1.5px solid ${BORDER}`, borderLeft: `4px solid ${team.color || GREEN}`, padding: 12 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8, gap: 8 }}>
+                    <div style={{ fontSize: 15, fontWeight: 800, color: DARK, fontFamily: "'DM Serif Display',Georgia,serif" }}>{team.name}</div>
+                    <div style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textAlign: "right" }}>
+                      {present}/{total} present
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 11, color: "#7a8c74", marginBottom: 8 }}>
+                    {teamDeliveries.length} {teamDeliveries.length === 1 ? "delivery" : "deliveries"}
+                    {teamValue > 0 && ` • ${formatCurrency(teamValue)}`}
+                    {teamDeliveries.length > 0 && ` • ${delivered}/${teamDeliveries.length} done`}
+                  </div>
+                  <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                    {(team.members || []).length === 0 ? (
+                      <span style={{ fontSize: 11, color: "#aabba0", fontStyle: "italic" }}>No members</span>
+                    ) : team.members.map((m, i) => {
+                      const isPresent = empPresentMap.get(m.name) !== false;
+                      return (
+                        <button key={i} onClick={() => toggleEmpAttendance(m.name)}
+                          title={isPresent ? "Tap to mark absent" : "Tap to mark present"}
+                          style={{
+                            background: isPresent ? "#f0f8eb" : "#f5f5f5",
+                            color: isPresent ? DARK : "#a0a0a0",
+                            border: `1px solid ${isPresent ? GREEN + "88" : "#c8c8c8"}`,
+                            borderRadius: 999, padding: "4px 10px",
+                            fontSize: 11, fontWeight: 700,
+                            cursor: "pointer", fontFamily: "inherit",
+                            textDecoration: isPresent ? "none" : "line-through",
+                            opacity: isPresent ? 1 : 0.65,
+                          }}>
+                          {isPresent ? "✓" : "✕"} {m.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Unassigned column */}
       <SectionHeader>Unassigned ({unassigned.length})</SectionHeader>

@@ -313,6 +313,7 @@ export const useDriverAttendance = () => useTable("driver_attendance", { orderBy
 export const useShippingTeams    = () => useTable("shipping_teams",    { orderBy: "name", ascending: true, localKey: "gh_shipping_teams_v1" });
 export const useFloorCodes       = () => useTable("floor_codes",       { orderBy: "label", ascending: true, localKey: "gh_floor_codes_v1" });
 export const useEmployees        = () => useTable("employees",         { orderBy: "name", ascending: true, localKey: "gh_employees_v1" });
+export const useEmployeeAttendance = () => useTable("employee_attendance", { orderBy: "attendance_date", localKey: "gh_employee_attendance_v1" });
 
 // ── AUTH HELPERS ──────────────────────────────────────────────────────────────
 export async function sendPasswordReset(email) {

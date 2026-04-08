@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useDrivers } from "../supabase";
+import { useState, useMemo } from "react";
+import { useDrivers, useDeliveries } from "../supabase";
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
 const DARK = "#1e2d1a";
@@ -8,7 +8,9 @@ const BORDER = "#e0ead8";
 
 export default function ShippingDrivers() {
   const { rows: drivers, insert, update, remove, loading } = useDrivers();
+  const { rows: deliveries } = useDeliveries();
   const [editing, setEditing] = useState(null); // row or "new"
+  const [dayOffset, setDayOffset] = useState(0);
 
   async function save(row) {
     if (row.id) {
@@ -60,10 +62,107 @@ export default function ShippingDrivers() {
       {inactive.length > 0 && <SectionLabel>Inactive</SectionLabel>}
       {inactive.map(d => <DriverRow key={d.id} driver={d} onEdit={() => setEditing(d)} onDelete={() => del(d.id)} />)}
 
+      <DriverSchedule drivers={active} deliveries={deliveries} dayOffset={dayOffset} setDayOffset={setDayOffset} />
+
       {editing && <DriverForm driver={editing} onSave={save} onCancel={() => setEditing(null)} />}
     </div>
   );
 }
+
+// ── Driver schedule ──────────────────────────────────────────────────────────
+function DriverSchedule({ drivers, deliveries, dayOffset, setDayOffset }) {
+  const activeDate = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + dayOffset);
+    return d;
+  }, [dayOffset]);
+  const iso = activeDate.toISOString().slice(0, 10);
+  const label = activeDate.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
+
+  const byDriver = useMemo(() => {
+    const m = new Map();
+    for (const d of deliveries) {
+      if (d.deliveryDate !== iso || !d.driverId) continue;
+      if (!m.has(d.driverId)) m.set(d.driverId, []);
+      m.get(d.driverId).push(d);
+    }
+    for (const arr of m.values()) arr.sort((a, b) => (a.stopOrder || 0) - (b.stopOrder || 0));
+    return m;
+  }, [deliveries, iso]);
+
+  return (
+    <div style={{ marginTop: 28 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
+        <div style={{ fontSize: 16, fontWeight: 800, color: DARK, fontFamily: "'DM Serif Display',Georgia,serif" }}>
+          Driver Schedule
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <button onClick={() => setDayOffset(o => o - 1)} style={navBtnStyle}>←</button>
+          <div style={{ fontSize: 13, fontWeight: 700, color: DARK, minWidth: 160, textAlign: "center" }}>
+            {label}
+            {dayOffset !== 0 && <button onClick={() => setDayOffset(0)} style={{ display: "block", background: "none", border: "none", color: GREEN, fontSize: 10, fontWeight: 700, cursor: "pointer", padding: 0, margin: "2px auto 0" }}>Today</button>}
+          </div>
+          <button onClick={() => setDayOffset(o => o + 1)} style={navBtnStyle}>→</button>
+        </div>
+      </div>
+
+      {drivers.length === 0 ? (
+        <div style={{ background: "#fff", borderRadius: 12, border: `1.5px solid ${BORDER}`, padding: "30px 20px", textAlign: "center", color: "#7a8c74", fontSize: 13 }}>
+          Add drivers above to see their schedule.
+        </div>
+      ) : drivers.map(d => {
+        const stops = byDriver.get(d.id) || [];
+        const total = stops.reduce((s, x) => s + (x.orderValueCents || 0), 0);
+        const delivered = stops.filter(s => s.status === "delivered").length;
+        return (
+          <div key={d.id} style={{ background: "#fff", borderRadius: 12, border: `1.5px solid ${BORDER}`, padding: 14, marginBottom: 10 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: stops.length > 0 ? 10 : 0, flexWrap: "wrap", gap: 8 }}>
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 800, color: DARK }}>🚚 {d.name}</div>
+                <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2 }}>
+                  {stops.length === 0 ? "No stops scheduled" : `${stops.length} stop${stops.length !== 1 ? "s" : ""} • $${(total/100).toLocaleString()} • ${delivered}/${stops.length} delivered`}
+                </div>
+              </div>
+              {d.phone && (
+                <a href={`tel:${d.phone}`}
+                  style={{ background: "#f0f8eb", color: DARK, padding: "6px 12px", borderRadius: 8, fontSize: 12, fontWeight: 800, textDecoration: "none" }}>
+                  📞 {d.phone}
+                </a>
+              )}
+            </div>
+            {stops.length > 0 && (
+              <div>
+                {stops.map((s, i) => {
+                  const c = s.customerSnapshot || {};
+                  const done = s.status === "delivered";
+                  return (
+                    <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0", borderTop: i === 0 ? `1px solid ${BORDER}` : "none", borderBottom: `1px solid ${BORDER}`, opacity: done ? 0.6 : 1 }}>
+                      <div style={{ background: done ? GREEN : DARK, color: done ? DARK : "#c8e6b8", borderRadius: "50%", width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 800, flexShrink: 0 }}>
+                        {done ? "✓" : (s.stopOrder || i + 1)}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: DARK, textDecoration: done ? "line-through" : "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {c.company_name || "—"}
+                        </div>
+                        <div style={{ fontSize: 10, color: "#7a8c74" }}>
+                          {[c.city, c.state].filter(Boolean).join(", ")}
+                          {s.deliveryTime && <> • {s.deliveryTime}</>}
+                          {s.orderValueCents > 0 && <> • ${(s.orderValueCents/100).toLocaleString()}</>}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+const navBtnStyle = { background: "#f2f5ef", border: "none", padding: "6px 10px", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 700, fontFamily: "inherit" };
 
 function SectionLabel({ children }) {
   return (
