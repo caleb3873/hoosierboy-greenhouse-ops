@@ -274,7 +274,8 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
           [
             { id: "today",          label: "Today" },
             { id: "tomorrow",       label: "Tomorrow" },
-            { id: "check_tomorrow", label: "Check Tomorrow" },
+            { id: "check_tomorrow", label: "Day After" },
+            { id: "this_week",      label: "This Week" },
           ].map(section => {
             const sectionTasks = visibleTasks.filter(t => (t.bucket || "today") === section.id);
             if (sectionTasks.length === 0) return null;
@@ -532,7 +533,8 @@ function VoiceRecorderModal({ onSave, onCancel }) {
           {[
             { id: "today", label: "Today" },
             { id: "tomorrow", label: "Tomorrow" },
-            { id: "check_tomorrow", label: "Check Tomorrow" },
+            { id: "check_tomorrow", label: "Day After" },
+            { id: "this_week", label: "This Week" },
           ].map(b => (
             <button key={b.id} onClick={() => setBucket(b.id)}
               style={{
@@ -611,6 +613,30 @@ function TaskDetail({ task, onBack, onSave }) {
           <textarea value={t.description || ""} onChange={e => upd("description", e.target.value)}
             placeholder="Add more details..."
             style={{ width: "100%", minHeight: 100, padding: "12px", borderRadius: 10, border: "1.5px solid #c8d8c0", fontSize: 14, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box", marginBottom: 14 }} />
+
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", marginBottom: 6 }}>When</div>
+          <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
+            {[
+              { id: "today",          label: "Today" },
+              { id: "tomorrow",       label: "Tomorrow" },
+              { id: "check_tomorrow", label: "Day After" },
+              { id: "this_week",      label: "This Week" },
+            ].map(b => {
+              const active = (t.bucket || "today") === b.id;
+              return (
+                <button key={b.id} onClick={() => upd("bucket", b.id)}
+                  style={{
+                    flex: "1 1 45%", padding: "10px 6px", borderRadius: 10, fontSize: 12, fontWeight: 800,
+                    background: active ? "#1e2d1a" : "#f2f5ef",
+                    color: active ? "#c8e6b8" : "#7a8c74",
+                    border: `1.5px solid ${active ? "#1e2d1a" : "#c8d8c0"}`,
+                    cursor: "pointer", fontFamily: "inherit",
+                  }}>
+                  {b.label}
+                </button>
+              );
+            })}
+          </div>
 
           <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", marginBottom: 6 }}>Photos</div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>

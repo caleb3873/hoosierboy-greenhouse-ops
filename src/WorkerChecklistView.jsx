@@ -84,7 +84,8 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
   const SECTIONS = [
     { id: "today",          label: "Today" },
     { id: "tomorrow",       label: "Tomorrow" },
-    { id: "check_tomorrow", label: "Check Tomorrow" },
+    { id: "check_tomorrow", label: "Day After" },
+    { id: "this_week",      label: "This Week" },
   ];
 
   return (
