@@ -225,7 +225,7 @@ function FloorAppRouter({ role, isManager, growerProfile, signOut }) {
     return <ManagerTasksView
       onSwitchMode={signOut}
       onBackToApp={() => setView("app")}
-      canCreateGrowing={isManager}
+      canCreateGrowing={isManager || isReese}
     />;
   }
   if (view === "worker") {
