@@ -60,23 +60,24 @@ export default function ShipperTasksView({ onSwitchMode }) {
   const monday = useMemo(() => getWeekMondayISO(), []);
   const todayISO = toISODate(new Date());
 
-  // Slot each delivery into a weekday bucket
+  // Slot each delivery into a weekday bucket — include delivered so they can be un-checked
   const byDay = useMemo(() => {
     const buckets = Object.fromEntries(SHIP_DAYS.map(d => [d.idx, []]));
     for (const del of deliveries) {
       if (!del.deliveryDate) continue;
-      if (del.status === "delivered") continue;
-      const d = new Date(del.deliveryDate);
+      const d = new Date(del.deliveryDate + "T00:00:00");
       const weekdayIdx = d.getDay();
-      // Only show this week's deliveries
       const thisWeek = d >= monday && d < new Date(monday.getTime() + 7 * 86400000);
       if (!thisWeek) continue;
       if (weekdayIdx === 0) continue; // skip Sundays
       if (buckets[weekdayIdx]) buckets[weekdayIdx].push(del);
     }
-    // Sort each bucket by priority then $ value descending
+    // Sort: pending first (by priority → $), then delivered at the bottom
     for (const k of Object.keys(buckets)) {
       buckets[k].sort((a, b) => {
+        const doneA = a.status === "delivered" ? 1 : 0;
+        const doneB = b.status === "delivered" ? 1 : 0;
+        if (doneA !== doneB) return doneA - doneB;
         const pa = PRIORITY_ORDER[a.priority || "normal"] ?? 9;
         const pb = PRIORITY_ORDER[b.priority || "normal"] ?? 9;
         if (pa !== pb) return pa - pb;
@@ -182,10 +183,10 @@ function DeliveryCard({ delivery: d, rank, onToggle }) {
     <div onClick={onToggle}
       style={{
         display: "flex", alignItems: "flex-start", gap: 14,
-        background: done ? "#2a3a24" : "#263821",
-        border: `1px solid ${GREEN}44`,
+        background: done ? "#1c2a18" : "#263821",
+        border: `1px solid ${done ? GREEN : GREEN + "44"}`,
         borderRadius: 10, padding: 14, marginBottom: 10, cursor: "pointer",
-        opacity: done ? 0.65 : 1,
+        opacity: done ? 0.55 : 1,
       }}>
       <div style={{
         width: 32, height: 32, minWidth: 32, borderRadius: 8,
@@ -201,6 +202,7 @@ function DeliveryCard({ delivery: d, rank, onToggle }) {
           <div style={{ fontSize: 15, fontWeight: 800, color: CREAM, textDecoration: done ? "line-through" : "none" }}>
             {name}
           </div>
+          {done && <span style={{ fontSize: 9, fontWeight: 800, background: "#4a7a35", color: "#fff", borderRadius: 999, padding: "2px 8px" }}>DELIVERED</span>}
           <span style={{ fontSize: 9, fontWeight: 800, background: priorityStyle.bg, color: priorityStyle.color, borderRadius: 999, padding: "2px 8px" }}>
             {priorityStyle.label}
           </span>
