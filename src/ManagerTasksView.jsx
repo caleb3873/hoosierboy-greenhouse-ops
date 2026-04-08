@@ -739,7 +739,22 @@ export function TaskViewer({ task, onBack, onAppend, readOnly = true }) {
 
 function TaskDetail({ task, onBack, onSave }) {
   const [t, setT] = useState({ ...task });
-  const upd = (k, v) => setT(p => ({ ...p, [k]: v }));
+  const [dirty, setDirty] = useState(false);
+  const upd = (k, v) => { setT(p => ({ ...p, [k]: v })); setDirty(true); };
+
+  const handleBack = () => {
+    if (dirty) { onSave(t); return; }
+    onBack();
+  };
+
+  // Warn on browser close/refresh with unsaved changes
+  useEffect(() => {
+    const handler = (e) => {
+      if (dirty) { e.preventDefault(); e.returnValue = ""; }
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [dirty]);
 
   function handlePhoto(e) {
     const file = e.target.files?.[0];
@@ -760,8 +775,8 @@ function TaskDetail({ task, onBack, onSave }) {
   return (
     <div style={{ ...FONT, minHeight: "100vh", background: "#f2f5ef" }}>
       <div style={{ background: "#1e2d1a", padding: "16px 20px", color: "#c8e6b8", display: "flex", alignItems: "center", gap: 12 }}>
-        <button onClick={onBack} style={{ background: "none", border: "none", color: "#c8e6b8", fontSize: 22, cursor: "pointer" }}>&larr;</button>
-        <div style={{ fontSize: 17, fontWeight: 800 }}>Edit Task</div>
+        <button onClick={handleBack} style={{ background: "none", border: "none", color: "#c8e6b8", fontSize: 22, cursor: "pointer" }}>&larr;</button>
+        <div style={{ fontSize: 17, fontWeight: 800 }}>Edit Task{dirty ? " •" : ""}</div>
       </div>
 
       <div style={{ padding: 16 }}>
