@@ -242,7 +242,7 @@ function FloorAppRouter({ role, isManager, growerProfile, signOut }) {
       <button
         onClick={() => setView(isManager ? "creator" : "worker")}
         style={{
-          position: "fixed", bottom: 20, right: 20, zIndex: 900,
+          position: "fixed", bottom: 20, left: 20, zIndex: 900,
           background: "#7fb069", color: "#1e2d1a", border: "3px solid #fff",
           borderRadius: 999, padding: "12px 18px", fontWeight: 800, fontSize: 14,
           cursor: "pointer", boxShadow: "0 4px 14px rgba(0,0,0,0.25)",
