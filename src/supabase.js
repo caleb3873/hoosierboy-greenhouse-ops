@@ -14,15 +14,26 @@ export function getSupabase() {
 }
 
 // ── HELPERS ───────────────────────────────────────────────────────────────────
+// Keys whose values are jsonb payloads — preserve their inner shape as-is
+const JSONB_KEYS = new Set([
+  "varieties","indoorAssignments","outsideAssignments","zones","sections","stages",
+  "items","spacing","details","priceHistory","inventoryHistory","formatConfig","availability",
+  "benchNumbers","customerSnapshot","customer_snapshot","orderNumbers","order_numbers",
+  "availableDays","available_days",
+  "photos","members","availableDays","available_days",
+]);
+
 // Convert snake_case DB row to camelCase app object
 function toCamel(obj) {
   if (!obj || typeof obj !== "object") return obj;
   if (Array.isArray(obj)) return obj.map(toCamel);
   return Object.fromEntries(
-    Object.entries(obj).map(([k, v]) => [
-      k.replace(/_([a-z])/g, (_, c) => c.toUpperCase()),
-      toCamel(v),
-    ])
+    Object.entries(obj).map(([k, v]) => {
+      const newKey = k.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+      // Skip recursion into jsonb payloads — preserve inner snake_case keys
+      if (JSONB_KEYS.has(k) || JSONB_KEYS.has(newKey)) return [newKey, v];
+      return [newKey, toCamel(v)];
+    })
   );
 }
 

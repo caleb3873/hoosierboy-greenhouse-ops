@@ -114,9 +114,12 @@ function DriverSchedule({ drivers, deliveries, dayOffset, setDayOffset }) {
         const stops = byDriver.get(d.id) || [];
         const total = stops.reduce((s, x) => s + (x.orderValueCents || 0), 0);
         const delivered = stops.filter(s => s.status === "delivered").length;
+        const weekdayId = ["sun","mon","tue","wed","thu","fri","sat"][activeDate.getDay()];
+        const availToday = (d.availableDays || []).includes(weekdayId);
+        const hasSchedule = (d.availableDays || []).length > 0;
         return (
-          <div key={d.id} style={{ background: "#fff", borderRadius: 12, border: `1.5px solid ${BORDER}`, padding: 14, marginBottom: 10 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: stops.length > 0 ? 10 : 0, flexWrap: "wrap", gap: 8 }}>
+          <div key={d.id} style={{ background: "#fff", borderRadius: 12, border: `1.5px solid ${hasSchedule && !availToday ? "#d94f3d" : BORDER}`, padding: 14, marginBottom: 10, opacity: hasSchedule && !availToday ? 0.75 : 1 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
               <div>
                 <div style={{ fontSize: 15, fontWeight: 800, color: DARK }}>🚚 {d.name}</div>
                 <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2 }}>
@@ -128,6 +131,39 @@ function DriverSchedule({ drivers, deliveries, dayOffset, setDayOffset }) {
                   style={{ background: "#f0f8eb", color: DARK, padding: "6px 12px", borderRadius: 8, fontSize: 12, fontWeight: 800, textDecoration: "none" }}>
                   📞 {d.phone}
                 </a>
+              )}
+            </div>
+            {/* Weekly availability strip */}
+            <div style={{ display: "flex", gap: 4, marginBottom: stops.length > 0 ? 10 : 0, flexWrap: "wrap" }}>
+              {!hasSchedule ? (
+                <div style={{ fontSize: 11, color: "#aabba0", fontStyle: "italic" }}>No weekly schedule set — edit driver to add availability</div>
+              ) : (
+                [
+                  { id: "mon", label: "Mon" },
+                  { id: "tue", label: "Tue" },
+                  { id: "wed", label: "Wed" },
+                  { id: "thu", label: "Thu" },
+                  { id: "fri", label: "Fri" },
+                  { id: "sat", label: "Sat" },
+                ].map(day => {
+                  const on = (d.availableDays || []).includes(day.id);
+                  const isCurrentDay = day.id === weekdayId;
+                  return (
+                    <span key={day.id} style={{
+                      fontSize: 10, fontWeight: 800,
+                      background: on ? (isCurrentDay ? "#4a7a35" : "#f0f8eb") : "#f5f5f5",
+                      color: on ? (isCurrentDay ? "#fff" : DARK) : "#a0a0a0",
+                      border: `1px solid ${on ? GREEN : "#d0d0d0"}`,
+                      borderRadius: 6, padding: "3px 8px",
+                      textDecoration: on ? "none" : "line-through",
+                    }}>
+                      {day.label}
+                    </span>
+                  );
+                })
+              )}
+              {hasSchedule && !availToday && (
+                <span style={{ fontSize: 10, fontWeight: 800, background: "#d94f3d", color: "#fff", borderRadius: 6, padding: "3px 8px" }}>⚠ Not scheduled today</span>
               )}
             </div>
             {stops.length > 0 && (
@@ -194,9 +230,22 @@ function DriverRow({ driver: d, onEdit, onDelete }) {
   );
 }
 
+const WEEK_DAYS = [
+  { id: "mon", label: "Mon" },
+  { id: "tue", label: "Tue" },
+  { id: "wed", label: "Wed" },
+  { id: "thu", label: "Thu" },
+  { id: "fri", label: "Fri" },
+  { id: "sat", label: "Sat" },
+];
+
 function DriverForm({ driver, onSave, onCancel }) {
-  const [d, setD] = useState({ ...driver });
+  const [d, setD] = useState({ ...driver, availableDays: driver.availableDays || [] });
   const upd = (k, v) => setD(p => ({ ...p, [k]: v }));
+  const toggleDay = (id) => {
+    const cur = d.availableDays || [];
+    upd("availableDays", cur.includes(id) ? cur.filter(x => x !== id) : [...cur, id]);
+  };
 
   return (
     <div onClick={onCancel}
@@ -209,6 +258,26 @@ function DriverForm({ driver, onSave, onCancel }) {
         <Field label="Phone" value={d.phone || ""} onChange={v => upd("phone", v)} placeholder="317-555-1234" />
         <Field label="Login Code" value={d.loginCode || ""} onChange={v => upd("loginCode", v)} placeholder="7-digit code for driver app" />
         <Field label="CDL / License" value={d.license || ""} onChange={v => upd("license", v)} />
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Available Days</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {WEEK_DAYS.map(day => {
+              const on = (d.availableDays || []).includes(day.id);
+              return (
+                <button key={day.id} type="button" onClick={() => toggleDay(day.id)}
+                  style={{
+                    flex: 1, padding: "10px 4px", borderRadius: 8,
+                    background: on ? GREEN : "#f2f5ef",
+                    color: on ? DARK : "#7a8c74",
+                    border: `1.5px solid ${on ? GREEN : BORDER}`,
+                    fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit",
+                  }}>
+                  {day.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
         <Field label="Notes" value={d.notes || ""} onChange={v => upd("notes", v)} multiline />
         <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, fontSize: 13, color: DARK, fontWeight: 700 }}>
           <input type="checkbox" checked={d.active !== false} onChange={e => upd("active", e.target.checked)} />

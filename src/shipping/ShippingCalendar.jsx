@@ -46,7 +46,7 @@ function hourBucket(hhmm) {
 }
 
 export default function ShippingCalendar() {
-  const { rows: deliveries, update } = useDeliveries();
+  const { rows: deliveries, update, remove } = useDeliveries();
   const { rows: trucks } = useTrucks();
   const { rows: teams }  = useShippingTeams();
 
@@ -199,6 +199,7 @@ export default function ShippingCalendar() {
           setTapSelected={setTapSelected}
           onDrop={(iso, slot, delivery) => moveDelivery(delivery, iso, slot)}
           onUnschedule={(d) => moveDelivery(d, d.deliveryDate, null)}
+          onViewDetails={setViewing}
         />
       ) : (
         <DayGrid
@@ -215,6 +216,7 @@ export default function ShippingCalendar() {
           setTapSelected={setTapSelected}
           onDrop={(iso, slot, delivery) => moveDelivery(delivery, iso, slot)}
           onUnschedule={(d) => moveDelivery(d, d.deliveryDate, null)}
+          onViewDetails={setViewing}
         />
       )}
 
@@ -230,7 +232,19 @@ export default function ShippingCalendar() {
         />
       )}
 
-      {viewing && <DeliveryDetailModal delivery={viewing} teams={teams} trucks={trucks} onClose={() => setViewing(null)} />}
+      {viewing && (
+        <DeliveryDetailModal
+          delivery={viewing}
+          teams={teams}
+          trucks={trucks}
+          onClose={() => setViewing(null)}
+          onDelete={async () => {
+            if (!window.confirm(`Delete this delivery for ${viewing.customerSnapshot?.company_name || "this customer"}? This can't be undone.`)) return;
+            await remove(viewing.id);
+            setViewing(null);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -508,7 +522,7 @@ function UnscheduledDrawer({ items, teams, setDragging, tapSelected, setTapSelec
 }
 
 // ── Delivery detail modal ───────────────────────────────────────────────────
-function DeliveryDetailModal({ delivery: d, teams, trucks, onClose }) {
+function DeliveryDetailModal({ delivery: d, teams, trucks, onClose, onDelete }) {
   const c = d.customerSnapshot || {};
   const team = teams.find(t => t.id === d.teamId);
   const truck = trucks.find(t => t.id === d.truckId);
@@ -555,6 +569,13 @@ function DeliveryDetailModal({ delivery: d, teams, trucks, onClose }) {
           {d.miles != null && <DetailRow label="Distance" value={`${d.miles} mi • ~${d.driveMinutes || "?"} min`} />}
           {d.notes && <DetailRow label="Notes" value={<div style={{ whiteSpace: "pre-wrap", fontStyle: "italic" }}>{d.notes}</div>} />}
           {d.createdBy && <DetailRow label="Created by" value={d.createdBy} />}
+
+          {onDelete && (
+            <button onClick={onDelete}
+              style={{ width: "100%", marginTop: 10, padding: "14px 0", borderRadius: 10, border: `1.5px solid #d94f3d`, background: "#fff", color: "#d94f3d", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+              🗑 Delete Delivery
+            </button>
+          )}
         </div>
       </div>
     </div>
