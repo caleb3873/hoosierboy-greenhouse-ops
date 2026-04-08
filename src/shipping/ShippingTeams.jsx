@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useShippingTeams, useFloorCodes } from "../supabase";
+import { useShippingTeams, useFloorCodes, useEmployees } from "../supabase";
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
 const DARK = "#1e2d1a";
@@ -11,16 +11,25 @@ const TEAM_COLORS = ["#7fb069", "#4a9d7f", "#d9a04a", "#a94aa0", "#4a6a8a", "#c5
 
 export default function ShippingTeams() {
   const { rows: teams, insert, update, remove, loading } = useShippingTeams();
+  const { rows: employees } = useEmployees();
   const { rows: floorCodes } = useFloorCodes();
   const [editing, setEditing] = useState(null);
 
-  // Candidates = anyone with a worker_name on floor_codes (shippers, growers, managers)
+  // Candidates = every active employee, annotated with role from floor_codes if available
   const people = useMemo(() => {
-    const seen = new Set();
-    return floorCodes
-      .filter(fc => fc.workerName && !seen.has(fc.workerName) && seen.add(fc.workerName))
-      .map(fc => ({ id: fc.id, name: fc.workerName, role: fc.role, code: fc.code }));
-  }, [floorCodes]);
+    const roleByName = new Map();
+    for (const fc of floorCodes) {
+      if (fc.workerName) roleByName.set(fc.workerName, { role: fc.role, code: fc.code });
+    }
+    return employees
+      .filter(e => e.active !== false)
+      .map(e => ({
+        id: e.id,
+        name: e.name,
+        role: roleByName.get(e.name)?.role || e.role || "staff",
+        code: roleByName.get(e.name)?.code || null,
+      }));
+  }, [employees, floorCodes]);
 
   async function save(row) {
     if (row.id) {
@@ -139,7 +148,7 @@ function TeamForm({ team, people, onSave, onCancel }) {
           <Label>Members</Label>
           {people.length === 0 ? (
             <div style={{ fontSize: 13, color: "#7a8c74", padding: "12px 0" }}>
-              No staff with floor codes found. Add people in <b>Floor Codes</b> first.
+              No employees found. Add them to the employees roster first.
             </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14, maxHeight: 260, overflowY: "auto", border: `1px solid ${BORDER}`, borderRadius: 10, padding: 8 }}>
