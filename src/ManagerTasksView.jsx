@@ -46,7 +46,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
 
   const canCreateInCurrentCategory = category === "production" || canCreateGrowing;
 
-  async function createTask(title) {
+  async function createTask(title, bucket = "today") {
     if (!title.trim()) return;
     const maxPriority = Math.max(0, ...tasks.filter(t => t.year === today.year && t.weekNumber === today.week && (t.category || "production") === category).map(t => t.priority || 0));
     await upsert({
@@ -57,6 +57,8 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       year: today.year,
       status: "pending",
       category,
+      bucket,
+      carriedOver: false,
       createdBy: displayName || "Manager",
       photos: [],
     });
@@ -64,16 +66,48 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
     refresh();
   }
 
+  const [completingTask, setCompletingTask] = useState(null);
+
   async function toggleComplete(task) {
     const completed = task.status === "completed";
+    if (!completed) {
+      // Prompt for notes/photo
+      setCompletingTask(task);
+      return;
+    }
     await upsert({
       ...task,
-      status: completed ? "pending" : "completed",
-      completedBy: completed ? null : (displayName || "Manager"),
-      completedAt: completed ? null : new Date().toISOString(),
+      status: "pending",
+      completedBy: null,
+      completedAt: null,
     });
     refresh();
   }
+
+  async function finishCompletion(notes, photo) {
+    if (!completingTask) return;
+    const photos = photo ? [...(completingTask.photos || []), photo] : (completingTask.photos || []);
+    const combinedNotes = notes ? ((completingTask.notes ? completingTask.notes + "\n" : "") + notes) : completingTask.notes;
+    await upsert({
+      ...completingTask,
+      status: "completed",
+      completedBy: displayName || "Manager",
+      completedAt: new Date().toISOString(),
+      notes: combinedNotes,
+      photos,
+    });
+    setCompletingTask(null);
+    refresh();
+  }
+
+  // ── CARRYOVER: move pending tasks from prior weeks into current week ──
+  useEffect(() => {
+    if (!tasks.length) return;
+    const stale = tasks.filter(t => t.status !== "completed" && (t.year < today.year || (t.year === today.year && t.weekNumber < today.week)));
+    stale.forEach(t => {
+      upsert({ ...t, year: today.year, weekNumber: today.week, carriedOver: true });
+    });
+  }, [tasks.length]); // eslint-disable-line
 
   async function moveTask(task, direction) {
     const sameWeek = visibleTasks;
@@ -104,6 +138,51 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
 
   if (selectedTask) {
     return <TaskDetail task={selectedTask} onBack={() => setSelectedTask(null)} onSave={async t => { await upsert(t); refresh(); setSelectedTask(null); }} />;
+  }
+
+  function renderTaskCard(t, idx) {
+    const isDone = t.status === "completed";
+    const isOverdue = !!t.carriedOver && !isDone;
+    return (
+      <div key={t.id} style={{
+        background: "#fff", borderRadius: 14,
+        border: `1.5px solid ${isOverdue ? "#d94f3d" : isDone ? "#c8d8c0" : "#e0ead8"}`,
+        boxShadow: isOverdue ? "0 0 0 2px rgba(217,79,61,0.15)" : "none",
+        padding: "14px 16px", marginBottom: 10, opacity: isDone ? 0.65 : 1,
+      }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <button onClick={() => moveTask(t, "up")} disabled={idx === 0 || isDone}
+              style={{ background: "none", border: "none", color: idx === 0 || isDone ? "#d0d8cc" : "#7a8c74", fontSize: 16, cursor: idx === 0 || isDone ? "default" : "pointer", padding: "2px 6px" }}>&#9650;</button>
+            <button onClick={() => moveTask(t, "down")} disabled={idx === visibleTasks.length - 1 || isDone}
+              style={{ background: "none", border: "none", color: idx === visibleTasks.length - 1 || isDone ? "#d0d8cc" : "#7a8c74", fontSize: 16, cursor: idx === visibleTasks.length - 1 || isDone ? "default" : "pointer", padding: "2px 6px" }}>&#9660;</button>
+          </div>
+          <button onClick={() => toggleComplete(t)}
+            style={{
+              width: 28, height: 28, minWidth: 28, borderRadius: 8,
+              border: `2px solid #7fb069`, background: isDone ? "#7fb069" : "#fff",
+              color: "#1e2d1a", fontSize: 16, fontWeight: 800, cursor: "pointer", padding: 0,
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}>{isDone ? "✓" : ""}</button>
+          <div style={{ flex: 1 }} onClick={() => setSelectedTask(t)}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: isOverdue ? "#d94f3d" : "#1e2d1a", textDecoration: isDone ? "line-through" : "none" }}>{t.title}</div>
+              {isOverdue && <span style={{ background: "#d94f3d", color: "#fff", borderRadius: 999, padding: "2px 8px", fontSize: 10, fontWeight: 800 }}>OVERDUE</span>}
+            </div>
+            {t.description && <div style={{ fontSize: 12, color: "#7a8c74", marginTop: 4 }}>{t.description}</div>}
+            {(t.photos || []).length > 0 && <div style={{ fontSize: 11, color: "#4a90d9", marginTop: 4 }}>📷 {t.photos.length} photo{t.photos.length !== 1 ? "s" : ""}</div>}
+            {t.notes && <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 4, fontStyle: "italic" }}>📝 {t.notes}</div>}
+            {isDone && (
+              <div style={{ fontSize: 11, color: "#4a7a35", marginTop: 4 }}>
+                ✓ {t.completedBy} — {formatTime(t.completedAt)}
+              </div>
+            )}
+          </div>
+          <button onClick={() => deleteTask(t)}
+            style={{ background: "none", border: "none", color: "#8a9a80", fontSize: 18, cursor: "pointer", padding: 4 }} title="Delete task">🗑</button>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -179,7 +258,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
         ))}
       </div>
 
-      {/* Task list */}
+      {/* Task list grouped by bucket */}
       <div style={{ padding: 16 }}>
         {visibleTasks.length === 0 ? (
           <div style={{ textAlign: "center", padding: "60px 20px", color: "#7a8c74" }}>
@@ -191,46 +270,33 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
               <div style={{ fontSize: 12, marginTop: 6, color: "#aabba0" }}>Tap the mic button below to add one</div>
             )}
           </div>
-        ) : visibleTasks.map((t, idx) => {
-          const isDone = t.status === "completed";
-          return (
-            <div key={t.id} style={{
-              background: "#fff", borderRadius: 14, border: `1.5px solid ${isDone ? "#c8d8c0" : "#e0ead8"}`,
-              padding: "14px 16px", marginBottom: 10, opacity: isDone ? 0.65 : 1,
-            }}>
-              <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                  <button onClick={() => moveTask(t, "up")} disabled={idx === 0 || isDone}
-                    style={{ background: "none", border: "none", color: idx === 0 || isDone ? "#d0d8cc" : "#7a8c74", fontSize: 16, cursor: idx === 0 || isDone ? "default" : "pointer", padding: "2px 6px" }}>&#9650;</button>
-                  <button onClick={() => moveTask(t, "down")} disabled={idx === visibleTasks.length - 1 || isDone}
-                    style={{ background: "none", border: "none", color: idx === visibleTasks.length - 1 || isDone ? "#d0d8cc" : "#7a8c74", fontSize: 16, cursor: idx === visibleTasks.length - 1 || isDone ? "default" : "pointer", padding: "2px 6px" }}>&#9660;</button>
+        ) : (
+          [
+            { id: "today",          label: "Today" },
+            { id: "tomorrow",       label: "Tomorrow" },
+            { id: "check_tomorrow", label: "Check Tomorrow" },
+          ].map(section => {
+            const sectionTasks = visibleTasks.filter(t => (t.bucket || "today") === section.id);
+            if (sectionTasks.length === 0) return null;
+            return (
+              <div key={section.id} style={{ marginBottom: 18 }}>
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 10,
+                  fontSize: 12, fontWeight: 800, color: "#1e2d1a", textTransform: "uppercase",
+                  letterSpacing: 1.2, margin: "6px 4px 10px",
+                }}>
+                  <span>{section.label}</span>
+                  <div style={{ flex: 1, height: 2, background: "#7fb069", borderRadius: 1 }} />
+                  <span style={{ background: "#7fb069", color: "#1e2d1a", borderRadius: 999, padding: "2px 10px", fontSize: 11 }}>{sectionTasks.length}</span>
                 </div>
-                <button onClick={() => toggleComplete(t)}
-                  style={{
-                    width: 28, height: 28, minWidth: 28, borderRadius: 8,
-                    border: `2px solid #7fb069`, background: isDone ? "#7fb069" : "#fff",
-                    color: "#1e2d1a", fontSize: 16, fontWeight: 800, cursor: "pointer", padding: 0,
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                  }}>{isDone ? "✓" : ""}</button>
-                <div style={{ flex: 1 }} onClick={() => setSelectedTask(t)}>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                    <span style={{ background: idx < 3 && !isDone ? "#1e2d1a" : "#7a8c74", color: "#fff", borderRadius: 20, width: 24, height: 24, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800 }}>{idx + 1}</span>
-                    <div style={{ fontSize: 15, fontWeight: 700, color: "#1e2d1a", textDecoration: isDone ? "line-through" : "none" }}>{t.title}</div>
-                  </div>
-                  {t.description && <div style={{ fontSize: 12, color: "#7a8c74", marginTop: 4, marginLeft: 32 }}>{t.description}</div>}
-                  {(t.photos || []).length > 0 && <div style={{ fontSize: 11, color: "#4a90d9", marginTop: 4, marginLeft: 32 }}>📷 {t.photos.length} photo{t.photos.length !== 1 ? "s" : ""}</div>}
-                  {isDone && (
-                    <div style={{ fontSize: 11, color: "#4a7a35", marginTop: 4, marginLeft: 32 }}>
-                      ✓ {t.completedBy} — {formatTime(t.completedAt)}
-                    </div>
-                  )}
-                </div>
-                <button onClick={() => deleteTask(t)}
-                  style={{ background: "none", border: "none", color: "#d0c8c8", fontSize: 18, cursor: "pointer", padding: 4 }}>&times;</button>
+                {sectionTasks.map((t, sIdx) => {
+                  const idx = visibleTasks.indexOf(t);
+                  return renderTaskCard(t, idx);
+                })}
               </div>
-            </div>
-          );
-        })}
+            );
+          })
+        )}
       </div>
 
       {/* Mic button - only on current week + only if allowed in this category */}
@@ -248,6 +314,13 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
 
       {showRecorder && <VoiceRecorderModal onSave={createTask} onCancel={() => setShowRecorder(false)} />}
       {showCodes && <CodesModal onClose={() => setShowCodes(false)} />}
+      {completingTask && (
+        <CompletionPromptModal
+          task={completingTask}
+          onCancel={() => setCompletingTask(null)}
+          onSave={finishCompletion}
+        />
+      )}
     </div>
   );
 }
@@ -262,7 +335,76 @@ const FLOOR_CODE_LIST = [
   { name: "Colin O'Dell",     code: "3333333", role: "Grower" },
   { name: "Reese Morris",     code: "4444444", role: "Grower + Tasks" },
   { name: "Eulogio Martinez", code: "6666666", role: "Grower" },
+  { name: "Amanda Kirsop",    code: "8888888", role: "Grower" },
 ];
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ── COMPLETION PROMPT MODAL ─────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+export function CompletionPromptModal({ task, onCancel, onSave }) {
+  const [notes, setNotes] = useState("");
+  const [photo, setPhoto] = useState(null);
+  const fileRef = useRef(null);
+
+  function handlePhoto(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => setPhoto(ev.target.result);
+    reader.readAsDataURL(file);
+  }
+
+  return (
+    <div onClick={onCancel}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 9999, display: "flex", alignItems: "flex-end", justifyContent: "center", ...FONT }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        background: "#fff", borderRadius: "20px 20px 0 0", padding: 22, width: "100%", maxWidth: 500,
+      }}>
+        <div style={{ fontSize: 11, color: "#7fb069", fontWeight: 800, textTransform: "uppercase", letterSpacing: 1 }}>Completing</div>
+        <div style={{ fontSize: 17, fontWeight: 800, color: "#1e2d1a", marginBottom: 14 }}>{task.title}</div>
+
+        <label style={{ fontSize: 12, fontWeight: 700, color: "#7a8c74" }}>Any notes? (optional)</label>
+        <textarea value={notes} onChange={e => setNotes(e.target.value)}
+          placeholder="e.g. looked healthy, watered well"
+          style={{
+            width: "100%", minHeight: 70, padding: 12, borderRadius: 10, border: "1.5px solid #c8d8c0",
+            fontSize: 14, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box", outline: "none",
+            marginTop: 6, marginBottom: 12,
+          }} />
+
+        <label style={{ fontSize: 12, fontWeight: 700, color: "#7a8c74" }}>Take a photo? (optional)</label>
+        <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={handlePhoto} style={{ display: "none" }} />
+        {photo ? (
+          <div style={{ position: "relative", marginTop: 6 }}>
+            <img src={photo} alt="" style={{ width: "100%", maxHeight: 180, objectFit: "cover", borderRadius: 10 }} />
+            <button onClick={() => setPhoto(null)}
+              style={{ position: "absolute", top: 6, right: 6, background: "rgba(0,0,0,0.6)", border: "none", color: "#fff", borderRadius: "50%", width: 28, height: 28, cursor: "pointer", fontSize: 14 }}>×</button>
+          </div>
+        ) : (
+          <button onClick={() => fileRef.current?.click()}
+            style={{
+              width: "100%", padding: "14px", borderRadius: 10, border: "1.5px dashed #c8d8c0",
+              background: "#fafcf8", color: "#7a8c74", fontSize: 14, fontWeight: 700, cursor: "pointer",
+              fontFamily: "inherit", marginTop: 6,
+            }}>
+            📷 Take Photo
+          </button>
+        )}
+
+        <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
+          <button onClick={onCancel}
+            style={{ flex: 1, padding: "13px 0", borderRadius: 10, border: "1.5px solid #c8d8c0", background: "#fff", color: "#7a8c74", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+            Cancel
+          </button>
+          <button onClick={() => onSave(notes.trim() || null, photo)}
+            style={{ flex: 2, padding: "13px 0", borderRadius: 10, border: "none", background: "#7fb069", color: "#1e2d1a", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+            ✓ Mark Done
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function CodesModal({ onClose }) {
   return (
@@ -297,6 +439,7 @@ function CodesModal({ onClose }) {
 // ══════════════════════════════════════════════════════════════════════════════
 function VoiceRecorderModal({ onSave, onCancel }) {
   const [transcript, setTranscript] = useState("");
+  const [bucket, setBucket] = useState("today");
   const [isListening, setIsListening] = useState(false);
   const [error, setError] = useState("");
   const recognitionRef = useRef(null);
@@ -360,7 +503,7 @@ function VoiceRecorderModal({ onSave, onCancel }) {
   function save() {
     if (!transcript.trim()) return;
     try { recognitionRef.current?.stop(); } catch {}
-    onSave(transcript);
+    onSave(transcript, bucket);
   }
 
   return (
@@ -383,6 +526,26 @@ function VoiceRecorderModal({ onSave, onCancel }) {
             border: `2px solid ${isListening ? "#7fb069" : "#c8d8c0"}`, fontSize: 15,
             fontFamily: "inherit", resize: "vertical", boxSizing: "border-box", outline: "none",
           }} />
+
+        {/* Bucket selection */}
+        <div style={{ display: "flex", gap: 6, marginTop: 12 }}>
+          {[
+            { id: "today", label: "Today" },
+            { id: "tomorrow", label: "Tomorrow" },
+            { id: "check_tomorrow", label: "Check Tomorrow" },
+          ].map(b => (
+            <button key={b.id} onClick={() => setBucket(b.id)}
+              style={{
+                flex: 1, padding: "10px 6px", borderRadius: 10, fontSize: 12, fontWeight: 800,
+                background: bucket === b.id ? "#1e2d1a" : "#f2f5ef",
+                color: bucket === b.id ? "#c8e6b8" : "#7a8c74",
+                border: `1.5px solid ${bucket === b.id ? "#1e2d1a" : "#c8d8c0"}`,
+                cursor: "pointer", fontFamily: "inherit",
+              }}>
+              {b.label}
+            </button>
+          ))}
+        </div>
 
         <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
           <button onClick={toggleListening}
