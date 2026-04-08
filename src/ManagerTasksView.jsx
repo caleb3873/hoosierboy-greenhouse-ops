@@ -337,6 +337,7 @@ const FLOOR_CODE_LIST = [
   { name: "Reese Morris",     code: "4444444", role: "Grower + Tasks" },
   { name: "Eulogio Martinez", code: "6666666", role: "Grower" },
   { name: "Amanda Kirsop",    code: "8888888", role: "Grower" },
+  { name: "Kurt Schlegel",    code: "1111222", role: "Grower" },
 ];
 
 // ══════════════════════════════════════════════════════════════════════════════
