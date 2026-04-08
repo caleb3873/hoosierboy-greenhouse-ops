@@ -24,27 +24,30 @@ function formatTime(iso) {
 // ══════════════════════════════════════════════════════════════════════════════
 // ── MANAGER VIEW ────────────────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════════════
-export default function ManagerTasksView({ onSwitchMode }) {
+export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateGrowing = true }) {
   const { rows: tasks, upsert, remove, refresh } = useManagerTasks();
   const { displayName } = useAuth();
 
   const today = useMemo(() => getWeekInfo(), []);
   const [selectedWeek, setSelectedWeek] = useState(today);
+  const [category, setCategory] = useState(canCreateGrowing ? "production" : "production"); // production | growing
   const [statusFilter, setStatusFilter] = useState("pending"); // all | pending | completed
   const [selectedTask, setSelectedTask] = useState(null);
   const [showRecorder, setShowRecorder] = useState(false);
 
   // Filter + sort by priority (higher = more important = on top)
   const visibleTasks = useMemo(() => {
-    let r = tasks.filter(t => t.year === selectedWeek.year && t.weekNumber === selectedWeek.week);
+    let r = tasks.filter(t => t.year === selectedWeek.year && t.weekNumber === selectedWeek.week && (t.category || "production") === category);
     if (statusFilter === "pending") r = r.filter(t => t.status !== "completed");
     else if (statusFilter === "completed") r = r.filter(t => t.status === "completed");
     return [...r].sort((a, b) => (b.priority || 0) - (a.priority || 0));
-  }, [tasks, selectedWeek, statusFilter]);
+  }, [tasks, selectedWeek, statusFilter, category]);
+
+  const canCreateInCurrentCategory = category === "production" || canCreateGrowing;
 
   async function createTask(title) {
     if (!title.trim()) return;
-    const maxPriority = Math.max(0, ...tasks.filter(t => t.year === today.year && t.weekNumber === today.week).map(t => t.priority || 0));
+    const maxPriority = Math.max(0, ...tasks.filter(t => t.year === today.year && t.weekNumber === today.week && (t.category || "production") === category).map(t => t.priority || 0));
     await upsert({
       id: crypto.randomUUID(),
       title: title.trim(),
@@ -52,10 +55,22 @@ export default function ManagerTasksView({ onSwitchMode }) {
       weekNumber: today.week,
       year: today.year,
       status: "pending",
+      category,
       createdBy: displayName || "Manager",
       photos: [],
     });
     setShowRecorder(false);
+    refresh();
+  }
+
+  async function toggleComplete(task) {
+    const completed = task.status === "completed";
+    await upsert({
+      ...task,
+      status: completed ? "pending" : "completed",
+      completedBy: completed ? null : (displayName || "Manager"),
+      completedAt: completed ? null : new Date().toISOString(),
+    });
     refresh();
   }
 
@@ -101,10 +116,18 @@ export default function ManagerTasksView({ onSwitchMode }) {
             <div style={{ fontSize: 10, fontWeight: 800, color: "#7a9a6a", letterSpacing: 1.2, textTransform: "uppercase" }}>Floor View</div>
             <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif" }}>Manager Tasks</div>
           </div>
-          <button onClick={onSwitchMode}
-            style={{ background: "none", border: "1px solid #4a6a3a", borderRadius: 8, color: "#c8e6b8", padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
-            Log out
-          </button>
+          <div style={{ display: "flex", gap: 6 }}>
+            {onBackToApp && (
+              <button onClick={onBackToApp}
+                style={{ background: "#7fb069", border: "none", borderRadius: 8, color: "#1e2d1a", padding: "6px 12px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                App →
+              </button>
+            )}
+            <button onClick={onSwitchMode}
+              style={{ background: "none", border: "1px solid #4a6a3a", borderRadius: 8, color: "#c8e6b8", padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+              Log out
+            </button>
+          </div>
         </div>
       </div>
 
@@ -119,6 +142,22 @@ export default function ManagerTasksView({ onSwitchMode }) {
         <button onClick={() => changeWeek(1)} style={{ background: "none", border: "none", color: "#c8e6b8", fontSize: 18, cursor: "pointer", padding: 6 }}>&rarr;</button>
       </div>
 
+      {/* Category tabs */}
+      <div style={{ padding: "12px 20px 0", background: "#fff", display: "flex", gap: 8 }}>
+        {[{id:"production",label:"Production"},{id:"growing",label:"Growing"}].map(c => (
+          <button key={c.id} onClick={() => setCategory(c.id)}
+            style={{
+              flex: 1, padding: "12px 0", borderRadius: "12px 12px 0 0", fontSize: 13, fontWeight: 800,
+              background: category === c.id ? "#7fb069" : "#f2f5ef",
+              color: category === c.id ? "#1e2d1a" : "#7a8c74",
+              border: "1.5px solid #c8d8c0", borderBottom: category === c.id ? "1.5px solid #7fb069" : "1.5px solid #c8d8c0",
+              cursor: "pointer", fontFamily: "inherit",
+            }}>
+            {c.label}
+          </button>
+        ))}
+      </div>
+
       {/* Status filter */}
       <div style={{ padding: "12px 20px", background: "#fff", borderBottom: "1.5px solid #e0ead8", display: "flex", gap: 8 }}>
         {[{id:"pending",label:"To Do"},{id:"completed",label:"Done"},{id:"all",label:"All"}].map(f => (
@@ -130,7 +169,7 @@ export default function ManagerTasksView({ onSwitchMode }) {
               border: `1.5px solid ${statusFilter === f.id ? "#1e2d1a" : "#c8d8c0"}`,
               cursor: "pointer", fontFamily: "inherit",
             }}>
-            {f.label} ({tasks.filter(t => t.year === selectedWeek.year && t.weekNumber === selectedWeek.week && (f.id === "all" || (f.id === "pending" ? t.status !== "completed" : t.status === "completed"))).length})
+            {f.label} ({tasks.filter(t => t.year === selectedWeek.year && t.weekNumber === selectedWeek.week && (t.category || "production") === category && (f.id === "all" || (f.id === "pending" ? t.status !== "completed" : t.status === "completed"))).length})
           </button>
         ))}
       </div>
@@ -161,6 +200,13 @@ export default function ManagerTasksView({ onSwitchMode }) {
                   <button onClick={() => moveTask(t, "down")} disabled={idx === visibleTasks.length - 1 || isDone}
                     style={{ background: "none", border: "none", color: idx === visibleTasks.length - 1 || isDone ? "#d0d8cc" : "#7a8c74", fontSize: 16, cursor: idx === visibleTasks.length - 1 || isDone ? "default" : "pointer", padding: "2px 6px" }}>&#9660;</button>
                 </div>
+                <button onClick={() => toggleComplete(t)}
+                  style={{
+                    width: 28, height: 28, minWidth: 28, borderRadius: 8,
+                    border: `2px solid #7fb069`, background: isDone ? "#7fb069" : "#fff",
+                    color: "#1e2d1a", fontSize: 16, fontWeight: 800, cursor: "pointer", padding: 0,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                  }}>{isDone ? "✓" : ""}</button>
                 <div style={{ flex: 1 }} onClick={() => setSelectedTask(t)}>
                   <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                     <span style={{ background: idx < 3 && !isDone ? "#1e2d1a" : "#7a8c74", color: "#fff", borderRadius: 20, width: 24, height: 24, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800 }}>{idx + 1}</span>
@@ -182,8 +228,8 @@ export default function ManagerTasksView({ onSwitchMode }) {
         })}
       </div>
 
-      {/* Mic button - only on current week */}
-      {isCurrentWeek && (
+      {/* Mic button - only on current week + only if allowed in this category */}
+      {isCurrentWeek && canCreateInCurrentCategory && (
         <button onClick={() => setShowRecorder(true)}
           style={{
             position: "fixed", bottom: 20, left: "50%", transform: "translateX(-50%)",

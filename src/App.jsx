@@ -212,6 +212,48 @@ function PlannerShell() {
   );
 }
 
+// ── FLOOR APP ROUTER ──────────────────────────────────────────────────────────
+// Handles dismissible task overlays for manager/Reese/workers.
+function FloorAppRouter({ role, isManager, growerProfile, signOut }) {
+  const name = growerProfile?.name || "";
+  const isReese = name === "Reese Morris";
+  // Manager starts in task creator. Workers (incl Reese) start in worker checklist.
+  const initial = isManager ? "creator" : "worker";
+  const [view, setView] = useState(initial);
+
+  if (view === "creator") {
+    return <ManagerTasksView
+      onSwitchMode={signOut}
+      onBackToApp={() => setView("app")}
+      canCreateGrowing={isManager}
+    />;
+  }
+  if (view === "worker") {
+    return <WorkerChecklistView
+      onSwitchMode={signOut}
+      onBackToApp={() => setView("app")}
+      onOpenTaskCreator={isManager || isReese ? () => setView("creator") : undefined}
+    />;
+  }
+  // Full operator app with a floating "Tasks" button to re-open the task view
+  return (
+    <div style={{ position: "relative" }}>
+      <OperatorView onSwitchMode={signOut} />
+      <button
+        onClick={() => setView(isManager ? "creator" : "worker")}
+        style={{
+          position: "fixed", bottom: 20, right: 20, zIndex: 900,
+          background: "#7fb069", color: "#1e2d1a", border: "3px solid #fff",
+          borderRadius: 999, padding: "12px 18px", fontWeight: 800, fontSize: 14,
+          cursor: "pointer", boxShadow: "0 4px 14px rgba(0,0,0,0.25)",
+          fontFamily: "'DM Sans',sans-serif",
+        }}>
+        📋 Tasks
+      </button>
+    </div>
+  );
+}
+
 // ── ROOT (auth-aware) ─────────────────────────────────────────────────────────
 function AppInner() {
   const { isAuthenticated, isAdmin, isOperator, isManager, role, growerProfile, loading, signOut, recoveryMode } = useAuth();
@@ -234,11 +276,10 @@ function AppInner() {
   // Grower → grower mobile view
   if (role === "grower") return <GrowerView onSwitchMode={signOut} />;
 
-  // Manager → voice task manager
-  if (isManager) return <ManagerTasksView onSwitchMode={signOut} />;
-
-  // Worker (named operator) → simple checklist view
-  if (isOperator && growerProfile?.name) return <WorkerChecklistView onSwitchMode={signOut} />;
+  // Manager + Reese get the task creator. Workers get the growing checklist first.
+  if (isManager || (isOperator && growerProfile?.name)) {
+    return <FloorAppRouter role={role} isManager={isManager} growerProfile={growerProfile} signOut={signOut} />;
+  }
 
   // Operator / maintenance → operator view
   if (isOperator) return <OperatorView onSwitchMode={signOut} />;

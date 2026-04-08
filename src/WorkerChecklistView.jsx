@@ -22,14 +22,15 @@ function formatTime(iso) {
   return d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
-export default function WorkerChecklistView({ onSwitchMode }) {
+export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenTaskCreator }) {
   const { rows: tasks, upsert, refresh } = useManagerTasks();
   const { displayName } = useAuth();
   const today = useMemo(() => getWeekInfo(), []);
   const [showDone, setShowDone] = useState(false);
 
   const weekTasks = useMemo(() => {
-    const r = tasks.filter(t => t.year === today.year && t.weekNumber === today.week);
+    // Workers only see growing tasks
+    const r = tasks.filter(t => t.year === today.year && t.weekNumber === today.week && (t.category || "production") === "growing");
     return [...r].sort((a, b) => (b.priority || 0) - (a.priority || 0));
   }, [tasks, today]);
 
@@ -55,9 +56,21 @@ export default function WorkerChecklistView({ onSwitchMode }) {
           <div style={{ fontSize: 12, color: GREEN, textTransform: "uppercase", letterSpacing: 1 }}>Hi {displayName}</div>
           <div style={{ fontSize: 22, fontWeight: 700, color: CREAM }}>This Week's Tasks</div>
         </div>
-        <button onClick={onSwitchMode} style={{ background: "transparent", border: `1px solid ${GREEN}66`, color: CREAM, padding: "6px 12px", borderRadius: 6, cursor: "pointer", ...FONT }}>
-          Sign out
-        </button>
+        <div style={{ display: "flex", gap: 6 }}>
+          {onOpenTaskCreator && (
+            <button onClick={onOpenTaskCreator} style={{ background: GREEN, border: "none", color: GREEN_DARK, padding: "6px 12px", borderRadius: 6, cursor: "pointer", fontWeight: 800, ...FONT }}>
+              + Tasks
+            </button>
+          )}
+          {onBackToApp && (
+            <button onClick={onBackToApp} style={{ background: GREEN, border: "none", color: GREEN_DARK, padding: "6px 12px", borderRadius: 6, cursor: "pointer", fontWeight: 800, ...FONT }}>
+              App →
+            </button>
+          )}
+          <button onClick={onSwitchMode} style={{ background: "transparent", border: `1px solid ${GREEN}66`, color: CREAM, padding: "6px 12px", borderRadius: 6, cursor: "pointer", ...FONT }}>
+            Sign out
+          </button>
+        </div>
       </div>
 
       <div style={{ display: "flex", gap: 8, padding: 12 }}>
