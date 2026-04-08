@@ -432,15 +432,20 @@ function DeliveryChip({ delivery: d, team, conflict, setDragging, tapSelected, s
         display: "flex", alignItems: "flex-start", gap: 4,
         overflow: "hidden",
       }}
-      title={`${name} • ${fmtMoney(d.orderValueCents)}${carts ? ` • ${carts} carts` : ''}${d.truckId ? ' • has truck' : ''}`}>
+      title={`${name} • ${fmtMoney(d.orderValueCents)}${carts ? ` • ${carts} carts` : ''}${cartEligible ? ' • cart-eligible' : ''}${d.truckId ? ' • has truck' : ''}`}>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 11, fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", lineHeight: 1.2 }}>
-          {name}
+        <div style={{ fontSize: 11, fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", lineHeight: 1.2, display: "flex", alignItems: "center", gap: 4 }}>
+          {cartEligible && (
+            <span title="Carts allowed at this customer" style={{
+              background: "#4a7a35", color: "#fff", borderRadius: 4,
+              padding: "1px 4px", fontSize: 9, fontWeight: 800, flexShrink: 0,
+            }}>🛒</span>
+          )}
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</span>
         </div>
         <div style={{ fontSize: 10, fontWeight: 600, opacity: 0.85, display: "flex", gap: 6, flexWrap: "wrap", marginTop: 1 }}>
           {d.orderValueCents > 0 && <span>{fmtMoney(d.orderValueCents)}</span>}
-          {carts > 0 && <span style={{ color: isSelected ? GREEN : "#4a7a35", fontWeight: 800 }}>🛒 {carts}</span>}
-          {!carts && cartEligible && <span title="Cart-eligible customer" style={{ opacity: 0.6 }}>🛒</span>}
+          {carts > 0 && <span style={{ color: isSelected ? GREEN : "#4a7a35", fontWeight: 800 }}>🛒 {carts} dropping</span>}
         </div>
       </div>
       {onUnschedule && (
