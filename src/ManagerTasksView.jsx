@@ -724,6 +724,11 @@ export function TaskViewer({ task, onBack, onAppend, readOnly = true }) {
             <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={handlePhoto} style={{ display: "none" }} />
           </div>
         </div>
+
+        <button onClick={onBack}
+          style={{ width: "100%", marginTop: 16, padding: "16px 0", borderRadius: 12, border: "none", background: "#7fb069", color: "#1e2d1a", fontSize: 16, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+          ✓ Done
+        </button>
       </div>
     </div>
   );
