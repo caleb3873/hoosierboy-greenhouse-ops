@@ -347,6 +347,7 @@ function CalendarCell({ dateISO, slot, items, capacity, conflicts, teams, draggi
   const overCap = items.length > capacity;
   const hasConflict = conflicts.length > 0;
   const total = items.reduce((s, d) => s + (d.orderValueCents || 0), 0);
+  const totalCarts = items.reduce((s, d) => s + (d.cartCount || 0), 0);
 
   const handleDrop = (e) => {
     e.preventDefault();
@@ -374,7 +375,10 @@ function CalendarCell({ dateISO, slot, items, capacity, conflicts, teams, draggi
       }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 9, fontWeight: 800, color: overCap ? RED : hasConflict ? AMBER : "#7a8c74", letterSpacing: 0.5 }}>
         <span>{items.length}/{capacity}</span>
-        <span>{total > 0 ? fmtMoney(total) : ""}</span>
+        <span style={{ display: "flex", gap: 4 }}>
+          {totalCarts > 0 && <span>🛒{totalCarts}</span>}
+          {total > 0 && <span>{fmtMoney(total)}</span>}
+        </span>
       </div>
       {items.map(d => (
         <DeliveryChip key={d.id} delivery={d} team={teams.find(t => t.id === d.teamId)} conflict={conflicts.includes(d.truckId)} setDragging={setDragging} tapSelected={tapSelected} setTapSelected={setTapSelected} onUnschedule={onUnschedule} />
@@ -395,6 +399,8 @@ function DeliveryChip({ delivery: d, team, conflict, setDragging, tapSelected, s
   const cust = d.customerSnapshot || {};
   const isSelected = tapSelected?.id === d.id;
   const name = cust.company_name || "—";
+  const carts = d.cartCount || 0;
+  const cartEligible = cust.allow_carts;
 
   return (
     <div
@@ -407,21 +413,27 @@ function DeliveryChip({ delivery: d, team, conflict, setDragging, tapSelected, s
         color: isSelected ? CREAM : DARK,
         border: `1.5px solid ${conflict ? AMBER : (team?.color || pr.bg)}`,
         borderLeft: `4px solid ${team?.color || pr.bg}`,
-        borderRadius: 6, padding: "4px 6px",
-        fontSize: 10, fontWeight: 700, cursor: "grab",
-        display: "flex", alignItems: "center", gap: 4,
+        borderRadius: 6, padding: "5px 7px",
+        cursor: "grab",
+        display: "flex", alignItems: "flex-start", gap: 4,
         overflow: "hidden",
       }}
-      title={`${name} • ${fmtMoney(d.orderValueCents)}${d.truckId ? ' • has truck' : ''}`}>
-      <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-        {name}
-        {d.orderValueCents > 0 && <span style={{ marginLeft: 4, opacity: 0.7, fontWeight: 500 }}>{fmtMoney(d.orderValueCents)}</span>}
-      </span>
+      title={`${name} • ${fmtMoney(d.orderValueCents)}${carts ? ` • ${carts} carts` : ''}${d.truckId ? ' • has truck' : ''}`}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 11, fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", lineHeight: 1.2 }}>
+          {name}
+        </div>
+        <div style={{ fontSize: 10, fontWeight: 600, opacity: 0.85, display: "flex", gap: 6, flexWrap: "wrap", marginTop: 1 }}>
+          {d.orderValueCents > 0 && <span>{fmtMoney(d.orderValueCents)}</span>}
+          {carts > 0 && <span style={{ color: isSelected ? GREEN : "#4a7a35", fontWeight: 800 }}>🛒 {carts}</span>}
+          {!carts && cartEligible && <span title="Cart-eligible customer" style={{ opacity: 0.6 }}>🛒</span>}
+        </div>
+      </div>
       {onUnschedule && (
         <button
           onClick={(e) => { e.stopPropagation(); onUnschedule(d); }}
           title="Move back to unscheduled"
-          style={{ background: "none", border: "none", color: isSelected ? CREAM : "#7a8c74", fontSize: 11, cursor: "pointer", padding: 0, lineHeight: 1, flexShrink: 0 }}>
+          style={{ background: "none", border: "none", color: isSelected ? CREAM : "#7a8c74", fontSize: 12, cursor: "pointer", padding: 0, lineHeight: 1, flexShrink: 0 }}>
           ↩
         </button>
       )}

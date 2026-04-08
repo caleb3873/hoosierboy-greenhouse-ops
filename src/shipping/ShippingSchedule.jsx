@@ -77,12 +77,14 @@ export default function ShippingSchedule() {
         email: form.customer.email,
         terms: form.customer.terms,
         customer_type: form.customer.customerType,
+        allow_carts: !!form.customer.allowCarts,
       } : null,
       deliveryDate: form.deliveryDate,
       deliveryTime: form.deliveryTime || null,
       priority: form.priority,
       orderNumbers: form.orderNumbers,
       orderValueCents: Math.round((parseFloat(form.orderValue) || 0) * 100),
+      cartCount: parseInt(form.cartCount, 10) || 0,
       notes: form.notes || null,
       status: "scheduled",
       createdBy,
@@ -216,6 +218,7 @@ function DeliveryRow({ delivery: d, drivers, teams, trucks, onEdit, onDelete }) 
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
           <div style={{ fontSize: 15, fontWeight: 800, color: DARK }}>{cust.company_name || "—"}</div>
           <span style={{ fontSize: 9, fontWeight: 800, background: pr.bg, color: pr.color, borderRadius: 999, padding: "2px 8px" }}>{pr.label.toUpperCase()}</span>
+          {d.cartCount > 0 && <span style={{ fontSize: 11, fontWeight: 800, color: "#4a7a35" }}>🛒 {d.cartCount}</span>}
           {isDelivered && <span style={{ fontSize: 9, fontWeight: 800, background: "#4a7a35", color: "#fff", borderRadius: 999, padding: "2px 8px" }}>DELIVERED</span>}
           {d.deliveryTime && <span style={{ fontSize: 11, color: "#7a8c74" }}>🕒 {d.deliveryTime}</span>}
         </div>
@@ -249,6 +252,7 @@ function DeliveryForm({ delivery, customers, onSave, onCancel }) {
     priority: delivery.priority || "normal",
     orderNumbers: delivery.orderNumbers || [],
     orderValue: delivery.orderValueCents ? (delivery.orderValueCents / 100).toString() : "",
+    cartCount: delivery.cartCount ? String(delivery.cartCount) : "",
     notes: delivery.notes || "",
   } : {
     customer: null,
@@ -257,6 +261,7 @@ function DeliveryForm({ delivery, customers, onSave, onCancel }) {
     priority: "normal",
     orderNumbers: [],
     orderValue: "",
+    cartCount: "",
     notes: "",
   };
 
@@ -387,11 +392,23 @@ function DeliveryForm({ delivery, customers, onSave, onCancel }) {
             </button>
           </div>
 
-          {/* Order value */}
-          <Label>Order Total Value ($)</Label>
-          <input type="number" value={form.orderValue} onChange={e => upd("orderValue", e.target.value)}
-            placeholder="0"
-            style={{ width: "100%", padding: 12, borderRadius: 10, border: `1.5px solid ${BORDER}`, fontSize: 14, fontFamily: "inherit", boxSizing: "border-box", outline: "none", marginBottom: 14 }} />
+          {/* Order value + carts */}
+          <div style={{ display: "flex", gap: 10 }}>
+            <div style={{ flex: 2 }}>
+              <Label>Order Total Value ($)</Label>
+              <input type="number" value={form.orderValue} onChange={e => upd("orderValue", e.target.value)}
+                placeholder="0"
+                style={{ width: "100%", padding: 12, borderRadius: 10, border: `1.5px solid ${BORDER}`, fontSize: 14, fontFamily: "inherit", boxSizing: "border-box", outline: "none", marginBottom: 14 }} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <Label>Carts {form.customer?.allowCarts ? "🛒" : ""}</Label>
+              <input type="number" value={form.cartCount} onChange={e => upd("cartCount", e.target.value)}
+                placeholder="0"
+                disabled={form.customer && !form.customer.allowCarts}
+                title={form.customer && !form.customer.allowCarts ? "This customer isn't cart-eligible" : "Number of carts to drop"}
+                style={{ width: "100%", padding: 12, borderRadius: 10, border: `1.5px solid ${form.customer?.allowCarts ? GREEN : BORDER}`, fontSize: 14, fontFamily: "inherit", boxSizing: "border-box", outline: "none", marginBottom: 14, background: form.customer && !form.customer.allowCarts ? "#f5f5f5" : "#fff" }} />
+            </div>
+          </div>
 
           {/* Notes */}
           <Label>Notes</Label>
