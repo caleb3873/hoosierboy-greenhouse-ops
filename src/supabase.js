@@ -41,7 +41,7 @@ function toSnake(obj) {
       SNAKE_OVERRIDES[k] || k.replace(/([A-Z])/g, "_$1").toLowerCase(),
       // Don't recurse into jsonb fields — keep them as-is
       typeof v === "object" && v !== null && !Array.isArray(v) &&
-        !["varieties","indoorAssignments","outsideAssignments","zones","sections","stages","items","spacing","details","priceHistory","inventoryHistory","formatConfig","availability"].includes(k)
+        !["varieties","indoorAssignments","outsideAssignments","zones","sections","stages","items","spacing","details","priceHistory","inventoryHistory","formatConfig","availability","benchNumbers"].includes(k)
         ? toSnake(v)
         : v,
     ])

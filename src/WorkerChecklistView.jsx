@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect } from "react";
 import { useManagerTasks, useFlags, useCropRuns } from "./supabase";
 import { useAuth } from "./Auth";
-import { CompletionPromptModal } from "./ManagerTasksView";
+import { CompletionPromptModal, TaskViewer } from "./ManagerTasksView";
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
 const GREEN_DARK = "#1e2d1a";
@@ -32,7 +32,23 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
   const today = useMemo(() => getWeekInfo(), []);
   const [showDone, setShowDone] = useState(false);
   const [completingTask, setCompletingTask] = useState(null);
+  const [viewingTask, setViewingTask] = useState(null);
   const [flagging, setFlagging] = useState(false);
+
+  async function appendToTask({ note, photo }) {
+    if (!viewingTask) return;
+    const updated = { ...viewingTask };
+    if (note) {
+      const stamp = `[${displayName || "Grower"} ${new Date().toLocaleString()}]`;
+      updated.notes = (updated.notes ? updated.notes + "\n" : "") + `${stamp} ${note}`;
+    }
+    if (photo) {
+      updated.photos = [...(updated.photos || []), photo];
+    }
+    await upsert(updated);
+    setViewingTask(updated);
+    refresh();
+  }
 
   const weekTasks = useMemo(() => {
     const r = tasks.filter(t => t.year === today.year && t.weekNumber === today.week && (t.category || "production") === "growing");
@@ -87,6 +103,10 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
     { id: "check_tomorrow", label: "Day After" },
     { id: "this_week",      label: "This Week" },
   ];
+
+  if (viewingTask) {
+    return <TaskViewer task={viewingTask} onBack={() => setViewingTask(null)} onAppend={appendToTask} />;
+  }
 
   return (
     <div style={{ ...FONT, minHeight: "100vh", background: GREEN_DARK, color: "#fff", paddingBottom: 100 }}>
@@ -155,24 +175,24 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
                 const completed = task.status === "completed";
                 const overdue = !!task.carriedOver && !completed;
                 return (
-                  <div key={task.id} onClick={() => handleCheck(task)}
+                  <div key={task.id}
                     style={{
                       display: "flex", alignItems: "flex-start", gap: 14,
                       background: completed ? "#2a3a24" : overdue ? "#3a1e18" : "#263821",
                       border: `1px solid ${overdue ? RED : GREEN + "44"}`,
                       boxShadow: overdue ? `0 0 0 2px ${RED}33` : "none",
-                      borderRadius: 10, padding: 16, marginBottom: 10, cursor: "pointer",
+                      borderRadius: 10, padding: 16, marginBottom: 10,
                     }}>
-                    <div style={{
+                    <button onClick={() => handleCheck(task)} style={{
                       width: 32, height: 32, minWidth: 32, borderRadius: 8,
                       border: `2px solid ${GREEN}`,
                       background: completed ? GREEN : "transparent",
                       display: "flex", alignItems: "center", justifyContent: "center",
-                      color: GREEN_DARK, fontSize: 20, fontWeight: 700,
+                      color: GREEN_DARK, fontSize: 20, fontWeight: 700, cursor: "pointer", padding: 0,
                     }}>
                       {completed ? "✓" : ""}
-                    </div>
-                    <div style={{ flex: 1 }}>
+                    </button>
+                    <div style={{ flex: 1, cursor: "pointer" }} onClick={() => setViewingTask(task)}>
                       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                         <div style={{ fontSize: 17, fontWeight: 600, color: overdue ? "#ffb3a8" : CREAM, textDecoration: completed ? "line-through" : "none", opacity: completed ? 0.7 : 1 }}>
                           {task.title}

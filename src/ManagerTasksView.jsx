@@ -582,6 +582,120 @@ function VoiceRecorderModal({ onSave, onCancel }) {
 // ══════════════════════════════════════════════════════════════════════════════
 // ── TASK DETAIL ─────────────────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════════════
+function BenchNumbersEditor({ value, onChange }) {
+  const [input, setInput] = useState("");
+  const add = () => {
+    const v = input.trim();
+    if (!v) return;
+    if (!value.includes(v)) onChange([...value, v]);
+    setInput("");
+  };
+  const remove = (b) => onChange(value.filter(x => x !== b));
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+        {value.map(b => (
+          <span key={b} style={{
+            background: "#1e2d1a", color: "#c8e6b8", borderRadius: 999, padding: "6px 12px",
+            fontSize: 12, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 6,
+          }}>
+            {b}
+            <button onClick={() => remove(b)} style={{ background: "none", border: "none", color: "#c8e6b8", cursor: "pointer", fontSize: 14, padding: 0 }}>×</button>
+          </span>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 6 }}>
+        <input value={input} onChange={e => setInput(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); add(); } }}
+          placeholder="Add bench #"
+          style={{ flex: 1, padding: 10, borderRadius: 10, border: "1.5px solid #c8d8c0", fontSize: 14, fontFamily: "inherit", boxSizing: "border-box", outline: "none" }} />
+        <button onClick={add}
+          style={{ padding: "10px 16px", borderRadius: 10, border: "none", background: "#7fb069", color: "#1e2d1a", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+          Add
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export function TaskViewer({ task, onBack, onAppend, readOnly = true }) {
+  const [note, setNote] = useState("");
+  const fileRef = useRef(null);
+  function handlePhoto(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => onAppend({ photo: ev.target.result });
+    reader.readAsDataURL(file);
+  }
+  function saveNote() {
+    if (!note.trim()) return;
+    onAppend({ note: note.trim() });
+    setNote("");
+  }
+  return (
+    <div style={{ ...FONT, minHeight: "100vh", background: "#f2f5ef" }}>
+      <div style={{ background: "#1e2d1a", padding: "16px 20px", color: "#c8e6b8", display: "flex", alignItems: "center", gap: 12 }}>
+        <button onClick={onBack} style={{ background: "none", border: "none", color: "#c8e6b8", fontSize: 22, cursor: "pointer" }}>&larr;</button>
+        <div style={{ fontSize: 17, fontWeight: 800 }}>Task Details</div>
+      </div>
+      <div style={{ padding: 16 }}>
+        <div style={{ background: "#fff", borderRadius: 14, padding: 18, border: "1.5px solid #e0ead8", marginBottom: 14 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", marginBottom: 4 }}>Title</div>
+          <div style={{ fontSize: 17, fontWeight: 800, color: "#1e2d1a", marginBottom: 12 }}>{task.title}</div>
+          {task.description && <>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", marginBottom: 4 }}>Details</div>
+            <div style={{ fontSize: 14, color: "#1e2d1a", marginBottom: 12, whiteSpace: "pre-wrap" }}>{task.description}</div>
+          </>}
+          {task.houseId && <>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", marginBottom: 4 }}>House</div>
+            <div style={{ fontSize: 14, color: "#1e2d1a", marginBottom: 12 }}>{task.houseId}</div>
+          </>}
+          {(task.benchNumbers || []).length > 0 && <>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", marginBottom: 4 }}>Benches</div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
+              {task.benchNumbers.map(b => (
+                <span key={b} style={{ background: "#1e2d1a", color: "#c8e6b8", borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>{b}</span>
+              ))}
+            </div>
+          </>}
+          {task.notes && <>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", marginBottom: 4 }}>Notes</div>
+            <div style={{ fontSize: 13, color: "#1e2d1a", marginBottom: 12, whiteSpace: "pre-wrap", background: "#f2f5ef", padding: 10, borderRadius: 8 }}>{task.notes}</div>
+          </>}
+          {(task.photos || []).length > 0 && <>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", marginBottom: 4 }}>Photos</div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {task.photos.map((p, i) => (
+                <img key={i} src={p} alt="" style={{ width: 90, height: 90, objectFit: "cover", borderRadius: 10, border: "1.5px solid #e0ead8" }} />
+              ))}
+            </div>
+          </>}
+        </div>
+
+        {/* Append-only controls for growers */}
+        <div style={{ background: "#fff", borderRadius: 14, padding: 18, border: "1.5px solid #e0ead8" }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: "#7fb069", textTransform: "uppercase", marginBottom: 8 }}>Add your update</div>
+          <textarea value={note} onChange={e => setNote(e.target.value)}
+            placeholder="Add a note…"
+            style={{ width: "100%", minHeight: 70, padding: 12, borderRadius: 10, border: "1.5px solid #c8d8c0", fontSize: 14, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box", outline: "none", marginBottom: 10 }} />
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={saveNote} disabled={!note.trim()}
+              style={{ flex: 1, padding: "12px 0", borderRadius: 10, border: "none", background: note.trim() ? "#1e2d1a" : "#c8d8c0", color: "#c8e6b8", fontSize: 14, fontWeight: 800, cursor: note.trim() ? "pointer" : "default", fontFamily: "inherit" }}>
+              Save Note
+            </button>
+            <button onClick={() => fileRef.current?.click()}
+              style={{ flex: 1, padding: "12px 0", borderRadius: 10, border: "1.5px solid #c8d8c0", background: "#fafcf8", color: "#7a8c74", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+              📷 Add Photo
+            </button>
+            <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={handlePhoto} style={{ display: "none" }} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TaskDetail({ task, onBack, onSave }) {
   const [t, setT] = useState({ ...task });
   const upd = (k, v) => setT(p => ({ ...p, [k]: v }));
@@ -619,6 +733,14 @@ function TaskDetail({ task, onBack, onSave }) {
           <textarea value={t.description || ""} onChange={e => upd("description", e.target.value)}
             placeholder="Add more details..."
             style={{ width: "100%", minHeight: 100, padding: "12px", borderRadius: 10, border: "1.5px solid #c8d8c0", fontSize: 14, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box", marginBottom: 14 }} />
+
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", marginBottom: 6 }}>House ID <span style={{ color: "#aabba0", fontWeight: 400 }}>(optional)</span></div>
+          <input value={t.houseId || ""} onChange={e => upd("houseId", e.target.value)}
+            placeholder="e.g. H-12"
+            style={{ width: "100%", padding: 12, borderRadius: 10, border: "1.5px solid #c8d8c0", fontSize: 14, fontFamily: "inherit", boxSizing: "border-box", marginBottom: 14 }} />
+
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", marginBottom: 6 }}>Bench Numbers <span style={{ color: "#aabba0", fontWeight: 400 }}>(optional)</span></div>
+          <BenchNumbersEditor value={t.benchNumbers || []} onChange={v => upd("benchNumbers", v)} />
 
           <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", marginBottom: 6 }}>When</div>
           <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
