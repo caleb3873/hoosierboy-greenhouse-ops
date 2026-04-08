@@ -6,6 +6,7 @@ import {
   useDriverAttendance,
   useDeliveryClaims,
   useFuelFills,
+  useShippingTeams,
 } from "../supabase";
 import { useAuth } from "../Auth";
 
@@ -33,6 +34,7 @@ export default function ShippingDashboard() {
   const { rows: deliveries, update: updateDelivery, upsert: upsertDelivery, refresh: refreshDeliveries } = useDeliveries();
   const { rows: drivers } = useDrivers();
   const { rows: trucks } = useTrucks();
+  const { rows: teams }  = useShippingTeams();
   const { rows: attendance, upsert: upsertAttendance } = useDriverAttendance();
   const { rows: claims } = useDeliveryClaims();
   const { rows: fuelFills, insert: insertFuel } = useFuelFills();
@@ -95,6 +97,14 @@ export default function ShippingDashboard() {
       stopOrder: driverId ? nextStopOrder : 0,
       assignedBy: user?.email || "tyler",
     });
+  }
+
+  async function assignTeam(delivery, teamId) {
+    await updateDelivery(delivery.id, { teamId, assignedBy: user?.email || "tyler" });
+  }
+
+  async function assignTruck(delivery, truckId) {
+    await updateDelivery(delivery.id, { truckId, assignedBy: user?.email || "tyler" });
   }
 
   async function moveStop(delivery, dir) {
@@ -246,9 +256,11 @@ export default function ShippingDashboard() {
         </div>
       ) : (
         unassigned.map(d => (
-          <DashDeliveryCard key={d.id} delivery={d} drivers={presentDrivers}
-            onAssign={driverId => assignDriver(d, driverId)}
-            onMoveUp={null} onMoveDown={null}
+          <DashDeliveryCard key={d.id} delivery={d}
+            drivers={presentDrivers} teams={teams} trucks={trucks}
+            onAssignDriver={driverId => assignDriver(d, driverId)}
+            onAssignTeam={teamId => assignTeam(d, teamId)}
+            onAssignTruck={truckId => assignTruck(d, truckId)}
           />
         ))
       )}
@@ -267,8 +279,11 @@ export default function ShippingDashboard() {
               )}
             </SectionHeader>
             {lane.map((d, idx) => (
-              <DashDeliveryCard key={d.id} delivery={d} drivers={presentDrivers} rank={idx + 1}
-                onAssign={driverId => assignDriver(d, driverId)}
+              <DashDeliveryCard key={d.id} delivery={d} rank={idx + 1}
+                drivers={presentDrivers} teams={teams} trucks={trucks}
+                onAssignDriver={driverId => assignDriver(d, driverId)}
+                onAssignTeam={teamId => assignTeam(d, teamId)}
+                onAssignTruck={truckId => assignTruck(d, truckId)}
                 onMoveUp={idx > 0 ? () => moveStop(d, "up") : null}
                 onMoveDown={idx < lane.length - 1 ? () => moveStop(d, "down") : null}
               />
@@ -330,18 +345,21 @@ function SectionHeader({ children }) {
   );
 }
 
-function DashDeliveryCard({ delivery: d, drivers, rank, onAssign, onMoveUp, onMoveDown }) {
+function DashDeliveryCard({ delivery: d, drivers, teams, trucks, rank,
+  onAssignDriver, onAssignTeam, onAssignTruck, onMoveUp, onMoveDown }) {
   const pr = PRIORITY[d.priority || "normal"];
   const cust = d.customerSnapshot || {};
   const isDelivered = d.status === "delivered";
   const addr = [cust.address1, cust.city, cust.state].filter(Boolean).join(", ");
+  const team = teams.find(t => t.id === d.teamId);
+  const selectStyle = { padding: "6px 8px", borderRadius: 8, border: `1.5px solid ${BORDER}`, background: "#fff", color: DARK, fontSize: 11, fontWeight: 700, fontFamily: "inherit", cursor: "pointer", outline: "none", minWidth: 120 };
 
   return (
     <div style={{
       background: "#fff", borderRadius: 12, border: `1.5px solid ${BORDER}`,
       padding: 14, marginBottom: 8, display: "flex", gap: 12, alignItems: "flex-start",
       opacity: isDelivered ? 0.6 : 1,
-      borderLeft: `4px solid ${pr.bg}`,
+      borderLeft: `4px solid ${team?.color || pr.bg}`,
     }}>
       {rank != null && (
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
@@ -358,6 +376,7 @@ function DashDeliveryCard({ delivery: d, drivers, rank, onAssign, onMoveUp, onMo
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 3 }}>
           <div style={{ fontSize: 14, fontWeight: 800, color: DARK }}>{cust.company_name || "—"}</div>
           <span style={{ fontSize: 9, fontWeight: 800, background: pr.bg, color: pr.color, borderRadius: 999, padding: "2px 8px" }}>{pr.label}</span>
+          {team && <span style={{ fontSize: 9, fontWeight: 800, background: team.color || GREEN, color: "#fff", borderRadius: 999, padding: "2px 8px" }}>{team.name}</span>}
           {isDelivered && <span style={{ fontSize: 9, fontWeight: 800, background: "#4a7a35", color: "#fff", borderRadius: 999, padding: "2px 8px" }}>DELIVERED</span>}
           {d.deliveryTime && <span style={{ fontSize: 11, color: "#7a8c74" }}>🕒 {d.deliveryTime}</span>}
           {(cust.terms || "").toUpperCase().includes("C.O.D") && <span style={{ fontSize: 9, fontWeight: 800, background: "#c03030", color: "#fff", borderRadius: 999, padding: "2px 8px" }}>COD</span>}
@@ -370,12 +389,23 @@ function DashDeliveryCard({ delivery: d, drivers, rank, onAssign, onMoveUp, onMo
           <div style={{ fontSize: 10, color: "#7a8c74", marginTop: 2 }}>Orders: {d.orderNumbers.join(", ")}</div>
         )}
         {d.notes && <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 4, fontStyle: "italic" }}>{d.notes}</div>}
+
+        {/* Assignment row */}
+        <div style={{ display: "flex", gap: 6, marginTop: 10, flexWrap: "wrap" }}>
+          <select value={d.driverId || ""} onChange={e => onAssignDriver(e.target.value || null)} style={selectStyle} title="Driver">
+            <option value="">🚚 Driver…</option>
+            {drivers.map(dr => <option key={dr.id} value={dr.id}>{dr.name}</option>)}
+          </select>
+          <select value={d.teamId || ""} onChange={e => onAssignTeam(e.target.value || null)} style={selectStyle} title="Team">
+            <option value="">👥 Team…</option>
+            {teams.filter(t => t.active !== false).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </select>
+          <select value={d.truckId || ""} onChange={e => onAssignTruck(e.target.value || null)} style={selectStyle} title="Truck">
+            <option value="">🚛 Truck…</option>
+            {trucks.filter(t => t.active !== false).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </select>
+        </div>
       </div>
-      <select value={d.driverId || ""} onChange={e => onAssign(e.target.value || null)}
-        style={{ padding: "6px 8px", borderRadius: 8, border: `1.5px solid ${BORDER}`, background: "#fff", color: DARK, fontSize: 12, fontWeight: 700, fontFamily: "inherit", cursor: "pointer", outline: "none" }}>
-        <option value="">— Unassigned —</option>
-        {drivers.map(dr => <option key={dr.id} value={dr.id}>{dr.name}</option>)}
-      </select>
     </div>
   );
 }

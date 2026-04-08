@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useDeliveries, useShippingCustomers, useDrivers } from "../supabase";
+import { useDeliveries, useShippingCustomers, useDrivers, useShippingTeams, useTrucks } from "../supabase";
 import { useAuth } from "../Auth";
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
@@ -36,6 +36,8 @@ export default function ShippingSchedule() {
   const { rows: deliveries, insert, update, remove } = useDeliveries();
   const { rows: customers } = useShippingCustomers();
   const { rows: drivers } = useDrivers();
+  const { rows: teams }   = useShippingTeams();
+  const { rows: trucks }  = useTrucks();
   const { user } = useAuth();
   const createdBy = user?.email || "sales";
 
@@ -174,7 +176,7 @@ export default function ShippingSchedule() {
                 </span>
               </div>
               {items.map(d => (
-                <DeliveryRow key={d.id} delivery={d} drivers={drivers}
+                <DeliveryRow key={d.id} delivery={d} drivers={drivers} teams={teams} trucks={trucks}
                   onEdit={() => { setEditing(d); setShowForm(true); }}
                   onDelete={() => del(d.id)}
                 />
@@ -196,10 +198,12 @@ export default function ShippingSchedule() {
   );
 }
 
-function DeliveryRow({ delivery: d, drivers, onEdit, onDelete }) {
+function DeliveryRow({ delivery: d, drivers, teams, trucks, onEdit, onDelete }) {
   const pr = PRIORITIES.find(p => p.id === d.priority) || PRIORITIES[2];
   const cust = d.customerSnapshot || {};
   const driver = drivers.find(dr => dr.id === d.driverId);
+  const team = teams?.find(t => t.id === d.teamId);
+  const truck = trucks?.find(t => t.id === d.truckId);
   const isDelivered = d.status === "delivered";
 
   return (
@@ -218,7 +222,9 @@ function DeliveryRow({ delivery: d, drivers, onEdit, onDelete }) {
         <div style={{ fontSize: 12, color: "#7a8c74" }}>
           {cust.city}{cust.state ? `, ${cust.state}` : ""} • <b style={{ color: DARK }}>{formatCurrency(d.orderValueCents)}</b>
           {d.miles != null && <> • {d.miles} mi / {d.driveMinutes || "?"} min</>}
-          {driver && <> • Driver: <b style={{ color: DARK }}>{driver.name}</b></>}
+          {driver && <> • 🚚 <b style={{ color: DARK }}>{driver.name}</b></>}
+          {team && <> • 👥 <b style={{ color: team.color || DARK }}>{team.name}</b></>}
+          {truck && <> • 🚛 <b style={{ color: DARK }}>{truck.name}</b></>}
         </div>
         {Array.isArray(d.orderNumbers) && d.orderNumbers.length > 0 && (
           <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2 }}>Orders: {d.orderNumbers.join(", ")}</div>
