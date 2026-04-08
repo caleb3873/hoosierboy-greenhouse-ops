@@ -310,6 +310,8 @@ export const useDeliveries  = () => useTable("deliveries",  { orderBy: "delivery
 export const useDeliveryClaims = () => useTable("delivery_claims", { orderBy: "reported_at", localKey: "gh_delivery_claims_v1" });
 export const useFuelFills      = () => useTable("fuel_fills",      { orderBy: "fill_date", localKey: "gh_fuel_fills_v1" });
 export const useDriverAttendance = () => useTable("driver_attendance", { orderBy: "attendance_date", localKey: "gh_driver_attendance_v1" });
+export const useShippingTeams    = () => useTable("shipping_teams",    { orderBy: "name", ascending: true, localKey: "gh_shipping_teams_v1" });
+export const useFloorCodes       = () => useTable("floor_codes",       { orderBy: "label", ascending: true, localKey: "gh_floor_codes_v1" });
 
 // ── AUTH HELPERS ──────────────────────────────────────────────────────────────
 export async function sendPasswordReset(email) {
