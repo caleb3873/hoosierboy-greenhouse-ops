@@ -105,6 +105,20 @@ export default function ShippingDashboard() {
   const deliveredCount = dayDeliveries.filter(d => d.status === "delivered").length;
   const openClaims = claims.filter(c => !c.resolved);
 
+  // Extra context: overdue, upcoming this week, next week preview
+  const overdue = useMemo(() => {
+    return deliveries
+      .filter(d => d.deliveryDate && d.deliveryDate < activeDateISO && d.status !== "delivered")
+      .sort((a, b) => (a.deliveryDate || "").localeCompare(b.deliveryDate || ""));
+  }, [deliveries, activeDateISO]);
+
+  const upcomingDays = useMemo(() => {
+    const horizon = toISODate(addDays(new Date(activeDateISO + "T00:00:00"), 14));
+    return deliveries
+      .filter(d => d.deliveryDate > activeDateISO && d.deliveryDate < horizon && d.status !== "delivered")
+      .sort((a, b) => (a.deliveryDate || "").localeCompare(b.deliveryDate || ""));
+  }, [deliveries, activeDateISO]);
+
   async function assignDriver(delivery, driverId) {
     const lane = dayDeliveries.filter(d => d.driverId === driverId);
     const nextStopOrder = lane.length ? Math.max(...lane.map(l => l.stopOrder || 0)) + 1 : 1;
@@ -401,12 +415,60 @@ export default function ShippingDashboard() {
         );
       })}
 
-      {dayDeliveries.length === 0 && (
+      {dayDeliveries.length === 0 && overdue.length === 0 && upcomingDays.length === 0 && (
         <div style={{ background: "#fff", borderRadius: 14, border: `1.5px solid ${BORDER}`, padding: "60px 20px", textAlign: "center", color: "#7a8c74" }}>
           <div style={{ fontSize: 40, marginBottom: 10 }}>📋</div>
-          <div style={{ fontSize: 15, fontWeight: 700 }}>Nothing scheduled for this day</div>
+          <div style={{ fontSize: 15, fontWeight: 700 }}>Nothing scheduled</div>
           <div style={{ fontSize: 13, marginTop: 6 }}>Sales reps add deliveries in the <b>Schedule</b> tab.</div>
         </div>
+      )}
+
+      {/* Overdue — undelivered from prior days */}
+      {overdue.length > 0 && (
+        <>
+          <SectionHeader>
+            <span style={{ color: "#d94f3d" }}>⚠ Overdue — not delivered ({overdue.length})</span>
+          </SectionHeader>
+          {overdue.map(d => (
+            <DashDeliveryCard key={d.id} delivery={d}
+              drivers={presentDrivers} teams={teams} trucks={trucks}
+              onAssignDriver={driverId => assignDriver(d, driverId)}
+              onAssignTeam={teamId => assignTeam(d, teamId)}
+              onAssignTruck={truckId => assignTruck(d, truckId)}
+              onMoveDate={date => moveToDate(d, date)}
+            />
+          ))}
+        </>
+      )}
+
+      {/* Upcoming days preview */}
+      {upcomingDays.length > 0 && (
+        <>
+          <SectionHeader>Upcoming days ({upcomingDays.length})</SectionHeader>
+          {[...new Set(upcomingDays.map(d => d.deliveryDate))].map(date => {
+            const items = upcomingDays.filter(d => d.deliveryDate === date);
+            const total = items.reduce((s, d) => s + (d.orderValueCents || 0), 0);
+            const label = new Date(date + "T00:00:00").toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
+            return (
+              <div key={date} style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: "#7a8c74", margin: "8px 4px 4px", display: "flex", alignItems: "center", gap: 8 }}>
+                  <span>{label}</span>
+                  <div style={{ flex: 1, height: 1, background: BORDER }} />
+                  <span>{items.length} • {formatCurrency(total)}</span>
+                </div>
+                {items.map(d => (
+                  <DashDeliveryCard key={d.id} delivery={d}
+                    drivers={presentDrivers} teams={teams} trucks={trucks}
+                    onAssignDriver={driverId => assignDriver(d, driverId)}
+                    onAssignTeam={teamId => assignTeam(d, teamId)}
+                    onAssignTruck={truckId => assignTruck(d, truckId)}
+                    onMoveDate={dt => moveToDate(d, dt)}
+                  />
+                ))}
+              </div>
+            );
+          })}
+        </>
       )}
 
       {/* Route compute footer */}
