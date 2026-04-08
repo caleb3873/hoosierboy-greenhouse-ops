@@ -1,5 +1,5 @@
 import { useMemo, useState, Fragment } from "react";
-import { useDeliveries, useTrucks, useShippingTeams } from "../supabase";
+import { useDeliveries, useTrucks, useShippingTeams, useShippingCustomers } from "../supabase";
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
 const DARK = "#1e2d1a";
@@ -49,6 +49,13 @@ export default function ShippingCalendar() {
   const { rows: deliveries, update, remove } = useDeliveries();
   const { rows: trucks } = useTrucks();
   const { rows: teams }  = useShippingTeams();
+  const { rows: customers } = useShippingCustomers();
+
+  const cartEligibleIds = useMemo(() => {
+    const s = new Set();
+    for (const c of customers) if (c.allowCarts) s.add(c.id);
+    return s;
+  }, [customers]);
 
   const [mode, setMode] = useState("week"); // week | day
   const [weekOffset, setWeekOffset] = useState(0);
@@ -193,6 +200,7 @@ export default function ShippingCalendar() {
           detectConflicts={detectConflicts}
           capacity={capacity}
           teams={teams}
+          cartEligibleIds={cartEligibleIds}
           dragging={dragging}
           setDragging={setDragging}
           tapSelected={tapSelected}
@@ -210,6 +218,7 @@ export default function ShippingCalendar() {
           detectConflicts={detectConflicts}
           capacity={capacity}
           teams={teams}
+          cartEligibleIds={cartEligibleIds}
           dragging={dragging}
           setDragging={setDragging}
           tapSelected={tapSelected}
@@ -252,7 +261,7 @@ export default function ShippingCalendar() {
 const navBtnStyle = { background: "#f2f5ef", border: "none", padding: "10px 16px", borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 700, fontFamily: "inherit" };
 
 // ── Week grid ───────────────────────────────────────────────────────────────
-function WeekGrid({ weekDays, cellDeliveries, detectConflicts, capacity, teams, dragging, setDragging, tapSelected, setTapSelected, onDrop }) {
+function WeekGrid({ weekDays, cellDeliveries, detectConflicts, capacity, teams, cartEligibleIds, dragging, setDragging, tapSelected, setTapSelected, onDrop, onUnschedule }) {
   return (
     <div style={{ display: "grid", gridTemplateColumns: "60px repeat(6, 1fr)", gap: 4 }}>
       {/* Header row */}
@@ -270,8 +279,8 @@ function WeekGrid({ weekDays, cellDeliveries, detectConflicts, capacity, teams, 
         const items = cellDeliveries(d.iso, "AM");
         return <CalendarCell key={`${d.iso}-AM`} dateISO={d.iso} slot="AM"
           items={items} capacity={capacity} conflicts={detectConflicts(items)}
-          teams={teams} dragging={dragging} setDragging={setDragging}
-          tapSelected={tapSelected} setTapSelected={setTapSelected} onDrop={onDrop} />;
+          teams={teams} cartEligibleIds={cartEligibleIds} dragging={dragging} setDragging={setDragging}
+          tapSelected={tapSelected} setTapSelected={setTapSelected} onDrop={onDrop} onUnschedule={onUnschedule} />;
       })}
 
       {/* PM row */}
@@ -280,8 +289,8 @@ function WeekGrid({ weekDays, cellDeliveries, detectConflicts, capacity, teams, 
         const items = cellDeliveries(d.iso, "PM");
         return <CalendarCell key={`${d.iso}-PM`} dateISO={d.iso} slot="PM"
           items={items} capacity={capacity} conflicts={detectConflicts(items)}
-          teams={teams} dragging={dragging} setDragging={setDragging}
-          tapSelected={tapSelected} setTapSelected={setTapSelected} onDrop={onDrop} />;
+          teams={teams} cartEligibleIds={cartEligibleIds} dragging={dragging} setDragging={setDragging}
+          tapSelected={tapSelected} setTapSelected={setTapSelected} onDrop={onDrop} onUnschedule={onUnschedule} />;
       })}
     </div>
   );
@@ -299,18 +308,18 @@ function SlotLabel({ label }) {
 const AM_HOURS = ["06:00","07:00","08:00","09:00","10:00","11:00"];
 const PM_HOURS = ["12:00","13:00","14:00","15:00","16:00","17:00","18:00"];
 
-function DayGrid({ dateISO, cellDeliveries, detectConflicts, capacity, teams, dragging, setDragging, tapSelected, setTapSelected, onDrop, onUnschedule }) {
+function DayGrid({ dateISO, cellDeliveries, detectConflicts, capacity, teams, cartEligibleIds, dragging, setDragging, tapSelected, setTapSelected, onDrop, onUnschedule }) {
   return (
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
       <DayColumn title="AM" hours={AM_HOURS} dateISO={dateISO}
         cellDeliveries={cellDeliveries} detectConflicts={detectConflicts}
-        capacity={capacity} teams={teams}
+        capacity={capacity} teams={teams} cartEligibleIds={cartEligibleIds}
         dragging={dragging} setDragging={setDragging}
         tapSelected={tapSelected} setTapSelected={setTapSelected}
         onDrop={onDrop} onUnschedule={onUnschedule} />
       <DayColumn title="PM" hours={PM_HOURS} dateISO={dateISO}
         cellDeliveries={cellDeliveries} detectConflicts={detectConflicts}
-        capacity={capacity} teams={teams}
+        capacity={capacity} teams={teams} cartEligibleIds={cartEligibleIds}
         dragging={dragging} setDragging={setDragging}
         tapSelected={tapSelected} setTapSelected={setTapSelected}
         onDrop={onDrop} onUnschedule={onUnschedule} />
@@ -318,7 +327,7 @@ function DayGrid({ dateISO, cellDeliveries, detectConflicts, capacity, teams, dr
   );
 }
 
-function DayColumn({ title, hours, dateISO, cellDeliveries, detectConflicts, capacity, teams, dragging, setDragging, tapSelected, setTapSelected, onDrop, onUnschedule }) {
+function DayColumn({ title, hours, dateISO, cellDeliveries, detectConflicts, capacity, teams, cartEligibleIds, dragging, setDragging, tapSelected, setTapSelected, onDrop, onUnschedule }) {
   const bucketItems = cellDeliveries(dateISO, title).filter(d => parseSlot(d.deliveryTime) === title);
   return (
     <div style={{ background: "#f8faf6", borderRadius: 12, border: `1.5px solid ${BORDER}`, padding: 10 }}>
@@ -331,7 +340,7 @@ function DayColumn({ title, hours, dateISO, cellDeliveries, detectConflicts, cap
         </div>
         <CalendarCell dateISO={dateISO} slot={title} items={bucketItems}
           capacity={capacity} conflicts={detectConflicts(bucketItems)}
-          teams={teams} dragging={dragging} setDragging={setDragging}
+          teams={teams} cartEligibleIds={cartEligibleIds} dragging={dragging} setDragging={setDragging}
           tapSelected={tapSelected} setTapSelected={setTapSelected}
           onDrop={onDrop} onUnschedule={onUnschedule} />
       </div>
@@ -356,7 +365,7 @@ function DayColumn({ title, hours, dateISO, cellDeliveries, detectConflicts, cap
 }
 
 // ── Calendar cell (drop target) ─────────────────────────────────────────────
-function CalendarCell({ dateISO, slot, items, capacity, conflicts, teams, dragging, setDragging, tapSelected, setTapSelected, onDrop, onUnschedule, tall, small }) {
+function CalendarCell({ dateISO, slot, items, capacity, conflicts, teams, cartEligibleIds, dragging, setDragging, tapSelected, setTapSelected, onDrop, onUnschedule, tall, small }) {
   const [hover, setHover] = useState(false);
   const overCap = items.length > capacity;
   const hasConflict = conflicts.length > 0;
@@ -395,7 +404,7 @@ function CalendarCell({ dateISO, slot, items, capacity, conflicts, teams, draggi
         </span>
       </div>
       {items.map(d => (
-        <DeliveryChip key={d.id} delivery={d} team={teams.find(t => t.id === d.teamId)} conflict={conflicts.includes(d.truckId)} setDragging={setDragging} tapSelected={tapSelected} setTapSelected={setTapSelected} onUnschedule={onUnschedule} />
+        <DeliveryChip key={d.id} delivery={d} team={teams.find(t => t.id === d.teamId)} conflict={conflicts.includes(d.truckId)} cartEligibleIds={cartEligibleIds} setDragging={setDragging} tapSelected={tapSelected} setTapSelected={setTapSelected} onUnschedule={onUnschedule} />
       ))}
       {hasConflict && (
         <div style={{ fontSize: 9, color: AMBER, fontWeight: 700, textAlign: "center", padding: "2px 0" }}>⚠ Truck conflict</div>
@@ -408,13 +417,14 @@ function CalendarCell({ dateISO, slot, items, capacity, conflicts, teams, draggi
 }
 
 // ── Delivery chip (draggable) ───────────────────────────────────────────────
-function DeliveryChip({ delivery: d, team, conflict, setDragging, tapSelected, setTapSelected, onUnschedule }) {
+function DeliveryChip({ delivery: d, team, conflict, cartEligibleIds, setDragging, tapSelected, setTapSelected, onUnschedule }) {
   const pr = PRIORITY[d.priority || "normal"];
   const cust = d.customerSnapshot || {};
   const isSelected = tapSelected?.id === d.id;
-  const name = cust.company_name || "—";
+  const name = cust.company_name || cust.companyName || "—";
   const carts = d.cartCount || 0;
-  const cartEligible = cust.allow_carts;
+  // Check live customer list first (fresh), fall back to snapshot
+  const cartEligible = (cartEligibleIds && cartEligibleIds.has(d.customerId)) || cust.allow_carts || cust.allowCarts;
 
   return (
     <div
