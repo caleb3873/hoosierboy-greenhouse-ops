@@ -17,6 +17,8 @@ const GREEN = "#7fb069";
 const CREAM = "#c8e6b8";
 const BORDER = "#e0ead8";
 
+const AMBER_BADGE = "#e89a3a";
+
 const PRIORITY = {
   critical: { label: "CRITICAL", bg: "#d94f3d", color: "#fff", rank: 0 },
   high:     { label: "HIGH",     bg: "#e89a3a", color: "#fff", rank: 1 },
@@ -60,7 +62,19 @@ export default function ShippingDashboard() {
   }, [attendance, activeDateISO]);
 
   const activeDrivers = drivers.filter(d => d.active);
-  const presentDrivers = activeDrivers.filter(d => presentMap.get(d.id) !== false);
+  const weekdayId = ["sun","mon","tue","wed","thu","fri","sat"][activeDate.getDay()];
+
+  // Default present = listed on weekly availability (or no availability set = always available)
+  // Manual attendance toggle overrides (Tyler can force-present an emergency driver or mark someone absent)
+  function effectivePresent(driver) {
+    const override = presentMap.get(driver.id);
+    if (override === true) return true;
+    if (override === false) return false;
+    if (!driver.availableDays || driver.availableDays.length === 0) return true;
+    return driver.availableDays.includes(weekdayId);
+  }
+
+  const presentDrivers = activeDrivers.filter(effectivePresent);
 
   const dayDeliveries = useMemo(() => {
     return deliveries
@@ -246,21 +260,32 @@ export default function ShippingDashboard() {
         ) : (
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             {activeDrivers.map(d => {
-              const present = presentMap.get(d.id) !== false;
+              const present = effectivePresent(d);
+              const hasSchedule = d.availableDays && d.availableDays.length > 0;
+              const scheduledToday = hasSchedule && d.availableDays.includes(weekdayId);
+              const override = presentMap.get(d.id);
+              const isOverride = override !== undefined;
               return (
                 <div key={d.id} style={{
                   display: "flex", alignItems: "center", gap: 8,
                   background: present ? "#f0f8eb" : "#f5f5f5",
                   border: `1.5px solid ${present ? GREEN : "#c8c8c8"}`,
                   borderRadius: 999, padding: "6px 12px 6px 10px",
-                  opacity: present ? 1 : 0.55,
-                }}>
+                  opacity: present ? 1 : 0.5,
+                }}
+                title={isOverride ? "Manual override" : hasSchedule ? (scheduledToday ? "Scheduled for today" : "Not on weekly schedule") : "No weekly schedule"}>
                   <button onClick={() => toggleAttendance(d)}
                     style={{ background: "none", border: "none", fontSize: 14, cursor: "pointer", padding: 0 }}
-                    title={present ? "Mark absent" : "Mark present"}>
+                    title={present ? "Mark absent" : "Mark present (emergency)"}>
                     {present ? "✓" : "○"}
                   </button>
-                  <span style={{ fontSize: 13, fontWeight: 700, color: DARK }}>{d.name}</span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: DARK, textDecoration: present ? "none" : "line-through" }}>{d.name}</span>
+                  {!scheduledToday && !isOverride && hasSchedule && (
+                    <span style={{ fontSize: 9, fontWeight: 800, color: "#7a8c74" }}>off</span>
+                  )}
+                  {isOverride && override === true && !scheduledToday && (
+                    <span style={{ fontSize: 9, fontWeight: 800, background: AMBER_BADGE, color: "#fff", borderRadius: 999, padding: "1px 6px" }}>EMERGENCY</span>
+                  )}
                   {d.phone && (
                     <a href={`tel:${d.phone}`} title={`Call ${d.phone}`}
                       style={{ background: GREEN, color: DARK, borderRadius: "50%", width: 26, height: 26, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 13, textDecoration: "none" }}>
