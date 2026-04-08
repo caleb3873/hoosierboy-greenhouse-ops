@@ -51,12 +51,12 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
 
   return (
     <div style={{ ...FONT, minHeight: "100vh", background: GREEN_DARK, color: "#fff", paddingBottom: 80 }}>
-      <div style={{ padding: "18px 16px", borderBottom: `1px solid ${GREEN}33`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div>
-          <div style={{ fontSize: 12, color: GREEN, textTransform: "uppercase", letterSpacing: 1 }}>Hi {displayName}</div>
-          <div style={{ fontSize: 22, fontWeight: 700, color: CREAM }}>This Week's Tasks</div>
+      <div style={{ padding: "14px 14px", borderBottom: `1px solid ${GREEN}33`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 11, color: GREEN, textTransform: "uppercase", letterSpacing: 1 }}>Hi {displayName}</div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: CREAM }}>This Week's Tasks</div>
         </div>
-        <div style={{ display: "flex", gap: 6 }}>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           {onOpenTaskCreator && (
             <button onClick={onOpenTaskCreator} style={{ background: GREEN, border: "none", color: GREEN_DARK, padding: "6px 12px", borderRadius: 6, cursor: "pointer", fontWeight: 800, ...FONT }}>
               + Tasks
@@ -94,7 +94,7 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
       <div style={{ padding: "0 12px" }}>
         {visible.length === 0 && (
           <div style={{ textAlign: "center", padding: 40, color: "#6a8a5a" }}>
-            {showDone ? "Nothing completed yet." : "No tasks — all caught up! 🎉"}
+            {showDone ? "Nothing completed yet." : "No growing tasks assigned yet."}
           </div>
         )}
         {visible.map(task => {
