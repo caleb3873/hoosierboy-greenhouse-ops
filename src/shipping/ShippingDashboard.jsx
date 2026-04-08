@@ -109,6 +109,10 @@ export default function ShippingDashboard() {
     await updateDelivery(delivery.id, { truckId, assignedBy: user?.email || "tyler" });
   }
 
+  async function moveToDate(delivery, date) {
+    await updateDelivery(delivery.id, { deliveryDate: date });
+  }
+
   async function moveStop(delivery, dir) {
     const lane = byDriver.get(delivery.driverId) || [];
     const idx = lane.findIndex(d => d.id === delivery.id);
@@ -327,10 +331,10 @@ export default function ShippingDashboard() {
       )}
 
       {/* Unassigned column */}
-      <SectionHeader>Unassigned ({unassigned.length})</SectionHeader>
+      <SectionHeader>Unassigned — no driver ({unassigned.length})</SectionHeader>
       {unassigned.length === 0 ? (
-        <div style={{ background: "#f0f8eb", border: `1px dashed ${GREEN}`, borderRadius: 10, padding: 16, textAlign: "center", fontSize: 12, color: "#6a8a5a", marginBottom: 18 }}>
-          All deliveries assigned ✓
+        <div style={{ background: "#f0f8eb", border: `1px dashed ${GREEN}`, borderRadius: 10, padding: 14, textAlign: "center", fontSize: 12, color: "#6a8a5a", marginBottom: 18 }}>
+          All deliveries have a driver ✓
         </div>
       ) : (
         unassigned.map(d => (
@@ -339,6 +343,7 @@ export default function ShippingDashboard() {
             onAssignDriver={driverId => assignDriver(d, driverId)}
             onAssignTeam={teamId => assignTeam(d, teamId)}
             onAssignTruck={truckId => assignTruck(d, truckId)}
+            onMoveDate={date => moveToDate(d, date)}
           />
         ))
       )}
@@ -362,6 +367,7 @@ export default function ShippingDashboard() {
                 onAssignDriver={driverId => assignDriver(d, driverId)}
                 onAssignTeam={teamId => assignTeam(d, teamId)}
                 onAssignTruck={truckId => assignTruck(d, truckId)}
+                onMoveDate={date => moveToDate(d, date)}
                 onMoveUp={idx > 0 ? () => moveStop(d, "up") : null}
                 onMoveDown={idx < lane.length - 1 ? () => moveStop(d, "down") : null}
               />
@@ -424,7 +430,7 @@ function SectionHeader({ children }) {
 }
 
 function DashDeliveryCard({ delivery: d, drivers, teams, trucks, rank,
-  onAssignDriver, onAssignTeam, onAssignTruck, onMoveUp, onMoveDown }) {
+  onAssignDriver, onAssignTeam, onAssignTruck, onMoveDate, onMoveUp, onMoveDown }) {
   const pr = PRIORITY[d.priority || "normal"];
   const cust = d.customerSnapshot || {};
   const isDelivered = d.status === "delivered";
@@ -469,19 +475,22 @@ function DashDeliveryCard({ delivery: d, drivers, teams, trucks, rank,
         {d.notes && <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 4, fontStyle: "italic" }}>{d.notes}</div>}
 
         {/* Assignment row */}
-        <div style={{ display: "flex", gap: 6, marginTop: 10, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 6, marginTop: 10, flexWrap: "wrap", alignItems: "center" }}>
           <select value={d.driverId || ""} onChange={e => onAssignDriver(e.target.value || null)} style={selectStyle} title="Driver">
             <option value="">🚚 Driver…</option>
             {drivers.map(dr => <option key={dr.id} value={dr.id}>{dr.name}</option>)}
           </select>
-          <select value={d.teamId || ""} onChange={e => onAssignTeam(e.target.value || null)} style={selectStyle} title="Team">
-            <option value="">👥 Team…</option>
+          <select value={d.teamId || ""} onChange={e => onAssignTeam(e.target.value || null)} style={selectStyle} title="Team (optional)">
+            <option value="">👥 General (no team)</option>
             {teams.filter(t => t.active !== false).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
           </select>
           <select value={d.truckId || ""} onChange={e => onAssignTruck(e.target.value || null)} style={selectStyle} title="Truck">
             <option value="">🚛 Truck…</option>
             {trucks.filter(t => t.active !== false).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
           </select>
+          <input type="date" value={d.deliveryDate || ""} onChange={e => onMoveDate(e.target.value)}
+            title="Move to a different day"
+            style={{ ...selectStyle, minWidth: 130, paddingRight: 4 }} />
         </div>
       </div>
     </div>
