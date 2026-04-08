@@ -172,6 +172,19 @@ export default function ShippingCalendar() {
         </div>
       )}
 
+      {/* Unscheduled drawer — top for day view */}
+      {mode === "day" && (
+        <UnscheduledDrawer
+          items={unscheduledForWeek()}
+          teams={teams}
+          setDragging={setDragging}
+          tapSelected={tapSelected}
+          setTapSelected={setTapSelected}
+          onOpen={setViewing}
+          compact
+        />
+      )}
+
       {mode === "week" ? (
         <WeekGrid
           weekDays={weekDays}
@@ -185,7 +198,7 @@ export default function ShippingCalendar() {
           tapSelected={tapSelected}
           setTapSelected={setTapSelected}
           onDrop={(iso, slot, delivery) => moveDelivery(delivery, iso, slot)}
-          onDrillDown={() => { setMode("day"); }}
+          onUnschedule={(d) => moveDelivery(d, d.deliveryDate, null)}
         />
       ) : (
         <DayGrid
@@ -201,18 +214,21 @@ export default function ShippingCalendar() {
           tapSelected={tapSelected}
           setTapSelected={setTapSelected}
           onDrop={(iso, slot, delivery) => moveDelivery(delivery, iso, slot)}
+          onUnschedule={(d) => moveDelivery(d, d.deliveryDate, null)}
         />
       )}
 
-      {/* Unscheduled drawer */}
-      <UnscheduledDrawer
-        items={unscheduledForWeek()}
-        teams={teams}
-        setDragging={setDragging}
-        tapSelected={tapSelected}
-        setTapSelected={setTapSelected}
-        onOpen={setViewing}
-      />
+      {/* Unscheduled drawer — bottom for week view */}
+      {mode === "week" && (
+        <UnscheduledDrawer
+          items={unscheduledForWeek()}
+          teams={teams}
+          setDragging={setDragging}
+          tapSelected={tapSelected}
+          setTapSelected={setTapSelected}
+          onOpen={setViewing}
+        />
+      )}
 
       {viewing && <DeliveryDetailModal delivery={viewing} teams={teams} trucks={trucks} onClose={() => setViewing(null)} />}
     </div>
@@ -265,47 +281,68 @@ function SlotLabel({ label }) {
   );
 }
 
-// ── Day grid (hours) ────────────────────────────────────────────────────────
-const DAY_HOURS = ["06:00","07:00","08:00","09:00","10:00","11:00","12:00","13:00","14:00","15:00","16:00","17:00","18:00"];
+// ── Day grid — side-by-side AM / PM columns ─────────────────────────────────
+const AM_HOURS = ["06:00","07:00","08:00","09:00","10:00","11:00"];
+const PM_HOURS = ["12:00","13:00","14:00","15:00","16:00","17:00","18:00"];
 
-function DayGrid({ dateISO, dateLabel, cellDeliveries, detectConflicts, capacity, teams, dragging, setDragging, tapSelected, setTapSelected, onDrop }) {
-  // AM/PM bucket items shown above, then hour rows
-  const amItems = cellDeliveries(dateISO, "AM");
-  const pmItems = cellDeliveries(dateISO, "PM");
+function DayGrid({ dateISO, cellDeliveries, detectConflicts, capacity, teams, dragging, setDragging, tapSelected, setTapSelected, onDrop, onUnschedule }) {
   return (
-    <div>
-      {/* Quick AM/PM buckets at top */}
-      <div style={{ display: "grid", gridTemplateColumns: "60px 1fr 1fr", gap: 4, marginBottom: 8 }}>
-        <div />
-        <div style={{ fontSize: 11, fontWeight: 800, color: "#7a8c74", textAlign: "center", padding: 4 }}>AM BUCKET</div>
-        <div style={{ fontSize: 11, fontWeight: 800, color: "#7a8c74", textAlign: "center", padding: 4 }}>PM BUCKET</div>
-        <SlotLabel label="bucket" />
-        <CalendarCell dateISO={dateISO} slot="AM" items={amItems.filter(d => parseSlot(d.deliveryTime) === "AM")} capacity={capacity} conflicts={detectConflicts(amItems)} teams={teams} dragging={dragging} setDragging={setDragging} tapSelected={tapSelected} setTapSelected={setTapSelected} onDrop={onDrop} tall />
-        <CalendarCell dateISO={dateISO} slot="PM" items={pmItems.filter(d => parseSlot(d.deliveryTime) === "PM")} capacity={capacity} conflicts={detectConflicts(pmItems)} teams={teams} dragging={dragging} setDragging={setDragging} tapSelected={tapSelected} setTapSelected={setTapSelected} onDrop={onDrop} tall />
-      </div>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+      <DayColumn title="AM" hours={AM_HOURS} dateISO={dateISO}
+        cellDeliveries={cellDeliveries} detectConflicts={detectConflicts}
+        capacity={capacity} teams={teams}
+        dragging={dragging} setDragging={setDragging}
+        tapSelected={tapSelected} setTapSelected={setTapSelected}
+        onDrop={onDrop} onUnschedule={onUnschedule} />
+      <DayColumn title="PM" hours={PM_HOURS} dateISO={dateISO}
+        cellDeliveries={cellDeliveries} detectConflicts={detectConflicts}
+        capacity={capacity} teams={teams}
+        dragging={dragging} setDragging={setDragging}
+        tapSelected={tapSelected} setTapSelected={setTapSelected}
+        onDrop={onDrop} onUnschedule={onUnschedule} />
+    </div>
+  );
+}
 
-      <div style={{ fontSize: 11, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: 1, margin: "14px 4px 6px" }}>Specific hours</div>
-      <div style={{ display: "grid", gridTemplateColumns: "60px 1fr", gap: 4 }}>
-        {DAY_HOURS.map(h => {
-          const items = cellDeliveries(dateISO, h);
-          const displayH = parseInt(h) % 12 || 12;
-          const ampm = parseInt(h) < 12 ? "AM" : "PM";
-          return (
-            <Fragment key={h}>
-              <div style={{ background: "#f2f5ef", borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, color: "#7a8c74", minHeight: 58 }}>
-                {displayH}{ampm.toLowerCase()}
-              </div>
-              <CalendarCell dateISO={dateISO} slot={h} items={items} capacity={capacity} conflicts={detectConflicts(items)} teams={teams} dragging={dragging} setDragging={setDragging} tapSelected={tapSelected} setTapSelected={setTapSelected} onDrop={onDrop} />
-            </Fragment>
-          );
-        })}
+function DayColumn({ title, hours, dateISO, cellDeliveries, detectConflicts, capacity, teams, dragging, setDragging, tapSelected, setTapSelected, onDrop, onUnschedule }) {
+  const bucketItems = cellDeliveries(dateISO, title).filter(d => parseSlot(d.deliveryTime) === title);
+  return (
+    <div style={{ background: "#f8faf6", borderRadius: 12, border: `1.5px solid ${BORDER}`, padding: 10 }}>
+      <div style={{ fontSize: 14, fontWeight: 800, color: DARK, textAlign: "center", marginBottom: 8, letterSpacing: 2, fontFamily: "'DM Serif Display',Georgia,serif" }}>
+        {title}
       </div>
+      <div style={{ marginBottom: 8 }}>
+        <div style={{ fontSize: 9, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4, paddingLeft: 2 }}>
+          Bucket
+        </div>
+        <CalendarCell dateISO={dateISO} slot={title} items={bucketItems}
+          capacity={capacity} conflicts={detectConflicts(bucketItems)}
+          teams={teams} dragging={dragging} setDragging={setDragging}
+          tapSelected={tapSelected} setTapSelected={setTapSelected}
+          onDrop={onDrop} onUnschedule={onUnschedule} />
+      </div>
+      {hours.map(h => {
+        const items = cellDeliveries(dateISO, h);
+        const displayH = parseInt(h) % 12 || 12;
+        return (
+          <div key={h} style={{ marginBottom: 6 }}>
+            <div style={{ fontSize: 9, fontWeight: 800, color: "#7a8c74", letterSpacing: 1, marginBottom: 2, paddingLeft: 2 }}>
+              {displayH}:00
+            </div>
+            <CalendarCell dateISO={dateISO} slot={h} items={items}
+              capacity={capacity} conflicts={detectConflicts(items)}
+              teams={teams} dragging={dragging} setDragging={setDragging}
+              tapSelected={tapSelected} setTapSelected={setTapSelected}
+              onDrop={onDrop} onUnschedule={onUnschedule} small />
+          </div>
+        );
+      })}
     </div>
   );
 }
 
 // ── Calendar cell (drop target) ─────────────────────────────────────────────
-function CalendarCell({ dateISO, slot, items, capacity, conflicts, teams, dragging, setDragging, tapSelected, setTapSelected, onDrop, tall }) {
+function CalendarCell({ dateISO, slot, items, capacity, conflicts, teams, dragging, setDragging, tapSelected, setTapSelected, onDrop, onUnschedule, tall, small }) {
   const [hover, setHover] = useState(false);
   const overCap = items.length > capacity;
   const hasConflict = conflicts.length > 0;
@@ -340,7 +377,7 @@ function CalendarCell({ dateISO, slot, items, capacity, conflicts, teams, draggi
         <span>{total > 0 ? fmtMoney(total) : ""}</span>
       </div>
       {items.map(d => (
-        <DeliveryChip key={d.id} delivery={d} team={teams.find(t => t.id === d.teamId)} conflict={conflicts.includes(d.truckId)} setDragging={setDragging} tapSelected={tapSelected} setTapSelected={setTapSelected} />
+        <DeliveryChip key={d.id} delivery={d} team={teams.find(t => t.id === d.teamId)} conflict={conflicts.includes(d.truckId)} setDragging={setDragging} tapSelected={tapSelected} setTapSelected={setTapSelected} onUnschedule={onUnschedule} />
       ))}
       {hasConflict && (
         <div style={{ fontSize: 9, color: AMBER, fontWeight: 700, textAlign: "center", padding: "2px 0" }}>⚠ Truck conflict</div>
@@ -353,7 +390,7 @@ function CalendarCell({ dateISO, slot, items, capacity, conflicts, teams, draggi
 }
 
 // ── Delivery chip (draggable) ───────────────────────────────────────────────
-function DeliveryChip({ delivery: d, team, conflict, setDragging, tapSelected, setTapSelected }) {
+function DeliveryChip({ delivery: d, team, conflict, setDragging, tapSelected, setTapSelected, onUnschedule }) {
   const pr = PRIORITY[d.priority || "normal"];
   const cust = d.customerSnapshot || {};
   const isSelected = tapSelected?.id === d.id;
@@ -372,24 +409,35 @@ function DeliveryChip({ delivery: d, team, conflict, setDragging, tapSelected, s
         borderLeft: `4px solid ${team?.color || pr.bg}`,
         borderRadius: 6, padding: "4px 6px",
         fontSize: 10, fontWeight: 700, cursor: "grab",
-        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+        display: "flex", alignItems: "center", gap: 4,
+        overflow: "hidden",
       }}
       title={`${name} • ${fmtMoney(d.orderValueCents)}${d.truckId ? ' • has truck' : ''}`}>
-      {name}
-      {d.orderValueCents > 0 && <span style={{ marginLeft: 4, opacity: 0.7, fontWeight: 500 }}>{fmtMoney(d.orderValueCents)}</span>}
+      <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        {name}
+        {d.orderValueCents > 0 && <span style={{ marginLeft: 4, opacity: 0.7, fontWeight: 500 }}>{fmtMoney(d.orderValueCents)}</span>}
+      </span>
+      {onUnschedule && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onUnschedule(d); }}
+          title="Move back to unscheduled"
+          style={{ background: "none", border: "none", color: isSelected ? CREAM : "#7a8c74", fontSize: 11, cursor: "pointer", padding: 0, lineHeight: 1, flexShrink: 0 }}>
+          ↩
+        </button>
+      )}
     </div>
   );
 }
 
 // ── Unscheduled drawer ──────────────────────────────────────────────────────
-function UnscheduledDrawer({ items, teams, setDragging, tapSelected, setTapSelected, onOpen }) {
+function UnscheduledDrawer({ items, teams, setDragging, tapSelected, setTapSelected, onOpen, compact }) {
   if (items.length === 0) return null;
   // Sort by delivery_date ascending
   const sorted = [...items].sort((a, b) => (a.deliveryDate || "").localeCompare(b.deliveryDate || ""));
   const total = sorted.reduce((s, d) => s + (d.orderValueCents || 0), 0);
 
   return (
-    <div style={{ marginTop: 20, background: "#fff", borderRadius: 12, border: `1.5px dashed ${BORDER}`, padding: 14 }}>
+    <div style={{ marginTop: compact ? 0 : 20, marginBottom: compact ? 14 : 0, background: "#fff", borderRadius: 12, border: `1.5px dashed ${BORDER}`, padding: compact ? 10 : 14, maxHeight: compact ? 220 : undefined, overflowY: compact ? "auto" : undefined }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
         <div style={{ fontSize: 11, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: 1 }}>
           Unscheduled this week ({items.length})
