@@ -55,6 +55,7 @@ export default function ShippingCalendar() {
   const [dayOffset, setDayOffset]   = useState(0);
   const [dragging, setDragging]     = useState(null);
   const [tapSelected, setTapSelected] = useState(null);
+  const [viewing, setViewing]       = useState(null);
 
   const monday = useMemo(() => addDays(weekMonday(), weekOffset * 7), [weekOffset]);
   const focusDay = useMemo(() => addDays(new Date(), dayOffset), [dayOffset]);
@@ -210,8 +211,10 @@ export default function ShippingCalendar() {
         setDragging={setDragging}
         tapSelected={tapSelected}
         setTapSelected={setTapSelected}
-        onDrop={(delivery) => moveDelivery(delivery, delivery.deliveryDate, null)}
+        onOpen={setViewing}
       />
+
+      {viewing && <DeliveryDetailModal delivery={viewing} teams={teams} trucks={trucks} onClose={() => setViewing(null)} />}
     </div>
   );
 }
@@ -379,32 +382,130 @@ function DeliveryChip({ delivery: d, team, conflict, setDragging, tapSelected, s
 }
 
 // ── Unscheduled drawer ──────────────────────────────────────────────────────
-function UnscheduledDrawer({ items, teams, setDragging, tapSelected, setTapSelected, onDrop }) {
+function UnscheduledDrawer({ items, teams, setDragging, tapSelected, setTapSelected, onOpen }) {
   if (items.length === 0) return null;
+  // Sort by delivery_date ascending
+  const sorted = [...items].sort((a, b) => (a.deliveryDate || "").localeCompare(b.deliveryDate || ""));
+  const total = sorted.reduce((s, d) => s + (d.orderValueCents || 0), 0);
+
   return (
     <div style={{ marginTop: 20, background: "#fff", borderRadius: 12, border: `1.5px dashed ${BORDER}`, padding: 14 }}>
-      <div style={{ fontSize: 11, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>
-        Unscheduled this week ({items.length})
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+        <div style={{ fontSize: 11, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: 1 }}>
+          Unscheduled this week ({items.length})
+        </div>
+        {total > 0 && <div style={{ fontSize: 12, color: "#7a8c74", fontWeight: 700 }}>{fmtMoney(total)} total</div>}
       </div>
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-        {items.map(d => (
-          <div key={d.id}
-            draggable
-            onDragStart={() => setDragging(d)}
-            onDragEnd={() => setDragging(null)}
-            onClick={() => setTapSelected(tapSelected?.id === d.id ? null : d)}
-            style={{
-              background: tapSelected?.id === d.id ? DARK : "#f2f5ef",
-              color: tapSelected?.id === d.id ? CREAM : DARK,
-              border: `1.5px solid ${BORDER}`,
-              borderRadius: 999, padding: "6px 12px", fontSize: 12, fontWeight: 700,
-              cursor: "grab",
-            }}>
-            {d.customerSnapshot?.company_name || "—"}
-            {d.orderValueCents > 0 && <span style={{ marginLeft: 6, opacity: 0.7 }}>{fmtMoney(d.orderValueCents)}</span>}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {sorted.map(d => {
+          const team = teams.find(t => t.id === d.teamId);
+          const pr = PRIORITY[d.priority || "normal"];
+          const dateLabel = d.deliveryDate
+            ? new Date(d.deliveryDate + "T00:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })
+            : "— no date —";
+          const isSelected = tapSelected?.id === d.id;
+          return (
+            <div key={d.id}
+              draggable
+              onDragStart={() => setDragging(d)}
+              onDragEnd={() => setDragging(null)}
+              style={{
+                background: isSelected ? DARK : "#fafcf8",
+                color: isSelected ? CREAM : DARK,
+                border: `1.5px solid ${BORDER}`,
+                borderLeft: `4px solid ${team?.color || pr.bg}`,
+                borderRadius: 10, padding: "10px 12px",
+                display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
+                cursor: "grab",
+              }}>
+              <div style={{ flex: "0 0 auto", background: isSelected ? "#2a3a2a" : "#f2f5ef", color: isSelected ? CREAM : DARK, borderRadius: 8, padding: "4px 10px", fontSize: 11, fontWeight: 800, minWidth: 86, textAlign: "center" }}>
+                {dateLabel}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {d.customerSnapshot?.company_name || "—"}
+                </div>
+                <div style={{ fontSize: 11, opacity: 0.75 }}>
+                  {[d.customerSnapshot?.city, d.customerSnapshot?.state].filter(Boolean).join(", ")}
+                  {d.orderValueCents > 0 && <> • {fmtMoney(d.orderValueCents)}</>}
+                </div>
+              </div>
+              <span style={{ fontSize: 9, fontWeight: 800, background: pr.bg, color: "#fff", borderRadius: 999, padding: "3px 8px" }}>{pr.label}</span>
+              <button onClick={(e) => { e.stopPropagation(); setTapSelected(isSelected ? null : d); }}
+                style={{ background: isSelected ? GREEN : "#fff", color: DARK, border: `1.5px solid ${GREEN}`, borderRadius: 8, padding: "6px 10px", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                {isSelected ? "Cancel" : "Move"}
+              </button>
+              <button onClick={(e) => { e.stopPropagation(); onOpen(d); }}
+                style={{ background: "#fff", color: "#7a8c74", border: `1.5px solid ${BORDER}`, borderRadius: 8, padding: "6px 10px", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                Details
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Delivery detail modal ───────────────────────────────────────────────────
+function DeliveryDetailModal({ delivery: d, teams, trucks, onClose }) {
+  const c = d.customerSnapshot || {};
+  const team = teams.find(t => t.id === d.teamId);
+  const truck = trucks.find(t => t.id === d.truckId);
+  const pr = PRIORITY[d.priority || "normal"];
+  const addr = [c.address1, c.city, c.state, c.zip].filter(Boolean).join(", ");
+  const dateLabel = d.deliveryDate
+    ? new Date(d.deliveryDate + "T00:00:00").toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric", year: "numeric" })
+    : "— no date —";
+
+  return (
+    <div onClick={onClose}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, ...FONT }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 520, maxHeight: "92vh", overflowY: "auto" }}>
+        <div style={{ background: DARK, color: CREAM, padding: "18px 22px", borderRadius: "16px 16px 0 0", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 11, fontWeight: 800, color: GREEN, textTransform: "uppercase", letterSpacing: 1 }}>{dateLabel}</div>
+            <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif", marginTop: 2 }}>{c.company_name || "—"}</div>
+            <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 10, fontWeight: 800, background: pr.bg, color: "#fff", borderRadius: 999, padding: "3px 10px" }}>{pr.label}</span>
+              {team && <span style={{ fontSize: 10, fontWeight: 800, background: team.color || GREEN, color: "#fff", borderRadius: 999, padding: "3px 10px" }}>{team.name}</span>}
+              {(c.terms || "").toUpperCase().includes("C.O.D") && <span style={{ fontSize: 10, fontWeight: 800, background: "#c03030", color: "#fff", borderRadius: 999, padding: "3px 10px" }}>COD</span>}
+            </div>
           </div>
-        ))}
+          <button onClick={onClose} style={{ background: "none", border: "none", color: CREAM, fontSize: 26, cursor: "pointer", padding: 0 }}>×</button>
+        </div>
+
+        <div style={{ padding: 22 }}>
+          {c.care_of && <DetailRow label="Contact" value={c.care_of} />}
+          {addr && (
+            <DetailRow label="Address" value={
+              <div>
+                <div>{c.address1}</div>
+                <div>{[c.city, c.state, c.zip].filter(Boolean).join(", ")}</div>
+              </div>
+            } />
+          )}
+          {c.phone && <DetailRow label="Phone" value={<a href={`tel:${c.phone}`} style={{ color: DARK, fontWeight: 700, textDecoration: "none" }}>{c.phone}</a>} />}
+          {c.email && <DetailRow label="Email" value={c.email} />}
+          {c.terms && <DetailRow label="Terms" value={c.terms} />}
+          <DetailRow label="Order value" value={<b>{fmtMoney(d.orderValueCents)}</b>} />
+          {d.deliveryTime && <DetailRow label="Time slot" value={d.deliveryTime} />}
+          {Array.isArray(d.orderNumbers) && d.orderNumbers.length > 0 && <DetailRow label="Order numbers" value={d.orderNumbers.join(", ")} />}
+          {truck && <DetailRow label="Truck" value={truck.name} />}
+          {d.miles != null && <DetailRow label="Distance" value={`${d.miles} mi • ~${d.driveMinutes || "?"} min`} />}
+          {d.notes && <DetailRow label="Notes" value={<div style={{ whiteSpace: "pre-wrap", fontStyle: "italic" }}>{d.notes}</div>} />}
+          {d.createdBy && <DetailRow label="Created by" value={d.createdBy} />}
+        </div>
       </div>
+    </div>
+  );
+}
+
+function DetailRow({ label, value }) {
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: 14, color: DARK, lineHeight: 1.5 }}>{value}</div>
     </div>
   );
 }
