@@ -35,7 +35,7 @@ Required in `.env.local`:
 - `src/supabase.js` — Supabase client, `useTable()` generic CRUD hook with real-time subscriptions
 - `src/*.jsx` — one file per page/feature (CropPlanning, Libraries, FallProgram, etc.)
 - `src/combo/` — combo designer sub-module
-- `src/shipping/` — shipping module (Dashboard, Calendar, Schedule, Drivers, Teams, Trucks, Carts, Customers, Claims, DriverView, ShipperTasksView)
+- `src/shipping/` — shipping module (Command, Dashboard, Calendar, Schedule, Drivers, Teams, Trucks, Carts, Customers, Claims, DriverView, ShipperTasksView, TeamPullView)
 - `src/ManagerTasksView.jsx` — grower/production task manager (voice input, claim/release, Spanish toggle)
 - `src/WorkerChecklistView.jsx` — grower daily task list (tap to claim → mark done / release)
 - `api/` — Vercel serverless functions
@@ -56,7 +56,7 @@ Required in `.env.local`:
 - **Fonts**: DM Sans (body), DM Serif Display (headings) — loaded via Google Fonts link in components
 - **No linter/formatter config** — uses CRA defaults
 - **camelCase in JS, snake_case in DB** — `useTable()` auto-converts via `toCamel()`/`toSnake()` in `supabase.js`
-  - **JSONB payloads** (e.g. `customer_snapshot`, `photos`, `order_numbers`, `members`, `available_days`, `bench_numbers`, etc.) are preserved with their original key case via a `JSONB_KEYS` exclusion list in `toCamel`. When reading these, use snake_case keys (e.g. `cust.company_name`, `cust.allow_carts`).
+  - **JSONB payloads** (e.g. `customer_snapshot`, `photos`, `order_numbers`, `members`, `available_days`, `bench_numbers`, `pick_sheet_photos`, `signed_invoice_photos`, `alerts`, etc.) are preserved with their original key case via a `JSONB_KEYS` exclusion list in `toCamel`. When reading these, use snake_case keys (e.g. `cust.company_name`, `cust.allow_carts`). Add new JSONB columns to that list whenever you introduce them.
 - **One component per file** — large self-contained pages, no shared component library
 - **No TypeScript** — plain JSX
 
@@ -83,9 +83,11 @@ Hybrid system in `src/Auth.jsx`:
 
 ### Active floor codes (non-exhaustive — use the Codes button in ManagerTasksView for current list)
 - **Manager (Paul Schlegel)**: `9999999`
-- **Reese Morris** (head grower + task creator access): `4444444`
-- **Growers**: Michael Papineau `1111111`, Zach Stenz `2222222`, Colin O'Dell `3333333`, Eulogio Martinez `6666666`, Amanda Kirsop `8888888`, Kurt Schlegel `1111222`
-- **Shipping managers** (to ShipperTasksView): Sam Schroder `1234567`, Evie Seaman `7654321`, Ryan Griffith `9876543`, Zach Stenz (shipping) `8765432`
+- **Amanda Kirsop** (manager — full task creator): `8888888`
+- **Reese Morris** (head grower + task creator access via name match): `4444444`
+- **Growers**: Michael Papineau `1111111`, Zach Stenz `2222222`, Colin O'Dell `3333333`, Eulogio Martinez `6666666`, Kurt Schlegel `1111222`
+- **Shipping Manager (Tyler)**: `7846038` → `role: "shipping_manager"` → ShippingCommand
+- **Shipping team members** (role `shipping`, tagged by `team` column → TeamPullView): Sam Schroder `1234567` (bluff1), Ryan Griffith `9876543` (bluff2), Evie Seaman `7654321` (sprague), Rachel `2016869` (houseplants), Zach Stenz shipping `8765432` (untagged)
 - **Drivers**: created dynamically in Drivers admin with `login_code` field — routed to DriverView
 
 ## Routing (src/App.jsx AppInner)
@@ -93,20 +95,35 @@ Hybrid system in `src/Auth.jsx`:
 1. Admin → PlannerShell (desktop nav with Production/Operations/Shipping/etc. tabs)
 2. Manager or named operator → FloorAppRouter (ManagerTasksView / WorkerChecklistView / OperatorView overlay)
 3. `role === "driver"` → DriverView
-4. `role === "shipping"` → ShipperTasksView
-5. `role === "operator"` → OperatorView
+4. `role === "shipping_manager"` → ShippingCommand (Tyler, wrapped in a minimal header shell)
+5. `role === "shipping"` → TeamPullView (team from `floor_codes.team`: bluff1/bluff2/sprague/houseplants)
+6. `role === "operator"` → OperatorView
 
 ## Key Feature Modules
 
 ### Shipping module (`src/shipping/`)
-- **Dashboard** (Tyler) — today's board with unassigned + per-driver lanes, driver attendance, team roster, overdue + upcoming days, fuel tracking with running cost-per-mile, drag-assignment of driver/team/truck, date picker to move deliveries
+- **Command** (Tyler — NEW, Phase 1 of whiteboard replacement) — calendar-first week grid with AM/PM buckets; chips render confirmation dots (sales/customer/shipping), per-team pull icons (Bluff unified / Sprague / Houseplants), COD badge, unconfirmed badge, claims history badge, and latest alert. Proposed deliveries show dashed borders until Tyler confirms them. Detail drawer handles confirmation toggles, per-team pull status + pick sheet photo gallery, alerts timeline, team assignment (Bluff 1 vs Bluff 2), move date, date_locked toggle. Top strip shows reconfirmation queue + late-change counters. Spec: `docs/superpowers/specs/2026-04-09-shipping-command.md`.
+- **TeamPullView** (Sam/Ryan/Evie/Rachel — NEW) — single-focus "Next Up" kiosk for team members. Shows only the top delivery in their queue (filtered by `needs_<team>=true AND lifecycle='confirmed' AND pulled_at IS NULL`), with progress bar (count + dollars for today). "Mark done" opens a mandatory pick sheet photo modal uploading to `pick-sheet-photos` Supabase storage bucket before flipping `<team>_pulled_at`. "Report problem" appends to `alerts`.
+- **Dashboard** (legacy) — today's board with unassigned + per-driver lanes, driver attendance, team roster, overdue + upcoming days, fuel tracking with running cost-per-mile, drag-assignment of driver/team/truck, date picker to move deliveries
 - **Calendar** — week/day grid with drag-and-drop, AM/PM buckets, hour drill-down, capacity warnings, truck-conflict detection, expandable chips, unscheduled drawer
-- **Schedule** — sales rep delivery creation form (customer autocomplete, priority, order numbers, value, carts, time)
+- **Schedule** — sales rep delivery creation form (customer autocomplete, priority, order numbers, value, carts, time, **"Which teams pull?" checkboxes** that set `needs_bluff1/2/sprague/houseplants`, creates deliveries with `lifecycle='proposed'`)
 - **Drivers / Trucks / Teams / Carts / Customers / Claims** — CRUD admin pages
-- **DriverView** — mobile stop list with Leave/Arrive/Delivered timestamps, Google Maps deeplink, departure email trigger, claim reporting
-- **ShipperTasksView** — weekly shipping task view (Mon–Sat) for shipping manager floor codes
+- **DriverView** — mobile stop list with Leave/Arrive/Delivered timestamps, Google Maps deeplink, departure email trigger, claim reporting, **optional signed invoice photo upload** on Delivered (to `signed-invoices` bucket)
+- **ShipperTasksView** — weekly shipping task view (Mon–Sat) — legacy, no longer routed to by default
 - **Departure emails** fired from driver's Leave button via `/api/shipping-email` (Resend)
 - **Distance** computed via `/api/shipping-distance` (Google Distance Matrix from greenhouse at 4425 Bluff Road)
+
+#### Shipping data model (Phase 1 additions)
+`deliveries` table new columns: `lifecycle` ('proposed'|'confirmed'|'cancelled'), `priority_order`, `too_late_reason`, `date_locked`, `loaded_at`, three-confirmation fields (`sales_confirmed_at/by`, `customer_confirmed_at/by`, `shipping_confirmed_at/by`), per-team fan-out fields (`needs_bluff1`, `bluff1_pulled_at`, `bluff1_pulled_by`, and same for `bluff2`, `sprague`, `houseplants`), and JSONB arrays `pick_sheet_photos`, `signed_invoice_photos`, `alerts`. `shipping_customers` adds `delivery_confirmation_required`, `shipping_notes` (the existing `terms` column doubles as payment terms / COD flag). `floor_codes` adds a `team` column for routing shipping-role codes to the correct TeamPullView.
+
+**Teams** (4 pull teams across 2 physical locations):
+- Bluff Team 1 (Sam), Bluff Team 2 (Ryan) — Bluff location; on the Command chip these are rendered as a single unified 🌱 Bluff icon, but detail drawer / TeamPullView distinguishes them
+- Sprague Team (Evie) — Sprague location
+- Houseplants Team (Rachel) — Houseplants
+
+Most orders fan out across multiple teams; an order is only "ready to load" when all `needs_<team>=true` flags have corresponding `<team>_pulled_at` timestamps. Pick sheet photos are mandatory when marking a team's portion done.
+
+**Customer confirmation auto-expiry**: if a delivery is within 14 days of its date, `customer_confirmed_at` must also be within 14 days; otherwise the chip goes yellow and lands in the reconfirmation queue for sales. Helper: `customerConfirmationValid()` exported from `ShippingCommand.jsx`.
 
 ### Grower tasks (`ManagerTasksView.jsx` + `WorkerChecklistView.jsx`)
 - Voice dictation with iOS keyboard fallback
