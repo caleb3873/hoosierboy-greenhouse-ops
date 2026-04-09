@@ -33,6 +33,77 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
   const [viewingTask, setViewingTask] = useState(null);
   const [releasingTask, setReleasingTask] = useState(null);
   const [suggesting, setSuggesting] = useState(false);
+  // Language: Eulogio defaults to Spanish, everyone else English. Stored per-device.
+  const [lang, setLang] = useState(() => {
+    const saved = localStorage.getItem("gh_worker_lang_" + (displayName || ""));
+    if (saved) return saved;
+    return (displayName || "").toLowerCase().includes("eulogio") ? "es" : "en";
+  });
+  useEffect(() => {
+    localStorage.setItem("gh_worker_lang_" + (displayName || ""), lang);
+  }, [lang, displayName]);
+  const [translations, setTranslations] = useState({}); // {taskId: {title, description, notes}}
+  const translationInFlight = useRef(new Set());
+
+  // Translate any visible task that hasn't been cached yet
+  useEffect(() => {
+    if (lang !== "es") return;
+    const needed = tasks.filter(t => (t.category || "production") === "growing" && t.status !== "requested" && !translations[t.id] && !translationInFlight.current.has(t.id));
+    if (needed.length === 0) return;
+    needed.forEach(t => translationInFlight.current.add(t.id));
+    const batch = needed.slice(0, 15); // cap per request
+    const texts = [];
+    const index = []; // {taskId, field}
+    for (const t of batch) {
+      if (t.title) { texts.push(t.title); index.push({ taskId: t.id, field: "title" }); }
+      if (t.description) { texts.push(t.description); index.push({ taskId: t.id, field: "description" }); }
+    }
+    if (texts.length === 0) return;
+    fetch("/api/translate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ texts, target: "es" }),
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (!data?.translations) return;
+        setTranslations(prev => {
+          const next = { ...prev };
+          data.translations.forEach((tr, i) => {
+            const { taskId, field } = index[i];
+            if (!next[taskId]) next[taskId] = {};
+            next[taskId][field] = tr;
+          });
+          return next;
+        });
+      })
+      .finally(() => {
+        batch.forEach(t => translationInFlight.current.delete(t.id));
+      });
+  }, [lang, tasks, translations]);
+
+  function tr(task, field) {
+    if (lang === "es" && translations[task.id]?.[field]) return translations[task.id][field];
+    return task[field];
+  }
+
+  // i18n strings
+  const t_ui = {
+    en: {
+      hi: "Hi", thisWeek: "This Week's Tasks", toDo: "To Do", done: "Done",
+      nothingDone: "Nothing completed yet.", noGrowing: "No growing tasks assigned yet.",
+      claim: "Claim Task", markDone: "Mark Done", release: "Release", mine: "MINE",
+      suggestTask: "Suggest Task", signOut: "Sign out",
+      today: "Today", tomorrow: "Tomorrow", dayAfter: "Day After", weekly: "This Week",
+    },
+    es: {
+      hi: "Hola", thisWeek: "Tareas de esta semana", toDo: "Por hacer", done: "Hechas",
+      nothingDone: "Nada completado aún.", noGrowing: "No hay tareas asignadas.",
+      claim: "Tomar tarea", markDone: "Marcar hecha", release: "Liberar", mine: "MÍA",
+      suggestTask: "Sugerir tarea", signOut: "Salir",
+      today: "Hoy", tomorrow: "Mañana", dayAfter: "Pasado mañana", weekly: "Esta semana",
+    },
+  }[lang];
 
   async function appendToTask({ note, photo, rating }) {
     if (!viewingTask) return;
@@ -138,10 +209,10 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
   }
 
   const SECTIONS = [
-    { id: "today",          label: "Today" },
-    { id: "tomorrow",       label: "Tomorrow" },
-    { id: "check_tomorrow", label: "Day After" },
-    { id: "this_week",      label: "This Week" },
+    { id: "today",          label: t_ui.today },
+    { id: "tomorrow",       label: t_ui.tomorrow },
+    { id: "check_tomorrow", label: t_ui.dayAfter },
+    { id: "this_week",      label: t_ui.weekly },
   ];
 
   if (viewingTask) {
@@ -152,10 +223,24 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
     <div style={{ ...FONT, minHeight: "100vh", background: GREEN_DARK, color: "#fff", paddingBottom: 100 }}>
       <div style={{ padding: "14px 14px", borderBottom: `1px solid ${GREEN}33`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 11, color: GREEN, textTransform: "uppercase", letterSpacing: 1 }}>Hi {displayName}</div>
-          <div style={{ fontSize: 18, fontWeight: 700, color: CREAM }}>This Week's Tasks</div>
+          <div style={{ fontSize: 11, color: GREEN, textTransform: "uppercase", letterSpacing: 1 }}>{t_ui.hi} {displayName}</div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: CREAM }}>{t_ui.thisWeek}</div>
         </div>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+          {/* Language toggle */}
+          <div style={{ display: "flex", background: "#2a3a24", borderRadius: 8, padding: 3 }}>
+            {["en","es"].map(l => (
+              <button key={l} onClick={() => setLang(l)}
+                style={{
+                  padding: "5px 10px", borderRadius: 6, border: "none",
+                  background: lang === l ? GREEN : "transparent",
+                  color: lang === l ? GREEN_DARK : CREAM,
+                  fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit",
+                }}>
+                {l.toUpperCase()}
+              </button>
+            ))}
+          </div>
           {onOpenTaskCreator && (
             <button onClick={onOpenTaskCreator} style={{ background: GREEN, border: "none", color: GREEN_DARK, padding: "6px 12px", borderRadius: 6, cursor: "pointer", fontWeight: 800, ...FONT }}>
               + Tasks
@@ -167,15 +252,15 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
             </button>
           )}
           <button onClick={onSwitchMode} style={{ background: "transparent", border: `1px solid ${GREEN}66`, color: CREAM, padding: "6px 12px", borderRadius: 6, cursor: "pointer", ...FONT }}>
-            Sign out
+            {t_ui.signOut}
           </button>
         </div>
       </div>
 
       <div style={{ display: "flex", gap: 8, padding: 12 }}>
         {[
-          { k: false, label: `To Do (${pending.length})` },
-          { k: true, label: `Done (${done.length})` },
+          { k: false, label: `${t_ui.toDo} (${pending.length})` },
+          { k: true, label: `${t_ui.done} (${done.length})` },
         ].map(t => (
           <button key={String(t.k)} onClick={() => setShowDone(t.k)}
             style={{
@@ -193,7 +278,7 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
       <div style={{ padding: "0 12px" }}>
         {visible.length === 0 && (
           <div style={{ textAlign: "center", padding: 40, color: "#6a8a5a" }}>
-            {showDone ? "Nothing completed yet." : "No growing tasks assigned yet."}
+            {showDone ? t_ui.nothingDone : t_ui.noGrowing}
           </div>
         )}
 
@@ -228,17 +313,17 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
                     <div style={{ cursor: "pointer" }} onClick={() => setViewingTask(task)}>
                       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                         <div style={{ fontSize: 17, fontWeight: 600, color: overdue ? "#ffb3a8" : CREAM, textDecoration: completed ? "line-through" : "none", opacity: completed ? 0.7 : 1 }}>
-                          {task.title}
+                          {tr(task, "title")}
                         </div>
                         {overdue && <span style={{ background: RED, color: "#fff", borderRadius: 999, padding: "2px 8px", fontSize: 10, fontWeight: 800 }}>OVERDUE</span>}
-                        {claimedByMe && <span style={{ background: "#e89a3a", color: "#1e2d1a", borderRadius: 999, padding: "2px 8px", fontSize: 10, fontWeight: 800 }}>🙋 MINE</span>}
+                        {claimedByMe && <span style={{ background: "#e89a3a", color: "#1e2d1a", borderRadius: 999, padding: "2px 8px", fontSize: 10, fontWeight: 800 }}>🙋 {t_ui.mine}</span>}
                         {claimedBySomeoneElse && <span style={{ background: "#7a8c74", color: "#fff", borderRadius: 999, padding: "2px 8px", fontSize: 10, fontWeight: 800 }}>🔒 {claimedBy}</span>}
                       </div>
                       {task.targetDate && (
                         <div style={{ fontSize: 11, color: "#9cb894", marginTop: 4, fontWeight: 700 }}>📅 {formatTargetDate(task.targetDate)}</div>
                       )}
                       {task.description && (
-                        <div style={{ fontSize: 13, color: "#9cb894", marginTop: 4 }}>{task.description}</div>
+                        <div style={{ fontSize: 13, color: "#9cb894", marginTop: 4 }}>{tr(task, "description")}</div>
                       )}
                       {task.notes && (
                         <div style={{ fontSize: 12, color: "#9cb894", marginTop: 4, fontStyle: "italic", whiteSpace: "pre-wrap" }}>📝 {task.notes}</div>
@@ -263,18 +348,18 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
                         {!claimedBy && (
                           <button onClick={() => claimTask(task)}
                             style={{ flex: 1, padding: "12px 16px", borderRadius: 10, border: "none", background: GREEN, color: GREEN_DARK, fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "'DM Sans',sans-serif" }}>
-                            🙋 Claim Task
+                            🙋 {t_ui.claim}
                           </button>
                         )}
                         {claimedByMe && (
                           <>
                             <button onClick={() => handleCheck(task)}
                               style={{ flex: 2, padding: "12px 16px", borderRadius: 10, border: "none", background: GREEN, color: GREEN_DARK, fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "'DM Sans',sans-serif" }}>
-                              ✓ Mark Done
+                              ✓ {t_ui.markDone}
                             </button>
                             <button onClick={() => setReleasingTask(task)}
                               style={{ flex: 1, padding: "12px 12px", borderRadius: 10, border: `1.5px solid ${GREEN}66`, background: "transparent", color: CREAM, fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "'DM Sans',sans-serif" }}>
-                              ↩ Release
+                              ↩ {t_ui.release}
                             </button>
                           </>
                         )}
@@ -302,7 +387,7 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
           cursor: "pointer", boxShadow: "0 4px 20px rgba(0,0,0,.3)", zIndex: 200, fontFamily: "'DM Sans',sans-serif",
           display: "flex", alignItems: "center", gap: 8,
         }}>
-        ➕ Suggest Task
+        ➕ {t_ui.suggestTask}
       </button>
 
       {completingTask && (
