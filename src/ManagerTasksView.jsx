@@ -66,10 +66,23 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
   const [selectedTask, setSelectedTask] = useState(null);
   const [showRecorder, setShowRecorder] = useState(false);
   const [showCodes, setShowCodes] = useState(false);
+  const [showRequests, setShowRequests] = useState(false);
+  const [approvingRequest, setApprovingRequest] = useState(null);
+  const autoOpenedRef = useRef(false);
+
+  const pendingRequests = useMemo(() => tasks.filter(t => t.status === "requested"), [tasks]);
+
+  // Auto-open requests modal on first load if there are any
+  useEffect(() => {
+    if (!autoOpenedRef.current && pendingRequests.length > 0) {
+      autoOpenedRef.current = true;
+      setShowRequests(true);
+    }
+  }, [pendingRequests.length]);
 
   // Filter + sort by priority (higher = more important = on top)
   const visibleTasks = useMemo(() => {
-    let r = tasks.filter(t => t.year === selectedWeek.year && t.weekNumber === selectedWeek.week && (t.category || "production") === category);
+    let r = tasks.filter(t => t.status !== "requested" && t.year === selectedWeek.year && t.weekNumber === selectedWeek.week && (t.category || "production") === category);
     if (statusFilter === "pending") r = r.filter(t => t.status !== "completed");
     else if (statusFilter === "completed") r = r.filter(t => t.status === "completed");
     return [...r].sort((a, b) => (b.priority || 0) - (a.priority || 0));
@@ -116,6 +129,33 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
     refresh();
   }
 
+  async function approveRequest(request, { bucket, targetDate }) {
+    const jan4 = new Date(new Date(targetDate + "T00:00:00").getFullYear(), 0, 4);
+    const s = new Date(jan4);
+    s.setDate(jan4.getDate() - ((jan4.getDay() + 6) % 7));
+    const dt = new Date(targetDate + "T00:00:00");
+    const week = Math.ceil((dt - s) / (7 * 86400000));
+    const year = dt.getFullYear();
+    const maxPriority = Math.max(0, ...tasks.filter(t => t.year === year && t.weekNumber === week && (t.category || "production") === (request.category || "growing")).map(t => t.priority || 0));
+    await upsert({
+      ...request,
+      status: "pending",
+      bucket,
+      targetDate,
+      weekNumber: week,
+      year,
+      priority: maxPriority + 10,
+    });
+    setApprovingRequest(null);
+    refresh();
+  }
+
+  async function rejectRequest(request) {
+    if (!window.confirm(`Reject "${request.title}"? It will be deleted.`)) return;
+    await remove(request.id);
+    refresh();
+  }
+
   async function finishCompletion(notes, photo) {
     if (!completingTask) return;
     const photos = photo ? [...(completingTask.photos || []), photo] : (completingTask.photos || []);
@@ -137,7 +177,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
     if (!tasks.length) return;
     const todayISO = new Date().toISOString().slice(0, 10);
     tasks.forEach(t => {
-      if (t.status === "completed") return;
+      if (t.status === "completed" || t.status === "requested") return;
       const stale = t.year < today.year || (t.year === today.year && t.weekNumber < today.week);
       const needsTargetDate = !t.targetDate;
       const staleDate = t.targetDate && t.targetDate < todayISO && (t.bucket === "today" || t.bucket === "tomorrow" || t.bucket === "check_tomorrow");
@@ -248,6 +288,10 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
                 App →
               </button>
             )}
+            <button onClick={() => setShowRequests(true)}
+              style={{ background: pendingRequests.length > 0 ? "#e89a3a" : "#c8e6b8", border: "none", borderRadius: 8, color: "#1e2d1a", padding: "6px 12px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+              📥 Requests{pendingRequests.length > 0 ? ` (${pendingRequests.length})` : ""}
+            </button>
             <button onClick={() => setShowCodes(true)}
               style={{ background: "#c8e6b8", border: "none", borderRadius: 8, color: "#1e2d1a", padding: "6px 12px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
               Codes
@@ -360,6 +404,21 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
 
       {showRecorder && <VoiceRecorderModal onSave={createTask} onCancel={() => setShowRecorder(false)} />}
       {showCodes && <CodesModal onClose={() => setShowCodes(false)} />}
+      {showRequests && (
+        <RequestsModal
+          requests={pendingRequests}
+          onClose={() => setShowRequests(false)}
+          onApprove={(r) => { setShowRequests(false); setApprovingRequest(r); }}
+          onReject={rejectRequest}
+        />
+      )}
+      {approvingRequest && (
+        <ApprovalModal
+          request={approvingRequest}
+          onCancel={() => setApprovingRequest(null)}
+          onApprove={(opts) => approveRequest(approvingRequest, opts)}
+        />
+      )}
       {completingTask && (
         <CompletionPromptModal
           task={completingTask}
@@ -446,6 +505,127 @@ export function CompletionPromptModal({ task, onCancel, onSave }) {
           <button onClick={() => onSave(notes.trim() || null, photo)}
             style={{ flex: 2, padding: "13px 0", borderRadius: 10, border: "none", background: "#7fb069", color: "#1e2d1a", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
             ✓ Mark Done
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Task requests inbox ─────────────────────────────────────────────────────
+function RequestsModal({ requests, onClose, onApprove, onReject }) {
+  return (
+    <div onClick={onClose}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, ...FONT }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        background: "#fff", borderRadius: 16, width: "100%", maxWidth: 560, maxHeight: "92vh", overflowY: "auto",
+      }}>
+        <div style={{ background: "#1e2d1a", color: "#c8e6b8", padding: "18px 22px", borderRadius: "16px 16px 0 0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 800, color: "#e89a3a", textTransform: "uppercase", letterSpacing: 1 }}>Pending Suggestions</div>
+            <div style={{ fontSize: 20, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif" }}>Grower Task Requests</div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "#c8e6b8", fontSize: 26, cursor: "pointer" }}>×</button>
+        </div>
+        <div style={{ padding: 22 }}>
+          {requests.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "40px 20px", color: "#7a8c74" }}>
+              <div style={{ fontSize: 36, marginBottom: 8 }}>✓</div>
+              <div style={{ fontSize: 14, fontWeight: 700 }}>No pending requests</div>
+            </div>
+          ) : (
+            requests.map(r => (
+              <div key={r.id} style={{ background: "#fafcf8", borderRadius: 12, border: "1.5px solid #e0ead8", borderLeft: "4px solid #e89a3a", padding: 16, marginBottom: 12 }}>
+                <div style={{ fontSize: 11, color: "#7a8c74", fontWeight: 700 }}>
+                  Suggested by <b style={{ color: "#1e2d1a" }}>{r.createdBy || "—"}</b>
+                </div>
+                <div style={{ fontSize: 16, fontWeight: 800, color: "#1e2d1a", marginTop: 4 }}>{r.title}</div>
+                {r.description && <div style={{ fontSize: 13, color: "#7a8c74", marginTop: 6, whiteSpace: "pre-wrap" }}>{r.description}</div>}
+                {Array.isArray(r.photos) && r.photos.length > 0 && (
+                  <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+                    {r.photos.map((p, i) => <img key={i} src={p} alt="" style={{ width: 90, height: 90, objectFit: "cover", borderRadius: 8 }} />)}
+                  </div>
+                )}
+                <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                  <button onClick={() => onApprove(r)}
+                    style={{ flex: 2, padding: "12px 0", borderRadius: 10, border: "none", background: "#4a7a35", color: "#fff", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                    ✓ Approve & Schedule
+                  </button>
+                  <button onClick={() => onReject(r)}
+                    style={{ flex: 1, padding: "12px 0", borderRadius: 10, border: "1.5px solid #c8d8c0", background: "#fff", color: "#7a8c74", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                    Reject
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ApprovalModal({ request, onCancel, onApprove }) {
+  const [bucket, setBucket] = useState("today");
+  const [customDate, setCustomDate] = useState(bucketToDate("today"));
+  const [useCustom, setUseCustom] = useState(false);
+
+  const finalDate = useCustom ? customDate : bucketToDate(bucket);
+
+  function submit() {
+    onApprove({ bucket: useCustom ? "this_week" : bucket, targetDate: finalDate });
+  }
+
+  return (
+    <div onClick={onCancel}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 10000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, ...FONT }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 460, padding: 24 }}>
+        <div style={{ fontSize: 11, fontWeight: 800, color: "#7fb069", textTransform: "uppercase", letterSpacing: 1 }}>Approving</div>
+        <div style={{ fontSize: 19, fontWeight: 800, color: "#1e2d1a", marginBottom: 16, fontFamily: "'DM Serif Display',Georgia,serif" }}>{request.title}</div>
+
+        <div style={{ fontSize: 11, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>When</div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
+          {[
+            { id: "today", label: "Today" },
+            { id: "tomorrow", label: "Tomorrow" },
+            { id: "check_tomorrow", label: "Day After" },
+            { id: "this_week", label: "This Week" },
+          ].map(b => {
+            const active = !useCustom && bucket === b.id;
+            return (
+              <button key={b.id} onClick={() => { setUseCustom(false); setBucket(b.id); }}
+                style={{
+                  flex: "1 1 45%", padding: "12px 6px", borderRadius: 10, fontSize: 12, fontWeight: 800,
+                  background: active ? "#1e2d1a" : "#f2f5ef",
+                  color: active ? "#c8e6b8" : "#7a8c74",
+                  border: `1.5px solid ${active ? "#1e2d1a" : "#c8d8c0"}`,
+                  cursor: "pointer", fontFamily: "inherit",
+                }}>
+                {b.label}
+              </button>
+            );
+          })}
+        </div>
+
+        <div style={{ fontSize: 11, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Or specific date</div>
+        <input type="date" value={customDate} onChange={e => { setCustomDate(e.target.value); setUseCustom(true); }}
+          style={{
+            width: "100%", padding: 12, borderRadius: 10,
+            border: `1.5px solid ${useCustom ? "#1e2d1a" : "#c8d8c0"}`,
+            fontSize: 14, fontFamily: "inherit", boxSizing: "border-box", outline: "none", marginBottom: 6,
+          }} />
+        <div style={{ fontSize: 11, color: "#7a8c74", marginBottom: 16 }}>
+          Will appear on: <b style={{ color: "#1e2d1a" }}>{formatTargetDate(finalDate)}</b>
+        </div>
+
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={onCancel}
+            style={{ flex: 1, padding: "13px 0", borderRadius: 10, border: "1.5px solid #c8d8c0", background: "#fff", color: "#7a8c74", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+            Cancel
+          </button>
+          <button onClick={submit}
+            style={{ flex: 2, padding: "13px 0", borderRadius: 10, border: "none", background: "#4a7a35", color: "#fff", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+            ✓ Schedule Task
           </button>
         </div>
       </div>

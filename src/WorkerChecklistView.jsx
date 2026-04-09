@@ -1,5 +1,5 @@
-import { useMemo, useState, useEffect } from "react";
-import { useManagerTasks, useFlags, useCropRuns } from "./supabase";
+import { useMemo, useState, useEffect, useRef } from "react";
+import { useManagerTasks } from "./supabase";
 import { useAuth } from "./Auth";
 import { CompletionPromptModal, TaskViewer, formatTargetDate, bucketToDate } from "./ManagerTasksView";
 
@@ -26,15 +26,13 @@ function formatTime(iso) {
 
 export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenTaskCreator }) {
   const { rows: tasks, upsert, refresh } = useManagerTasks();
-  const { rows: runs } = useCropRuns();
-  const { upsert: upsertFlag } = useFlags();
   const { displayName } = useAuth();
   const today = useMemo(() => getWeekInfo(), []);
   const [showDone, setShowDone] = useState(false);
   const [completingTask, setCompletingTask] = useState(null);
   const [viewingTask, setViewingTask] = useState(null);
   const [releasingTask, setReleasingTask] = useState(null);
-  const [flagging, setFlagging] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
 
   async function appendToTask({ note, photo, rating }) {
     if (!viewingTask) return;
@@ -55,7 +53,7 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
   }
 
   const weekTasks = useMemo(() => {
-    const r = tasks.filter(t => t.year === today.year && t.weekNumber === today.week && (t.category || "production") === "growing");
+    const r = tasks.filter(t => t.status !== "requested" && t.year === today.year && t.weekNumber === today.week && (t.category || "production") === "growing");
     return [...r].sort((a, b) => (b.priority || 0) - (a.priority || 0));
   }, [tasks, today]);
 
@@ -69,7 +67,7 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
     const todayISO = new Date().toISOString().slice(0, 10);
     tasks.forEach(t => {
       if ((t.category || "production") !== "growing") return;
-      if (t.status === "completed") return;
+      if (t.status === "completed" || t.status === "requested") return;
       const stale = t.year < today.year || (t.year === today.year && t.weekNumber < today.week);
       const needsTargetDate = !t.targetDate;
       const staleDate = t.targetDate && t.targetDate < todayISO && (t.bucket === "today" || t.bucket === "tomorrow" || t.bucket === "check_tomorrow");
@@ -295,14 +293,16 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
         })}
       </div>
 
-      {/* Floating flag button */}
-      <button onClick={() => setFlagging(true)}
+      {/* Floating "suggest task" button */}
+      <button onClick={() => setSuggesting(true)}
+        title="Suggest a task for the manager to approve"
         style={{
-          position: "fixed", bottom: 24, right: 20, width: 56, height: 56, borderRadius: 28,
-          background: "#c03030", border: "3px solid #fff", color: "#fff", fontSize: 22,
-          cursor: "pointer", boxShadow: "0 4px 20px rgba(192,48,48,.4)", zIndex: 200,
+          position: "fixed", bottom: 24, right: 20, padding: "14px 20px", borderRadius: 999,
+          background: GREEN, border: "3px solid #fff", color: GREEN_DARK, fontSize: 14, fontWeight: 800,
+          cursor: "pointer", boxShadow: "0 4px 20px rgba(0,0,0,.3)", zIndex: 200, fontFamily: "'DM Sans',sans-serif",
+          display: "flex", alignItems: "center", gap: 8,
         }}>
-        ⚑
+        ➕ Suggest Task
       </button>
 
       {completingTask && (
@@ -321,12 +321,27 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
         />
       )}
 
-      {flagging && (
-        <WorkerFlagModal
-          runs={runs}
-          reportedBy={displayName || "Worker"}
-          onCancel={() => setFlagging(false)}
-          onSubmit={async f => { await upsertFlag({ ...f, id: crypto.randomUUID(), createdAt: new Date().toISOString(), resolved: false, reportedBy: displayName || "Worker" }); setFlagging(false); }}
+      {suggesting && (
+        <SuggestTaskModal
+          requestedBy={displayName || "Grower"}
+          onCancel={() => setSuggesting(false)}
+          onSubmit={async (row) => {
+            await upsert({
+              id: crypto.randomUUID(),
+              title: row.title,
+              description: row.description || null,
+              photos: row.photos || [],
+              priority: 0,
+              weekNumber: today.week,
+              year: today.year,
+              status: "requested",
+              category: "growing",
+              createdBy: displayName || "Grower",
+              notes: null,
+            });
+            setSuggesting(false);
+            refresh();
+          }}
         />
       )}
     </div>
@@ -371,25 +386,23 @@ function ReleaseModal({ task, onCancel, onRelease }) {
   );
 }
 
-// ── Flag modal ────────────────────────────────────────────────────────────────
-function WorkerFlagModal({ runs, onCancel, onSubmit }) {
+// ── Suggest task modal ───────────────────────────────────────────────────────
+function SuggestTaskModal({ requestedBy, onCancel, onSubmit }) {
   const [title, setTitle] = useState("");
-  const [details, setDetails] = useState("");
-  const [runId, setRunId] = useState("");
-  const [severity, setSeverity] = useState("medium");
-  const [photo, setPhoto] = useState(null);
+  const [description, setDescription] = useState("");
+  const [photos, setPhotos] = useState([]);
 
   function handlePhoto(e) {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = ev => setPhoto(ev.target.result);
+    reader.onload = ev => setPhotos(p => [...p, ev.target.result]);
     reader.readAsDataURL(file);
   }
 
   function submit() {
     if (!title.trim()) return;
-    onSubmit({ title: title.trim(), details, runId: runId || null, severity, photo });
+    onSubmit({ title: title.trim(), description: description.trim(), photos });
   }
 
   return (
@@ -399,48 +412,37 @@ function WorkerFlagModal({ runs, onCancel, onSubmit }) {
         background: "#fff", borderRadius: "20px 20px 0 0", padding: 22, width: "100%", maxWidth: 500,
         maxHeight: "90vh", overflowY: "auto", color: "#1e2d1a",
       }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-          <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif" }}>Flag a Problem</div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+          <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif" }}>Suggest a Task</div>
           <button onClick={onCancel} style={{ background: "none", border: "none", fontSize: 26, color: "#7a8c74", cursor: "pointer" }}>&times;</button>
         </div>
-
-        <input value={title} onChange={e => setTitle(e.target.value)} placeholder="What's the issue?"
-          style={{ width: "100%", padding: 12, borderRadius: 10, border: "1.5px solid #c8d8c0", fontSize: 14, fontFamily: "inherit", boxSizing: "border-box", marginBottom: 10, outline: "none" }} />
-
-        <textarea value={details} onChange={e => setDetails(e.target.value)} placeholder="More detail (optional)"
-          style={{ width: "100%", minHeight: 70, padding: 12, borderRadius: 10, border: "1.5px solid #c8d8c0", fontSize: 14, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box", marginBottom: 10, outline: "none" }} />
-
-        <select value={runId} onChange={e => setRunId(e.target.value)}
-          style={{ width: "100%", padding: 12, borderRadius: 10, border: "1.5px solid #c8d8c0", fontSize: 14, fontFamily: "inherit", marginBottom: 10, background: "#fff" }}>
-          <option value="">— Related crop run (optional) —</option>
-          {runs?.map(r => <option key={r.id} value={r.id}>{r.cropName} {r.code ? `(${r.code})` : ""}</option>)}
-        </select>
-
-        <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
-          {["low","medium","high"].map(s => (
-            <button key={s} onClick={() => setSeverity(s)}
-              style={{
-                flex: 1, padding: "10px 6px", borderRadius: 8, border: `1.5px solid ${severity === s ? "#1e2d1a" : "#c8d8c0"}`,
-                background: severity === s ? "#1e2d1a" : "#f2f5ef", color: severity === s ? "#c8e6b8" : "#7a8c74",
-                fontSize: 12, fontWeight: 800, cursor: "pointer", textTransform: "capitalize", fontFamily: "inherit",
-              }}>{s}</button>
-          ))}
+        <div style={{ fontSize: 12, color: "#7a8c74", marginBottom: 14 }}>
+          The manager will review and decide whether to schedule it.
         </div>
 
-        <label style={{ display: "block", marginBottom: 12 }}>
-          <input type="file" accept="image/*" capture="environment" onChange={handlePhoto} style={{ display: "none" }} />
-          {photo ? (
-            <img src={photo} alt="" style={{ width: "100%", maxHeight: 180, objectFit: "cover", borderRadius: 10 }} />
-          ) : (
-            <div style={{ padding: 14, borderRadius: 10, border: "1.5px dashed #c8d8c0", textAlign: "center", color: "#7a8c74", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
-              📷 Take Photo (optional)
+        <input value={title} onChange={e => setTitle(e.target.value)} placeholder="What needs to happen?"
+          style={{ width: "100%", padding: 12, borderRadius: 10, border: "1.5px solid #c8d8c0", fontSize: 14, fontFamily: "inherit", boxSizing: "border-box", marginBottom: 10, outline: "none" }} />
+
+        <textarea value={description} onChange={e => setDescription(e.target.value)} placeholder="Why does this need to be done? Any detail helpful to the manager"
+          style={{ width: "100%", minHeight: 90, padding: 12, borderRadius: 10, border: "1.5px solid #c8d8c0", fontSize: 14, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box", marginBottom: 12, outline: "none" }} />
+
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+          {photos.map((p, i) => (
+            <div key={i} style={{ position: "relative" }}>
+              <img src={p} alt="" style={{ width: 80, height: 80, objectFit: "cover", borderRadius: 8 }} />
+              <button onClick={() => setPhotos(ps => ps.filter((_, j) => j !== i))}
+                style={{ position: "absolute", top: 3, right: 3, width: 20, height: 20, borderRadius: "50%", background: "rgba(0,0,0,.7)", color: "#fff", border: "none", cursor: "pointer", fontSize: 12 }}>×</button>
             </div>
-          )}
-        </label>
+          ))}
+          <label style={{ width: 80, height: 80, borderRadius: 8, border: "2px dashed #c8d8c0", background: "#fafcf8", display: "flex", alignItems: "center", justifyContent: "center", color: "#7a8c74", fontSize: 22, cursor: "pointer" }}>
+            +
+            <input type="file" accept="image/*" capture="environment" onChange={handlePhoto} style={{ display: "none" }} />
+          </label>
+        </div>
 
         <button onClick={submit} disabled={!title.trim()}
-          style={{ width: "100%", padding: "14px 0", borderRadius: 10, border: "none", background: title.trim() ? "#c03030" : "#c8d8c0", color: "#fff", fontSize: 15, fontWeight: 800, cursor: title.trim() ? "pointer" : "default", fontFamily: "inherit" }}>
-          Submit Flag
+          style={{ width: "100%", padding: "14px 0", borderRadius: 10, border: "none", background: title.trim() ? "#1e2d1a" : "#c8d8c0", color: "#c8e6b8", fontSize: 15, fontWeight: 800, cursor: title.trim() ? "pointer" : "default", fontFamily: "inherit" }}>
+          Submit Suggestion
         </button>
       </div>
     </div>
