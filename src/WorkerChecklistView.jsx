@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect } from "react";
 import { useManagerTasks, useFlags, useCropRuns } from "./supabase";
 import { useAuth } from "./Auth";
-import { CompletionPromptModal, TaskViewer } from "./ManagerTasksView";
+import { CompletionPromptModal, TaskViewer, formatTargetDate, bucketToDate } from "./ManagerTasksView";
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
 const GREEN_DARK = "#1e2d1a";
@@ -33,6 +33,7 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
   const [showDone, setShowDone] = useState(false);
   const [completingTask, setCompletingTask] = useState(null);
   const [viewingTask, setViewingTask] = useState(null);
+  const [releasingTask, setReleasingTask] = useState(null);
   const [flagging, setFlagging] = useState(false);
 
   async function appendToTask({ note, photo, rating }) {
@@ -62,26 +63,62 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
   const done = weekTasks.filter(t => t.status === "completed");
   const visible = showDone ? done : pending;
 
-  // Carryover stale growing tasks
+  // Carryover + target_date refresh for growing tasks
   useEffect(() => {
     if (!tasks.length) return;
-    const stale = tasks.filter(t =>
-      (t.category || "production") === "growing" &&
-      t.status !== "completed" &&
-      (t.year < today.year || (t.year === today.year && t.weekNumber < today.week))
-    );
-    stale.forEach(t => {
-      upsert({ ...t, year: today.year, weekNumber: today.week, carriedOver: true });
+    const todayISO = new Date().toISOString().slice(0, 10);
+    tasks.forEach(t => {
+      if ((t.category || "production") !== "growing") return;
+      if (t.status === "completed") return;
+      const stale = t.year < today.year || (t.year === today.year && t.weekNumber < today.week);
+      const needsTargetDate = !t.targetDate;
+      const staleDate = t.targetDate && t.targetDate < todayISO && (t.bucket === "today" || t.bucket === "tomorrow" || t.bucket === "check_tomorrow");
+      if (stale || needsTargetDate || staleDate) {
+        const patch = { ...t };
+        if (stale) { patch.year = today.year; patch.weekNumber = today.week; patch.carriedOver = true; }
+        if (needsTargetDate || staleDate) patch.targetDate = bucketToDate(t.bucket || "today");
+        upsert(patch);
+      }
     });
   }, [tasks.length]); // eslint-disable-line
 
+  const myName = displayName || "Grower";
+
+  async function claimTask(task) {
+    await upsert({
+      ...task,
+      status: "claimed",
+      claimedBy: myName,
+      claimedAt: new Date().toISOString(),
+    });
+    refresh();
+  }
+
   async function handleCheck(task) {
     if (task.status === "completed") {
-      await upsert({ ...task, status: "pending", completedBy: null, completedAt: null });
+      await upsert({ ...task, status: "pending", completedBy: null, completedAt: null, claimedBy: null, claimedAt: null });
       refresh();
       return;
     }
+    // Only the claimer can check off
+    if (task.claimedBy && task.claimedBy !== myName) return;
     setCompletingTask(task);
+  }
+
+  async function releaseTask(task, unfinishedNotes) {
+    const stamp = `[${myName} — released ${new Date().toLocaleString()}]`;
+    const appendedNotes = unfinishedNotes
+      ? ((task.notes ? task.notes + "\n" : "") + `${stamp} ${unfinishedNotes}`)
+      : task.notes;
+    await upsert({
+      ...task,
+      status: "pending",
+      claimedBy: null,
+      claimedAt: null,
+      notes: appendedNotes,
+    });
+    setReleasingTask(null);
+    refresh();
   }
 
   async function finishCompletion(notes, photo) {
@@ -93,6 +130,8 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
       status: "completed",
       completedBy: displayName || "Worker",
       completedAt: new Date().toISOString(),
+      claimedBy: null,
+      claimedAt: null,
       notes: combinedNotes,
       photos,
     });
@@ -177,36 +216,34 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
               {sectionTasks.map(task => {
                 const completed = task.status === "completed";
                 const overdue = !!task.carriedOver && !completed;
+                const claimedBy = task.claimedBy;
+                const claimedByMe = claimedBy === myName;
+                const claimedBySomeoneElse = claimedBy && !claimedByMe;
                 return (
                   <div key={task.id}
                     style={{
-                      display: "flex", alignItems: "flex-start", gap: 14,
-                      background: completed ? "#2a3a24" : overdue ? "#3a1e18" : "#263821",
-                      border: `1px solid ${overdue ? RED : GREEN + "44"}`,
-                      boxShadow: overdue ? `0 0 0 2px ${RED}33` : "none",
+                      background: completed ? "#2a3a24" : overdue ? "#3a1e18" : claimedBySomeoneElse ? "#223018" : "#263821",
+                      border: `1px solid ${overdue ? RED : claimedByMe ? "#e89a3a" : GREEN + "44"}`,
+                      boxShadow: overdue ? `0 0 0 2px ${RED}33` : claimedByMe ? "0 0 0 2px #e89a3a44" : "none",
                       borderRadius: 10, padding: 16, marginBottom: 10,
                     }}>
-                    <button onClick={() => handleCheck(task)} style={{
-                      width: 32, height: 32, minWidth: 32, borderRadius: 8,
-                      border: `2px solid ${GREEN}`,
-                      background: completed ? GREEN : "transparent",
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      color: GREEN_DARK, fontSize: 20, fontWeight: 700, cursor: "pointer", padding: 0,
-                    }}>
-                      {completed ? "✓" : ""}
-                    </button>
-                    <div style={{ flex: 1, cursor: "pointer" }} onClick={() => setViewingTask(task)}>
+                    <div style={{ cursor: "pointer" }} onClick={() => setViewingTask(task)}>
                       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                         <div style={{ fontSize: 17, fontWeight: 600, color: overdue ? "#ffb3a8" : CREAM, textDecoration: completed ? "line-through" : "none", opacity: completed ? 0.7 : 1 }}>
                           {task.title}
                         </div>
                         {overdue && <span style={{ background: RED, color: "#fff", borderRadius: 999, padding: "2px 8px", fontSize: 10, fontWeight: 800 }}>OVERDUE</span>}
+                        {claimedByMe && <span style={{ background: "#e89a3a", color: "#1e2d1a", borderRadius: 999, padding: "2px 8px", fontSize: 10, fontWeight: 800 }}>🙋 MINE</span>}
+                        {claimedBySomeoneElse && <span style={{ background: "#7a8c74", color: "#fff", borderRadius: 999, padding: "2px 8px", fontSize: 10, fontWeight: 800 }}>🔒 {claimedBy}</span>}
                       </div>
+                      {task.targetDate && (
+                        <div style={{ fontSize: 11, color: "#9cb894", marginTop: 4, fontWeight: 700 }}>📅 {formatTargetDate(task.targetDate)}</div>
+                      )}
                       {task.description && (
                         <div style={{ fontSize: 13, color: "#9cb894", marginTop: 4 }}>{task.description}</div>
                       )}
                       {task.notes && (
-                        <div style={{ fontSize: 12, color: "#9cb894", marginTop: 4, fontStyle: "italic" }}>📝 {task.notes}</div>
+                        <div style={{ fontSize: 12, color: "#9cb894", marginTop: 4, fontStyle: "italic", whiteSpace: "pre-wrap" }}>📝 {task.notes}</div>
                       )}
                       {completed && (
                         <div style={{ fontSize: 12, color: GREEN, marginTop: 6 }}>
@@ -221,6 +258,35 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
                         </div>
                       )}
                     </div>
+
+                    {/* Action buttons */}
+                    {!completed && (
+                      <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+                        {!claimedBy && (
+                          <button onClick={() => claimTask(task)}
+                            style={{ flex: 1, padding: "12px 16px", borderRadius: 10, border: "none", background: GREEN, color: GREEN_DARK, fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "'DM Sans',sans-serif" }}>
+                            🙋 Claim Task
+                          </button>
+                        )}
+                        {claimedByMe && (
+                          <>
+                            <button onClick={() => handleCheck(task)}
+                              style={{ flex: 2, padding: "12px 16px", borderRadius: 10, border: "none", background: GREEN, color: GREEN_DARK, fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "'DM Sans',sans-serif" }}>
+                              ✓ Mark Done
+                            </button>
+                            <button onClick={() => setReleasingTask(task)}
+                              style={{ flex: 1, padding: "12px 12px", borderRadius: 10, border: `1.5px solid ${GREEN}66`, background: "transparent", color: CREAM, fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "'DM Sans',sans-serif" }}>
+                              ↩ Release
+                            </button>
+                          </>
+                        )}
+                        {claimedBySomeoneElse && (
+                          <div style={{ flex: 1, padding: "12px 16px", borderRadius: 10, background: "transparent", border: `1.5px dashed #7a8c74`, color: "#9cb894", fontSize: 12, fontWeight: 700, textAlign: "center" }}>
+                            🔒 Claimed by {claimedBy}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -247,6 +313,14 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
         />
       )}
 
+      {releasingTask && (
+        <ReleaseModal
+          task={releasingTask}
+          onCancel={() => setReleasingTask(null)}
+          onRelease={(notes) => releaseTask(releasingTask, notes)}
+        />
+      )}
+
       {flagging && (
         <WorkerFlagModal
           runs={runs}
@@ -255,6 +329,44 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
           onSubmit={async f => { await upsertFlag({ ...f, id: crypto.randomUUID(), createdAt: new Date().toISOString(), resolved: false, reportedBy: displayName || "Worker" }); setFlagging(false); }}
         />
       )}
+    </div>
+  );
+}
+
+// ── Release modal ─────────────────────────────────────────────────────────────
+function ReleaseModal({ task, onCancel, onRelease }) {
+  const [notes, setNotes] = useState("");
+  return (
+    <div onClick={onCancel}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 9999, display: "flex", alignItems: "flex-end", justifyContent: "center", ...FONT }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        background: "#fff", borderRadius: "20px 20px 0 0", padding: 22, width: "100%", maxWidth: 500, color: "#1e2d1a",
+      }}>
+        <div style={{ fontSize: 11, color: "#e89a3a", fontWeight: 800, textTransform: "uppercase", letterSpacing: 1 }}>Releasing</div>
+        <div style={{ fontSize: 17, fontWeight: 800, color: "#1e2d1a", marginBottom: 14 }}>{task.title}</div>
+
+        <label style={{ fontSize: 12, fontWeight: 700, color: "#7a8c74" }}>
+          What's left for the next person?
+        </label>
+        <textarea value={notes} onChange={e => setNotes(e.target.value)}
+          placeholder="e.g. got through house 3, still need houses 4 and 5; watering done but need to check pest"
+          style={{
+            width: "100%", minHeight: 90, padding: 12, borderRadius: 10, border: "1.5px solid #c8d8c0",
+            fontSize: 14, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box", outline: "none",
+            marginTop: 6, marginBottom: 14,
+          }} />
+
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={onCancel}
+            style={{ flex: 1, padding: "13px 0", borderRadius: 10, border: "1.5px solid #c8d8c0", background: "#fff", color: "#7a8c74", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+            Cancel
+          </button>
+          <button onClick={() => onRelease(notes.trim())}
+            style={{ flex: 2, padding: "13px 0", borderRadius: 10, border: "none", background: "#e89a3a", color: "#fff", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+            ↩ Release as Incomplete
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

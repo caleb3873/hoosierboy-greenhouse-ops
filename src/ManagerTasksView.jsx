@@ -21,6 +21,37 @@ function formatTime(iso) {
   return d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
+function toISODate(d) { return d.toISOString().slice(0, 10); }
+function addDays(d, n) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
+
+// Compute a target date from a bucket name based on today
+export function bucketToDate(bucket, from = new Date()) {
+  const today = new Date(from);
+  today.setHours(0, 0, 0, 0);
+  if (bucket === "today")          return toISODate(today);
+  if (bucket === "tomorrow")       return toISODate(addDays(today, 1));
+  if (bucket === "check_tomorrow") return toISODate(addDays(today, 2));
+  if (bucket === "this_week") {
+    // End of current week (Saturday)
+    const day = today.getDay();
+    const offset = day === 0 ? 6 : 6 - day;
+    return toISODate(addDays(today, offset));
+  }
+  return toISODate(today);
+}
+
+export function formatTargetDate(iso) {
+  if (!iso) return "";
+  const d = new Date(iso + "T00:00:00");
+  const today = new Date(); today.setHours(0,0,0,0);
+  const diff = Math.round((d - today) / 86400000);
+  const short = d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+  if (diff === 0) return `Today • ${short}`;
+  if (diff === 1) return `Tomorrow • ${short}`;
+  if (diff === -1) return `Yesterday • ${short}`;
+  return short;
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // ── MANAGER VIEW ────────────────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════════════
@@ -58,6 +89,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       status: "pending",
       category,
       bucket,
+      targetDate: bucketToDate(bucket),
       carriedOver: false,
       createdBy: displayName || "Manager",
       photos: [],
@@ -100,12 +132,21 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
     refresh();
   }
 
-  // ── CARRYOVER: move pending tasks from prior weeks into current week ──
+  // ── CARRYOVER: move pending tasks from prior weeks into current week, refresh target_date ──
   useEffect(() => {
     if (!tasks.length) return;
-    const stale = tasks.filter(t => t.status !== "completed" && (t.year < today.year || (t.year === today.year && t.weekNumber < today.week)));
-    stale.forEach(t => {
-      upsert({ ...t, year: today.year, weekNumber: today.week, carriedOver: true });
+    const todayISO = new Date().toISOString().slice(0, 10);
+    tasks.forEach(t => {
+      if (t.status === "completed") return;
+      const stale = t.year < today.year || (t.year === today.year && t.weekNumber < today.week);
+      const needsTargetDate = !t.targetDate;
+      const staleDate = t.targetDate && t.targetDate < todayISO && (t.bucket === "today" || t.bucket === "tomorrow" || t.bucket === "check_tomorrow");
+      if (stale || needsTargetDate || staleDate) {
+        const patch = { ...t };
+        if (stale) { patch.year = today.year; patch.weekNumber = today.week; patch.carriedOver = true; }
+        if (needsTargetDate || staleDate) patch.targetDate = bucketToDate(t.bucket || "today");
+        upsert(patch);
+      }
     });
   }, [tasks.length]); // eslint-disable-line
 
@@ -168,7 +209,11 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <div style={{ fontSize: 15, fontWeight: 700, color: isOverdue ? "#d94f3d" : "#1e2d1a", textDecoration: isDone ? "line-through" : "none" }}>{t.title}</div>
               {isOverdue && <span style={{ background: "#d94f3d", color: "#fff", borderRadius: 999, padding: "2px 8px", fontSize: 10, fontWeight: 800 }}>OVERDUE</span>}
+              {t.claimedBy && !isDone && (
+                <span style={{ background: "#e89a3a", color: "#fff", borderRadius: 999, padding: "2px 8px", fontSize: 10, fontWeight: 800 }}>🔒 {t.claimedBy}</span>
+              )}
             </div>
+            {t.targetDate && <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2, fontWeight: 600 }}>📅 {formatTargetDate(t.targetDate)}</div>}
             {t.description && <div style={{ fontSize: 12, color: "#7a8c74", marginTop: 4 }}>{t.description}</div>}
             {(t.photos || []).length > 0 && <div style={{ fontSize: 11, color: "#4a90d9", marginTop: 4 }}>📷 {t.photos.length} photo{t.photos.length !== 1 ? "s" : ""}</div>}
             {t.notes && <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 4, fontStyle: "italic" }}>📝 {t.notes}</div>}
@@ -820,7 +865,7 @@ function TaskDetail({ task, onBack, onSave }) {
             ].map(b => {
               const active = (t.bucket || "today") === b.id;
               return (
-                <button key={b.id} onClick={() => upd("bucket", b.id)}
+                <button key={b.id} onClick={() => { upd("bucket", b.id); upd("targetDate", bucketToDate(b.id)); }}
                   style={{
                     flex: "1 1 45%", padding: "10px 6px", borderRadius: 10, fontSize: 12, fontWeight: 800,
                     background: active ? "#1e2d1a" : "#f2f5ef",
