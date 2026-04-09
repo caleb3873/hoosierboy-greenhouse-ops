@@ -239,9 +239,13 @@ function Chip({ delivery: d, customers, claimsCount, onClick }) {
         <span title="shipping">{shipOk ? "🟢" : "🟡"}T</span>
       </div>
       <div>
-        {TEAMS.filter(t => d[`needs${t.key[0].toUpperCase() + t.key.slice(1)}`]).map(t => (
-          <span key={t.key} title={t.label}>{t.icon}{d[`${t.key}PulledAt`] ? "✅" : "⬜"} </span>
-        ))}
+        {(d.needsBluff1 || d.needsBluff2) && (() => {
+          const b1Done = !d.needsBluff1 || d.bluff1PulledAt;
+          const b2Done = !d.needsBluff2 || d.bluff2PulledAt;
+          return <span title="Bluff">🌱{b1Done && b2Done ? "✅" : "⬜"} </span>;
+        })()}
+        {d.needsSprague && <span title="Sprague">🌿{d.spraguePulledAt ? "✅" : "⬜"} </span>}
+        {d.needsHouseplants && <span title="Houseplants">🪴{d.houseplantsPulledAt ? "✅" : "⬜"} </span>}
       </div>
       {(isCOD || needsCustomerConfirm || claimsCount > 0) && (
         <div style={{ marginTop: 2 }}>
