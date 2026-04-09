@@ -38,8 +38,9 @@ export default function ShippingSchedule() {
   const { rows: drivers } = useDrivers();
   const { rows: teams }   = useShippingTeams();
   const { rows: trucks }  = useTrucks();
-  const { user } = useAuth();
+  const { user, displayName } = useAuth();
   const createdBy = user?.email || "sales";
+  const createdByName = displayName || user?.email || "sales";
 
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -88,7 +89,16 @@ export default function ShippingSchedule() {
       notes: form.notes || null,
       status: "scheduled",
       createdBy,
+      needsBluff1: !!form.needsBluff1,
+      needsBluff2: !!form.needsBluff2,
+      needsSprague: !!form.needsSprague,
+      needsHouseplants: !!form.needsHouseplants,
     };
+    if (!form.id) {
+      row.lifecycle = "proposed";
+      row.salesConfirmedAt = new Date().toISOString();
+      row.salesConfirmedBy = createdByName;
+    }
     let saved;
     if (form.id) {
       await update(form.id, row);
@@ -254,6 +264,10 @@ function DeliveryForm({ delivery, customers, onSave, onCancel }) {
     orderValue: delivery.orderValueCents ? (delivery.orderValueCents / 100).toString() : "",
     cartCount: delivery.cartCount ? String(delivery.cartCount) : "",
     notes: delivery.notes || "",
+    needsBluff1: !!delivery.needsBluff1,
+    needsBluff2: !!delivery.needsBluff2,
+    needsSprague: !!delivery.needsSprague,
+    needsHouseplants: !!delivery.needsHouseplants,
   } : {
     customer: null,
     deliveryDate: todayISO(),
@@ -263,6 +277,10 @@ function DeliveryForm({ delivery, customers, onSave, onCancel }) {
     orderValue: "",
     cartCount: "",
     notes: "",
+    needsBluff1: true,
+    needsBluff2: false,
+    needsSprague: false,
+    needsHouseplants: false,
   };
 
   const [form, setForm] = useState(init);
@@ -408,6 +426,22 @@ function DeliveryForm({ delivery, customers, onSave, onCancel }) {
                 title={form.customer && !form.customer.allowCarts ? "This customer isn't cart-eligible" : "Number of carts to drop"}
                 style={{ width: "100%", padding: 12, borderRadius: 10, border: `1.5px solid ${form.customer?.allowCarts ? GREEN : BORDER}`, fontSize: 14, fontFamily: "inherit", boxSizing: "border-box", outline: "none", marginBottom: 14, background: form.customer && !form.customer.allowCarts ? "#f5f5f5" : "#fff" }} />
             </div>
+          </div>
+
+          {/* Team pull assignments */}
+          <Label>Which teams pull?</Label>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 14 }}>
+            {[
+              { k: "needsBluff1", label: "🌱 Bluff 1" },
+              { k: "needsBluff2", label: "🌱 Bluff 2" },
+              { k: "needsSprague", label: "🌿 Sprague" },
+              { k: "needsHouseplants", label: "🪴 Houseplants" },
+            ].map(t => (
+              <label key={t.k} style={{ display: "flex", alignItems: "center", gap: 8, padding: 10, borderRadius: 8, border: `1.5px solid ${form[t.k] ? GREEN : BORDER}`, background: form[t.k] ? "#f0f8eb" : "#fff", cursor: "pointer", fontSize: 13, fontWeight: 700, color: DARK }}>
+                <input type="checkbox" checked={!!form[t.k]} onChange={e => upd(t.k, e.target.checked)} />
+                {t.label}
+              </label>
+            ))}
           </div>
 
           {/* Notes */}

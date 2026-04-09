@@ -1,0 +1,478 @@
+import { useMemo, useState, useEffect } from "react";
+import { useDeliveries, useShippingCustomers, useDeliveryClaims, getSupabase } from "../supabase";
+import { useAuth } from "../Auth";
+
+const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
+const DARK = "#1e2d1a";
+const GREEN = "#7fb069";
+const CREAM = "#c8e6b8";
+const MUTED = "#7a8c74";
+const BORDER = "#e0ead8";
+const AMBER = "#e89a3a";
+const RED = "#d94f3d";
+
+const TEAMS = [
+  { key: "bluff1", label: "Bluff 1", icon: "🌱1" },
+  { key: "bluff2", label: "Bluff 2", icon: "🌱2" },
+  { key: "sprague", label: "Sprague", icon: "🌿" },
+  { key: "houseplants", label: "Houseplants", icon: "🪴" },
+];
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+function toISODate(d) { return new Date(d).toISOString().slice(0, 10); }
+function todayISO() { return toISODate(new Date()); }
+function weekMonday(d = new Date()) {
+  const dt = new Date(d);
+  const day = dt.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  dt.setDate(dt.getDate() + diff);
+  dt.setHours(0, 0, 0, 0);
+  return dt;
+}
+function addDays(d, n) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
+function fmtMoney(c) { if (!c && c !== 0) return "—"; return `$${Math.round(c / 100).toLocaleString()}`; }
+
+export function customerConfirmationValid(delivery) {
+  if (!delivery.customerConfirmedAt) return false;
+  const deliveryDate = new Date(delivery.deliveryDate);
+  const confirmedAt = new Date(delivery.customerConfirmedAt);
+  const daysUntilDelivery = (deliveryDate - Date.now()) / 86400000;
+  const daysSinceConfirm = (Date.now() - confirmedAt) / 86400000;
+  if (daysUntilDelivery > 14) return true;
+  return daysSinceConfirm <= 14;
+}
+
+export function tooLateToAdd(delivery) {
+  if (delivery.tooLateReason) return true;
+  if (delivery.loadedAt) return true;
+  return false;
+}
+
+// ── Main ────────────────────────────────────────────────────────────────────
+export default function ShippingCommand() {
+  const { rows: deliveries, update } = useDeliveries();
+  const { rows: customers } = useShippingCustomers();
+  const { rows: claims } = useDeliveryClaims();
+  const { displayName } = useAuth();
+
+  const [weekOffset, setWeekOffset] = useState(0);
+  const [selected, setSelected] = useState(null);
+  const [modal, setModal] = useState(null); // 'reconfirm' | 'late' | null
+
+  const monday = useMemo(() => addDays(weekMonday(), weekOffset * 7), [weekOffset]);
+  const days = useMemo(() => Array.from({ length: 6 }, (_, i) => addDays(monday, i)), [monday]);
+
+  // Claims-per-customer count (last 6 months)
+  const claimsByCustomer = useMemo(() => {
+    const cutoff = Date.now() - 180 * 86400000;
+    const deliveryById = new Map(deliveries.map(d => [d.id, d]));
+    const map = new Map();
+    for (const cl of claims) {
+      const repAt = cl.reportedAt ? new Date(cl.reportedAt).getTime() : 0;
+      if (repAt < cutoff) continue;
+      const del = deliveryById.get(cl.deliveryId);
+      const custId = del?.customerId;
+      if (!custId) continue;
+      map.set(custId, (map.get(custId) || 0) + 1);
+    }
+    return map;
+  }, [claims, deliveries]);
+
+  const weekDeliveries = useMemo(() => {
+    const start = toISODate(monday);
+    const end = toISODate(addDays(monday, 7));
+    return deliveries.filter(d => d.deliveryDate && d.deliveryDate >= start && d.deliveryDate < end);
+  }, [deliveries, monday]);
+
+  const lateChanges = useMemo(() => weekDeliveries.filter(tooLateToAdd), [weekDeliveries]);
+  const needReconfirm = useMemo(() => {
+    const today = todayISO();
+    return deliveries.filter(d =>
+      d.lifecycle === "confirmed" && d.deliveryDate >= today && !customerConfirmationValid(d)
+    );
+  }, [deliveries]);
+
+  function bucket(date, ampm) {
+    const iso = toISODate(date);
+    return weekDeliveries
+      .filter(d => {
+        if (d.deliveryDate !== iso) return false;
+        const t = d.deliveryTime || "12:00";
+        const hr = parseInt(t.split(":")[0], 10) || 12;
+        return ampm === "AM" ? hr < 12 : hr >= 12;
+      })
+      .sort((a, b) => (a.priorityOrder ?? 9999) - (b.priorityOrder ?? 9999) || (a.deliveryTime || "").localeCompare(b.deliveryTime || ""));
+  }
+
+  const weekLabel = `${monday.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${addDays(monday, 5).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
+
+  return (
+    <div style={FONT}>
+      <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
+
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, flexWrap: "wrap", gap: 12 }}>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 800, color: GREEN, letterSpacing: 1.2, textTransform: "uppercase" }}>Shipping</div>
+          <div style={{ fontSize: 30, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif", color: DARK }}>Command</div>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <button onClick={() => setWeekOffset(0)} style={navBtn}>Today</button>
+          <button onClick={() => setWeekOffset(w => w - 1)} style={navBtn}>‹</button>
+          <div style={{ fontSize: 14, fontWeight: 800, color: DARK, minWidth: 150, textAlign: "center" }}>{weekLabel}</div>
+          <button onClick={() => setWeekOffset(w => w + 1)} style={navBtn}>›</button>
+        </div>
+      </div>
+
+      {/* Counter strip */}
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+        <button onClick={() => setModal("late")}
+          style={{ padding: "10px 16px", borderRadius: 999, border: `1.5px solid ${lateChanges.length ? RED : BORDER}`, background: lateChanges.length ? "#fff3f1" : "#fff", color: lateChanges.length ? RED : MUTED, fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
+          ⚠ {lateChanges.length} late changes
+        </button>
+        <button onClick={() => setModal("reconfirm")}
+          style={{ padding: "10px 16px", borderRadius: 999, border: `1.5px solid ${needReconfirm.length ? AMBER : BORDER}`, background: needReconfirm.length ? "#fff7ec" : "#fff", color: needReconfirm.length ? AMBER : MUTED, fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
+          🟡 {needReconfirm.length} need reconfirmation
+        </button>
+      </div>
+
+      {/* Week grid */}
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: "60px repeat(6, minmax(0, 1fr))",
+        gap: 6,
+        background: "#fff", borderRadius: 14, border: `1.5px solid ${BORDER}`, padding: 10,
+      }}>
+        <div />
+        {days.map((d, i) => {
+          const isToday = toISODate(d) === todayISO();
+          return (
+            <div key={i} style={{ textAlign: "center", padding: "6px 2px", fontSize: 11, fontWeight: 800, color: isToday ? GREEN : DARK, textTransform: "uppercase", letterSpacing: 0.5 }}>
+              {d.toLocaleDateString("en-US", { weekday: "short" })}<br />
+              <span style={{ fontSize: 13 }}>{d.getDate()}</span>
+            </div>
+          );
+        })}
+
+        {["AM", "PM"].map(slot => (
+          <>
+            <div key={slot + "-lbl"} style={{ fontSize: 11, fontWeight: 800, color: MUTED, textAlign: "right", paddingRight: 6, paddingTop: 6 }}>{slot}</div>
+            {days.map((d, i) => (
+              <div key={slot + i} style={{ minHeight: 120, background: "#f7faf4", borderRadius: 8, padding: 4, border: `1px solid ${BORDER}` }}>
+                {bucket(d, slot).map(del => (
+                  <Chip key={del.id} delivery={del} customers={customers} claimsCount={claimsByCustomer.get(del.customerId) || 0} onClick={() => setSelected(del)} />
+                ))}
+              </div>
+            ))}
+          </>
+        ))}
+      </div>
+
+      {selected && (
+        <DetailDrawer
+          delivery={selected}
+          displayName={displayName}
+          onClose={() => setSelected(null)}
+          onUpdate={async patch => {
+            await update(selected.id, patch);
+            setSelected(s => s ? { ...s, ...patch } : s);
+          }}
+        />
+      )}
+
+      {modal === "reconfirm" && (
+        <ListModal title="Need reconfirmation" items={needReconfirm} onClose={() => setModal(null)}
+          renderAction={(d) => (
+            <button onClick={async () => {
+              await update(d.id, { customerConfirmedAt: new Date().toISOString(), customerConfirmedBy: displayName });
+            }}
+              style={{ padding: "8px 14px", background: GREEN, color: DARK, border: "none", borderRadius: 8, fontWeight: 800, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+              📞 Reconfirmed
+            </button>
+          )}
+        />
+      )}
+      {modal === "late" && (
+        <ListModal title="Late changes" items={lateChanges} onClose={() => setModal(null)} />
+      )}
+    </div>
+  );
+}
+
+const navBtn = { background: "#f2f5ef", border: `1px solid ${BORDER}`, padding: "8px 12px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 700, fontFamily: "inherit", color: DARK };
+
+// ── Chip ────────────────────────────────────────────────────────────────────
+function Chip({ delivery: d, customers, claimsCount, onClick }) {
+  const cust = d.customerSnapshot || {};
+  const fullCust = customers.find(c => c.id === d.customerId) || {};
+  const isProposed = d.lifecycle === "proposed" || (!d.lifecycle);
+  const isCancelled = d.lifecycle === "cancelled";
+  const isCOD = (fullCust.terms || cust.terms || "").toUpperCase().includes("COD") || (fullCust.terms || "").toUpperCase().includes("C.O.D");
+  const needsCustomerConfirm = fullCust.delivery_confirmation_required || fullCust.deliveryConfirmationRequired;
+
+  const salesOk = !!d.salesConfirmedAt;
+  const custOk = customerConfirmationValid(d);
+  const shipOk = !!d.shippingConfirmedAt;
+
+  const latestAlert = Array.isArray(d.alerts) && d.alerts.length > 0 ? d.alerts[d.alerts.length - 1] : null;
+
+  return (
+    <div onClick={onClick} style={{
+      background: isCancelled ? "#f0f0f0" : "#fff",
+      border: isProposed ? `1.5px dashed ${MUTED}` : `1.5px solid ${DARK}`,
+      borderRadius: 6, padding: 6, marginBottom: 4, cursor: "pointer",
+      opacity: isProposed ? 0.75 : isCancelled ? 0.5 : 1,
+      fontSize: 10, lineHeight: 1.3,
+    }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 4, fontWeight: 800, color: DARK }}>
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
+          {d.dateLocked && "🔒 "}{cust.company_name || "—"}
+        </span>
+        <span style={{ color: GREEN }}>{fmtMoney(d.orderValueCents)}</span>
+      </div>
+      <div style={{ color: MUTED }}>
+        {d.deliveryTime || "—"}{d.cartCount ? ` · 🛒${d.cartCount}` : ""}
+      </div>
+      <div>
+        <span title="sales">{salesOk ? "🟢" : "🟡"}S</span>{" "}
+        <span title="customer">{custOk ? "🟢" : "🟡"}C</span>{" "}
+        <span title="shipping">{shipOk ? "🟢" : "🟡"}T</span>
+      </div>
+      <div>
+        {TEAMS.filter(t => d[`needs${t.key[0].toUpperCase() + t.key.slice(1)}`]).map(t => (
+          <span key={t.key} title={t.label}>{t.icon}{d[`${t.key}PulledAt`] ? "✅" : "⬜"} </span>
+        ))}
+      </div>
+      {(isCOD || needsCustomerConfirm || claimsCount > 0) && (
+        <div style={{ marginTop: 2 }}>
+          {isCOD && <span style={{ color: RED, fontWeight: 800 }}>💰COD </span>}
+          {needsCustomerConfirm && !d.customerConfirmedAt && <span style={{ color: AMBER, fontWeight: 800 }}>⚠Unconf </span>}
+          {claimsCount > 0 && <span style={{ color: RED, fontWeight: 700 }}>⚖{claimsCount} </span>}
+        </div>
+      )}
+      {latestAlert && (
+        <div style={{ marginTop: 2, padding: "2px 4px", background: "#fff3f1", color: RED, borderRadius: 4, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          🔔 {latestAlert.text}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Detail Drawer ──────────────────────────────────────────────────────────
+function DetailDrawer({ delivery: d, displayName, onClose, onUpdate }) {
+  const cust = d.customerSnapshot || {};
+  const [alertText, setAlertText] = useState("");
+  const [moveDate, setMoveDate] = useState(d.deliveryDate || "");
+
+  async function addAlert(severity = "info") {
+    if (!alertText.trim()) return;
+    const newAlert = { text: alertText.trim(), author: displayName, created_at: new Date().toISOString(), severity };
+    const alerts = [...(Array.isArray(d.alerts) ? d.alerts : []), newAlert];
+    await onUpdate({ alerts });
+    setAlertText("");
+  }
+
+  async function confirmRole(which) {
+    const patch = {};
+    const ts = new Date().toISOString();
+    if (which === "sales") { patch.salesConfirmedAt = ts; patch.salesConfirmedBy = displayName; }
+    if (which === "customer") { patch.customerConfirmedAt = ts; patch.customerConfirmedBy = displayName; }
+    if (which === "shipping") {
+      patch.shippingConfirmedAt = ts;
+      patch.shippingConfirmedBy = displayName;
+      if (d.lifecycle === "proposed") patch.lifecycle = "confirmed";
+    }
+    await onUpdate(patch);
+  }
+
+  async function toggleNeeds(key) {
+    const field = `needs${key[0].toUpperCase() + key.slice(1)}`;
+    await onUpdate({ [field]: !d[field] });
+  }
+
+  async function toggleLock() {
+    await onUpdate({ dateLocked: !d.dateLocked });
+  }
+
+  async function cancelDelivery() {
+    if (!window.confirm("Cancel this delivery?")) return;
+    await onUpdate({ lifecycle: "cancelled" });
+    onClose();
+  }
+
+  async function moveToDate() {
+    if (!moveDate || moveDate === d.deliveryDate) return;
+    await onUpdate({ deliveryDate: moveDate });
+  }
+
+  const picksByTeam = {};
+  for (const p of (Array.isArray(d.pickSheetPhotos) ? d.pickSheetPhotos : [])) {
+    if (!picksByTeam[p.team]) picksByTeam[p.team] = [];
+    picksByTeam[p.team].push(p);
+  }
+  const signedInvoices = Array.isArray(d.signedInvoicePhotos) ? d.signedInvoicePhotos : [];
+  const alerts = Array.isArray(d.alerts) ? d.alerts : [];
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 9999, display: "flex", justifyContent: "flex-end", ...FONT }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "#fff", width: "100%", maxWidth: 520, height: "100%", overflowY: "auto" }}>
+        <div style={{ background: DARK, color: CREAM, padding: "16px 20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif" }}>{cust.company_name || "Delivery"}</div>
+            <div style={{ fontSize: 12, color: "#9cb894" }}>{d.deliveryDate} · {d.deliveryTime || "—"} · {fmtMoney(d.orderValueCents)}</div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: CREAM, fontSize: 26, cursor: "pointer" }}>×</button>
+        </div>
+
+        <div style={{ padding: 20 }}>
+          <Section title="Flags">
+            <div style={{ fontSize: 12, color: MUTED }}>
+              {(cust.terms || "").toUpperCase().includes("COD") && <div style={{ color: RED, fontWeight: 700 }}>💰 COD</div>}
+              {cust.shipping_notes && <div>📝 {cust.shipping_notes}</div>}
+              {d.dateLocked && <div>🔒 Date locked (fundraiser)</div>}
+            </div>
+          </Section>
+
+          <Section title="Confirmations">
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <ConfBtn label={`Sales ${d.salesConfirmedAt ? "🟢" : "🟡"}`} active={!!d.salesConfirmedAt} onClick={() => confirmRole("sales")} />
+              <ConfBtn label={`Customer ${customerConfirmationValid(d) ? "🟢" : "🟡"}`} active={customerConfirmationValid(d)} onClick={() => confirmRole("customer")} />
+              <ConfBtn label={`Shipping ${d.shippingConfirmedAt ? "🟢" : "🟡"}`} active={!!d.shippingConfirmedAt} onClick={() => confirmRole("shipping")} />
+            </div>
+          </Section>
+
+          <Section title="Teams">
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {TEAMS.map(t => {
+                const field = `needs${t.key[0].toUpperCase() + t.key.slice(1)}`;
+                const pulledAt = d[`${t.key}PulledAt`];
+                const pulledBy = d[`${t.key}PulledBy`];
+                const active = !!d[field];
+                return (
+                  <div key={t.key} style={{ padding: 8, border: `1px solid ${BORDER}`, borderRadius: 8, background: active ? "#f7faf4" : "#fafafa" }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                      <input type="checkbox" checked={active} onChange={() => toggleNeeds(t.key)} />
+                      <b>{t.icon} {t.label}</b>
+                      {pulledAt && <span style={{ color: GREEN, fontSize: 11, marginLeft: "auto" }}>✅ {new Date(pulledAt).toLocaleString()} by {pulledBy}</span>}
+                    </label>
+                    {picksByTeam[t.key] && picksByTeam[t.key].length > 0 && (
+                      <div style={{ marginTop: 6, display: "flex", gap: 4, flexWrap: "wrap" }}>
+                        {picksByTeam[t.key].map((p, i) => <PhotoThumb key={i} path={p.storage_path} bucket="pick-sheet-photos" />)}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </Section>
+
+          <Section title="Alerts">
+            <div style={{ maxHeight: 160, overflowY: "auto", marginBottom: 8 }}>
+              {alerts.length === 0 && <div style={{ fontSize: 12, color: MUTED }}>No alerts yet.</div>}
+              {alerts.map((a, i) => (
+                <div key={i} style={{ padding: 6, background: "#fff3f1", borderRadius: 6, marginBottom: 4, fontSize: 12 }}>
+                  <div><b>{a.author}:</b> {a.text}</div>
+                  <div style={{ color: MUTED, fontSize: 10 }}>{new Date(a.created_at).toLocaleString()}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: 6 }}>
+              <input value={alertText} onChange={e => setAlertText(e.target.value)} placeholder="Add alert…"
+                style={{ flex: 1, padding: 8, borderRadius: 6, border: `1px solid ${BORDER}`, fontSize: 13, fontFamily: "inherit", outline: "none" }} />
+              <button onClick={() => addAlert()} style={{ padding: "8px 12px", background: DARK, color: CREAM, border: "none", borderRadius: 6, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", fontSize: 12 }}>Add</button>
+            </div>
+          </Section>
+
+          <Section title="Signed invoices">
+            {signedInvoices.length === 0 ? (
+              <div style={{ fontSize: 12, color: MUTED }}>None yet.</div>
+            ) : (
+              <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                {signedInvoices.map((p, i) => <PhotoThumb key={i} path={p.storage_path} bucket="signed-invoices" />)}
+              </div>
+            )}
+          </Section>
+
+          <Section title="Actions">
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ display: "flex", gap: 6 }}>
+                <input type="date" value={moveDate} onChange={e => setMoveDate(e.target.value)} style={{ padding: 8, borderRadius: 6, border: `1px solid ${BORDER}`, fontFamily: "inherit" }} />
+                <button onClick={moveToDate} disabled={d.dateLocked} style={{ padding: "8px 12px", background: d.dateLocked ? "#ccc" : DARK, color: CREAM, border: "none", borderRadius: 6, fontWeight: 800, cursor: d.dateLocked ? "default" : "pointer", fontFamily: "inherit", fontSize: 12 }}>
+                  Move date
+                </button>
+              </div>
+              <button onClick={toggleLock} style={{ padding: "8px 12px", background: "#f2f5ef", color: DARK, border: `1px solid ${BORDER}`, borderRadius: 6, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", fontSize: 12 }}>
+                {d.dateLocked ? "🔓 Unlock date" : "🔒 Lock date"}
+              </button>
+              <button onClick={cancelDelivery} style={{ padding: "8px 12px", background: "#fff", color: RED, border: `1px solid ${RED}`, borderRadius: 6, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", fontSize: 12 }}>
+                Cancel delivery
+              </button>
+            </div>
+          </Section>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Section({ title, children }) {
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ fontSize: 10, fontWeight: 800, color: MUTED, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>{title}</div>
+      {children}
+    </div>
+  );
+}
+
+function ConfBtn({ label, active, onClick }) {
+  return (
+    <button onClick={onClick} style={{
+      padding: "8px 12px",
+      background: active ? GREEN : "#f2f5ef",
+      color: DARK,
+      border: `1.5px solid ${active ? GREEN : BORDER}`,
+      borderRadius: 8, fontWeight: 800, fontSize: 12,
+      cursor: "pointer", fontFamily: "inherit",
+    }}>{label}</button>
+  );
+}
+
+function PhotoThumb({ path, bucket }) {
+  const [url, setUrl] = useState(null);
+  useEffect(() => {
+    const sb = getSupabase();
+    if (!sb || !path) return;
+    sb.storage.from(bucket).createSignedUrl(path, 3600).then(({ data }) => {
+      if (data?.signedUrl) setUrl(data.signedUrl);
+    });
+  }, [path, bucket]);
+  if (!url) return <div style={{ width: 60, height: 60, background: "#eee", borderRadius: 6 }} />;
+  return <a href={url} target="_blank" rel="noopener noreferrer"><img src={url} alt="" style={{ width: 60, height: 60, objectFit: "cover", borderRadius: 6 }} /></a>;
+}
+
+function ListModal({ title, items, onClose, renderAction }) {
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, ...FONT }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 14, width: "100%", maxWidth: 540, maxHeight: "80vh", overflowY: "auto" }}>
+        <div style={{ background: DARK, color: CREAM, padding: "14px 20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ fontSize: 16, fontWeight: 800 }}>{title}</div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: CREAM, fontSize: 24, cursor: "pointer" }}>×</button>
+        </div>
+        <div style={{ padding: 16 }}>
+          {items.length === 0 ? <div style={{ fontSize: 13, color: MUTED, textAlign: "center", padding: 20 }}>Nothing here.</div> :
+            items.map(d => (
+              <div key={d.id} style={{ padding: 10, border: `1px solid ${BORDER}`, borderRadius: 8, marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+                <div>
+                  <div style={{ fontWeight: 800, fontSize: 13, color: DARK }}>{d.customerSnapshot?.company_name || "—"}</div>
+                  <div style={{ fontSize: 11, color: MUTED }}>{d.deliveryDate} · {fmtMoney(d.orderValueCents)}</div>
+                </div>
+                {renderAction && renderAction(d)}
+              </div>
+            ))
+          }
+        </div>
+      </div>
+    </div>
+  );
+}

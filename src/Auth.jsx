@@ -29,6 +29,7 @@ export function AuthProvider({ children }) {
   const [loading,       setLoading]       = useState(true);
   const [initialized,   setInitialized]   = useState(false);
   const [growerProfile, setGrowerProfile] = useState(null);
+  const [team, setTeam] = useState(null);
   const [recoveryMode, setRecoveryMode] = useState(
     () => sessionStorage.getItem("gh_recovery_mode") === "true"
   );
@@ -47,6 +48,7 @@ export function AuthProvider({ children }) {
           setFloorMode(mode);
           setRole(mode);
           if (s.growerProfile) setGrowerProfile(s.growerProfile);
+          if (s.team) setTeam(s.team);
           return true;
         } else {
           localStorage.removeItem(FLOOR_SESSION_KEY);
@@ -116,11 +118,13 @@ export function AuthProvider({ children }) {
       setFloorMode(null);
       setRole(null);
       setGrowerProfile(null);
+      setTeam(null);
     } else {
       if (sb) await sb.auth.signOut();
       setUser(null);
       setRole(null);
       setGrowerProfile(null);
+      setTeam(null);
     }
   }, [sb, floorMode]);
 
@@ -137,12 +141,14 @@ export function AuthProvider({ children }) {
         .single();
       if (fc) {
         const workerName = fc.worker_name || fc.workerName;
-        const profile = workerName ? { id: null, name: workerName, role: fc.role, code } : null;
-        const session = { mode: fc.role, growerProfile: profile, expires: Date.now() + 12 * 60 * 60 * 1000 };
+        const fcTeam = fc.team || null;
+        const profile = workerName ? { id: null, name: workerName, role: fc.role, code, team: fcTeam } : null;
+        const session = { mode: fc.role, growerProfile: profile, team: fcTeam, expires: Date.now() + 12 * 60 * 60 * 1000 };
         localStorage.setItem(FLOOR_SESSION_KEY, JSON.stringify(session));
         setFloorMode(fc.role);
         setRole(fc.role);
         setGrowerProfile(profile);
+        setTeam(fcTeam);
         return true;
       }
     } catch (e) { /* offline or no match — fall through */ }
@@ -208,11 +214,13 @@ export function AuthProvider({ children }) {
   const isOperator    = role === "operator" || role === "maintenance" || role === "manager";
   const isManager     = role === "manager";
   const isGrower      = role === "grower";
+  const isShippingManager = role === "shipping_manager";
+  const isShippingTeam    = role === "shipping";
   const isAuthenticated = !!role;
 
   const value = {
-    user, role, floorMode, loading, initialized,
-    isAdmin, isOperator, isGrower, isOwner, isManager, isAuthenticated,
+    user, role, floorMode, loading, initialized, team,
+    isAdmin, isOperator, isGrower, isOwner, isManager, isShippingManager, isShippingTeam, isAuthenticated,
     growerProfile,
     signIn, signOut, signInWithCode,
     recoveryMode, clearRecovery,

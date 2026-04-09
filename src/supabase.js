@@ -21,6 +21,9 @@ const JSONB_KEYS = new Set([
   "benchNumbers","customerSnapshot","customer_snapshot","orderNumbers","order_numbers",
   "availableDays","available_days",
   "photos","members","availableDays","available_days",
+  "pick_sheet_photos","pickSheetPhotos",
+  "signed_invoice_photos","signedInvoicePhotos",
+  "alerts",
 ]);
 
 // Convert snake_case DB row to camelCase app object

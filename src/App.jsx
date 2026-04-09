@@ -33,6 +33,8 @@ import ShippingTrucks       from "./shipping/ShippingTrucks";
 import ShipperTasksView     from "./shipping/ShipperTasksView";
 import ShippingSchedule     from "./shipping/ShippingSchedule";
 import ShippingDashboard    from "./shipping/ShippingDashboard";
+import ShippingCommand      from "./shipping/ShippingCommand";
+import TeamPullView         from "./shipping/TeamPullView";
 import ShippingClaims       from "./shipping/ShippingClaims";
 import ShippingTeams        from "./shipping/ShippingTeams";
 import ShippingCalendar     from "./shipping/ShippingCalendar";
@@ -91,6 +93,7 @@ const NAV_GROUPS = [
   {
     id: "shipping", label: "Shipping", icon: "🚚",
     items: [
+      { id: "ship-command",   label: "Command" },
       { id: "ship-dashboard", label: "Dashboard" },
       { id: "ship-calendar",  label: "Calendar" },
       { id: "ship-schedule",  label: "Schedule" },
@@ -231,6 +234,7 @@ function PlannerShell() {
         {page === "soil"       && <SoilCalculator />}
         {page === "fall"       && <FallProgram />}
         {page === "houseplants" && <HouseplantAvailability />}
+        {page === "ship-command"   && <ShippingCommand />}
         {page === "ship-dashboard" && <ShippingDashboard />}
         {page === "ship-calendar"  && <ShippingCalendar />}
         {page === "ship-schedule"  && <ShippingSchedule />}
@@ -290,7 +294,7 @@ function FloorAppRouter({ role, isManager, growerProfile, signOut }) {
 
 // ── ROOT (auth-aware) ─────────────────────────────────────────────────────────
 function AppInner() {
-  const { isAuthenticated, isAdmin, isOperator, isManager, role, growerProfile, loading, signOut, recoveryMode } = useAuth();
+  const { isAuthenticated, isAdmin, isOperator, isManager, role, growerProfile, loading, signOut, recoveryMode, team } = useAuth();
 
   if (loading) return (
     <div style={{ minHeight: "100vh", background: "#1e2d1a", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans',sans-serif" }}>
@@ -318,8 +322,24 @@ function AppInner() {
   // Driver (from drivers.login_code) → driver mobile view
   if (role === "driver") return <DriverView onSwitchMode={signOut} />;
 
-  // Shipping floor code → shipper task view
-  if (role === "shipping") return <ShipperTasksView onSwitchMode={signOut} />;
+  // Shipping manager (Tyler) → full command center
+  if (role === "shipping_manager") {
+    return (
+      <div style={{ fontFamily: "'DM Sans','Segoe UI',sans-serif", background: "#f2f5ef", minHeight: "100vh" }}>
+        <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
+        <div style={{ background: "#1a2a1a", padding: "12px 20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ color: "#c8e6b8", fontWeight: 800, fontSize: 16 }}>Shipping Command</div>
+          <button onClick={signOut} style={{ background: "transparent", border: "1px solid #7fb06966", color: "#c8e6b8", padding: "6px 12px", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 700, fontFamily: "inherit" }}>Sign out</button>
+        </div>
+        <div style={{ maxWidth: 1200, margin: "0 auto", padding: "20px 16px" }}>
+          <ShippingCommand />
+        </div>
+      </div>
+    );
+  }
+
+  // Shipping team member → Next Up kiosk for their team
+  if (role === "shipping") return <TeamPullView team={team} onSwitchMode={signOut} />;
 
   // Operator / maintenance → operator view
   if (isOperator) return <OperatorView onSwitchMode={signOut} />;

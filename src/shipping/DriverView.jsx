@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useDeliveries, useDeliveryClaims } from "../supabase";
+import { useDeliveries, useDeliveryClaims, getSupabase } from "../supabase";
 import { useAuth } from "../Auth";
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
@@ -143,6 +143,8 @@ function StopDetail({ delivery: d, totalStops, onBack, onUpdate, onClaim }) {
   const pr = PRIORITY[d.priority || "normal"];
   const isCOD = (c.terms || "").toUpperCase().includes("C.O.D");
   const [emailing, setEmailing] = useState(false);
+  const [showInvoice, setShowInvoice] = useState(false);
+  const { displayName } = useAuth();
 
   async function leave() {
     await onUpdate({ status: "in_transit", leftAt: new Date().toISOString() });
@@ -176,6 +178,29 @@ function StopDetail({ delivery: d, totalStops, onBack, onUpdate, onClaim }) {
       status: "delivered",
       deliveredAt: new Date().toISOString(),
     });
+    setShowInvoice(true);
+  }
+
+  async function uploadInvoice(file) {
+    if (!file) { setShowInvoice(false); return; }
+    const sb = getSupabase();
+    try {
+      const ts = Date.now();
+      const path = `${d.id}/${ts}.jpg`;
+      const { error } = await sb.storage.from("signed-invoices").upload(path, file, { contentType: file.type || "image/jpeg" });
+      if (error) throw error;
+      const existing = Array.isArray(d.signedInvoicePhotos) ? d.signedInvoicePhotos : [];
+      await onUpdate({
+        signedInvoicePhotos: [...existing, {
+          storage_path: path,
+          uploaded_at: new Date().toISOString(),
+          uploaded_by: displayName || "driver",
+        }],
+      });
+    } catch (e) {
+      alert("Upload failed: " + e.message);
+    }
+    setShowInvoice(false);
   }
 
   return (
@@ -254,6 +279,19 @@ function StopDetail({ delivery: d, totalStops, onBack, onUpdate, onClaim }) {
           {d.deliveredAt && (
             <div style={{ background: "#4a7a35", color: "#fff", padding: 16, borderRadius: 10, textAlign: "center", fontSize: 15, fontWeight: 800 }}>
               ✓ Delivered at {fmtTime(d.deliveredAt)}
+            </div>
+          )}
+          {showInvoice && (
+            <div style={{ background: "#263821", border: `1px solid ${GREEN}66`, borderRadius: 10, padding: 14, marginTop: 6 }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: CREAM, marginBottom: 8 }}>📄 Photo of signed invoice?</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <label style={{ flex: 1, textAlign: "center", padding: "12px 0", borderRadius: 8, background: GREEN, color: DARK, fontWeight: 800, cursor: "pointer" }}>
+                  📷 Take photo
+                  <input type="file" accept="image/*" capture="environment" onChange={e => uploadInvoice(e.target.files?.[0])} style={{ display: "none" }} />
+                </label>
+                <button onClick={() => setShowInvoice(false)}
+                  style={{ flex: 1, padding: "12px 0", borderRadius: 8, background: "transparent", color: CREAM, border: `1px solid #4a6a3a`, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>Skip</button>
+              </div>
             </div>
           )}
           <button onClick={onClaim}
