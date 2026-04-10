@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect, useCallback, useRef } from "react";
-import { useDeliveries, useShippingCustomers, useDeliveryClaims, useDrivers, useTrucks, getSupabase } from "../supabase";
+import { useDeliveries, useShippingCustomers, useDeliveryClaims, useDrivers, useTrucks, useShippingRoutes, getSupabase } from "../supabase";
 import { useAuth } from "../Auth";
 import DeliveryImporter from "./DeliveryImporter";
 
@@ -56,6 +56,7 @@ export default function ShippingCommand() {
   const { rows: claims } = useDeliveryClaims();
   const { rows: drivers } = useDrivers();
   const { rows: trucks } = useTrucks();
+  const { rows: routes, insert: insertRoute, update: updateRoute, remove: removeRoute } = useShippingRoutes();
   const { displayName } = useAuth();
 
   const [weekOffset, setWeekOffset] = useState(0);
@@ -223,8 +224,43 @@ export default function ShippingCommand() {
   }, [routeDeliveries, update]);
 
   async function saveRoute() {
+    if (routeStops.length === 0) return;
+    // Compute route stats
+    const totalMiles = routeDeliveries.reduce((s, d) => s + (d.miles || 0), 0);
+    const lastMiles = routeDeliveries[routeDeliveries.length - 1]?.miles || 0;
+    const totalRouteMiles = totalMiles + lastMiles;
+    const totalDriveMins = routeDeliveries.reduce((s, d) => s + (d.driveMinutes || 0), 0);
+    const dropoffMins = routeDeliveries.length * 30;
+    const lastStopMins = routeDeliveries[routeDeliveries.length - 1]?.driveMinutes || 0;
+    const totalMins = totalDriveMins + dropoffMins + lastStopMins;
+    const driverCost = (totalMins / 60) * DRIVER_RATE;
+    const fuelGallons = totalRouteMiles / MPG;
+    const fuelCostTotal = fuelGallons * fuelCostPerGal;
+    const estimatedCost = Math.round((driverCost + fuelCostTotal) * 100); // cents
+
+    const driverObj = drivers.find(dr => dr.id === routeDriver);
+    const deliveryDate = routeDeliveries[0]?.deliveryDate || todayISO();
+    const dateParts = deliveryDate.split("-");
+    const dateLabel = new Date(deliveryDate + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    const routeName = `${driverObj?.name || "Unassigned"} — ${dateLabel}`;
+
+    // Create route record
+    const newRoute = await insertRoute({
+      name: routeName,
+      driverId: routeDriver || null,
+      truckId: routeTruck || null,
+      deliveryDate,
+      status: "planned",
+      fuelCostPerGal,
+      totalMiles: Math.round(totalRouteMiles * 10) / 10,
+      totalMinutes: Math.round(totalMins),
+      estimatedCost,
+      createdBy: displayName,
+    });
+
+    // Update each delivery with route linkage
     for (let i = 0; i < routeStops.length; i++) {
-      const patch = { stopOrder: i + 1 };
+      const patch = { stopOrder: i + 1, routeId: newRoute.id };
       if (routeDriver) patch.driverId = routeDriver;
       if (routeTruck) patch.truckId = routeTruck;
       await update(routeStops[i], patch);
@@ -400,18 +436,43 @@ export default function ShippingCommand() {
                 onDragLeave={e => { e.currentTarget.style.background = "#f7faf4"; }}
                 onDrop={e => { e.currentTarget.style.background = "#f7faf4"; handleDrop(e, d, slot); }}
                 style={{ minHeight: 120, background: "#f7faf4", borderRadius: 8, padding: 4, border: `1px solid ${BORDER}`, transition: "background 0.15s" }}>
-                {bucket(d, slot).map(del => {
-                  const routeIdx = routeStops.indexOf(del.id);
+                {(() => {
+                  const items = bucket(d, slot);
+                  // Group by routeId
+                  const routeGroups = new Map();
+                  const standalone = [];
+                  for (const del of items) {
+                    if (del.routeId && !routeMode) {
+                      if (!routeGroups.has(del.routeId)) routeGroups.set(del.routeId, []);
+                      routeGroups.get(del.routeId).push(del);
+                    } else {
+                      standalone.push(del);
+                    }
+                  }
                   return (
-                    <Chip key={del.id} delivery={del} customers={customers} claimsCount={claimsByCustomer.get(del.customerId) || 0}
-                      onClick={() => handleChipClick(del)}
-                      onDragStart={() => setDragId(del.id)}
-                      onDragEnd={() => setDragId(null)}
-                      isDragging={dragId === del.id}
-                      routeMode={routeMode}
-                      routeIndex={routeIdx >= 0 ? routeIdx + 1 : null} />
+                    <>
+                      {[...routeGroups.entries()].map(([rId, dels]) => {
+                        const route = routes.find(r => r.id === rId);
+                        return (
+                          <RouteChip key={rId} route={route} deliveries={dels} drivers={drivers} trucks={trucks}
+                            customers={customers} claimsByCustomer={claimsByCustomer} onSelectDelivery={setSelected} />
+                        );
+                      })}
+                      {standalone.map(del => {
+                        const routeIdx = routeStops.indexOf(del.id);
+                        return (
+                          <Chip key={del.id} delivery={del} customers={customers} claimsCount={claimsByCustomer.get(del.customerId) || 0}
+                            onClick={() => handleChipClick(del)}
+                            onDragStart={() => setDragId(del.id)}
+                            onDragEnd={() => setDragId(null)}
+                            isDragging={dragId === del.id}
+                            routeMode={routeMode}
+                            routeIndex={routeIdx >= 0 ? routeIdx + 1 : null} />
+                        );
+                      })}
+                    </>
                   );
-                })}
+                })()}
               </div>
             ))}
           </>
@@ -659,6 +720,8 @@ export default function ShippingCommand() {
           drivers={drivers}
           trucks={trucks}
           customers={customers}
+          routes={routes}
+          deliveries={deliveries}
           onUpdateCustomer={updateCustomer}
           onUpdateDelivery={update}
           onClose={() => setSelected(null)}
@@ -706,6 +769,57 @@ export default function ShippingCommand() {
 }
 
 const navBtn = { background: "#f2f5ef", border: `1px solid ${BORDER}`, padding: "8px 12px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 700, fontFamily: "inherit", color: DARK };
+
+// ── Route Chip ─────────────────────────────────────────────────────────────
+function RouteChip({ route, deliveries, drivers, trucks, customers, claimsByCustomer, onSelectDelivery }) {
+  const [expanded, setExpanded] = useState(false);
+  const sorted = [...deliveries].sort((a, b) => (a.stopOrder || 999) - (b.stopOrder || 999));
+  const driverObj = drivers.find(dr => dr.id === route?.driverId);
+  const truckObj = trucks.find(tr => tr.id === route?.truckId);
+  const totalValue = sorted.reduce((s, d) => s + (d.orderValueCents || 0), 0);
+
+  return (
+    <div style={{
+      background: "#e8f5e0", border: `2px solid ${GREEN}`, borderLeft: `4px solid ${DARK}`,
+      borderRadius: 6, padding: 6, marginBottom: 4, fontSize: 10, lineHeight: 1.3,
+    }}>
+      <div onClick={() => setExpanded(e => !e)} style={{ cursor: "pointer" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 4, fontWeight: 800, color: DARK }}>
+          <span>🚛 {driverObj?.name || "Route"}{truckObj ? ` · ${truckObj.name}` : ""}</span>
+          <span style={{ color: GREEN }}>{fmtMoney(totalValue)}</span>
+        </div>
+        <div style={{ color: MUTED, fontWeight: 700 }}>
+          {sorted.length} stop{sorted.length !== 1 ? "s" : ""} · {expanded ? "▲" : "▼"}
+        </div>
+        {!expanded && (
+          <div style={{ fontSize: 9, color: DARK, marginTop: 2, lineHeight: 1.4 }}>
+            {sorted.map(d => d.customerSnapshot?.company_name || "—").join(", ")}
+          </div>
+        )}
+      </div>
+      {expanded && (
+        <div style={{ marginTop: 4, borderTop: `1px solid ${BORDER}`, paddingTop: 4 }}>
+          {sorted.map(d => {
+            const cust = d.customerSnapshot || {};
+            return (
+              <div key={d.id} onClick={() => onSelectDelivery(d)}
+                style={{ display: "flex", alignItems: "center", gap: 4, padding: "3px 4px", cursor: "pointer", borderRadius: 4, marginBottom: 2, background: "#fff", border: `1px solid ${BORDER}` }}>
+                <div style={{
+                  width: 16, height: 16, borderRadius: "50%", background: DARK, color: "#fff",
+                  fontSize: 8, fontWeight: 900, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+                }}>{d.stopOrder || "?"}</div>
+                <div style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 700, color: DARK, fontSize: 9 }}>
+                  {cust.company_name || "—"}
+                </div>
+                <div style={{ fontSize: 9, color: GREEN, fontWeight: 700 }}>{fmtMoney(d.orderValueCents)}</div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ── Chip ────────────────────────────────────────────────────────────────────
 function Chip({ delivery: d, customers, claimsCount, onClick, onDragStart, onDragEnd, isDragging, routeMode, routeIndex }) {
@@ -783,7 +897,7 @@ function Chip({ delivery: d, customers, claimsCount, onClick, onDragStart, onDra
 }
 
 // ── Detail Drawer ──────────────────────────────────────────────────────────
-function DetailDrawer({ delivery: d, displayName, drivers = [], trucks = [], customers = [], onUpdateCustomer, onUpdateDelivery, onClose, onUpdate }) {
+function DetailDrawer({ delivery: d, displayName, drivers = [], trucks = [], customers = [], routes = [], deliveries = [], onUpdateCustomer, onUpdateDelivery, onClose, onUpdate }) {
   const cust = d.customerSnapshot || {};
   const fullCust = customers.find(c => c.id === d.customerId) || {};
   const hasAddress = !!(fullCust.address1 || cust.address1);
@@ -969,6 +1083,50 @@ function DetailDrawer({ delivery: d, displayName, drivers = [], trucks = [], cus
                 </select>
               </label>
             </div>
+          </Section>
+
+          <Section title="Route">
+            {d.routeId ? (() => {
+              const route = routes.find(r => r.id === d.routeId);
+              return (
+                <div style={{ fontSize: 12, color: DARK }}>
+                  <div style={{ fontWeight: 800 }}>🚛 {route?.name || "Unknown route"}</div>
+                  <div style={{ color: MUTED, fontSize: 11, marginTop: 2 }}>
+                    Loading position: #{d.stopOrder || "—"}
+                    {route?.status && <span> · Status: {route.status}</span>}
+                  </div>
+                  <button onClick={() => onUpdate({ routeId: null, stopOrder: null })}
+                    style={{ marginTop: 6, padding: "4px 10px", background: "#fff", color: RED, border: `1px solid ${RED}`, borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                    Remove from route
+                  </button>
+                </div>
+              );
+            })() : (() => {
+              const dayRoutes = routes.filter(r => r.deliveryDate === d.deliveryDate);
+              if (dayRoutes.length === 0) return <div style={{ fontSize: 12, color: MUTED }}>No routes for this date. Build one from the Command view.</div>;
+              return (
+                <div>
+                  <div style={{ fontSize: 11, color: MUTED, marginBottom: 6 }}>Add to an existing route:</div>
+                  {dayRoutes.map(r => {
+                    const routeDelivs = deliveries.filter(dd => dd.routeId === r.id);
+                    const nextStop = routeDelivs.length + 1;
+                    const driverObj = drivers.find(dr => dr.id === r.driverId);
+                    return (
+                      <div key={r.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "6px 8px", border: `1px solid ${BORDER}`, borderRadius: 6, marginBottom: 4 }}>
+                        <div>
+                          <div style={{ fontWeight: 700, fontSize: 12, color: DARK }}>{r.name}</div>
+                          <div style={{ fontSize: 10, color: MUTED }}>{driverObj?.name || "No driver"} · {routeDelivs.length} stops</div>
+                        </div>
+                        <button onClick={() => onUpdate({ routeId: r.id, stopOrder: nextStop, driverId: r.driverId || d.driverId, truckId: r.truckId || d.truckId })}
+                          style={{ padding: "4px 10px", background: GREEN, color: "#fff", border: "none", borderRadius: 6, fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                          Add (stop #{nextStop})
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
           </Section>
 
           <Section title="Confirmations">

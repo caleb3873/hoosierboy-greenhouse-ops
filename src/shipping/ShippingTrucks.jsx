@@ -37,7 +37,7 @@ export default function ShippingTrucks() {
             {loading ? "Loading…" : `${trucks.length} total`}
           </div>
         </div>
-        <button onClick={() => setEditing({ name: "", licensePlate: "", riverlinkTag: "", mpg: 8, capacityNotes: "", active: true })}
+        <button onClick={() => setEditing({ name: "", licensePlate: "", riverlinkTag: "", mpg: 8, capacityNotes: "", active: true, isRental: false, rentalReceivedDate: "", rentalCostPerDay: "", rentalMileageCost: "", hasRiverlink: false })}
           style={{ padding: "12px 22px", borderRadius: 10, border: "none", background: DARK, color: "#c8e6b8", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
           + Add Truck
         </button>
@@ -57,9 +57,18 @@ export default function ShippingTrucks() {
               <div style={{ fontSize: 17, fontWeight: 800, color: DARK }}>{t.name}</div>
               <div style={{ display: "flex", gap: 14, marginTop: 6, fontSize: 12, color: "#7a8c74", flexWrap: "wrap" }}>
                 {t.licensePlate && <div>🔢 <b style={{ color: DARK }}>{t.licensePlate}</b></div>}
-                {t.riverlinkTag && <div>🌉 RiverLink: <b style={{ color: DARK }}>{t.riverlinkTag}</b></div>}
+                {t.hasRiverlink && <div style={{ color: GREEN, fontWeight: 700 }}>🌉 RiverLink</div>}
+                {!t.hasRiverlink && <div style={{ color: "#d94f3d", fontWeight: 700 }}>🌉 No RiverLink</div>}
                 {t.mpg && <div>⛽ {t.mpg} mpg</div>}
+                {t.isRental && <div style={{ color: "#e89a3a", fontWeight: 700 }}>🏷 Rental</div>}
               </div>
+              {t.isRental && (
+                <div style={{ display: "flex", gap: 14, marginTop: 4, fontSize: 12, color: "#7a8c74", flexWrap: "wrap" }}>
+                  {t.rentalReceivedDate && <div>📅 Received: <b style={{ color: DARK }}>{t.rentalReceivedDate}</b></div>}
+                  {t.rentalCostPerDay && <div>💰 ${t.rentalCostPerDay}/day</div>}
+                  {t.rentalMileageCost && <div>📍 ${t.rentalMileageCost}/mile</div>}
+                </div>
+              )}
               {t.capacityNotes && <div style={{ fontSize: 12, color: "#7a8c74", fontStyle: "italic", marginTop: 6 }}>{t.capacityNotes}</div>}
             </div>
             <div style={{ display: "flex", gap: 6 }}>
@@ -90,10 +99,28 @@ function TruckForm({ truck, onSave, onCancel }) {
         </div>
         <F label="Name / Number" value={t.name || ""} onChange={v => upd("name", v)} placeholder="Truck 1" />
         <F label="License Plate" value={t.licensePlate || ""} onChange={v => upd("licensePlate", v)} />
-        <F label="RiverLink Tag" value={t.riverlinkTag || ""} onChange={v => upd("riverlinkTag", v)} />
         <F label="MPG (loaded)" value={String(t.mpg ?? "")} onChange={v => upd("mpg", parseFloat(v) || 0)} type="number" />
         <F label="Capacity Notes" value={t.capacityNotes || ""} onChange={v => upd("capacityNotes", v)} multiline />
-        <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, fontSize: 13, color: DARK, fontWeight: 700 }}>
+
+        <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, fontSize: 13, color: DARK, fontWeight: 700 }}>
+          <input type="checkbox" checked={!!t.hasRiverlink} onChange={e => upd("hasRiverlink", e.target.checked)} />
+          🌉 Has RiverLink (can go to Louisville)
+        </label>
+        {t.hasRiverlink && <F label="RiverLink Tag #" value={t.riverlinkTag || ""} onChange={v => upd("riverlinkTag", v)} />}
+
+        <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, fontSize: 13, color: DARK, fontWeight: 700 }}>
+          <input type="checkbox" checked={!!t.isRental} onChange={e => upd("isRental", e.target.checked)} />
+          🏷 Rental Truck
+        </label>
+        {t.isRental && (
+          <div style={{ marginLeft: 26, marginTop: 6, padding: 12, background: "#fff7ec", borderRadius: 8, border: "1px solid #e89a3a44" }}>
+            <F label="Date Received" value={t.rentalReceivedDate || ""} onChange={v => upd("rentalReceivedDate", v)} type="date" />
+            <F label="Cost per Day ($)" value={String(t.rentalCostPerDay ?? "")} onChange={v => upd("rentalCostPerDay", parseFloat(v) || 0)} type="number" />
+            <F label="Mileage Cost ($/mile)" value={String(t.rentalMileageCost ?? "")} onChange={v => upd("rentalMileageCost", parseFloat(v) || 0)} type="number" />
+          </div>
+        )}
+
+        <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, fontSize: 13, color: DARK, fontWeight: 700 }}>
           <input type="checkbox" checked={t.active !== false} onChange={e => upd("active", e.target.checked)} />
           Active
         </label>

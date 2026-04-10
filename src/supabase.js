@@ -321,6 +321,7 @@ export const useShippingCustomers = () => useTable("shipping_customers", { order
 export const useDrivers     = () => useTable("drivers",     { orderBy: "name", ascending: true, localKey: "gh_drivers_v1" });
 export const useTrucks      = () => useTable("trucks",      { orderBy: "name", ascending: true, localKey: "gh_trucks_v1" });
 export const useDeliveries  = () => useTable("deliveries",  { orderBy: "delivery_date", ascending: true, localKey: "gh_deliveries_v1" });
+export const useShippingRoutes = () => useTable("shipping_routes", { orderBy: "delivery_date", ascending: true, localKey: "gh_shipping_routes_v1" });
 export const useDeliveryClaims = () => useTable("delivery_claims", { orderBy: "reported_at", localKey: "gh_delivery_claims_v1" });
 export const useFuelFills      = () => useTable("fuel_fills",      { orderBy: "fill_date", localKey: "gh_fuel_fills_v1" });
 export const useDriverAttendance = () => useTable("driver_attendance", { orderBy: "attendance_date", localKey: "gh_driver_attendance_v1" });
