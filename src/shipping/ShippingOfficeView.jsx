@@ -32,6 +32,8 @@ export default function ShippingOfficeView() {
   const [showAddForm, setShowAddForm] = useState(false);
   const [showImporter, setShowImporter] = useState(false);
   const [showReconfirm, setShowReconfirm] = useState(false);
+  const [showChanges, setShowChanges] = useState(false);
+  const [dismissedChanges, setDismissedChanges] = useState(new Set());
   const [tab, setTab] = useState("day"); // 'day' | 'reconfirm' | 'import'
 
   // Day deliveries
@@ -53,6 +55,14 @@ export default function ShippingOfficeView() {
     );
   }, [deliveries]);
 
+  // Schedule changes — deliveries moved in the last 24 hours
+  const recentChanges = useMemo(() => {
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    return deliveries.filter(d =>
+      d.dateChangedAt && new Date(d.dateChangedAt).getTime() > cutoff && !dismissedChanges.has(d.id)
+    ).sort((a, b) => (b.dateChangedAt || "").localeCompare(a.dateChangedAt || ""));
+  }, [deliveries, dismissedChanges]);
+
   // Day stats
   const dayTotal = dayDeliveries.reduce((s, d) => s + (d.orderValueCents || 0), 0);
   const confirmedCount = dayDeliveries.filter(d => d.lifecycle === "confirmed").length;
@@ -67,6 +77,43 @@ export default function ShippingOfficeView() {
 
   return (
     <div style={{ ...FONT, maxWidth: 600, margin: "0 auto", padding: "0 12px 100px" }}>
+      {/* Schedule changes banner */}
+      {recentChanges.length > 0 && (
+        <div style={{ marginTop: 12 }}>
+          <button onClick={() => setShowChanges(!showChanges)}
+            style={{
+              width: "100%", padding: "12px 16px", borderRadius: 12,
+              border: `1.5px solid ${AMBER}`, background: "#fff7ec",
+              color: DARK, fontWeight: 800, fontSize: 14,
+              cursor: "pointer", fontFamily: "inherit", textAlign: "left",
+            }}>
+            📅 {recentChanges.length} schedule change{recentChanges.length !== 1 ? "s" : ""} in the last 24h
+          </button>
+          {showChanges && (
+            <div style={{ marginTop: 6, border: `1.5px solid ${BORDER}`, borderRadius: 12, background: "#fff", overflow: "hidden" }}>
+              {recentChanges.map(d => {
+                const cust = d.customerSnapshot || {};
+                return (
+                  <div key={d.id} style={{ padding: "10px 14px", borderBottom: `1px solid ${BORDER}`, display: "flex", alignItems: "center", gap: 10 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: DARK }}>{cust.company_name || "—"}</div>
+                      <div style={{ fontSize: 11, color: AMBER, fontWeight: 700 }}>
+                        {d.originalDate ? `${fmtDate(d.originalDate)} → ` : ""}{fmtDate(d.deliveryDate)}
+                        {d.dateChangedBy && ` · by ${d.dateChangedBy}`}
+                      </div>
+                    </div>
+                    <button onClick={() => setDismissedChanges(prev => new Set([...prev, d.id]))}
+                      style={{ background: "none", border: `1px solid ${BORDER}`, borderRadius: 8, color: MUTED, padding: "6px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                      Dismiss
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Date nav */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 0 12px" }}>
         <button onClick={prevDay} style={navBtn}>&lsaquo;</button>
@@ -134,19 +181,22 @@ export default function ShippingOfficeView() {
           const cust = d.customerSnapshot || {};
           const isProposed = d.lifecycle === "proposed";
           const isConfirmed = d.lifecycle === "confirmed";
+          const wasRescheduled = !!d.dateChangedAt;
           const salesOk = !!d.salesConfirmedAt;
           const custOk = customerConfirmationValid(d);
           const shipOk = !!d.shippingConfirmedAt;
           return (
             <div key={d.id} style={{
               background: "#fff",
-              border: isProposed ? `2px dashed ${AMBER}` : `1.5px solid ${BORDER}`,
+              border: isProposed ? `2px dashed ${AMBER}` : wasRescheduled ? `1.5px solid ${AMBER}` : `1.5px solid ${BORDER}`,
+              borderLeft: wasRescheduled ? `4px solid ${AMBER}` : undefined,
               borderRadius: 12, padding: "14px 16px", marginBottom: 8,
             }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 15, fontWeight: 800, color: DARK }}>
                     {cust.company_name || "\u2014"}
+                    {wasRescheduled && <span style={{ marginLeft: 8, background: AMBER, color: "#fff", borderRadius: 999, padding: "1px 8px", fontSize: 10, fontWeight: 800, verticalAlign: "middle" }}>MOVED</span>}
                   </div>
                   <div style={{ fontSize: 12, color: MUTED, marginTop: 2 }}>
                     {d.deliveryTime || "No time"} &middot; {fmtMoney(d.orderValueCents)}

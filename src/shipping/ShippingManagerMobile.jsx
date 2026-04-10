@@ -112,6 +112,25 @@ export default function ShippingManagerMobile({ onSwitchMode }) {
     return routes.filter(r => routeIds.has(r.id) && r.departedAt && !r.completedAt).length;
   }, [dayDeliveries, routes]);
 
+  // Move delivery to a different date
+  async function moveDeliveryToDate(delivery, newDate) {
+    if (!newDate || newDate === delivery.deliveryDate) return;
+    const alertEntry = {
+      text: `Moved from ${dateLabel(delivery.deliveryDate)} to ${dateLabel(newDate)} by ${displayName}`,
+      author: displayName,
+      created_at: new Date().toISOString(),
+      severity: "info",
+    };
+    const alerts = [...(Array.isArray(delivery.alerts) ? delivery.alerts : []), alertEntry];
+    await update(delivery.id, {
+      originalDate: delivery.originalDate || delivery.deliveryDate,
+      deliveryDate: newDate,
+      dateChangedAt: new Date().toISOString(),
+      dateChangedBy: displayName,
+      alerts,
+    });
+  }
+
   // Priority reorder
   async function moveDelivery(delivery, direction) {
     const idx = dayDeliveries.findIndex(d => d.id === delivery.id);
@@ -206,10 +225,13 @@ export default function ShippingManagerMobile({ onSwitchMode }) {
     const b2Done = !d.needsBluff2 || d.bluff2PulledAt;
     const bluffDone = b1Done && b2Done;
 
+    const wasRescheduled = !!d.dateChangedAt;
+
     return (
       <div key={d.id} style={{
         background: "#fff", borderRadius: 14,
-        border: `1.5px solid ${BORDER}`,
+        border: wasRescheduled ? `1.5px solid ${AMBER}` : `1.5px solid ${BORDER}`,
+        borderLeft: wasRescheduled ? `4px solid ${AMBER}` : undefined,
         boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
         padding: "14px 16px", marginBottom: 10,
       }}>
@@ -243,6 +265,7 @@ export default function ShippingManagerMobile({ onSwitchMode }) {
               {d.deliveryTime && <span style={{ fontSize: 12, color: MUTED, fontWeight: 600 }}>{d.deliveryTime}</span>}
               {d.notes && <span style={{ fontSize: 12 }}>📝</span>}
               {isCOD && <span style={{ background: RED, color: "#fff", borderRadius: 999, padding: "1px 8px", fontSize: 10, fontWeight: 800 }}>COD</span>}
+              {wasRescheduled && <span style={{ background: AMBER, color: "#fff", borderRadius: 999, padding: "1px 8px", fontSize: 10, fontWeight: 800 }}>MOVED</span>}
               {selectedDayIdx === null && <span style={{ fontSize: 11, color: MUTED, fontWeight: 600 }}>{dateLabel(d.deliveryDate)}</span>}
             </div>
             {/* Team pull status */}
@@ -280,8 +303,20 @@ export default function ShippingManagerMobile({ onSwitchMode }) {
               <div style={{ fontSize: 12, color: MUTED, marginBottom: 4 }}>🛒 {d.cartCount} cart{d.cartCount !== 1 ? "s" : ""}</div>
             )}
             {(d.orderNumbers || []).length > 0 && (
-              <div style={{ fontSize: 12, color: MUTED }}>Orders: {d.orderNumbers.join(", ")}</div>
+              <div style={{ fontSize: 12, color: MUTED, marginBottom: 4 }}>Orders: {d.orderNumbers.join(", ")}</div>
             )}
+            {wasRescheduled && d.originalDate && (
+              <div style={{ fontSize: 11, color: AMBER, fontWeight: 700, marginBottom: 4 }}>
+                📅 Originally: {dateLabel(d.originalDate)} → moved by {d.dateChangedBy}
+              </div>
+            )}
+            {/* Move to date */}
+            <div style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "center" }}>
+              <input type="date" defaultValue={d.deliveryDate}
+                onChange={e => { if (e.target.value) moveDeliveryToDate(d, e.target.value); }}
+                style={{ padding: "8px 10px", borderRadius: 8, border: `1px solid ${BORDER}`, fontSize: 13, fontFamily: "inherit", flex: 1 }} />
+              <span style={{ fontSize: 11, color: MUTED, fontWeight: 600 }}>Move to date</span>
+            </div>
           </div>
         )}
       </div>
