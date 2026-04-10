@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from "react";
-import { useDeliveries, useShippingCustomers, useShippingRoutes, useDrivers } from "../supabase";
+import { useDeliveries, useShippingCustomers, useShippingRoutes, useDrivers, useFloorCodes } from "../supabase";
 import { useAuth } from "../Auth";
 import { customerConfirmationValid } from "./ShippingCommand";
 import DeliveryImporter from "./DeliveryImporter";
@@ -43,6 +43,7 @@ export default function ShippingManagerMobile({ onSwitchMode }) {
   const { rows: customers } = useShippingCustomers();
   const { rows: routes } = useShippingRoutes();
   const { rows: drivers } = useDrivers();
+  const { rows: floorCodes } = useFloorCodes();
   const { displayName, signOut } = useAuth();
 
   const [weekOffset, setWeekOffset] = useState(0);
@@ -51,6 +52,7 @@ export default function ShippingManagerMobile({ onSwitchMode }) {
   const [expandedId, setExpandedId] = useState(null);
   const [showQuickAdd, setShowQuickAdd] = useState(false);
   const [showImporter, setShowImporter] = useState(false);
+  const [showCodes, setShowCodes] = useState(false);
   const autoOpenedRef = useRef(false);
 
   // Quick add form state
@@ -433,6 +435,10 @@ export default function ShippingManagerMobile({ onSwitchMode }) {
             <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif" }}>Deliveries</div>
           </div>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            <button onClick={() => setShowCodes(true)}
+              style={{ background: "transparent", border: "1px solid #4a6a3a", borderRadius: 8, color: CREAM, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+              🔑 Codes
+            </button>
             <button onClick={() => setShowImporter(true)}
               style={{ background: CREAM, border: "none", borderRadius: 8, color: DARK, padding: "6px 12px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
               📁 Import
@@ -687,6 +693,39 @@ export default function ShippingManagerMobile({ onSwitchMode }) {
                 style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: MUTED, padding: 4 }}>✕</button>
             </div>
             <DeliveryImporter onDone={() => setShowImporter(false)} />
+          </div>
+        </div>
+      )}
+
+      {/* Codes modal */}
+      {showCodes && (
+        <div onClick={() => setShowCodes(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, ...FONT }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 16, padding: 22, width: "100%", maxWidth: 420, maxHeight: "80vh", overflowY: "auto" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+              <div style={{ fontSize: 18, fontWeight: 800, color: DARK, fontFamily: "'DM Serif Display',Georgia,serif" }}>Shipping Codes</div>
+              <button onClick={() => setShowCodes(false)} style={{ background: "none", border: "none", color: MUTED, fontSize: 26, cursor: "pointer" }}>×</button>
+            </div>
+            {floorCodes
+              .filter(c => c.active && ["shipping_manager", "shipping_office", "shipping_team", "shipping"].includes(c.role))
+              .sort((a, b) => {
+                const order = { shipping_manager: 0, shipping_office: 1, shipping_team: 2, shipping: 3 };
+                return (order[a.role] ?? 9) - (order[b.role] ?? 9) || (a.label || "").localeCompare(b.label || "");
+              })
+              .map(c => {
+                const roleLabels = { shipping_manager: "Manager", shipping_office: "Office", shipping_team: "Team Lead", shipping: "Shipping" };
+                return (
+                  <div key={c.code} style={{
+                    display: "flex", alignItems: "center", justifyContent: "space-between",
+                    background: "#f2f5ef", borderRadius: 10, padding: "12px 14px", marginBottom: 8,
+                  }}>
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 800, color: DARK }}>{c.label || c.workerName || "—"}</div>
+                      <div style={{ fontSize: 11, color: MUTED }}>{roleLabels[c.role] || c.role}{c.team ? ` · ${c.team}` : ""}</div>
+                    </div>
+                    <div style={{ fontSize: 20, fontWeight: 900, color: DARK, fontFamily: "monospace", letterSpacing: 2 }}>{c.code}</div>
+                  </div>
+                );
+              })}
           </div>
         </div>
       )}

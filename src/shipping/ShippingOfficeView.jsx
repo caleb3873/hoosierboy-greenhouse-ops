@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { useDeliveries, useShippingCustomers } from "../supabase";
+import { useDeliveries, useShippingCustomers, useFloorCodes } from "../supabase";
 import { useAuth } from "../Auth";
 import { customerConfirmationValid } from "./ShippingCommand";
 import DeliveryImporter from "./DeliveryImporter";
@@ -26,6 +26,7 @@ function fmtDate(iso) {
 export default function ShippingOfficeView() {
   const { rows: deliveries, insert, update } = useDeliveries();
   const { rows: customers } = useShippingCustomers();
+  const { rows: floorCodes } = useFloorCodes();
   const { displayName } = useAuth();
 
   const [selectedDate, setSelectedDate] = useState(todayISO());
@@ -34,6 +35,7 @@ export default function ShippingOfficeView() {
   const [showReconfirm, setShowReconfirm] = useState(false);
   const [showChanges, setShowChanges] = useState(false);
   const [dismissedChanges, setDismissedChanges] = useState(new Set());
+  const [showCodes, setShowCodes] = useState(false);
   const [tab, setTab] = useState("day"); // 'day' | 'reconfirm' | 'import'
 
   // Day deliveries
@@ -166,6 +168,14 @@ export default function ShippingOfficeView() {
             color: DARK, fontWeight: 800, fontSize: 12, cursor: "pointer", fontFamily: "inherit",
           }}>
           Import XLS
+        </button>
+        <button onClick={() => setShowCodes(true)}
+          style={{
+            padding: "10px 12px", borderRadius: 10,
+            border: `1.5px solid ${BORDER}`, background: "#fff",
+            color: MUTED, fontWeight: 800, fontSize: 12, cursor: "pointer", fontFamily: "inherit",
+          }}>
+          🔑 Codes
         </button>
       </div>
 
@@ -310,6 +320,39 @@ export default function ShippingOfficeView() {
                 );
               })
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Codes modal */}
+      {showCodes && (
+        <div onClick={() => setShowCodes(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, fontFamily: "'DM Sans','Segoe UI',sans-serif" }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 16, padding: 22, width: "100%", maxWidth: 420, maxHeight: "80vh", overflowY: "auto" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+              <div style={{ fontSize: 18, fontWeight: 800, color: DARK, fontFamily: "'DM Serif Display',Georgia,serif" }}>Shipping Codes</div>
+              <button onClick={() => setShowCodes(false)} style={{ background: "none", border: "none", color: MUTED, fontSize: 26, cursor: "pointer" }}>×</button>
+            </div>
+            {floorCodes
+              .filter(c => c.active && ["shipping_manager", "shipping_office", "shipping_team", "shipping"].includes(c.role))
+              .sort((a, b) => {
+                const order = { shipping_manager: 0, shipping_office: 1, shipping_team: 2, shipping: 3 };
+                return (order[a.role] ?? 9) - (order[b.role] ?? 9) || (a.label || "").localeCompare(b.label || "");
+              })
+              .map(c => {
+                const roleLabels = { shipping_manager: "Manager", shipping_office: "Office", shipping_team: "Team Lead", shipping: "Shipping" };
+                return (
+                  <div key={c.code} style={{
+                    display: "flex", alignItems: "center", justifyContent: "space-between",
+                    background: "#f2f5ef", borderRadius: 10, padding: "12px 14px", marginBottom: 8,
+                  }}>
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 800, color: DARK }}>{c.label || c.workerName || "—"}</div>
+                      <div style={{ fontSize: 11, color: MUTED }}>{roleLabels[c.role] || c.role}{c.team ? ` · ${c.team}` : ""}</div>
+                    </div>
+                    <div style={{ fontSize: 20, fontWeight: 900, color: DARK, fontFamily: "monospace", letterSpacing: 2 }}>{c.code}</div>
+                  </div>
+                );
+              })}
           </div>
         </div>
       )}

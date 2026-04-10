@@ -347,7 +347,9 @@ function AppInner() {
         <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
         <div style={{ background: "#1a2a1a", padding: "12px 20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div style={{ color: "#c8e6b8", fontWeight: 800, fontSize: 16 }}>Shipping Office</div>
-          <button onClick={signOut} style={{ background: "transparent", border: "1px solid #7fb06966", color: "#c8e6b8", padding: "6px 12px", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 700, fontFamily: "inherit" }}>Sign out</button>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button onClick={signOut} style={{ background: "transparent", border: "1px solid #7fb06966", color: "#c8e6b8", padding: "6px 12px", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 700, fontFamily: "inherit" }}>Sign out</button>
+          </div>
         </div>
         <ShippingOfficeView />
       </div>
