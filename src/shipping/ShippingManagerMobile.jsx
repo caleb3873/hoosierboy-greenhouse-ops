@@ -93,10 +93,13 @@ export default function ShippingManagerMobile({ onSwitchMode }) {
       .sort((a, b) => (a.priorityOrder ?? 9999) - (b.priorityOrder ?? 9999) || (a.deliveryTime || "").localeCompare(b.deliveryTime || ""));
   }, [deliveries, selectedDate, weekStart, weekEnd]);
 
-  // Pending approvals — scoped to the viewed week
+  // Pending approvals — scoped to selected day, or full week if "All"
   const pendingApprovals = useMemo(() => {
+    if (selectedDate) {
+      return deliveries.filter(d => d.lifecycle === "proposed" && d.deliveryDate === selectedDate);
+    }
     return deliveries.filter(d => d.lifecycle === "proposed" && d.deliveryDate >= weekStart && d.deliveryDate <= weekEnd);
-  }, [deliveries, weekStart, weekEnd]);
+  }, [deliveries, selectedDate, weekStart, weekEnd]);
 
   // Auto-open approvals on first load if any exist
   useEffect(() => {
