@@ -1,6 +1,7 @@
 import { useMemo, useState, useEffect } from "react";
 import { useDeliveries, useShippingCustomers, useDeliveryClaims, getSupabase } from "../supabase";
 import { useAuth } from "../Auth";
+import DeliveryImporter from "./DeliveryImporter";
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
 const DARK = "#1e2d1a";
@@ -57,7 +58,7 @@ export default function ShippingCommand() {
 
   const [weekOffset, setWeekOffset] = useState(0);
   const [selected, setSelected] = useState(null);
-  const [modal, setModal] = useState(null); // 'reconfirm' | 'late' | null
+  const [modal, setModal] = useState(null); // 'reconfirm' | 'late' | 'import' | null
 
   const monday = useMemo(() => addDays(weekMonday(), weekOffset * 7), [weekOffset]);
   const days = useMemo(() => Array.from({ length: 6 }, (_, i) => addDays(monday, i)), [monday]);
@@ -134,6 +135,10 @@ export default function ShippingCommand() {
           style={{ padding: "10px 16px", borderRadius: 999, border: `1.5px solid ${needReconfirm.length ? AMBER : BORDER}`, background: needReconfirm.length ? "#fff7ec" : "#fff", color: needReconfirm.length ? AMBER : MUTED, fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
           🟡 {needReconfirm.length} need reconfirmation
         </button>
+        <button onClick={() => setModal("import")}
+          style={{ padding: "10px 16px", borderRadius: 999, border: `1.5px solid ${GREEN}`, background: "#f0f9ec", color: DARK, fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit", marginLeft: "auto" }}>
+          📁 Import schedule
+        </button>
       </div>
 
       {/* Week grid */}
@@ -194,6 +199,23 @@ export default function ShippingCommand() {
       )}
       {modal === "late" && (
         <ListModal title="Late changes" items={lateChanges} onClose={() => setModal(null)} />
+      )}
+      {modal === "import" && (
+        <div style={{
+          position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(30,45,26,0.6)",
+          zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20,
+        }} onClick={() => setModal(null)}>
+          <div style={{
+            background: "#fff", borderRadius: 16, padding: 24, maxWidth: 800, width: "100%",
+            maxHeight: "80vh", overflowY: "auto", boxShadow: "0 12px 40px rgba(0,0,0,0.25)",
+          }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <div style={{ fontSize: 20, fontWeight: 800, color: DARK }}>Import Delivery Schedule</div>
+              <button onClick={() => setModal(null)} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: MUTED }}>✕</button>
+            </div>
+            <DeliveryImporter onDone={() => setModal(null)} />
+          </div>
+        </div>
       )}
     </div>
   );
