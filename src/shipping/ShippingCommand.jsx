@@ -83,6 +83,8 @@ export default function ShippingCommand() {
   const [routeStops, setRouteStops] = useState([]); // array of delivery IDs in order
   const [routeDriver, setRouteDriver] = useState("");
   const [routeTruck, setRouteTruck] = useState("");
+  const [editingRouteId, setEditingRouteId] = useState(null); // when loading an existing route into the builder
+  const [pendingAdd, setPendingAdd] = useState(null); // delivery awaiting confirmation before adding to route
   const [fuelCostPerGal, setFuelCostPerGal] = useState(5.00);
   const DRIVER_RATE = 22; // $/hr
   const MPG = 8; // rough box truck fuel economy
@@ -244,36 +246,85 @@ export default function ShippingCommand() {
     const dateLabel = new Date(deliveryDate + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
     const routeName = `${driverObj?.name || "Unassigned"} — ${dateLabel}`;
 
-    // Create route record
-    const newRoute = await insertRoute({
+    const routeData = {
       name: routeName,
       driverId: routeDriver || null,
       truckId: routeTruck || null,
       deliveryDate,
-      status: "planned",
       fuelCostPerGal,
       totalMiles: Math.round(totalRouteMiles * 10) / 10,
       totalMinutes: Math.round(totalMins),
       estimatedCost,
-      createdBy: displayName,
-    });
+    };
+
+    let routeId;
+    if (editingRouteId) {
+      // Update existing route
+      await updateRoute(editingRouteId, routeData);
+      routeId = editingRouteId;
+      // Unlink any deliveries that were removed from this route
+      const oldDelivs = deliveries.filter(d => d.routeId === editingRouteId);
+      for (const d of oldDelivs) {
+        if (!routeStops.includes(d.id)) {
+          await update(d.id, { routeId: null, stopOrder: null });
+        }
+      }
+    } else {
+      // Create new route record
+      routeData.status = "planned";
+      routeData.createdBy = displayName;
+      const newRoute = await insertRoute(routeData);
+      routeId = newRoute.id;
+    }
 
     // Update each delivery with route linkage
     for (let i = 0; i < routeStops.length; i++) {
-      const patch = { stopOrder: i + 1, routeId: newRoute.id };
+      const patch = { stopOrder: i + 1, routeId };
       if (routeDriver) patch.driverId = routeDriver;
       if (routeTruck) patch.truckId = routeTruck;
       await update(routeStops[i], patch);
     }
     setRouteMode(false);
     setRouteStops([]);
+    setEditingRouteId(null);
   }
 
+  // Load an existing route into the builder side panel
+  function openRouteInBuilder(routeId) {
+    const route = routes.find(r => r.id === routeId);
+    if (!route) return;
+    const routeDelivs = deliveries.filter(d => d.routeId === routeId).sort((a, b) => (a.stopOrder || 999) - (b.stopOrder || 999));
+    setRouteMode(true);
+    setEditingRouteId(routeId);
+    setRouteStops(routeDelivs.map(d => d.id));
+    setRouteDriver(route.driverId || "");
+    setRouteTruck(route.truckId || "");
+    setFuelCostPerGal(route.fuelCostPerGal || 5.00);
+  }
+
+  // When in route mode, check if delivery has notes/time before adding
   function handleChipClick(del) {
     if (routeMode) {
-      toggleRouteStop(del.id);
+      // If removing (already in route), just toggle
+      if (routeStops.includes(del.id)) {
+        toggleRouteStop(del.id);
+        return;
+      }
+      // If delivery has notes or specific delivery time, show confirmation
+      if (del.notes || del.deliveryTime) {
+        setPendingAdd(del);
+      } else {
+        toggleRouteStop(del.id);
+      }
     } else {
       setSelected(del);
+    }
+  }
+
+  function confirmPendingAdd() {
+    if (pendingAdd) {
+      toggleRouteStop(pendingAdd.id);
+      setPendingAdd(null);
     }
   }
 
@@ -340,9 +391,9 @@ export default function ShippingCommand() {
           style={{ padding: "10px 16px", borderRadius: 999, border: `1.5px solid ${needReconfirm.length ? AMBER : BORDER}`, background: needReconfirm.length ? "#fff7ec" : "#fff", color: needReconfirm.length ? AMBER : MUTED, fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
           🟡 {needReconfirm.length} need reconfirmation
         </button>
-        <button onClick={() => { setRouteMode(true); setRouteStops([]); setRouteDriver(""); setRouteTruck(""); }}
+        <button onClick={() => { setRouteMode(true); setRouteStops([]); setRouteDriver(""); setRouteTruck(""); setEditingRouteId(null); }}
           style={{ padding: "10px 16px", borderRadius: 999, border: `1.5px solid ${DARK}`, background: routeMode ? DARK : "#fff", color: routeMode ? "#fff" : DARK, fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
-          🚛 Build Route
+          🚛 Build Route / Assign Truck
         </button>
         <button onClick={() => setModal("import")}
           style={{ padding: "10px 16px", borderRadius: 999, border: `1.5px solid ${GREEN}`, background: "#f0f9ec", color: DARK, fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit", marginLeft: "auto" }}>
@@ -455,7 +506,8 @@ export default function ShippingCommand() {
                         const route = routes.find(r => r.id === rId);
                         return (
                           <RouteChip key={rId} route={route} deliveries={dels} drivers={drivers} trucks={trucks}
-                            customers={customers} claimsByCustomer={claimsByCustomer} onSelectDelivery={setSelected} />
+                            customers={customers} claimsByCustomer={claimsByCustomer} onSelectDelivery={setSelected}
+                            onEditRoute={() => openRouteInBuilder(rId)} />
                         );
                       })}
                       {standalone.map(del => {
@@ -487,11 +539,13 @@ export default function ShippingCommand() {
           zIndex: 500, overflowY: "auto", padding: 20, ...FONT,
         }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-            <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif", color: DARK }}>🚛 Route Builder</div>
-            <button onClick={() => { setRouteMode(false); setRouteStops([]); }}
+            <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif", color: DARK }}>🚛 {editingRouteId ? "Edit Route" : "Build Route / Assign Truck"}</div>
+            <button onClick={() => { setRouteMode(false); setRouteStops([]); setEditingRouteId(null); }}
               style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: MUTED }}>✕</button>
           </div>
-          <div style={{ fontSize: 11, color: MUTED, marginBottom: 12 }}>Click deliveries on the calendar to add stops in delivery order.</div>
+          <div style={{ fontSize: 11, color: MUTED, marginBottom: 12 }}>
+            {editingRouteId ? "Edit this route — add, remove, or reorder stops." : "Click deliveries on the calendar to add stops. Works for a single delivery too — just assign a truck."}
+          </div>
 
           {/* Driver + truck */}
           <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
@@ -703,9 +757,9 @@ export default function ShippingCommand() {
                 border: "none", borderRadius: 8, fontWeight: 800, fontSize: 13,
                 cursor: routeStops.length === 0 ? "default" : "pointer", fontFamily: "inherit",
               }}>
-              ✓ Save Route ({routeStops.length} stops)
+              ✓ {editingRouteId ? "Update" : "Save"} {routeStops.length === 1 ? "Assignment" : `Route (${routeStops.length} stops)`}
             </button>
-            <button onClick={() => { setRouteMode(false); setRouteStops([]); }}
+            <button onClick={() => { setRouteMode(false); setRouteStops([]); setEditingRouteId(null); }}
               style={{ padding: "10px 16px", background: "#fff", color: MUTED, border: `1px solid ${BORDER}`, borderRadius: 8, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 13 }}>
               Cancel
             </button>
@@ -744,6 +798,45 @@ export default function ShippingCommand() {
           )}
         />
       )}
+      {/* Pending add confirmation — shows delivery time/notes before adding to route */}
+      {pendingAdd && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(30,45,26,0.6)", zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, ...FONT }}
+          onClick={() => setPendingAdd(null)}>
+          <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 14, padding: 24, maxWidth: 420, width: "100%", boxShadow: "0 12px 40px rgba(0,0,0,0.25)" }}>
+            <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif", color: DARK, marginBottom: 12 }}>
+              Review before adding
+            </div>
+            <div style={{ fontSize: 14, fontWeight: 800, color: DARK, marginBottom: 4 }}>
+              {pendingAdd.customerSnapshot?.company_name || "—"}
+            </div>
+            {pendingAdd.deliveryTime && (
+              <div style={{ padding: "8px 12px", background: "#fff7ec", border: `1px solid ${AMBER}`, borderRadius: 8, marginBottom: 8 }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: AMBER, textTransform: "uppercase", letterSpacing: 0.5 }}>Expected Delivery Time</div>
+                <div style={{ fontSize: 16, fontWeight: 800, color: DARK, marginTop: 2 }}>{pendingAdd.deliveryTime}</div>
+              </div>
+            )}
+            {pendingAdd.notes && (
+              <div style={{ padding: "8px 12px", background: "#f2f5ef", border: `1px solid ${BORDER}`, borderRadius: 8, marginBottom: 8 }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: MUTED, textTransform: "uppercase", letterSpacing: 0.5 }}>Notes</div>
+                <div style={{ fontSize: 13, color: DARK, marginTop: 2, whiteSpace: "pre-wrap" }}>{pendingAdd.notes}</div>
+              </div>
+            )}
+            <div style={{ fontSize: 12, color: MUTED, marginBottom: 14 }}>
+              Add this delivery to the route? Make sure the time and notes work with the current plan.
+            </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={confirmPendingAdd}
+                style={{ flex: 1, padding: "12px 0", background: GREEN, color: "#fff", border: "none", borderRadius: 8, fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
+                Continue — add to route
+              </button>
+              <button onClick={() => setPendingAdd(null)}
+                style={{ padding: "12px 20px", background: "#fff", color: MUTED, border: `1px solid ${BORDER}`, borderRadius: 8, fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
+                Choose another
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {modal === "late" && (
         <ListModal title="Late changes" items={lateChanges} onClose={() => setModal(null)} />
       )}
@@ -771,7 +864,7 @@ export default function ShippingCommand() {
 const navBtn = { background: "#f2f5ef", border: `1px solid ${BORDER}`, padding: "8px 12px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 700, fontFamily: "inherit", color: DARK };
 
 // ── Route Chip ─────────────────────────────────────────────────────────────
-function RouteChip({ route, deliveries, drivers, trucks, customers, claimsByCustomer, onSelectDelivery }) {
+function RouteChip({ route, deliveries, drivers, trucks, customers, claimsByCustomer, onSelectDelivery, onEditRoute }) {
   const [expanded, setExpanded] = useState(false);
   const sorted = [...deliveries].sort((a, b) => (a.stopOrder || 999) - (b.stopOrder || 999));
   const driverObj = drivers.find(dr => dr.id === route?.driverId);
@@ -783,7 +876,7 @@ function RouteChip({ route, deliveries, drivers, trucks, customers, claimsByCust
       background: "#e8f5e0", border: `2px solid ${GREEN}`, borderLeft: `4px solid ${DARK}`,
       borderRadius: 6, padding: 6, marginBottom: 4, fontSize: 10, lineHeight: 1.3,
     }}>
-      <div onClick={() => setExpanded(e => !e)} style={{ cursor: "pointer" }}>
+      <div onClick={() => setExpanded(e => !e)} onDoubleClick={(e) => { e.stopPropagation(); onEditRoute?.(); }} style={{ cursor: "pointer" }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 4, fontWeight: 800, color: DARK }}>
           <span>🚛 {driverObj?.name || "Route"}{truckObj ? ` · ${truckObj.name}` : ""}</span>
           <span style={{ color: GREEN }}>{fmtMoney(totalValue)}</span>
@@ -864,7 +957,7 @@ function Chip({ delivery: d, customers, claimsCount, onClick, onDragStart, onDra
         <span style={{ color: GREEN }}>{fmtMoney(d.orderValueCents)}</span>
       </div>
       <div style={{ color: MUTED }}>
-        {d.deliveryTime || "—"}{d.cartCount ? ` · 🛒${d.cartCount}` : ""}
+        {d.deliveryTime || "—"}{d.cartCount ? ` · 🛒${d.cartCount}` : ""}{d.notes ? " · 📝" : ""}
       </div>
       <div>
         <span title="sales">{salesOk ? "🟢" : "🟡"}S</span>{" "}
@@ -1050,6 +1143,22 @@ function DetailDrawer({ delivery: d, displayName, drivers = [], trucks = [], cus
                 </div>
               </div>
             )}
+          </Section>
+
+          <Section title="Delivery Time & Notes">
+            <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+              <label style={{ flex: 1 }}>
+                <div style={{ fontSize: 10, fontWeight: 800, color: MUTED, marginBottom: 3 }}>Expected Time</div>
+                <input type="time" value={d.deliveryTime || ""}
+                  onChange={e => onUpdate({ deliveryTime: e.target.value || null })}
+                  style={{ width: "100%", padding: "8px 10px", borderRadius: 6, border: `1px solid ${BORDER}`, fontSize: 13, fontFamily: "inherit" }} />
+              </label>
+            </div>
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 800, color: MUTED, marginBottom: 3 }}>Notes</div>
+              <textarea value={d.notes || ""} onChange={e => onUpdate({ notes: e.target.value || null })} placeholder="Special instructions, loading notes, customer requests…"
+                style={{ width: "100%", padding: "8px 10px", borderRadius: 6, border: `1px solid ${BORDER}`, fontSize: 13, fontFamily: "inherit", minHeight: 60, resize: "vertical", boxSizing: "border-box" }} />
+            </div>
           </Section>
 
           <Section title="Flags">
