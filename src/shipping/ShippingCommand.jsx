@@ -52,7 +52,7 @@ export function tooLateToAdd(delivery) {
 // ── Main ────────────────────────────────────────────────────────────────────
 export default function ShippingCommand() {
   const { rows: deliveries, update } = useDeliveries();
-  const { rows: customers } = useShippingCustomers();
+  const { rows: customers, update: updateCustomer } = useShippingCustomers();
   const { rows: claims } = useDeliveryClaims();
   const { rows: drivers } = useDrivers();
   const { rows: trucks } = useTrucks();
@@ -595,6 +595,9 @@ export default function ShippingCommand() {
           displayName={displayName}
           drivers={drivers}
           trucks={trucks}
+          customers={customers}
+          onUpdateCustomer={updateCustomer}
+          onUpdateDelivery={update}
           onClose={() => setSelected(null)}
           onUpdate={async patch => {
             await update(selected.id, patch);
@@ -717,10 +720,51 @@ function Chip({ delivery: d, customers, claimsCount, onClick, onDragStart, onDra
 }
 
 // ── Detail Drawer ──────────────────────────────────────────────────────────
-function DetailDrawer({ delivery: d, displayName, drivers = [], trucks = [], onClose, onUpdate }) {
+function DetailDrawer({ delivery: d, displayName, drivers = [], trucks = [], customers = [], onUpdateCustomer, onUpdateDelivery, onClose, onUpdate }) {
   const cust = d.customerSnapshot || {};
+  const fullCust = customers.find(c => c.id === d.customerId) || {};
+  const hasAddress = !!(fullCust.address1 || cust.address1);
   const [alertText, setAlertText] = useState("");
   const [moveDate, setMoveDate] = useState(d.deliveryDate || "");
+  const [editingAddress, setEditingAddress] = useState(false);
+  const [addrForm, setAddrForm] = useState({
+    address1: fullCust.address1 || cust.address1 || "",
+    city: fullCust.city || cust.city || "",
+    state: fullCust.state || cust.state || "",
+    zip: fullCust.zip || cust.zip || "",
+  });
+
+  async function saveAddress() {
+    if (!d.customerId || !onUpdateCustomer) return;
+    // Update the customer record
+    await onUpdateCustomer(d.customerId, {
+      address1: addrForm.address1,
+      city: addrForm.city,
+      state: addrForm.state,
+      zip: addrForm.zip,
+    });
+    // Update the delivery snapshot so distance can be computed
+    const newSnapshot = {
+      ...cust,
+      address1: addrForm.address1,
+      city: addrForm.city,
+      state: addrForm.state,
+      zip: addrForm.zip,
+    };
+    await onUpdate({ customerSnapshot: newSnapshot });
+    // Auto-compute distance
+    const destination = [addrForm.address1, addrForm.city, addrForm.state, addrForm.zip].filter(Boolean).join(", ");
+    if (destination && onUpdateDelivery) {
+      fetch("/api/shipping-distance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ destination }),
+      }).then(r => r.ok ? r.json() : null).then(data => {
+        if (data) onUpdateDelivery(d.id, { miles: data.miles, driveMinutes: data.minutes });
+      }).catch(() => {});
+    }
+    setEditingAddress(false);
+  }
 
   async function addAlert(severity = "info") {
     if (!alertText.trim()) return;
@@ -783,6 +827,54 @@ function DetailDrawer({ delivery: d, displayName, drivers = [], trucks = [], onC
         </div>
 
         <div style={{ padding: 20 }}>
+          {/* Address */}
+          <Section title="Delivery Address">
+            {!editingAddress && hasAddress && (
+              <div style={{ fontSize: 12, color: DARK }}>
+                <div>{fullCust.address1 || cust.address1}</div>
+                <div>{fullCust.city || cust.city}{(fullCust.state || cust.state) ? `, ${fullCust.state || cust.state}` : ""} {fullCust.zip || cust.zip || ""}</div>
+                {d.miles && <div style={{ color: MUTED, marginTop: 4 }}>📍 {Math.round(d.miles)} miles · ~{Math.round(d.driveMinutes || 0)} min from greenhouse</div>}
+                <button onClick={() => setEditingAddress(true)}
+                  style={{ marginTop: 6, padding: "4px 10px", background: "#f2f5ef", border: `1px solid ${BORDER}`, borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", color: MUTED }}>
+                  Edit address
+                </button>
+              </div>
+            )}
+            {!editingAddress && !hasAddress && (
+              <div>
+                <div style={{ fontSize: 12, color: AMBER, fontWeight: 700, marginBottom: 6 }}>⚠ No address on file — distance cannot be computed</div>
+                <button onClick={() => setEditingAddress(true)}
+                  style={{ padding: "8px 14px", background: AMBER, color: "#fff", border: "none", borderRadius: 6, fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                  + Add Address
+                </button>
+              </div>
+            )}
+            {editingAddress && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <input value={addrForm.address1} onChange={e => setAddrForm(f => ({ ...f, address1: e.target.value }))} placeholder="Street address"
+                  style={{ padding: "8px 10px", borderRadius: 6, border: `1px solid ${BORDER}`, fontSize: 13, fontFamily: "inherit" }} />
+                <div style={{ display: "flex", gap: 6 }}>
+                  <input value={addrForm.city} onChange={e => setAddrForm(f => ({ ...f, city: e.target.value }))} placeholder="City"
+                    style={{ flex: 2, padding: "8px 10px", borderRadius: 6, border: `1px solid ${BORDER}`, fontSize: 13, fontFamily: "inherit" }} />
+                  <input value={addrForm.state} onChange={e => setAddrForm(f => ({ ...f, state: e.target.value }))} placeholder="State"
+                    style={{ flex: 1, padding: "8px 10px", borderRadius: 6, border: `1px solid ${BORDER}`, fontSize: 13, fontFamily: "inherit" }} />
+                  <input value={addrForm.zip} onChange={e => setAddrForm(f => ({ ...f, zip: e.target.value }))} placeholder="Zip"
+                    style={{ flex: 1, padding: "8px 10px", borderRadius: 6, border: `1px solid ${BORDER}`, fontSize: 13, fontFamily: "inherit" }} />
+                </div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button onClick={saveAddress}
+                    style={{ padding: "8px 14px", background: GREEN, color: "#fff", border: "none", borderRadius: 6, fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                    Save & compute distance
+                  </button>
+                  <button onClick={() => setEditingAddress(false)}
+                    style={{ padding: "8px 12px", background: "#fff", color: MUTED, border: `1px solid ${BORDER}`, borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </Section>
+
           <Section title="Flags">
             <div style={{ fontSize: 12, color: MUTED }}>
               {(cust.terms || "").toUpperCase().includes("COD") && <div style={{ color: RED, fontWeight: 700 }}>💰 COD</div>}
