@@ -43,6 +43,7 @@ import ShippingCarts        from "./shipping/ShippingCarts";
 import DriverView           from "./shipping/DriverView";
 import ShippingOfficeView   from "./shipping/ShippingOfficeView";
 import ShippingManagerMobile from "./shipping/ShippingManagerMobile";
+import PickSheetViewer      from "./shipping/PickSheetViewer";
 
 // ── PLANNER SHELL ─────────────────────────────────────────────────────────────
 // Nav grouped by category
@@ -101,6 +102,7 @@ const NAV_GROUPS = [
       { id: "ship-dashboard", label: "Dashboard" },
       { id: "ship-calendar",  label: "Calendar" },
       { id: "ship-schedule",  label: "Schedule" },
+      { id: "ship-picksheets", label: "Pick Sheets" },
       { id: "ship-claims",    label: "Claims" },
       { id: "ship-customers", label: "Customers" },
       { id: "ship-carts",     label: "Carts" },
@@ -243,6 +245,7 @@ function PlannerShell() {
         {page === "ship-dashboard" && <ShippingDashboard />}
         {page === "ship-calendar"  && <ShippingCalendar />}
         {page === "ship-schedule"  && <ShippingSchedule />}
+        {page === "ship-picksheets" && <PickSheetViewer />}
         {page === "ship-claims"    && <ShippingClaims />}
         {page === "ship-customers" && <ShippingCustomers />}
         {page === "ship-carts"     && <ShippingCarts />}
