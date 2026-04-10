@@ -335,7 +335,12 @@ function AppInner() {
     return <ShippingManagerMobile onSwitchMode={signOut} />;
   }
 
-  // Shipping office (Mario, Trish, Rachel) → delivery entry + calendar view
+  // Shipping office with a team (Rachel = houseplants) → hybrid: team pull + add orders
+  if (role === "shipping_office" && team) {
+    return <TeamPullView team={team} onSwitchMode={signOut} canAddOrders />;
+  }
+
+  // Shipping office (Mario, Trish) → delivery entry + calendar view
   if (role === "shipping_office") {
     return (
       <div style={{ fontFamily: "'DM Sans','Segoe UI',sans-serif", background: "#f2f5ef", minHeight: "100vh" }}>

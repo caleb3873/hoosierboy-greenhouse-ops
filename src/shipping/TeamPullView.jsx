@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useDeliveries, getSupabase } from "../supabase";
+import { useDeliveries, useShippingCustomers, getSupabase } from "../supabase";
 import { useAuth } from "../Auth";
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
@@ -22,13 +22,25 @@ const TEAM_LABELS = {
 function todayISO() { return new Date().toISOString().slice(0, 10); }
 function fmtMoney(c) { if (!c && c !== 0) return "—"; return `$${Math.round(c / 100).toLocaleString()}`; }
 
-export default function TeamPullView({ team: teamProp, onSwitchMode }) {
-  const { team: ctxTeam, displayName } = useAuth();
+export default function TeamPullView({ team: teamProp, onSwitchMode, canAddOrders = false }) {
+  const { team: ctxTeam, displayName, signOut } = useAuth();
   const team = teamProp || ctxTeam || "bluff1";
-  const { rows: deliveries, update } = useDeliveries();
+  const { rows: deliveries, update, insert } = useDeliveries();
+  const { rows: customers } = useShippingCustomers();
 
   const [showPhotoModal, setShowPhotoModal] = useState(false);
   const [showProblem, setShowProblem] = useState(false);
+  const [showAddOrder, setShowAddOrder] = useState(false);
+  const [showAllOrders, setShowAllOrders] = useState(false);
+
+  // Add order form state
+  const [aoSearch, setAoSearch] = useState("");
+  const [aoCustomer, setAoCustomer] = useState(null);
+  const [aoAmount, setAoAmount] = useState("");
+  const [aoDate, setAoDate] = useState(todayISO());
+  const [aoTime, setAoTime] = useState("");
+  const [aoNotes, setAoNotes] = useState("");
+  const [aoSaving, setAoSaving] = useState(false);
 
   const isBluff = team === "bluff1" || team === "bluff2" || team === "loader";
   const effectiveTeam = team === "loader" ? "bluff1" : team;
@@ -107,6 +119,44 @@ export default function TeamPullView({ team: teamProp, onSwitchMode }) {
       bluffClaimedAt: new Date().toISOString(),
     });
   }
+
+  // Customer search for add order
+  const aoMatches = useMemo(() => {
+    if (!aoSearch || aoSearch.length < 2) return [];
+    const q = aoSearch.toLowerCase();
+    return customers.filter(c => (c.companyName || "").toLowerCase().includes(q)).slice(0, 8);
+  }, [aoSearch, customers]);
+
+  // Save new order (proposed — needs Tyler approval)
+  async function saveAddOrder() {
+    if (!aoCustomer) return;
+    setAoSaving(true);
+    try {
+      const cust = aoCustomer;
+      const snapshot = {
+        company_name: cust.companyName, address1: cust.address1 || "", city: cust.city || "",
+        state: cust.state || "", zip: cust.zip || "", phone: cust.phone || "",
+        email: cust.email || "", terms: cust.terms || "",
+      };
+      await insert({
+        customerId: cust.id, customerSnapshot: snapshot, deliveryDate: aoDate,
+        deliveryTime: aoTime || null, orderValueCents: Math.round((parseFloat(aoAmount) || 0) * 100),
+        notes: aoNotes || null, needsHouseplants: team === "houseplants",
+        needsBluff1: team !== "houseplants", needsSprague: false,
+        lifecycle: "proposed", salesConfirmedAt: new Date().toISOString(), salesConfirmedBy: displayName,
+      });
+      setAoSearch(""); setAoCustomer(null); setAoAmount(""); setAoTime(""); setAoNotes(""); setShowAddOrder(false);
+    } catch (err) { alert("Failed: " + err.message); }
+    setAoSaving(false);
+  }
+
+  // All orders for this team (for "view all" mode)
+  const allTeamOrders = useMemo(() => {
+    const needsField2 = `needs${effectiveTeam[0].toUpperCase() + effectiveTeam.slice(1)}`;
+    return deliveries
+      .filter(d => d.lifecycle !== "cancelled" && (isBluff ? (d.needsBluff1 || d.needsBluff2) : d[needsField2]))
+      .sort((a, b) => (b.deliveryDate || "").localeCompare(a.deliveryDate || "") || (a.priorityOrder ?? 9999) - (b.priorityOrder ?? 9999));
+  }, [deliveries, effectiveTeam, isBluff]);
 
   // Submit pick sheet photos + mark pulled
   async function submitPhotos(files) {
@@ -330,11 +380,118 @@ export default function TeamPullView({ team: teamProp, onSwitchMode }) {
         </div>
       </div>
 
+      {/* canAddOrders buttons (Rachel) */}
+      {canAddOrders && (
+        <div style={{ padding: "0 16px", display: "flex", gap: 8, marginTop: 0 }}>
+          <button onClick={() => setShowAddOrder(true)}
+            style={{ flex: 1, background: GREEN, color: DARK, border: "none", padding: "14px 0", borderRadius: 12, fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", minHeight: 48 }}>
+            + Add Order
+          </button>
+          <button onClick={() => setShowAllOrders(true)}
+            style={{ flex: 1, background: "#263821", color: CREAM, border: `1px solid ${GREEN}44`, padding: "14px 0", borderRadius: 12, fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", minHeight: 48 }}>
+            📋 All Orders
+          </button>
+        </div>
+      )}
+
       {/* Photo modal */}
       {showPhotoModal && <PhotoModal onSubmit={submitPhotos} onCancel={() => setShowPhotoModal(false)} />}
 
       {/* Problem modal */}
       {showProblem && <ProblemModal onSubmit={submitProblem} onCancel={() => setShowProblem(false)} />}
+
+      {/* Add order bottom sheet */}
+      {showAddOrder && (
+        <div onClick={() => setShowAddOrder(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 1000, display: "flex", alignItems: "flex-end", ...FONT }}>
+          <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxHeight: "85vh", background: "#fff", borderRadius: "20px 20px 0 0", padding: "20px 20px 32px", overflowY: "auto" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+              <div style={{ fontSize: 20, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif", color: DARK }}>Add Order</div>
+              <button onClick={() => setShowAddOrder(false)} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: MUTED }}>✕</button>
+            </div>
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: MUTED, textTransform: "uppercase", marginBottom: 4 }}>Customer</div>
+              {aoCustomer ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", background: "#e8f5e0", borderRadius: 10, border: `1.5px solid ${GREEN}` }}>
+                  <span style={{ flex: 1, fontWeight: 800, color: DARK }}>{aoCustomer.companyName}</span>
+                  <button onClick={() => { setAoCustomer(null); setAoSearch(""); }} style={{ background: "none", border: "none", fontSize: 16, cursor: "pointer", color: MUTED }}>✕</button>
+                </div>
+              ) : (
+                <div style={{ position: "relative" }}>
+                  <input type="text" value={aoSearch} onChange={e => setAoSearch(e.target.value)} placeholder="Search customers..."
+                    style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: `1.5px solid ${BORDER}`, fontSize: 15, fontFamily: "inherit", boxSizing: "border-box" }} />
+                  {aoMatches.length > 0 && (
+                    <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: "#fff", border: `1.5px solid ${BORDER}`, borderRadius: 10, boxShadow: "0 4px 16px rgba(0,0,0,0.12)", zIndex: 50, maxHeight: 200, overflowY: "auto", marginTop: 4 }}>
+                      {aoMatches.map(c => (
+                        <button key={c.id} onClick={() => { setAoCustomer(c); setAoSearch(""); }}
+                          style={{ display: "block", width: "100%", textAlign: "left", padding: "12px 14px", background: "none", border: "none", borderBottom: `1px solid ${BORDER}`, cursor: "pointer", fontSize: 14, fontWeight: 600, fontFamily: "inherit", color: DARK }}>
+                          {c.companyName}{c.city && <span style={{ color: MUTED }}> — {c.city}</span>}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+            <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: MUTED, textTransform: "uppercase", marginBottom: 4 }}>Amount</div>
+                <input type="number" value={aoAmount} onChange={e => setAoAmount(e.target.value)} placeholder="0.00"
+                  style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: `1.5px solid ${BORDER}`, fontSize: 15, fontFamily: "inherit", boxSizing: "border-box" }} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: MUTED, textTransform: "uppercase", marginBottom: 4 }}>Date</div>
+                <input type="date" value={aoDate} onChange={e => setAoDate(e.target.value)}
+                  style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: `1.5px solid ${BORDER}`, fontSize: 15, fontFamily: "inherit", boxSizing: "border-box" }} />
+              </div>
+            </div>
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: MUTED, textTransform: "uppercase", marginBottom: 4 }}>Notes</div>
+              <textarea value={aoNotes} onChange={e => setAoNotes(e.target.value)} placeholder="Notes..." rows={2}
+                style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: `1.5px solid ${BORDER}`, fontSize: 14, fontFamily: "inherit", boxSizing: "border-box", resize: "vertical" }} />
+            </div>
+            <button onClick={saveAddOrder} disabled={!aoCustomer || aoSaving}
+              style={{ width: "100%", padding: "14px 0", borderRadius: 12, border: "none", background: aoCustomer ? GREEN : "#c8d8c0", color: aoCustomer ? "#fff" : MUTED, fontSize: 16, fontWeight: 800, cursor: aoCustomer ? "pointer" : "default", fontFamily: "inherit", minHeight: 52 }}>
+              {aoSaving ? "Saving..." : "Submit for approval"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* All orders sheet */}
+      {showAllOrders && (
+        <div onClick={() => setShowAllOrders(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 1000, display: "flex", alignItems: "flex-end", ...FONT }}>
+          <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxHeight: "90vh", background: "#fff", borderRadius: "20px 20px 0 0", padding: "20px 20px 32px", overflowY: "auto" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+              <div style={{ fontSize: 20, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif", color: DARK }}>All {TEAM_LABELS[team] || team} Orders</div>
+              <button onClick={() => setShowAllOrders(false)} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: MUTED }}>✕</button>
+            </div>
+            {allTeamOrders.length === 0 && <div style={{ padding: 20, textAlign: "center", color: MUTED }}>No orders found.</div>}
+            {allTeamOrders.map(d => {
+              const c = d.customerSnapshot || {};
+              const pulled = isPulled(d);
+              return (
+                <div key={d.id} style={{ padding: "10px 14px", borderBottom: `1px solid ${BORDER}`, opacity: pulled ? 0.5 : 1 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 800, color: DARK }}>{c.company_name || "—"}</div>
+                      <div style={{ fontSize: 11, color: MUTED }}>
+                        {d.deliveryDate} · {d.deliveryTime || "—"} · {fmtMoney(d.orderValueCents)}
+                      </div>
+                    </div>
+                    <span style={{
+                      padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 800,
+                      background: pulled ? "#e8f5e0" : d.lifecycle === "proposed" ? "#fff7ec" : "#f2f5ef",
+                      color: pulled ? GREEN : d.lifecycle === "proposed" ? AMBER : MUTED,
+                    }}>
+                      {pulled ? "Done" : d.lifecycle === "proposed" ? "Pending" : d.shippedAt ? "Shipped" : "Active"}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
