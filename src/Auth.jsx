@@ -216,11 +216,12 @@ export function AuthProvider({ children }) {
   const isGrower      = role === "grower";
   const isShippingManager = role === "shipping_manager";
   const isShippingTeam    = role === "shipping";
+  const isShippingOffice  = role === "shipping_office";
   const isAuthenticated = !!role;
 
   const value = {
     user, role, floorMode, loading, initialized, team,
-    isAdmin, isOperator, isGrower, isOwner, isManager, isShippingManager, isShippingTeam, isAuthenticated,
+    isAdmin, isOperator, isGrower, isOwner, isManager, isShippingManager, isShippingTeam, isShippingOffice, isAuthenticated,
     growerProfile,
     signIn, signOut, signInWithCode,
     recoveryMode, clearRecovery,

@@ -349,6 +349,13 @@ export default function ShippingCommand() {
     );
   }, [deliveries]);
 
+  const pendingApprovals = useMemo(() => {
+    const today = todayISO();
+    return deliveries.filter(d =>
+      d.lifecycle === "proposed" && d.deliveryDate >= today
+    );
+  }, [deliveries]);
+
   function bucket(date, ampm) {
     const iso = toISODate(date);
     return weekDeliveries
@@ -390,6 +397,10 @@ export default function ShippingCommand() {
         <button onClick={() => setModal("reconfirm")}
           style={{ padding: "10px 16px", borderRadius: 999, border: `1.5px solid ${needReconfirm.length ? AMBER : BORDER}`, background: needReconfirm.length ? "#fff7ec" : "#fff", color: needReconfirm.length ? AMBER : MUTED, fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
           🟡 {needReconfirm.length} need reconfirmation
+        </button>
+        <button onClick={() => setModal("approvals")}
+          style={{ padding: "10px 16px", borderRadius: 999, border: `1.5px solid ${pendingApprovals.length ? GREEN : BORDER}`, background: pendingApprovals.length ? "#e8f5e0" : "#fff", color: pendingApprovals.length ? DARK : MUTED, fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
+          📥 {pendingApprovals.length} pending approval
         </button>
         <button onClick={() => { setRouteMode(true); setRouteStops([]); setRouteDriver(""); setRouteTruck(""); setEditingRouteId(null); }}
           style={{ padding: "10px 16px", borderRadius: 999, border: `1.5px solid ${DARK}`, background: routeMode ? DARK : "#fff", color: routeMode ? "#fff" : DARK, fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
@@ -833,6 +844,64 @@ export default function ShippingCommand() {
                 style={{ padding: "12px 20px", background: "#fff", color: MUTED, border: `1px solid ${BORDER}`, borderRadius: 8, fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
                 Choose another
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {modal === "approvals" && (
+        <div onClick={() => setModal(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, ...FONT }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 14, width: "100%", maxWidth: 600, maxHeight: "80vh", overflowY: "auto" }}>
+            <div style={{ background: DARK, color: CREAM, padding: "14px 20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ fontSize: 16, fontWeight: 800 }}>📥 Pending Approval ({pendingApprovals.length})</div>
+              <button onClick={() => setModal(null)} style={{ background: "none", border: "none", color: CREAM, fontSize: 24, cursor: "pointer" }}>×</button>
+            </div>
+            <div style={{ padding: 16 }}>
+              {pendingApprovals.length === 0 ? (
+                <div style={{ fontSize: 13, color: MUTED, textAlign: "center", padding: 20 }}>No pending approvals.</div>
+              ) : (
+                pendingApprovals.map(d => {
+                  const cust = d.customerSnapshot || {};
+                  return (
+                    <div key={d.id} style={{ padding: 14, border: `1.5px dashed ${AMBER}`, borderRadius: 10, marginBottom: 8, background: "#fffbf5" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontWeight: 800, fontSize: 14, color: DARK }}>{cust.company_name || "—"}</div>
+                          <div style={{ fontSize: 12, color: MUTED, marginTop: 2 }}>
+                            {d.deliveryDate} · {d.deliveryTime || "No time"} · {fmtMoney(d.orderValueCents)}
+                          </div>
+                          {d.salesConfirmedBy && (
+                            <div style={{ fontSize: 11, color: MUTED, marginTop: 2 }}>Submitted by: <b>{d.salesConfirmedBy}</b></div>
+                          )}
+                          {d.notes && (
+                            <div style={{ fontSize: 12, color: DARK, marginTop: 6, padding: "6px 8px", background: "#f2f5ef", borderRadius: 6 }}>{d.notes}</div>
+                          )}
+                          <div style={{ fontSize: 11, color: MUTED, marginTop: 4 }}>
+                            {d.needsBluff1 && "🌱 Bluff "}{d.needsSprague && "🌿 Sprague "}{d.needsHouseplants && "🪴 HP "}
+                          </div>
+                        </div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 }}>
+                          <button onClick={async () => {
+                            await update(d.id, {
+                              lifecycle: "confirmed",
+                              shippingConfirmedAt: new Date().toISOString(),
+                              shippingConfirmedBy: displayName,
+                            });
+                          }}
+                            style={{ padding: "10px 16px", background: GREEN, color: "#fff", border: "none", borderRadius: 8, fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
+                            ✓ Approve
+                          </button>
+                          <button onClick={async () => {
+                            await update(d.id, { lifecycle: "cancelled" });
+                          }}
+                            style={{ padding: "8px 16px", background: "#fff", color: RED, border: `1.5px solid ${RED}`, borderRadius: 8, fontWeight: 800, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+                            ✗ Decline
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
             </div>
           </div>
         </div>

@@ -41,6 +41,7 @@ import ShippingTeams        from "./shipping/ShippingTeams";
 import ShippingCalendar     from "./shipping/ShippingCalendar";
 import ShippingCarts        from "./shipping/ShippingCarts";
 import DriverView           from "./shipping/DriverView";
+import ShippingOfficeView   from "./shipping/ShippingOfficeView";
 
 // ── PLANNER SHELL ─────────────────────────────────────────────────────────────
 // Nav grouped by category
@@ -337,6 +338,20 @@ function AppInner() {
         <div style={{ maxWidth: 1200, margin: "0 auto", padding: "20px 16px" }}>
           <ShippingCommand />
         </div>
+      </div>
+    );
+  }
+
+  // Shipping office (Mario, Trish, Rachel) → delivery entry + calendar view
+  if (role === "shipping_office") {
+    return (
+      <div style={{ fontFamily: "'DM Sans','Segoe UI',sans-serif", background: "#f2f5ef", minHeight: "100vh" }}>
+        <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
+        <div style={{ background: "#1a2a1a", padding: "12px 20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ color: "#c8e6b8", fontWeight: 800, fontSize: 16 }}>Shipping Office</div>
+          <button onClick={signOut} style={{ background: "transparent", border: "1px solid #7fb06966", color: "#c8e6b8", padding: "6px 12px", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 700, fontFamily: "inherit" }}>Sign out</button>
+        </div>
+        <ShippingOfficeView />
       </div>
     );
   }

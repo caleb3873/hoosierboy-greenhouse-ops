@@ -13,6 +13,7 @@ const TEAM_LABELS = {
   bluff2: "Bluff Team 2",
   sprague: "Sprague Team",
   houseplants: "Houseplants Team",
+  loader: "Loader",
 };
 
 function todayISO() { return new Date().toISOString().slice(0, 10); }
@@ -26,9 +27,11 @@ export default function TeamPullView({ team: teamProp, onSwitchMode }) {
   const [showPhotoModal, setShowPhotoModal] = useState(false);
   const [showProblem, setShowProblem] = useState(false);
 
-  const needsField = `needs${team[0].toUpperCase() + team.slice(1)}`;
-  const pulledAtField = `${team}PulledAt`;
-  const pulledByField = `${team}PulledBy`;
+  // Loader team sees bluff1's queue (Zack helps with loading)
+  const effectiveTeam = team === "loader" ? "bluff1" : team;
+  const needsField = `needs${effectiveTeam[0].toUpperCase() + effectiveTeam.slice(1)}`;
+  const pulledAtField = `${effectiveTeam}PulledAt`;
+  const pulledByField = `${effectiveTeam}PulledBy`;
 
   const todaysForTeam = useMemo(() => {
     const today = todayISO();
@@ -119,34 +122,40 @@ export default function TeamPullView({ team: teamProp, onSwitchMode }) {
 
       <div style={{ padding: 16 }}>
         {current ? (
-          <div style={{ background: "#263821", border: `1px solid ${GREEN}44`, borderRadius: 14, padding: 20 }}>
-            <div style={{ fontSize: 10, fontWeight: 800, color: GREEN, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Next up</div>
-            <div style={{ fontSize: 26, fontWeight: 800, color: CREAM, fontFamily: "'DM Serif Display',Georgia,serif", marginBottom: 4 }}>
+          <div style={{ background: "#263821", border: `1px solid ${GREEN}44`, borderRadius: 14, padding: 24 }}>
+            <div style={{ fontSize: 11, fontWeight: 800, color: GREEN, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Next up</div>
+            <div style={{ fontSize: 30, fontWeight: 800, color: CREAM, fontFamily: "'DM Serif Display',Georgia,serif", marginBottom: 6, lineHeight: 1.15 }}>
               {current.customerSnapshot?.company_name || "—"}
             </div>
-            <div style={{ fontSize: 14, color: "#9cb894", marginBottom: 12 }}>
+            {(current.customerSnapshot?.address1 || current.customerSnapshot?.city) && (
+              <div style={{ fontSize: 13, color: "#9cb894", marginBottom: 8 }}>
+                {current.customerSnapshot.address1 && <div>{current.customerSnapshot.address1}</div>}
+                <div>{[current.customerSnapshot.city, current.customerSnapshot.state].filter(Boolean).join(", ")} {current.customerSnapshot.zip || ""}</div>
+              </div>
+            )}
+            <div style={{ fontSize: 15, color: "#9cb894", marginBottom: 14 }}>
               {current.deliveryTime || "—"} · {current.cartCount || 0} carts · {fmtMoney(current.orderValueCents)}
             </div>
             {(current.customerSnapshot?.terms || "").toUpperCase().includes("COD") && (
-              <div style={{ background: RED, color: "#fff", padding: 10, borderRadius: 8, fontWeight: 800, marginBottom: 8 }}>
+              <div style={{ background: RED, color: "#fff", padding: 12, borderRadius: 10, fontWeight: 800, marginBottom: 10, fontSize: 15 }}>
                 💰 COD — collect {fmtMoney(current.orderValueCents)}
               </div>
             )}
             {current.customerSnapshot?.shipping_notes && (
-              <div style={{ background: "#1e2d1a", color: CREAM, padding: 10, borderRadius: 8, marginBottom: 8, fontSize: 13 }}>
+              <div style={{ background: "#1e2d1a", color: CREAM, padding: 12, borderRadius: 10, marginBottom: 10, fontSize: 14 }}>
                 📝 {current.customerSnapshot.shipping_notes}
               </div>
             )}
             {current.notes && (
-              <div style={{ fontSize: 13, color: CREAM, marginBottom: 12, whiteSpace: "pre-wrap" }}>{current.notes}</div>
+              <div style={{ fontSize: 14, color: CREAM, marginBottom: 14, whiteSpace: "pre-wrap" }}>{current.notes}</div>
             )}
 
             <button onClick={() => setShowPhotoModal(true)}
-              style={{ width: "100%", background: GREEN, color: DARK, border: "none", padding: "18px 0", borderRadius: 12, fontSize: 17, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", marginBottom: 10 }}>
+              style={{ width: "100%", background: GREEN, color: DARK, border: "none", padding: "20px 0", borderRadius: 12, fontSize: 18, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", marginBottom: 12, minHeight: 56 }}>
               ✓ Mark {TEAM_LABELS[team].replace(" Team", "")} done
             </button>
             <button onClick={() => setShowProblem(true)}
-              style={{ width: "100%", background: "transparent", color: "#ffb3a8", border: `1.5px solid ${RED}`, padding: "14px 0", borderRadius: 12, fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+              style={{ width: "100%", background: "transparent", color: "#ffb3a8", border: `1.5px solid ${RED}`, padding: "16px 0", borderRadius: 12, fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", minHeight: 52 }}>
               ⚠ Report problem
             </button>
           </div>
