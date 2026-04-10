@@ -278,11 +278,23 @@ export default function ShippingManagerMobile({ onSwitchMode }) {
               {isShipped && <span style={{ background: GREEN, color: "#fff", borderRadius: 999, padding: "1px 8px", fontSize: 10, fontWeight: 800 }}>SHIPPED {new Date(d.shippedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}</span>}
               {selectedDayIdx === null && <span style={{ fontSize: 11, color: MUTED, fontWeight: 600 }}>{dateLabel(d.deliveryDate)}</span>}
             </div>
-            {/* Team pull status */}
-            <div style={{ marginTop: 4, fontSize: 13 }}>
-              {(d.needsBluff1 || d.needsBluff2) && <span title="Bluff" style={{ fontWeight: 800 }}>B{bluffDone ? "✓" : "○"} </span>}
-              {d.needsSprague && <span title="Sprague" style={{ fontWeight: 800 }}>S{d.spraguePulledAt ? "✓" : "○"} </span>}
-              {d.needsHouseplants && <span title="Houseplants" style={{ fontWeight: 800 }}>H{d.houseplantsPulledAt ? "✓" : "○"} </span>}
+            {/* Team pull status + quick ship */}
+            <div style={{ marginTop: 4, fontSize: 13, display: "flex", alignItems: "center", gap: 8 }}>
+              <span>
+                {(d.needsBluff1 || d.needsBluff2) && <span title="Bluff" style={{ fontWeight: 800 }}>B{bluffDone ? "✓" : "○"} </span>}
+                {d.needsSprague && <span title="Sprague" style={{ fontWeight: 800 }}>S{d.spraguePulledAt ? "✓" : "○"} </span>}
+                {d.needsHouseplants && <span title="Houseplants" style={{ fontWeight: 800 }}>H{d.houseplantsPulledAt ? "✓" : "○"} </span>}
+              </span>
+              {allPulled && !isShipped && (
+                <button onClick={async (e) => {
+                    e.stopPropagation();
+                    await update(d.id, { shippedAt: new Date().toISOString(), shippedBy: displayName });
+                    setExpandedId(null);
+                  }}
+                  style={{ padding: "3px 10px", background: GREEN, color: "#fff", border: "none", borderRadius: 999, fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                  ✓ Ship
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -342,6 +354,7 @@ export default function ShippingManagerMobile({ onSwitchMode }) {
                         await update(d.id, { shippedAt: null, shippedBy: null });
                       } else {
                         await update(d.id, { shippedAt: new Date().toISOString(), shippedBy: displayName });
+                        setExpandedId(null);
                       }
                     }}
                     style={{ width: 22, height: 22 }} />
