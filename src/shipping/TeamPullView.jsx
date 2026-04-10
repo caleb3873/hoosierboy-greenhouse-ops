@@ -59,9 +59,8 @@ export default function TeamPullView({ team: teamProp, onSwitchMode, canAddOrder
     });
   }, [deliveries, needsField, isBluff]);
 
-  // For bluff: "pulled" = both bluff portions done (or only the needed one)
-  // For others: pulled = their pulledAt is set
-  function isPulled(d) {
+  // "Fully pulled" = ALL portions done (for progress bar)
+  function isFullyPulled(d) {
     if (isBluff) {
       const b1Done = !d.needsBluff1 || d.bluff1PulledAt;
       const b2Done = !d.needsBluff2 || d.bluff2PulledAt;
@@ -69,6 +68,20 @@ export default function TeamPullView({ team: teamProp, onSwitchMode, canAddOrder
     }
     return !!d[`${effectiveTeam}PulledAt`];
   }
+
+  // "My portion done" = for Bluff teams, either team completing marks all Bluff done
+  // So any bluff team member skips orders where bluff1PulledAt is set (since completion sets both)
+  function isMyPortionDone(d) {
+    if (isBluff) {
+      const b1Done = !d.needsBluff1 || !!d.bluff1PulledAt;
+      const b2Done = !d.needsBluff2 || !!d.bluff2PulledAt;
+      return b1Done && b2Done;
+    }
+    return !!d[`${effectiveTeam}PulledAt`];
+  }
+
+  // Alias for backward compat in all-orders list
+  function isPulled(d) { return isFullyPulled(d); }
 
   // For bluff: is this order claimed by another bluff team lead?
   function isClaimedByOther(d) {
@@ -82,16 +95,16 @@ export default function TeamPullView({ team: teamProp, onSwitchMode, canAddOrder
     return d.bluffClaimedBy === displayName;
   }
 
-  // Pending orders: not pulled, sorted by priority
+  // Pending orders: my portion not yet done, sorted by priority
   const allPending = useMemo(() =>
     todaysForTeam
-      .filter(d => !isPulled(d))
+      .filter(d => !isMyPortionDone(d))
       .sort((a, b) =>
         (a.priorityOrder ?? 9999) - (b.priorityOrder ?? 9999) ||
         (a.deliveryTime || "").localeCompare(b.deliveryTime || "") ||
         (a.createdAt || "").localeCompare(b.createdAt || "")
       ),
-    [todaysForTeam] // eslint-disable-line
+    [todaysForTeam, team] // eslint-disable-line
   );
 
   // Current order for this person:
@@ -104,10 +117,10 @@ export default function TeamPullView({ team: teamProp, onSwitchMode, canAddOrder
   const current = myClaimed || (isBluff ? null : nextUnclaimed);
   const needsClaim = isBluff && !myClaimed && !!nextUnclaimed;
 
-  // Stats
-  const pulledCount = todaysForTeam.filter(d => isPulled(d)).length;
+  // Stats — based on MY portion, not all portions
+  const pulledCount = todaysForTeam.filter(d => isMyPortionDone(d)).length;
   const totalDollars = todaysForTeam.reduce((s, d) => s + (d.orderValueCents || 0), 0);
-  const pulledDollars = todaysForTeam.filter(d => isPulled(d)).reduce((s, d) => s + (d.orderValueCents || 0), 0);
+  const pulledDollars = todaysForTeam.filter(d => isMyPortionDone(d)).reduce((s, d) => s + (d.orderValueCents || 0), 0);
   const remainingDollars = totalDollars - pulledDollars;
   const pct = todaysForTeam.length === 0 ? 0 : Math.round((pulledCount / todaysForTeam.length) * 100);
 
@@ -180,14 +193,10 @@ export default function TeamPullView({ team: teamProp, onSwitchMode, canAddOrder
     // Determine which pulled fields to set
     const patch = { pickSheetPhotos: [...existing, ...uploaded] };
     if (isBluff) {
-      // Mark whichever bluff portion this team handles
-      if (team === "bluff1" || team === "loader") {
-        if (current.needsBluff1) { patch.bluff1PulledAt = new Date().toISOString(); patch.bluff1PulledBy = displayName; }
-      }
-      if (team === "bluff2") {
-        if (current.needsBluff2) { patch.bluff2PulledAt = new Date().toISOString(); patch.bluff2PulledBy = displayName; }
-      }
-      // Clear the claim so the order shows as available if the other bluff portion still needs pulling
+      // Either Bluff team completing marks ALL of Bluff done
+      const now = new Date().toISOString();
+      if (current.needsBluff1) { patch.bluff1PulledAt = now; patch.bluff1PulledBy = displayName; }
+      if (current.needsBluff2) { patch.bluff2PulledAt = now; patch.bluff2PulledBy = displayName; }
       patch.bluffClaimedBy = null;
       patch.bluffClaimedAt = null;
     } else {
@@ -324,15 +333,10 @@ export default function TeamPullView({ team: teamProp, onSwitchMode, canAddOrder
             <button onClick={async () => {
                 if (!window.confirm("Mark order complete with lost/incomplete pick sheet? This will be flagged for review.")) return;
                 const patch = {};
+                const now = new Date().toISOString();
                 if (isBluff) {
-                  if ((team === "bluff1" || team === "loader") && current.needsBluff1) {
-                    patch.bluff1PulledAt = new Date().toISOString();
-                    patch.bluff1PulledBy = displayName;
-                  }
-                  if (team === "bluff2" && current.needsBluff2) {
-                    patch.bluff2PulledAt = new Date().toISOString();
-                    patch.bluff2PulledBy = displayName;
-                  }
+                  if (current.needsBluff1) { patch.bluff1PulledAt = now; patch.bluff1PulledBy = displayName; }
+                  if (current.needsBluff2) { patch.bluff2PulledAt = now; patch.bluff2PulledBy = displayName; }
                   patch.bluffClaimedBy = null;
                   patch.bluffClaimedAt = null;
                 } else {
