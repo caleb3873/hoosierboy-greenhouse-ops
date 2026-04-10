@@ -3,6 +3,7 @@ import { useDeliveries, useShippingCustomers, useFloorCodes } from "../supabase"
 import { useAuth } from "../Auth";
 import { customerConfirmationValid } from "./ShippingCommand";
 import DeliveryImporter from "./DeliveryImporter";
+import { NotificationBanner } from "../PushNotifications";
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
 const DARK = "#1e2d1a";
@@ -79,6 +80,7 @@ export default function ShippingOfficeView() {
 
   return (
     <div style={{ ...FONT, maxWidth: 600, margin: "0 auto", padding: "0 12px 100px" }}>
+      <div style={{ marginTop: 12 }}><NotificationBanner /></div>
       {/* Schedule changes banner */}
       {recentChanges.length > 0 && (
         <div style={{ marginTop: 12 }}>

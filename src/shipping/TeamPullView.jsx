@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useDeliveries, useShippingCustomers, getSupabase } from "../supabase";
 import { useAuth } from "../Auth";
+import { NotificationBanner } from "../PushNotifications";
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
 const DARK = "#1e2d1a";
@@ -260,6 +261,7 @@ export default function TeamPullView({ team: teamProp, onSwitchMode, canAddOrder
       </div>
 
       <div style={{ padding: 16 }}>
+        <NotificationBanner />
         {/* Claim flow for Bluff teams */}
         {needsClaim && nextUnclaimed && (
           <div style={{ background: "#263821", border: `1px solid ${GREEN}44`, borderRadius: 14, padding: 24 }}>

@@ -2,6 +2,7 @@ import { useMemo, useState, useEffect, useRef } from "react";
 import { useManagerTasks } from "./supabase";
 import { useAuth } from "./Auth";
 import { CompletionPromptModal, TaskViewer, formatTargetDate, bucketToDate } from "./ManagerTasksView";
+import { NotificationBanner } from "./PushNotifications";
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
 const GREEN_DARK = "#1e2d1a";
@@ -221,6 +222,7 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
 
   return (
     <div style={{ ...FONT, minHeight: "100vh", background: GREEN_DARK, color: "#fff", paddingBottom: 100 }}>
+      <div style={{ padding: "10px 14px 0" }}><NotificationBanner /></div>
       <div style={{ padding: "14px 14px", borderBottom: `1px solid ${GREEN}33`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
         <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: 11, color: GREEN, textTransform: "uppercase", letterSpacing: 1 }}>{t_ui.hi} {displayName}</div>

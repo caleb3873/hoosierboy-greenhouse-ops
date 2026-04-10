@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useRef } from "react";
 import { useManagerTasks } from "./supabase";
 import { useAuth } from "./Auth";
 import { getCurrentWeek } from "./shared";
+import { NotificationBanner } from "./PushNotifications";
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
 
@@ -109,6 +110,12 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
     });
     setShowRecorder(false);
     refresh();
+    // Notify growers of new task
+    fetch("/api/notify-task", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ event: "task_created", title: title.trim(), category, bucket }),
+    }).catch(() => {});
   }
 
   const [completingTask, setCompletingTask] = useState(null);
@@ -148,6 +155,12 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
     });
     setApprovingRequest(null);
     refresh();
+    // Notify the requester their task was approved
+    fetch("/api/notify-task", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ event: "task_approved", title: request.title, requester: request.createdBy }),
+    }).catch(() => {});
   }
 
   async function rejectRequest(request) {
@@ -314,6 +327,9 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
         </div>
         <button onClick={() => changeWeek(1)} style={{ background: "none", border: "none", color: "#c8e6b8", fontSize: 18, cursor: "pointer", padding: 6 }}>&rarr;</button>
       </div>
+
+      {/* Push notification banner */}
+      <div style={{ padding: "12px 20px 0" }}><NotificationBanner /></div>
 
       {/* Category tabs */}
       <div style={{ padding: "12px 20px 0", background: "#fff", display: "flex", gap: 8 }}>
