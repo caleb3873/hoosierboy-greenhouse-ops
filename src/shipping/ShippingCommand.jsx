@@ -77,6 +77,12 @@ export default function ShippingCommand() {
   // Drag state
   const [dragId, setDragId] = useState(null);
 
+  // Route builder state
+  const [routeMode, setRouteMode] = useState(false);
+  const [routeStops, setRouteStops] = useState([]); // array of delivery IDs in order
+  const [routeDriver, setRouteDriver] = useState("");
+  const [routeTruck, setRouteTruck] = useState("");
+
   const monday = useMemo(() => addDays(weekMonday(), weekOffset * 7), [weekOffset]);
   const days = useMemo(() => Array.from({ length: 6 }, (_, i) => addDays(monday, i)), [monday]);
 
@@ -170,6 +176,49 @@ export default function ShippingCommand() {
     });
   }
 
+  // Route builder helpers
+  function toggleRouteStop(deliveryId) {
+    setRouteStops(prev => {
+      if (prev.includes(deliveryId)) return prev.filter(id => id !== deliveryId);
+      return [...prev, deliveryId];
+    });
+  }
+  function moveRouteStop(idx, dir) {
+    setRouteStops(prev => {
+      const arr = [...prev];
+      const newIdx = idx + dir;
+      if (newIdx < 0 || newIdx >= arr.length) return arr;
+      [arr[idx], arr[newIdx]] = [arr[newIdx], arr[idx]];
+      return arr;
+    });
+  }
+  function removeRouteStop(idx) {
+    setRouteStops(prev => prev.filter((_, i) => i !== idx));
+  }
+  const routeDeliveries = routeStops.map(id => deliveries.find(d => d.id === id)).filter(Boolean);
+  const routeTotal = routeDeliveries.reduce((s, d) => s + (d.orderValueCents || 0), 0);
+  const routeTotalDollars = routeTotal / 100;
+  const TRUCK_WARN = 22000;
+
+  async function saveRoute() {
+    for (let i = 0; i < routeStops.length; i++) {
+      const patch = { stopOrder: i + 1 };
+      if (routeDriver) patch.driverId = routeDriver;
+      if (routeTruck) patch.truckId = routeTruck;
+      await update(routeStops[i], patch);
+    }
+    setRouteMode(false);
+    setRouteStops([]);
+  }
+
+  function handleChipClick(del) {
+    if (routeMode) {
+      toggleRouteStop(del.id);
+    } else {
+      setSelected(del);
+    }
+  }
+
   // Drag handlers
   async function handleDrop(e, targetDate, targetSlot) {
     e.preventDefault();
@@ -232,6 +281,10 @@ export default function ShippingCommand() {
         <button onClick={() => setModal("reconfirm")}
           style={{ padding: "10px 16px", borderRadius: 999, border: `1.5px solid ${needReconfirm.length ? AMBER : BORDER}`, background: needReconfirm.length ? "#fff7ec" : "#fff", color: needReconfirm.length ? AMBER : MUTED, fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
           🟡 {needReconfirm.length} need reconfirmation
+        </button>
+        <button onClick={() => { setRouteMode(true); setRouteStops([]); setRouteDriver(""); setRouteTruck(""); }}
+          style={{ padding: "10px 16px", borderRadius: 999, border: `1.5px solid ${DARK}`, background: routeMode ? DARK : "#fff", color: routeMode ? "#fff" : DARK, fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
+          🚛 Build Route
         </button>
         <button onClick={() => setModal("import")}
           style={{ padding: "10px 16px", borderRadius: 999, border: `1.5px solid ${GREEN}`, background: "#f0f9ec", color: DARK, fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit", marginLeft: "auto" }}>
@@ -325,18 +378,188 @@ export default function ShippingCommand() {
                 onDragLeave={e => { e.currentTarget.style.background = "#f7faf4"; }}
                 onDrop={e => { e.currentTarget.style.background = "#f7faf4"; handleDrop(e, d, slot); }}
                 style={{ minHeight: 120, background: "#f7faf4", borderRadius: 8, padding: 4, border: `1px solid ${BORDER}`, transition: "background 0.15s" }}>
-                {bucket(d, slot).map(del => (
-                  <Chip key={del.id} delivery={del} customers={customers} claimsCount={claimsByCustomer.get(del.customerId) || 0}
-                    onClick={() => setSelected(del)}
-                    onDragStart={() => setDragId(del.id)}
-                    onDragEnd={() => setDragId(null)}
-                    isDragging={dragId === del.id} />
-                ))}
+                {bucket(d, slot).map(del => {
+                  const routeIdx = routeStops.indexOf(del.id);
+                  return (
+                    <Chip key={del.id} delivery={del} customers={customers} claimsCount={claimsByCustomer.get(del.customerId) || 0}
+                      onClick={() => handleChipClick(del)}
+                      onDragStart={() => setDragId(del.id)}
+                      onDragEnd={() => setDragId(null)}
+                      isDragging={dragId === del.id}
+                      routeMode={routeMode}
+                      routeIndex={routeIdx >= 0 ? routeIdx + 1 : null} />
+                  );
+                })}
               </div>
             ))}
           </>
         ))}
       </div>
+
+      {/* Route Builder Panel */}
+      {routeMode && (
+        <div style={{ marginTop: 16, background: "#fff", border: `2px solid ${DARK}`, borderRadius: 14, padding: 20, position: "relative" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+            <div style={{ fontSize: 20, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif", color: DARK }}>🚛 Route Builder</div>
+            <button onClick={() => { setRouteMode(false); setRouteStops([]); }}
+              style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: MUTED }}>✕</button>
+          </div>
+          <div style={{ fontSize: 12, color: MUTED, marginBottom: 12 }}>Click deliveries on the calendar to add stops. Order matters — first click = first delivery (back of truck), last click = last delivery (front of truck).</div>
+
+          {/* Driver + truck assignment */}
+          <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+            <label style={{ flex: 1, minWidth: 160 }}>
+              <div style={{ fontSize: 10, fontWeight: 800, color: MUTED, marginBottom: 4 }}>Driver</div>
+              <select value={routeDriver} onChange={e => setRouteDriver(e.target.value)}
+                style={{ width: "100%", padding: "8px 10px", borderRadius: 6, border: `1px solid ${BORDER}`, fontSize: 13, fontFamily: "inherit" }}>
+                <option value="">— Select driver —</option>
+                {drivers.map(dr => <option key={dr.id} value={dr.id}>{dr.name}</option>)}
+              </select>
+            </label>
+            <label style={{ flex: 1, minWidth: 160 }}>
+              <div style={{ fontSize: 10, fontWeight: 800, color: MUTED, marginBottom: 4 }}>Truck</div>
+              <select value={routeTruck} onChange={e => setRouteTruck(e.target.value)}
+                style={{ width: "100%", padding: "8px 10px", borderRadius: 6, border: `1px solid ${BORDER}`, fontSize: 13, fontFamily: "inherit" }}>
+                <option value="">— Select truck —</option>
+                {trucks.map(tr => <option key={tr.id} value={tr.id}>{tr.name}</option>)}
+              </select>
+            </label>
+          </div>
+
+          {/* Value warning */}
+          {routeTotalDollars > TRUCK_WARN && (
+            <div style={{ padding: "10px 14px", background: "#fff3f1", border: `1.5px solid ${RED}`, borderRadius: 8, marginBottom: 14, fontWeight: 800, fontSize: 13, color: RED }}>
+              ⚠ Route total ${routeTotalDollars.toLocaleString()} exceeds ${TRUCK_WARN.toLocaleString()} — truck might be full!
+            </div>
+          )}
+
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+            {/* Stop list */}
+            <div style={{ flex: 1, minWidth: 280 }}>
+              <div style={{ fontSize: 10, fontWeight: 800, color: MUTED, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>
+                Stops ({routeStops.length}) · ${routeTotalDollars.toLocaleString(undefined, { minimumFractionDigits: 0 })}
+              </div>
+              {routeDeliveries.length === 0 && (
+                <div style={{ padding: 20, textAlign: "center", color: MUTED, fontSize: 13, border: `1.5px dashed ${BORDER}`, borderRadius: 8 }}>
+                  Click deliveries on the calendar above to add stops
+                </div>
+              )}
+              {routeDeliveries.map((d, i) => {
+                const c = d.customerSnapshot || {};
+                const fc = customers.find(x => x.id === d.customerId) || {};
+                return (
+                  <div key={d.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", border: `1px solid ${BORDER}`, borderRadius: 8, marginBottom: 4, background: "#f7faf4" }}>
+                    <div style={{ width: 24, height: 24, borderRadius: "50%", background: DARK, color: "#fff", fontSize: 11, fontWeight: 900, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{i + 1}</div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 800, fontSize: 12, color: DARK, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.company_name || "—"}</div>
+                      <div style={{ fontSize: 10, color: MUTED }}>{fc.city || c.city || ""}{fc.state ? `, ${fc.state}` : ""} · {fmtMoney(d.orderValueCents)}{d.miles ? ` · ${d.miles}mi` : ""}{d.driveMinutes ? ` · ~${Math.round(d.driveMinutes)}min` : ""}</div>
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                      <button onClick={() => moveRouteStop(i, -1)} disabled={i === 0}
+                        style={{ background: "none", border: "none", cursor: i === 0 ? "default" : "pointer", fontSize: 14, opacity: i === 0 ? 0.3 : 1, padding: 0, lineHeight: 1 }}>▲</button>
+                      <button onClick={() => moveRouteStop(i, 1)} disabled={i === routeDeliveries.length - 1}
+                        style={{ background: "none", border: "none", cursor: i === routeDeliveries.length - 1 ? "default" : "pointer", fontSize: 14, opacity: i === routeDeliveries.length - 1 ? 0.3 : 1, padding: 0, lineHeight: 1 }}>▼</button>
+                    </div>
+                    <button onClick={() => removeRouteStop(i)}
+                      style={{ background: "none", border: "none", color: RED, fontSize: 16, cursor: "pointer", padding: 0, fontWeight: 900 }}>×</button>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Truck diagram */}
+            <div style={{ width: 180, flexShrink: 0 }}>
+              <div style={{ fontSize: 10, fontWeight: 800, color: MUTED, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Truck Loading</div>
+              <div style={{
+                border: `2px solid ${DARK}`, borderRadius: "8px 8px 20px 20px", overflow: "hidden",
+                background: "#f7faf4", position: "relative",
+              }}>
+                {/* Cab */}
+                <div style={{ background: DARK, color: CREAM, textAlign: "center", fontSize: 10, fontWeight: 800, padding: "6px 0" }}>
+                  🚛 CAB — FRONT
+                </div>
+                {/* Bed — last delivery loaded first (front), first delivery loaded last (back) */}
+                <div style={{ padding: 6, minHeight: 80 }}>
+                  {[...routeDeliveries].reverse().map((d, ri) => {
+                    const stopNum = routeDeliveries.length - ri;
+                    const c = d.customerSnapshot || {};
+                    const pct = Math.min(((d.orderValueCents || 0) / 100) / TRUCK_WARN * 100, 100);
+                    return (
+                      <div key={d.id} style={{
+                        padding: "5px 8px", marginBottom: 3,
+                        background: `linear-gradient(90deg, ${CREAM} ${pct}%, #fff ${pct}%)`,
+                        border: `1px solid ${BORDER}`, borderRadius: 4,
+                        fontSize: 9, fontWeight: 700, color: DARK,
+                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                      }}>
+                        <span style={{ fontWeight: 900 }}>#{stopNum}</span> {c.company_name || "—"}
+                      </div>
+                    );
+                  })}
+                  {routeDeliveries.length === 0 && (
+                    <div style={{ textAlign: "center", color: MUTED, fontSize: 10, padding: 16 }}>Empty</div>
+                  )}
+                </div>
+                {/* Tailgate */}
+                <div style={{ background: "#e0ead8", textAlign: "center", fontSize: 10, fontWeight: 800, padding: "6px 0", color: MUTED }}>
+                  BACK — LOAD FIRST
+                </div>
+              </div>
+              {/* Fill meter */}
+              {routeDeliveries.length > 0 && (
+                <div style={{ marginTop: 8 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: routeTotalDollars > TRUCK_WARN ? RED : DARK, marginBottom: 4 }}>
+                    ${routeTotalDollars.toLocaleString()} / ${TRUCK_WARN.toLocaleString()}
+                  </div>
+                  <div style={{ background: "#e0ead8", borderRadius: 6, height: 8, overflow: "hidden" }}>
+                    <div style={{
+                      width: `${Math.min((routeTotalDollars / TRUCK_WARN) * 100, 100)}%`,
+                      height: "100%", borderRadius: 6,
+                      background: routeTotalDollars > TRUCK_WARN ? RED : GREEN,
+                      transition: "width 0.3s",
+                    }} />
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Route time estimate */}
+          {routeDeliveries.length > 0 && (() => {
+            const totalDriveMins = routeDeliveries.reduce((s, d) => s + (d.driveMinutes || 0), 0);
+            const dropoffMins = routeDeliveries.length * 30;
+            // Rough return trip = last stop's drive minutes (or average if not set)
+            const lastStopMins = routeDeliveries[routeDeliveries.length - 1]?.driveMinutes || 0;
+            const totalMins = totalDriveMins + dropoffMins + lastStopMins;
+            const hrs = Math.floor(totalMins / 60);
+            const mins = Math.round(totalMins % 60);
+            return (
+              <div style={{ marginTop: 14, padding: "10px 14px", background: "#f2f5ef", borderRadius: 8, fontSize: 12, color: DARK }}>
+                <b>Estimated route time:</b> {hrs > 0 ? `${hrs}h ` : ""}{mins}min
+                <span style={{ color: MUTED, marginLeft: 8 }}>
+                  ({Math.round(totalDriveMins)}min driving + {dropoffMins}min drop-offs + ~{Math.round(lastStopMins)}min return)
+                </span>
+              </div>
+            );
+          })()}
+
+          {/* Save */}
+          <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
+            <button onClick={saveRoute} disabled={routeStops.length === 0}
+              style={{
+                padding: "12px 24px", background: routeStops.length === 0 ? MUTED : GREEN, color: "#fff",
+                border: "none", borderRadius: 8, fontWeight: 800, fontSize: 14,
+                cursor: routeStops.length === 0 ? "default" : "pointer", fontFamily: "inherit",
+              }}>
+              ✓ Save Route ({routeStops.length} stops)
+            </button>
+            <button onClick={() => { setRouteMode(false); setRouteStops([]); }}
+              style={{ padding: "12px 20px", background: "#fff", color: MUTED, border: `1px solid ${BORDER}`, borderRadius: 8, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {selected && (
         <DetailDrawer
@@ -391,7 +614,7 @@ export default function ShippingCommand() {
 const navBtn = { background: "#f2f5ef", border: `1px solid ${BORDER}`, padding: "8px 12px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 700, fontFamily: "inherit", color: DARK };
 
 // ── Chip ────────────────────────────────────────────────────────────────────
-function Chip({ delivery: d, customers, claimsCount, onClick, onDragStart, onDragEnd, isDragging }) {
+function Chip({ delivery: d, customers, claimsCount, onClick, onDragStart, onDragEnd, isDragging, routeMode, routeIndex }) {
   const cust = d.customerSnapshot || {};
   const fullCust = customers.find(c => c.id === d.customerId) || {};
   const isProposed = d.lifecycle === "proposed" || (!d.lifecycle);
@@ -412,12 +635,20 @@ function Chip({ delivery: d, customers, claimsCount, onClick, onDragStart, onDra
       onDragEnd={() => onDragEnd?.()}
       onClick={onClick}
       style={{
-      background: isCancelled ? "#f0f0f0" : "#fff",
-      border: isProposed ? `1.5px dashed ${MUTED}` : `1.5px solid ${DARK}`,
-      borderRadius: 6, padding: 6, marginBottom: 4, cursor: d.dateLocked ? "pointer" : "grab",
+      background: routeIndex ? "#e8f5e0" : isCancelled ? "#f0f0f0" : "#fff",
+      border: routeIndex ? `2px solid ${GREEN}` : isProposed ? `1.5px dashed ${MUTED}` : `1.5px solid ${DARK}`,
+      borderRadius: 6, padding: 6, marginBottom: 4, cursor: routeMode ? "pointer" : d.dateLocked ? "pointer" : "grab",
       opacity: isDragging ? 0.4 : isProposed ? 0.75 : isCancelled ? 0.5 : 1,
+      position: "relative",
       fontSize: 10, lineHeight: 1.3,
     }}>
+      {routeIndex && (
+        <div style={{
+          position: "absolute", top: -6, left: -6, width: 20, height: 20, borderRadius: "50%",
+          background: DARK, color: "#fff", fontSize: 10, fontWeight: 900,
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>{routeIndex}</div>
+      )}
       <div style={{ display: "flex", justifyContent: "space-between", gap: 4, fontWeight: 800, color: DARK }}>
         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
           {d.dateLocked && "🔒 "}{cust.company_name || "—"}
