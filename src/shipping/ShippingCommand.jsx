@@ -82,6 +82,9 @@ export default function ShippingCommand() {
   const [routeStops, setRouteStops] = useState([]); // array of delivery IDs in order
   const [routeDriver, setRouteDriver] = useState("");
   const [routeTruck, setRouteTruck] = useState("");
+  const [fuelCostPerGal, setFuelCostPerGal] = useState(5.00);
+  const DRIVER_RATE = 22; // $/hr
+  const MPG = 8; // rough box truck fuel economy
 
   const monday = useMemo(() => addDays(weekMonday(), weekOffset * 7), [weekOffset]);
   const days = useMemo(() => Array.from({ length: 6 }, (_, i) => addDays(monday, i)), [monday]);
@@ -456,44 +459,80 @@ export default function ShippingCommand() {
             </div>
           )}
 
-          {/* Truck diagram — correct loading order:
-              Back of truck = loaded LAST, unloaded FIRST = stop #1 (first delivery)
-              Front of truck = loaded FIRST, unloaded LAST = last stop */}
+          {/* Truck diagram — top-down box truck view
+              Looking down at the truck from above:
+              Left = CAB (front). Right = DOORS (back).
+              Last stop loaded first → goes to front (left).
+              First stop loaded last → goes to back/doors (right), unloaded first. */}
           <div style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: 10, fontWeight: 800, color: MUTED, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Truck Loading Order</div>
-            <div style={{ border: `2px solid ${DARK}`, borderRadius: "8px 8px 20px 20px", overflow: "hidden", background: "#f7faf4" }}>
-              <div style={{ background: DARK, color: CREAM, textAlign: "center", fontSize: 9, fontWeight: 800, padding: "5px 0" }}>
-                🚛 CAB — FRONT (load first, unload last)
+            <div style={{ fontSize: 10, fontWeight: 800, color: MUTED, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Truck Loading — Top View</div>
+            <div style={{ display: "flex", alignItems: "stretch", border: `2px solid ${DARK}`, borderRadius: "12px 4px 4px 12px", overflow: "hidden", minHeight: 90 }}>
+              {/* Cab */}
+              <div style={{
+                width: 36, background: DARK, color: CREAM, display: "flex", alignItems: "center", justifyContent: "center",
+                writingMode: "vertical-rl", textOrientation: "mixed", fontSize: 9, fontWeight: 800, letterSpacing: 1, flexShrink: 0,
+              }}>
+                CAB
               </div>
-              <div style={{ padding: 4, minHeight: 50 }}>
-                {/* Front of truck shows LAST delivery (loaded first, unloaded last) */}
+              {/* Cargo area — each delivery is a section from left (front) to right (back/doors) */}
+              <div style={{ flex: 1, display: "flex", background: "#f7faf4", position: "relative", minHeight: 80 }}>
+                {routeDeliveries.length === 0 && (
+                  <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: MUTED, fontSize: 11 }}>
+                    Empty truck
+                  </div>
+                )}
+                {/* Reverse order: last stop at front (left), first stop at back (right/doors) */}
                 {[...routeDeliveries].reverse().map((d, ri) => {
                   const stopNum = routeDeliveries.length - ri;
                   const c = d.customerSnapshot || {};
-                  const pct = Math.min(((d.orderValueCents || 0) / 100) / TRUCK_WARN * 100, 100);
+                  const isFirst = stopNum === 1;
+                  const isLast = stopNum === routeDeliveries.length;
+                  // Width proportional to order value, min 40px
+                  const valPct = routeTotal > 0 ? (d.orderValueCents || 0) / routeTotal : 1 / (routeDeliveries.length || 1);
+                  const colors = ["#c8e6b8", "#b8d9a8", "#a8cc98", "#98bf88", "#88b278", "#78a568"];
+                  const bgColor = colors[ri % colors.length];
                   return (
                     <div key={d.id} style={{
-                      padding: "4px 6px", marginBottom: 2,
-                      background: `linear-gradient(90deg, ${CREAM} ${pct}%, #fff ${pct}%)`,
-                      border: `1px solid ${BORDER}`, borderRadius: 3,
-                      fontSize: 9, fontWeight: 700, color: DARK,
-                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                      flex: `${Math.max(valPct * 100, 12)} 0 0`,
+                      minWidth: 36,
+                      background: bgColor,
+                      borderRight: ri < routeDeliveries.length - 1 ? `2px solid ${DARK}` : "none",
+                      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                      padding: "6px 2px", position: "relative", overflow: "hidden",
                     }}>
-                      <span style={{ fontWeight: 900 }}>#{stopNum}</span> {c.company_name || "—"}
+                      <div style={{
+                        width: 20, height: 20, borderRadius: "50%", background: DARK, color: "#fff",
+                        fontSize: 10, fontWeight: 900, display: "flex", alignItems: "center", justifyContent: "center",
+                        marginBottom: 2, flexShrink: 0,
+                      }}>{stopNum}</div>
+                      <div style={{ fontSize: 8, fontWeight: 700, color: DARK, textAlign: "center", lineHeight: 1.2, overflow: "hidden", maxHeight: 28 }}>
+                        {c.company_name || "—"}
+                      </div>
+                      <div style={{ fontSize: 7, color: "#4a6a3a", fontWeight: 700, marginTop: 1 }}>
+                        {fmtMoney(d.orderValueCents)}
+                      </div>
                     </div>
                   );
                 })}
-                {routeDeliveries.length === 0 && (
-                  <div style={{ textAlign: "center", color: MUTED, fontSize: 10, padding: 12 }}>Empty</div>
-                )}
               </div>
-              <div style={{ background: "#e0ead8", textAlign: "center", fontSize: 9, fontWeight: 800, padding: "5px 0", color: MUTED }}>
-                BACK — TAILGATE (load last, unload first)
+              {/* Doors */}
+              <div style={{
+                width: 20, background: "#e0ead8", display: "flex", alignItems: "center", justifyContent: "center",
+                borderLeft: `2px dashed ${MUTED}`, flexShrink: 0,
+              }}>
+                <div style={{ writingMode: "vertical-rl", textOrientation: "mixed", fontSize: 8, fontWeight: 800, color: MUTED, letterSpacing: 1 }}>
+                  DOORS
+                </div>
               </div>
+            </div>
+            {/* Labels */}
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4, fontSize: 9, color: MUTED, fontWeight: 700 }}>
+              <span>← Load first, unload last</span>
+              <span>Load last, unload first →</span>
             </div>
             {/* Fill meter */}
             {routeDeliveries.length > 0 && (
-              <div style={{ marginTop: 6 }}>
+              <div style={{ marginTop: 8 }}>
                 <div style={{ fontSize: 10, fontWeight: 700, color: routeTotalDollars > TRUCK_WARN ? RED : DARK, marginBottom: 3 }}>
                   ${routeTotalDollars.toLocaleString()} / ${TRUCK_WARN.toLocaleString()}
                 </div>
@@ -550,15 +589,23 @@ export default function ShippingCommand() {
           {/* Time estimate */}
           {routeDeliveries.length > 0 && (() => {
             const totalDriveMins = routeDeliveries.reduce((s, d) => s + (d.driveMinutes || 0), 0);
+            const totalMiles = routeDeliveries.reduce((s, d) => s + (d.miles || 0), 0);
             const dropoffMins = routeDeliveries.length * 30;
             const lastStopMins = routeDeliveries[routeDeliveries.length - 1]?.driveMinutes || 0;
+            const lastStopMiles = routeDeliveries[routeDeliveries.length - 1]?.miles || 0;
             const totalMins = totalDriveMins + dropoffMins + lastStopMins;
+            const totalRouteMiles = totalMiles + lastStopMiles; // include return
             const hrs = Math.floor(totalMins / 60);
             const mins = Math.round(totalMins % 60);
             const missingDist = routeDeliveries.filter(d => !d.miles).length;
+            // Cost estimate
+            const driverCost = (totalMins / 60) * DRIVER_RATE;
+            const fuelGallons = totalRouteMiles / MPG;
+            const fuelCost = fuelGallons * fuelCostPerGal;
+            const totalCost = driverCost + fuelCost;
             return (
               <div style={{ marginTop: 10, padding: "8px 10px", background: "#f2f5ef", borderRadius: 8, fontSize: 11, color: DARK }}>
-                <b>Est. route time:</b> {hrs > 0 ? `${hrs}h ` : ""}{mins}min
+                <b>Est. route time:</b> {hrs > 0 ? `${hrs}h ` : ""}{mins}min · {Math.round(totalRouteMiles)} miles
                 <div style={{ color: MUTED, fontSize: 10, marginTop: 2 }}>
                   {Math.round(totalDriveMins)}min driving + {dropoffMins}min drop-offs + ~{Math.round(lastStopMins)}min return
                 </div>
@@ -567,6 +614,22 @@ export default function ShippingCommand() {
                     ⚠ {missingDist} stop{missingDist > 1 ? "s" : ""} missing distance data — estimate may be low
                   </div>
                 )}
+                {/* Cost estimate */}
+                <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${BORDER}` }}>
+                  <b>Est. delivery cost:</b> ${totalCost.toFixed(2)}
+                  <div style={{ color: MUTED, fontSize: 10, marginTop: 2 }}>
+                    Driver: ${driverCost.toFixed(2)} ({(totalMins / 60).toFixed(1)}hrs × ${DRIVER_RATE}/hr)
+                    {" · "}Fuel: ${fuelCost.toFixed(2)} ({fuelGallons.toFixed(1)}gal × ${fuelCostPerGal.toFixed(2)}/gal)
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+                    <label style={{ fontSize: 10, fontWeight: 700, color: MUTED }}>
+                      Fuel $/gal:
+                      <input type="number" step="0.01" value={fuelCostPerGal}
+                        onChange={e => setFuelCostPerGal(parseFloat(e.target.value) || 0)}
+                        style={{ marginLeft: 4, width: 60, padding: "3px 6px", borderRadius: 4, border: `1px solid ${BORDER}`, fontSize: 11, fontFamily: "inherit" }} />
+                    </label>
+                  </div>
+                </div>
               </div>
             );
           })()}
