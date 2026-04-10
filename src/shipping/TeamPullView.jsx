@@ -270,8 +270,40 @@ export default function TeamPullView({ team: teamProp, onSwitchMode }) {
               style={{ width: "100%", background: GREEN, color: DARK, border: "none", padding: "20px 0", borderRadius: 12, fontSize: 18, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", marginTop: 16, minHeight: 56 }}>
               ✓ Mark done
             </button>
+            <button onClick={async () => {
+                if (!window.confirm("Mark order complete with lost/incomplete pick sheet? This will be flagged for review.")) return;
+                const patch = {};
+                if (isBluff) {
+                  if ((team === "bluff1" || team === "loader") && current.needsBluff1) {
+                    patch.bluff1PulledAt = new Date().toISOString();
+                    patch.bluff1PulledBy = displayName;
+                  }
+                  if (team === "bluff2" && current.needsBluff2) {
+                    patch.bluff2PulledAt = new Date().toISOString();
+                    patch.bluff2PulledBy = displayName;
+                  }
+                  patch.bluffClaimedBy = null;
+                  patch.bluffClaimedAt = null;
+                } else {
+                  patch[`${effectiveTeam}PulledAt`] = new Date().toISOString();
+                  patch[`${effectiveTeam}PulledBy`] = displayName;
+                }
+                const alerts = Array.isArray(current.alerts) ? [...current.alerts] : [];
+                alerts.push({
+                  text: `Pick sheet lost/incomplete — completed without photos by ${displayName}`,
+                  author: displayName,
+                  created_at: new Date().toISOString(),
+                  severity: "warning",
+                  team,
+                });
+                patch.alerts = alerts;
+                await update(current.id, patch);
+              }}
+              style={{ width: "100%", background: "transparent", color: AMBER, border: `1.5px solid ${AMBER}`, padding: "14px 0", borderRadius: 12, fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", marginTop: 8, minHeight: 48 }}>
+              ⚠ Complete — lost/incomplete pick sheet
+            </button>
             <button onClick={() => setShowProblem(true)}
-              style={{ width: "100%", background: "transparent", color: "#ffb3a8", border: `1.5px solid ${RED}`, padding: "16px 0", borderRadius: 12, fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", marginTop: 8, minHeight: 52 }}>
+              style={{ width: "100%", background: "transparent", color: "#ffb3a8", border: `1.5px solid ${RED}`, padding: "14px 0", borderRadius: 12, fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", marginTop: 8, minHeight: 48 }}>
               ⚠ Report problem
             </button>
           </div>
