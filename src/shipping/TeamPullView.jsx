@@ -7,6 +7,7 @@ const DARK = "#1e2d1a";
 const GREEN = "#7fb069";
 const CREAM = "#c8e6b8";
 const RED = "#d94f3d";
+const AMBER = "#e89a3a";
 const MUTED = "#7a8c74";
 const BORDER = "#e0ead8";
 
