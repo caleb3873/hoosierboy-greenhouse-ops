@@ -347,7 +347,7 @@ function AppInner() {
   }
 
   // Shipping team member → Next Up kiosk for their team
-  if (role === "shipping") return <TeamPullView team={team} onSwitchMode={signOut} />;
+  if (role === "shipping" || role === "shipping_team") return <TeamPullView team={team} onSwitchMode={signOut} />;
 
   // Operator / maintenance → operator view
   if (isOperator) return <OperatorView onSwitchMode={signOut} />;
