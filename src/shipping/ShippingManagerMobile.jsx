@@ -1,0 +1,550 @@
+import { useState, useMemo, useEffect, useRef } from "react";
+import { useDeliveries, useShippingCustomers, useShippingRoutes } from "../supabase";
+import { useAuth } from "../Auth";
+import { customerConfirmationValid } from "./ShippingCommand";
+import DeliveryImporter from "./DeliveryImporter";
+
+const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
+const DARK = "#1e2d1a";
+const GREEN = "#7fb069";
+const CREAM = "#c8e6b8";
+const MUTED = "#7a8c74";
+const BORDER = "#e0ead8";
+const AMBER = "#e89a3a";
+const RED = "#d94f3d";
+
+function toISODate(d) { return new Date(d).toISOString().slice(0, 10); }
+function todayISO() { return toISODate(new Date()); }
+function addDays(d, n) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
+function fmtMoney(c) { if (!c && c !== 0) return "—"; return `$${Math.round(c / 100).toLocaleString()}`; }
+
+function getBucketLabel(bucket) {
+  const labels = { today: "Today", tomorrow: "Tomorrow", dayAfter: "Day After", thisWeek: "This Week" };
+  return labels[bucket] || bucket;
+}
+
+function bucketToDate(bucket) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  if (bucket === "today") return toISODate(today);
+  if (bucket === "tomorrow") return toISODate(addDays(today, 1));
+  if (bucket === "dayAfter") return toISODate(addDays(today, 2));
+  if (bucket === "thisWeek") {
+    // Saturday
+    const day = today.getDay();
+    const offset = day === 0 ? 6 : 6 - day;
+    return toISODate(addDays(today, offset));
+  }
+  return toISODate(today);
+}
+
+function dateLabel(iso) {
+  if (!iso) return "";
+  const d = new Date(iso + "T00:00:00");
+  return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+}
+
+export default function ShippingManagerMobile({ onSwitchMode }) {
+  const { rows: deliveries, update, insert, refresh } = useDeliveries();
+  const { rows: customers } = useShippingCustomers();
+  const { rows: routes } = useShippingRoutes();
+  const { displayName, signOut } = useAuth();
+
+  const [bucket, setBucket] = useState("today");
+  const [showApprovals, setShowApprovals] = useState(false);
+  const [expandedId, setExpandedId] = useState(null);
+  const [showQuickAdd, setShowQuickAdd] = useState(false);
+  const [showImporter, setShowImporter] = useState(false);
+  const autoOpenedRef = useRef(false);
+
+  // Quick add form state
+  const [qaSearch, setQaSearch] = useState("");
+  const [qaCustomer, setQaCustomer] = useState(null);
+  const [qaAmount, setQaAmount] = useState("");
+  const [qaTime, setQaTime] = useState("");
+  const [qaNotes, setQaNotes] = useState("");
+  const [qaBluff, setQaBluff] = useState(true);
+  const [qaSprague, setQaSprague] = useState(false);
+  const [qaHouseplants, setQaHouseplants] = useState(false);
+  const [qaSaving, setQaSaving] = useState(false);
+
+  const selectedDate = bucketToDate(bucket);
+
+  // For "This Week" bucket, show Mon–Sat of current week
+  const weekRange = useMemo(() => {
+    if (bucket !== "thisWeek") return null;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const day = today.getDay();
+    const monday = addDays(today, day === 0 ? -6 : 1 - day);
+    const saturday = addDays(monday, 5);
+    return { start: toISODate(monday), end: toISODate(saturday) };
+  }, [bucket]);
+
+  // Deliveries for selected bucket/date
+  const dayDeliveries = useMemo(() => {
+    let filtered;
+    if (bucket === "thisWeek" && weekRange) {
+      filtered = deliveries.filter(d =>
+        d.deliveryDate >= weekRange.start && d.deliveryDate <= weekRange.end && d.lifecycle !== "cancelled"
+      );
+    } else {
+      filtered = deliveries.filter(d => d.deliveryDate === selectedDate && d.lifecycle !== "cancelled");
+    }
+    return filtered
+      .filter(d => d.lifecycle === "confirmed")
+      .sort((a, b) => (a.priorityOrder ?? 9999) - (b.priorityOrder ?? 9999) || (a.deliveryTime || "").localeCompare(b.deliveryTime || ""));
+  }, [deliveries, selectedDate, bucket, weekRange]);
+
+  // Pending approvals
+  const pendingApprovals = useMemo(() => {
+    const today = todayISO();
+    return deliveries.filter(d => d.lifecycle === "proposed" && d.deliveryDate >= today);
+  }, [deliveries]);
+
+  // Auto-open approvals on first load if any exist
+  useEffect(() => {
+    if (!autoOpenedRef.current && pendingApprovals.length > 0) {
+      autoOpenedRef.current = true;
+      setShowApprovals(true);
+    }
+  }, [pendingApprovals.length]);
+
+  // Summary stats
+  const totalValue = dayDeliveries.reduce((s, d) => s + (d.orderValueCents || 0), 0);
+  const activeRoutes = useMemo(() => {
+    const routeIds = new Set(dayDeliveries.filter(d => d.routeId).map(d => d.routeId));
+    return routes.filter(r => routeIds.has(r.id) && r.departedAt && !r.completedAt).length;
+  }, [dayDeliveries, routes]);
+
+  // Priority reorder
+  async function moveDelivery(delivery, direction) {
+    const idx = dayDeliveries.findIndex(d => d.id === delivery.id);
+    const swapIdx = direction === "up" ? idx - 1 : idx + 1;
+    if (swapIdx < 0 || swapIdx >= dayDeliveries.length) return;
+    const other = dayDeliveries[swapIdx];
+    const myOrder = delivery.priorityOrder ?? (idx * 10);
+    const otherOrder = other.priorityOrder ?? (swapIdx * 10);
+    await update(delivery.id, { priorityOrder: otherOrder });
+    await update(other.id, { priorityOrder: myOrder });
+  }
+
+  // Approve / decline
+  async function approveDelivery(d) {
+    await update(d.id, {
+      lifecycle: "confirmed",
+      shippingConfirmedAt: new Date().toISOString(),
+      shippingConfirmedBy: displayName,
+    });
+  }
+  async function declineDelivery(d) {
+    await update(d.id, { lifecycle: "cancelled" });
+  }
+
+  // Quick add — save
+  async function saveQuickAdd() {
+    if (!qaCustomer) return;
+    setQaSaving(true);
+    try {
+      const cust = qaCustomer;
+      const snapshot = {
+        company_name: cust.companyName,
+        address1: cust.address1 || "",
+        city: cust.city || "",
+        state: cust.state || "",
+        zip: cust.zip || "",
+        phone: cust.phone || "",
+        email: cust.email || "",
+        terms: cust.terms || "",
+      };
+      const now = new Date().toISOString();
+      const newDelivery = {
+        id: crypto.randomUUID(),
+        customerId: cust.id,
+        customerSnapshot: snapshot,
+        deliveryDate: selectedDate,
+        deliveryTime: qaTime || null,
+        orderValueCents: Math.round((parseFloat(qaAmount) || 0) * 100),
+        notes: qaNotes || null,
+        needsBluff1: qaBluff,
+        needsSprague: qaSprague,
+        needsHouseplants: qaHouseplants,
+        lifecycle: "confirmed",
+        salesConfirmedAt: now,
+        salesConfirmedBy: displayName,
+        shippingConfirmedAt: now,
+        shippingConfirmedBy: displayName,
+      };
+      await insert(newDelivery);
+      // Reset form
+      setQaSearch("");
+      setQaCustomer(null);
+      setQaAmount("");
+      setQaTime("");
+      setQaNotes("");
+      setQaBluff(true);
+      setQaSprague(false);
+      setQaHouseplants(false);
+      setShowQuickAdd(false);
+    } catch (err) {
+      alert("Failed to save: " + err.message);
+    } finally {
+      setQaSaving(false);
+    }
+  }
+
+  // Customer search for quick-add
+  const customerMatches = useMemo(() => {
+    if (!qaSearch || qaSearch.length < 2) return [];
+    const q = qaSearch.toLowerCase();
+    return customers.filter(c => (c.companyName || "").toLowerCase().includes(q)).slice(0, 8);
+  }, [qaSearch, customers]);
+
+  // Delivery card renderer
+  function renderCard(d, idx) {
+    const cust = d.customerSnapshot || {};
+    const fullCust = customers.find(c => c.id === d.customerId) || {};
+    const isCOD = ((fullCust.terms || cust.terms || "").toUpperCase().includes("COD")) || ((fullCust.terms || "").toUpperCase().includes("C.O.D"));
+    const isExpanded = expandedId === d.id;
+
+    const b1Done = !d.needsBluff1 || d.bluff1PulledAt;
+    const b2Done = !d.needsBluff2 || d.bluff2PulledAt;
+    const bluffDone = b1Done && b2Done;
+
+    return (
+      <div key={d.id} style={{
+        background: "#fff", borderRadius: 14,
+        border: `1.5px solid ${BORDER}`,
+        boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
+        padding: "14px 16px", marginBottom: 10,
+      }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+          {/* Move buttons */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 2, flexShrink: 0 }}>
+            <button onClick={() => moveDelivery(d, "up")} disabled={idx === 0}
+              style={{ background: "none", border: "none", color: idx === 0 ? "#d0d8cc" : MUTED, fontSize: 18, cursor: idx === 0 ? "default" : "pointer", padding: "4px 8px", minHeight: 36, minWidth: 36 }}>&#9650;</button>
+            <button onClick={() => moveDelivery(d, "down")} disabled={idx === dayDeliveries.length - 1}
+              style={{ background: "none", border: "none", color: idx === dayDeliveries.length - 1 ? "#d0d8cc" : MUTED, fontSize: 18, cursor: idx === dayDeliveries.length - 1 ? "default" : "pointer", padding: "4px 8px", minHeight: 36, minWidth: 36 }}>&#9660;</button>
+          </div>
+
+          {/* Priority number */}
+          <div style={{
+            width: 28, height: 28, minWidth: 28, borderRadius: "50%",
+            background: DARK, color: CREAM, fontSize: 13, fontWeight: 900,
+            display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 2,
+          }}>{idx + 1}</div>
+
+          {/* Main content */}
+          <div style={{ flex: 1, minWidth: 0 }} onClick={() => setExpandedId(isExpanded ? null : d.id)}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+              <div style={{ fontSize: 16, fontWeight: 800, color: DARK, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
+                {cust.company_name || "—"}
+              </div>
+              <div style={{ fontSize: 16, fontWeight: 800, color: GREEN, flexShrink: 0 }}>
+                {fmtMoney(d.orderValueCents)}
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 4, flexWrap: "wrap" }}>
+              {d.deliveryTime && <span style={{ fontSize: 12, color: MUTED, fontWeight: 600 }}>{d.deliveryTime}</span>}
+              {d.notes && <span style={{ fontSize: 12 }}>📝</span>}
+              {isCOD && <span style={{ background: RED, color: "#fff", borderRadius: 999, padding: "1px 8px", fontSize: 10, fontWeight: 800 }}>COD</span>}
+              {bucket === "thisWeek" && <span style={{ fontSize: 11, color: MUTED, fontWeight: 600 }}>{dateLabel(d.deliveryDate)}</span>}
+            </div>
+            {/* Team pull status */}
+            <div style={{ marginTop: 4, fontSize: 13 }}>
+              {(d.needsBluff1 || d.needsBluff2) && <span title="Bluff">🌱{bluffDone ? "✅" : "⬜"} </span>}
+              {d.needsSprague && <span title="Sprague">🌿{d.spraguePulledAt ? "✅" : "⬜"} </span>}
+              {d.needsHouseplants && <span title="Houseplants">🪴{d.houseplantsPulledAt ? "✅" : "⬜"} </span>}
+            </div>
+          </div>
+        </div>
+
+        {/* Expanded detail */}
+        {isExpanded && (
+          <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${BORDER}` }}>
+            {(cust.address1 || cust.city) && (
+              <div style={{ fontSize: 13, color: DARK, marginBottom: 6 }}>
+                📍 {[cust.address1, cust.city, cust.state, cust.zip].filter(Boolean).join(", ")}
+              </div>
+            )}
+            {d.notes && (
+              <div style={{ fontSize: 13, color: MUTED, marginBottom: 6, fontStyle: "italic" }}>
+                📝 {d.notes}
+              </div>
+            )}
+            {d.driverId && (() => {
+              const driver = (routes.find(r => r.id === d.routeId) || {});
+              return driver.driverName ? (
+                <div style={{ fontSize: 12, color: MUTED, marginBottom: 4 }}>🚛 Driver: {driver.driverName}</div>
+              ) : null;
+            })()}
+            {d.miles && (
+              <div style={{ fontSize: 12, color: MUTED, marginBottom: 4 }}>📏 {d.miles} mi{d.driveMinutes ? ` · ${d.driveMinutes} min` : ""}</div>
+            )}
+            {d.cartCount && (
+              <div style={{ fontSize: 12, color: MUTED, marginBottom: 4 }}>🛒 {d.cartCount} cart{d.cartCount !== 1 ? "s" : ""}</div>
+            )}
+            {(d.orderNumbers || []).length > 0 && (
+              <div style={{ fontSize: 12, color: MUTED }}>Orders: {d.orderNumbers.join(", ")}</div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ ...FONT, minHeight: "100vh", background: "#f2f5ef", paddingBottom: 120 }}>
+      <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
+
+      {/* Header */}
+      <div style={{ background: DARK, padding: "16px 20px", color: CREAM }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 800, color: "#7a9a6a", letterSpacing: 1.2, textTransform: "uppercase" }}>Shipping</div>
+            <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif" }}>Today's Deliveries</div>
+          </div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            <button onClick={() => setShowImporter(true)}
+              style={{ background: CREAM, border: "none", borderRadius: 8, color: DARK, padding: "6px 12px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+              📁 Import
+            </button>
+            <button onClick={onSwitchMode || signOut}
+              style={{ background: "none", border: "1px solid #4a6a3a", borderRadius: 8, color: CREAM, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+              Sign out
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Date bucket pills */}
+      <div style={{ padding: "12px 16px", background: "#fff", borderBottom: `1.5px solid ${BORDER}`, display: "flex", gap: 8, overflowX: "auto" }}>
+        {["today", "tomorrow", "dayAfter", "thisWeek"].map(b => (
+          <button key={b} onClick={() => setBucket(b)}
+            style={{
+              padding: "10px 16px", borderRadius: 10, fontSize: 13, fontWeight: 700, whiteSpace: "nowrap",
+              background: bucket === b ? DARK : "#f2f5ef",
+              color: bucket === b ? CREAM : MUTED,
+              border: `1.5px solid ${bucket === b ? DARK : "#c8d8c0"}`,
+              cursor: "pointer", fontFamily: "inherit", minHeight: 44,
+            }}>
+            {getBucketLabel(b)}
+          </button>
+        ))}
+      </div>
+
+      {/* Date subtitle */}
+      <div style={{ padding: "8px 16px 0", fontSize: 12, color: MUTED, fontWeight: 600 }}>
+        {bucket === "thisWeek" && weekRange
+          ? `${dateLabel(weekRange.start)} — ${dateLabel(weekRange.end)}`
+          : dateLabel(selectedDate)}
+      </div>
+
+      {/* Approval inbox strip */}
+      {pendingApprovals.length > 0 && (
+        <div style={{ padding: "0 16px", marginTop: 10 }}>
+          <button onClick={() => setShowApprovals(!showApprovals)}
+            style={{
+              width: "100%", padding: "12px 16px", borderRadius: 12, border: `1.5px solid ${AMBER}`,
+              background: "#fff7ec", color: DARK, fontWeight: 800, fontSize: 14,
+              cursor: "pointer", fontFamily: "inherit", textAlign: "left",
+            }}>
+            📥 {pendingApprovals.length} pending approval{pendingApprovals.length !== 1 ? "s" : ""}
+          </button>
+          {showApprovals && (
+            <div style={{ marginTop: 8, borderRadius: 12, border: `1.5px solid ${BORDER}`, background: "#fff", overflow: "hidden" }}>
+              {pendingApprovals.map(d => {
+                const cust = d.customerSnapshot || {};
+                return (
+                  <div key={d.id} style={{ padding: "12px 16px", borderBottom: `1px solid ${BORDER}`, display: "flex", alignItems: "center", gap: 12 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 14, fontWeight: 800, color: DARK, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {cust.company_name || "—"}
+                      </div>
+                      <div style={{ fontSize: 12, color: MUTED }}>
+                        {dateLabel(d.deliveryDate)} · {fmtMoney(d.orderValueCents)}
+                        {d.salesConfirmedBy && ` · by ${d.salesConfirmedBy}`}
+                      </div>
+                    </div>
+                    <button onClick={() => approveDelivery(d)}
+                      style={{ width: 44, height: 44, borderRadius: 10, border: `2px solid ${GREEN}`, background: "#e8f5e0", color: GREEN, fontSize: 20, fontWeight: 900, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      ✓
+                    </button>
+                    <button onClick={() => declineDelivery(d)}
+                      style={{ width: 44, height: 44, borderRadius: 10, border: `2px solid ${RED}`, background: "#fff3f1", color: RED, fontSize: 20, fontWeight: 900, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      ✗
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Progress summary */}
+      <div style={{ padding: "12px 16px", display: "flex", gap: 12, alignItems: "center" }}>
+        <div style={{ fontSize: 14, fontWeight: 800, color: DARK }}>
+          {dayDeliveries.length} deliver{dayDeliveries.length !== 1 ? "ies" : "y"} · {fmtMoney(totalValue)} total
+        </div>
+        {activeRoutes > 0 && (
+          <span style={{ background: GREEN, color: "#fff", borderRadius: 999, padding: "2px 10px", fontSize: 11, fontWeight: 800 }}>
+            {activeRoutes} active route{activeRoutes !== 1 ? "s" : ""}
+          </span>
+        )}
+      </div>
+
+      {/* Delivery list */}
+      <div style={{ padding: "0 16px" }}>
+        {dayDeliveries.length === 0 && (
+          <div style={{ padding: 40, textAlign: "center", color: MUTED, fontSize: 14 }}>
+            No confirmed deliveries for {getBucketLabel(bucket).toLowerCase()}.
+          </div>
+        )}
+        {dayDeliveries.map((d, idx) => renderCard(d, idx))}
+      </div>
+
+      {/* Quick Add bottom sheet */}
+      {showQuickAdd && (
+        <div onClick={() => setShowQuickAdd(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 1000, display: "flex", alignItems: "flex-end" }}>
+          <div onClick={e => e.stopPropagation()} style={{
+            width: "100%", maxHeight: "85vh", background: "#fff", borderRadius: "20px 20px 0 0",
+            padding: "20px 20px 32px", overflowY: "auto",
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <div style={{ fontSize: 20, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif", color: DARK }}>Add Delivery</div>
+              <button onClick={() => setShowQuickAdd(false)}
+                style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: MUTED, padding: 4 }}>✕</button>
+            </div>
+
+            {/* Customer search */}
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: MUTED, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 4 }}>Customer</div>
+              {qaCustomer ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", background: "#e8f5e0", borderRadius: 10, border: `1.5px solid ${GREEN}` }}>
+                  <span style={{ flex: 1, fontWeight: 800, color: DARK }}>{qaCustomer.companyName}</span>
+                  <button onClick={() => { setQaCustomer(null); setQaSearch(""); }}
+                    style={{ background: "none", border: "none", fontSize: 16, cursor: "pointer", color: MUTED }}>✕</button>
+                </div>
+              ) : (
+                <div style={{ position: "relative" }}>
+                  <input type="text" value={qaSearch} onChange={e => setQaSearch(e.target.value)}
+                    placeholder="Search customers..."
+                    style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: `1.5px solid ${BORDER}`, fontSize: 15, fontFamily: "inherit", boxSizing: "border-box" }} />
+                  {customerMatches.length > 0 && (
+                    <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: "#fff", border: `1.5px solid ${BORDER}`, borderRadius: 10, boxShadow: "0 4px 16px rgba(0,0,0,0.12)", zIndex: 50, maxHeight: 240, overflowY: "auto", marginTop: 4 }}>
+                      {customerMatches.map(c => (
+                        <button key={c.id} onClick={() => { setQaCustomer(c); setQaSearch(""); }}
+                          style={{ display: "block", width: "100%", textAlign: "left", padding: "12px 14px", background: "none", border: "none", borderBottom: `1px solid ${BORDER}`, cursor: "pointer", fontSize: 14, fontWeight: 600, fontFamily: "inherit", color: DARK }}>
+                          {c.companyName}
+                          {c.city && <span style={{ color: MUTED, fontWeight: 400 }}> — {c.city}, {c.state}</span>}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Amount + time */}
+            <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: MUTED, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 4 }}>Dollar Amount</div>
+                <input type="number" value={qaAmount} onChange={e => setQaAmount(e.target.value)}
+                  placeholder="0.00"
+                  style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: `1.5px solid ${BORDER}`, fontSize: 15, fontFamily: "inherit", boxSizing: "border-box" }} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: MUTED, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 4 }}>Time (optional)</div>
+                <input type="time" value={qaTime} onChange={e => setQaTime(e.target.value)}
+                  style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: `1.5px solid ${BORDER}`, fontSize: 15, fontFamily: "inherit", boxSizing: "border-box" }} />
+              </div>
+            </div>
+
+            {/* Date */}
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: MUTED, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 4 }}>Delivery Date</div>
+              <div style={{ padding: "10px 14px", background: "#f2f5ef", borderRadius: 10, fontSize: 14, fontWeight: 600, color: DARK }}>
+                {dateLabel(selectedDate)}
+              </div>
+            </div>
+
+            {/* Notes */}
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: MUTED, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 4 }}>Notes (optional)</div>
+              <textarea value={qaNotes} onChange={e => setQaNotes(e.target.value)}
+                placeholder="Delivery notes..."
+                rows={3}
+                style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: `1.5px solid ${BORDER}`, fontSize: 14, fontFamily: "inherit", boxSizing: "border-box", resize: "vertical" }} />
+            </div>
+
+            {/* Teams */}
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: MUTED, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 8 }}>Teams needed</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                {[
+                  { key: "bluff", label: "🌱 Bluff", val: qaBluff, set: setQaBluff },
+                  { key: "sprague", label: "🌿 Sprague", val: qaSprague, set: setQaSprague },
+                  { key: "houseplants", label: "🪴 HP", val: qaHouseplants, set: setQaHouseplants },
+                ].map(t => (
+                  <button key={t.key} onClick={() => t.set(!t.val)}
+                    style={{
+                      flex: 1, padding: "12px 8px", borderRadius: 10, fontSize: 13, fontWeight: 700,
+                      background: t.val ? "#e8f5e0" : "#f2f5ef",
+                      color: t.val ? DARK : MUTED,
+                      border: `1.5px solid ${t.val ? GREEN : "#c8d8c0"}`,
+                      cursor: "pointer", fontFamily: "inherit", minHeight: 48,
+                    }}>
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Save */}
+            <button onClick={saveQuickAdd} disabled={!qaCustomer || qaSaving}
+              style={{
+                width: "100%", padding: "14px 0", borderRadius: 12, border: "none",
+                background: qaCustomer ? GREEN : "#c8d8c0",
+                color: qaCustomer ? "#fff" : MUTED,
+                fontSize: 16, fontWeight: 800, cursor: qaCustomer ? "pointer" : "default",
+                fontFamily: "inherit", minHeight: 52,
+              }}>
+              {qaSaving ? "Saving..." : "Save Delivery"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Import bottom sheet */}
+      {showImporter && (
+        <div onClick={() => setShowImporter(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 1000, display: "flex", alignItems: "flex-end" }}>
+          <div onClick={e => e.stopPropagation()} style={{
+            width: "100%", maxHeight: "90vh", background: "#fff", borderRadius: "20px 20px 0 0",
+            padding: "20px 20px 32px", overflowY: "auto",
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <div style={{ fontSize: 20, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif", color: DARK }}>Import Schedule</div>
+              <button onClick={() => setShowImporter(false)}
+                style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: MUTED, padding: 4 }}>✕</button>
+            </div>
+            <DeliveryImporter onDone={() => setShowImporter(false)} />
+          </div>
+        </div>
+      )}
+
+      {/* FAB — Quick Add */}
+      {!showQuickAdd && !showImporter && (
+        <button onClick={() => setShowQuickAdd(true)}
+          style={{
+            position: "fixed", bottom: 24, right: 24, zIndex: 900,
+            width: 60, height: 60, borderRadius: "50%",
+            background: GREEN, color: "#fff", border: "3px solid #fff",
+            fontSize: 28, fontWeight: 900, cursor: "pointer",
+            boxShadow: "0 4px 16px rgba(0,0,0,0.25)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>+</button>
+      )}
+    </div>
+  );
+}
