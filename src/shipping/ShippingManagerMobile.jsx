@@ -18,30 +18,24 @@ function todayISO() { return toISODate(new Date()); }
 function addDays(d, n) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
 function fmtMoney(c) { if (!c && c !== 0) return "—"; return `$${Math.round(c / 100).toLocaleString()}`; }
 
-function getBucketLabel(bucket) {
-  const labels = { today: "Today", tomorrow: "Tomorrow", dayAfter: "Day After", thisWeek: "This Week" };
-  return labels[bucket] || bucket;
-}
-
-function bucketToDate(bucket) {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  if (bucket === "today") return toISODate(today);
-  if (bucket === "tomorrow") return toISODate(addDays(today, 1));
-  if (bucket === "dayAfter") return toISODate(addDays(today, 2));
-  if (bucket === "thisWeek") {
-    // Saturday
-    const day = today.getDay();
-    const offset = day === 0 ? 6 : 6 - day;
-    return toISODate(addDays(today, offset));
-  }
-  return toISODate(today);
-}
-
 function dateLabel(iso) {
   if (!iso) return "";
   const d = new Date(iso + "T00:00:00");
   return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+}
+
+function weekMonday(d = new Date()) {
+  const dt = new Date(d);
+  dt.setHours(0, 0, 0, 0);
+  const day = dt.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  dt.setDate(dt.getDate() + diff);
+  return dt;
+}
+
+function weekLabel(monday) {
+  const sat = addDays(monday, 5);
+  return `${monday.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${sat.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
 }
 
 export default function ShippingManagerMobile({ onSwitchMode }) {
@@ -50,7 +44,8 @@ export default function ShippingManagerMobile({ onSwitchMode }) {
   const { rows: routes } = useShippingRoutes();
   const { displayName, signOut } = useAuth();
 
-  const [bucket, setBucket] = useState("today");
+  const [weekOffset, setWeekOffset] = useState(0);
+  const [selectedDayIdx, setSelectedDayIdx] = useState(null); // null = show all week, 0-5 = Mon-Sat
   const [showApprovals, setShowApprovals] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
   const [showQuickAdd, setShowQuickAdd] = useState(false);
@@ -68,39 +63,39 @@ export default function ShippingManagerMobile({ onSwitchMode }) {
   const [qaHouseplants, setQaHouseplants] = useState(false);
   const [qaSaving, setQaSaving] = useState(false);
 
-  const selectedDate = bucketToDate(bucket);
+  const monday = useMemo(() => addDays(weekMonday(), weekOffset * 7), [weekOffset]);
+  const weekDays = useMemo(() => Array.from({ length: 6 }, (_, i) => addDays(monday, i)), [monday]);
+  const weekStart = toISODate(monday);
+  const weekEnd = toISODate(addDays(monday, 6));
+  const selectedDate = selectedDayIdx !== null ? toISODate(weekDays[selectedDayIdx]) : null;
+  const todayStr = todayISO();
 
-  // For "This Week" bucket, show Mon–Sat of current week
-  const weekRange = useMemo(() => {
-    if (bucket !== "thisWeek") return null;
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const day = today.getDay();
-    const monday = addDays(today, day === 0 ? -6 : 1 - day);
-    const saturday = addDays(monday, 5);
-    return { start: toISODate(monday), end: toISODate(saturday) };
-  }, [bucket]);
+  // Auto-select today's day if it's in the current week
+  useEffect(() => {
+    if (weekOffset === 0 && selectedDayIdx === null) {
+      const todayDow = new Date().getDay();
+      const idx = todayDow === 0 ? 6 : todayDow - 1; // Mon=0, Sat=5, Sun=6
+      if (idx <= 5) setSelectedDayIdx(idx);
+    }
+  }, [weekOffset]); // eslint-disable-line
 
-  // Deliveries for selected bucket/date
+  // Deliveries for selected day or full week
   const dayDeliveries = useMemo(() => {
     let filtered;
-    if (bucket === "thisWeek" && weekRange) {
-      filtered = deliveries.filter(d =>
-        d.deliveryDate >= weekRange.start && d.deliveryDate <= weekRange.end && d.lifecycle !== "cancelled"
-      );
-    } else {
+    if (selectedDate) {
       filtered = deliveries.filter(d => d.deliveryDate === selectedDate && d.lifecycle !== "cancelled");
+    } else {
+      filtered = deliveries.filter(d => d.deliveryDate >= weekStart && d.deliveryDate <= weekEnd && d.lifecycle !== "cancelled");
     }
     return filtered
       .filter(d => d.lifecycle === "confirmed")
       .sort((a, b) => (a.priorityOrder ?? 9999) - (b.priorityOrder ?? 9999) || (a.deliveryTime || "").localeCompare(b.deliveryTime || ""));
-  }, [deliveries, selectedDate, bucket, weekRange]);
+  }, [deliveries, selectedDate, weekStart, weekEnd]);
 
-  // Pending approvals
+  // Pending approvals — scoped to the viewed week
   const pendingApprovals = useMemo(() => {
-    const today = todayISO();
-    return deliveries.filter(d => d.lifecycle === "proposed" && d.deliveryDate >= today);
-  }, [deliveries]);
+    return deliveries.filter(d => d.lifecycle === "proposed" && d.deliveryDate >= weekStart && d.deliveryDate <= weekEnd);
+  }, [deliveries, weekStart, weekEnd]);
 
   // Auto-open approvals on first load if any exist
   useEffect(() => {
@@ -162,7 +157,7 @@ export default function ShippingManagerMobile({ onSwitchMode }) {
         id: crypto.randomUUID(),
         customerId: cust.id,
         customerSnapshot: snapshot,
-        deliveryDate: selectedDate,
+        deliveryDate: selectedDate || toISODate(weekDays[0]),
         deliveryTime: qaTime || null,
         orderValueCents: Math.round((parseFloat(qaAmount) || 0) * 100),
         notes: qaNotes || null,
@@ -248,7 +243,7 @@ export default function ShippingManagerMobile({ onSwitchMode }) {
               {d.deliveryTime && <span style={{ fontSize: 12, color: MUTED, fontWeight: 600 }}>{d.deliveryTime}</span>}
               {d.notes && <span style={{ fontSize: 12 }}>📝</span>}
               {isCOD && <span style={{ background: RED, color: "#fff", borderRadius: 999, padding: "1px 8px", fontSize: 10, fontWeight: 800 }}>COD</span>}
-              {bucket === "thisWeek" && <span style={{ fontSize: 11, color: MUTED, fontWeight: 600 }}>{dateLabel(d.deliveryDate)}</span>}
+              {selectedDayIdx === null && <span style={{ fontSize: 11, color: MUTED, fontWeight: 600 }}>{dateLabel(d.deliveryDate)}</span>}
             </div>
             {/* Team pull status */}
             <div style={{ marginTop: 4, fontSize: 13 }}>
@@ -302,7 +297,7 @@ export default function ShippingManagerMobile({ onSwitchMode }) {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div>
             <div style={{ fontSize: 10, fontWeight: 800, color: "#7a9a6a", letterSpacing: 1.2, textTransform: "uppercase" }}>Shipping</div>
-            <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif" }}>Today's Deliveries</div>
+            <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif" }}>Deliveries</div>
           </div>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             <button onClick={() => setShowImporter(true)}
@@ -315,29 +310,59 @@ export default function ShippingManagerMobile({ onSwitchMode }) {
             </button>
           </div>
         </div>
-      </div>
 
-      {/* Date bucket pills */}
-      <div style={{ padding: "12px 16px", background: "#fff", borderBottom: `1.5px solid ${BORDER}`, display: "flex", gap: 8, overflowX: "auto" }}>
-        {["today", "tomorrow", "dayAfter", "thisWeek"].map(b => (
-          <button key={b} onClick={() => setBucket(b)}
-            style={{
-              padding: "10px 16px", borderRadius: 10, fontSize: 13, fontWeight: 700, whiteSpace: "nowrap",
-              background: bucket === b ? DARK : "#f2f5ef",
-              color: bucket === b ? CREAM : MUTED,
-              border: `1.5px solid ${bucket === b ? DARK : "#c8d8c0"}`,
-              cursor: "pointer", fontFamily: "inherit", minHeight: 44,
-            }}>
-            {getBucketLabel(b)}
+        {/* Week navigation */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginTop: 12 }}>
+          <button onClick={() => { setWeekOffset(w => w - 1); setSelectedDayIdx(0); }}
+            style={{ background: "none", border: "none", color: CREAM, fontSize: 20, cursor: "pointer", padding: "4px 8px" }}>‹</button>
+          <button onClick={() => { setWeekOffset(0); setSelectedDayIdx(null); }}
+            style={{ background: weekOffset === 0 ? GREEN : "transparent", border: weekOffset === 0 ? "none" : "1px solid #4a6a3a", color: weekOffset === 0 ? "#fff" : CREAM, borderRadius: 8, padding: "6px 14px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+            This Week
           </button>
-        ))}
+          <div style={{ fontSize: 14, fontWeight: 700, color: CREAM, minWidth: 140, textAlign: "center" }}>
+            {weekLabel(monday)}
+          </div>
+          <button onClick={() => { setWeekOffset(w => w + 1); setSelectedDayIdx(0); }}
+            style={{ background: "none", border: "none", color: CREAM, fontSize: 20, cursor: "pointer", padding: "4px 8px" }}>›</button>
+        </div>
       </div>
 
-      {/* Date subtitle */}
+      {/* Day pills (Mon–Sat) + All Week */}
+      <div style={{ padding: "10px 12px", background: "#fff", borderBottom: `1.5px solid ${BORDER}`, display: "flex", gap: 4, overflowX: "auto" }}>
+        <button onClick={() => setSelectedDayIdx(null)}
+          style={{
+            padding: "8px 12px", borderRadius: 8, fontSize: 11, fontWeight: 700, whiteSpace: "nowrap",
+            background: selectedDayIdx === null ? DARK : "#f2f5ef",
+            color: selectedDayIdx === null ? CREAM : MUTED,
+            border: `1.5px solid ${selectedDayIdx === null ? DARK : "#c8d8c0"}`,
+            cursor: "pointer", fontFamily: "inherit", minHeight: 40,
+          }}>
+          All
+        </button>
+        {weekDays.map((d, i) => {
+          const iso = toISODate(d);
+          const isToday = iso === todayStr;
+          const dayCount = deliveries.filter(dd => dd.deliveryDate === iso && dd.lifecycle !== "cancelled").length;
+          return (
+            <button key={i} onClick={() => setSelectedDayIdx(i)}
+              style={{
+                padding: "6px 10px", borderRadius: 8, fontSize: 11, fontWeight: 700, whiteSpace: "nowrap",
+                background: selectedDayIdx === i ? DARK : isToday ? "#e8f5e0" : "#f2f5ef",
+                color: selectedDayIdx === i ? CREAM : isToday ? DARK : MUTED,
+                border: `1.5px solid ${selectedDayIdx === i ? DARK : isToday ? GREEN : "#c8d8c0"}`,
+                cursor: "pointer", fontFamily: "inherit", minHeight: 40, textAlign: "center", minWidth: 48,
+              }}>
+              <div>{d.toLocaleDateString("en-US", { weekday: "short" })}</div>
+              <div style={{ fontSize: 13, fontWeight: 900 }}>{d.getDate()}</div>
+              {dayCount > 0 && <div style={{ fontSize: 9, color: selectedDayIdx === i ? GREEN : MUTED }}>{dayCount}</div>}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Week/day subtitle */}
       <div style={{ padding: "8px 16px 0", fontSize: 12, color: MUTED, fontWeight: 600 }}>
-        {bucket === "thisWeek" && weekRange
-          ? `${dateLabel(weekRange.start)} — ${dateLabel(weekRange.end)}`
-          : dateLabel(selectedDate)}
+        {selectedDate ? dateLabel(selectedDate) : weekLabel(monday)}
       </div>
 
       {/* Approval inbox strip */}
