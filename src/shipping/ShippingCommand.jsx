@@ -81,7 +81,7 @@ export default function ShippingCommand() {
   const weekDeliveries = useMemo(() => {
     const start = toISODate(monday);
     const end = toISODate(addDays(monday, 7));
-    return deliveries.filter(d => d.deliveryDate && d.deliveryDate >= start && d.deliveryDate < end);
+    return deliveries.filter(d => d.deliveryDate && d.deliveryDate >= start && d.deliveryDate < end && d.lifecycle !== "cancelled");
   }, [deliveries, monday]);
 
   const lateChanges = useMemo(() => weekDeliveries.filter(tooLateToAdd), [weekDeliveries]);
