@@ -423,7 +423,7 @@ export default function ShippingManagerMobile({ onSwitchMode }) {
       <div style={{ padding: "0 16px" }}>
         {dayDeliveries.length === 0 && (
           <div style={{ padding: 40, textAlign: "center", color: MUTED, fontSize: 14 }}>
-            No confirmed deliveries for {getBucketLabel(bucket).toLowerCase()}.
+            No confirmed deliveries for {selectedDate ? dateLabel(selectedDate) : "this week"}.
           </div>
         )}
         {dayDeliveries.map((d, idx) => renderCard(d, idx))}
