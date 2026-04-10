@@ -876,7 +876,7 @@ export default function ShippingCommand() {
                             <div style={{ fontSize: 12, color: DARK, marginTop: 6, padding: "6px 8px", background: "#f2f5ef", borderRadius: 6 }}>{d.notes}</div>
                           )}
                           <div style={{ fontSize: 11, color: MUTED, marginTop: 4 }}>
-                            {d.needsBluff1 && "🌱 Bluff "}{d.needsSprague && "🌿 Sprague "}{d.needsHouseplants && "🪴 HP "}
+                            {d.needsBluff1 && "B "}{d.needsSprague && "S "}{d.needsHouseplants && "H "}
                           </div>
                         </div>
                         <div style={{ display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 }}>
@@ -1037,10 +1037,10 @@ function Chip({ delivery: d, customers, claimsCount, onClick, onDragStart, onDra
         {(d.needsBluff1 || d.needsBluff2) && (() => {
           const b1Done = !d.needsBluff1 || d.bluff1PulledAt;
           const b2Done = !d.needsBluff2 || d.bluff2PulledAt;
-          return <span title="Bluff">🌱{b1Done && b2Done ? "✅" : "⬜"} </span>;
+          return <span title="Bluff" style={{ fontWeight: 800 }}>B{b1Done && b2Done ? "✓" : "○"} </span>;
         })()}
-        {d.needsSprague && <span title="Sprague">🌿{d.spraguePulledAt ? "✅" : "⬜"} </span>}
-        {d.needsHouseplants && <span title="Houseplants">🪴{d.houseplantsPulledAt ? "✅" : "⬜"} </span>}
+        {d.needsSprague && <span title="Sprague" style={{ fontWeight: 800 }}>S{d.spraguePulledAt ? "✓" : "○"} </span>}
+        {d.needsHouseplants && <span title="Houseplants" style={{ fontWeight: 800 }}>H{d.houseplantsPulledAt ? "✓" : "○"} </span>}
       </div>
       {(isCOD || needsCustomerConfirm || claimsCount > 0) && (
         <div style={{ marginTop: 2 }}>

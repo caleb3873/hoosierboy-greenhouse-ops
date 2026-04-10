@@ -7,10 +7,12 @@ const DARK = "#1e2d1a";
 const GREEN = "#7fb069";
 const CREAM = "#c8e6b8";
 const RED = "#d94f3d";
+const MUTED = "#7a8c74";
+const BORDER = "#e0ead8";
 
 const TEAM_LABELS = {
-  bluff1: "Bluff Team 1",
-  bluff2: "Bluff Team 2",
+  bluff1: "Bluff Team — Sam",
+  bluff2: "Bluff Team — Ryan",
   sprague: "Sprague Team",
   houseplants: "Houseplants Team",
   loader: "Loader",
@@ -27,39 +29,85 @@ export default function TeamPullView({ team: teamProp, onSwitchMode }) {
   const [showPhotoModal, setShowPhotoModal] = useState(false);
   const [showProblem, setShowProblem] = useState(false);
 
-  // Loader team sees bluff1's queue (Zack helps with loading)
+  const isBluff = team === "bluff1" || team === "bluff2" || team === "loader";
   const effectiveTeam = team === "loader" ? "bluff1" : team;
-  const needsField = `needs${effectiveTeam[0].toUpperCase() + effectiveTeam.slice(1)}`;
-  const pulledAtField = `${effectiveTeam}PulledAt`;
-  const pulledByField = `${effectiveTeam}PulledBy`;
 
+  // For bluff teams: shared pool where (needsBluff1 || needsBluff2)
+  // For sprague/houseplants: their own needs field
+  const needsField = isBluff ? null : `needs${effectiveTeam[0].toUpperCase() + effectiveTeam.slice(1)}`;
+
+  // Today's deliveries for this team
   const todaysForTeam = useMemo(() => {
     const today = todayISO();
-    return deliveries.filter(d =>
-      d.deliveryDate === today &&
-      d.lifecycle === "confirmed" &&
-      d[needsField]
-    );
-  }, [deliveries, needsField]);
+    return deliveries.filter(d => {
+      if (d.deliveryDate !== today || d.lifecycle !== "confirmed") return false;
+      if (isBluff) return d.needsBluff1 || d.needsBluff2;
+      return d[needsField];
+    });
+  }, [deliveries, needsField, isBluff]);
 
-  const pending = useMemo(() =>
+  // For bluff: "pulled" = both bluff portions done (or only the needed one)
+  // For others: pulled = their pulledAt is set
+  function isPulled(d) {
+    if (isBluff) {
+      const b1Done = !d.needsBluff1 || d.bluff1PulledAt;
+      const b2Done = !d.needsBluff2 || d.bluff2PulledAt;
+      return b1Done && b2Done;
+    }
+    return !!d[`${effectiveTeam}PulledAt`];
+  }
+
+  // For bluff: is this order claimed by another bluff team lead?
+  function isClaimedByOther(d) {
+    if (!isBluff) return false;
+    return d.bluffClaimedBy && d.bluffClaimedBy !== displayName;
+  }
+
+  // For bluff: is this order claimed by ME?
+  function isClaimedByMe(d) {
+    if (!isBluff) return false;
+    return d.bluffClaimedBy === displayName;
+  }
+
+  // Pending orders: not pulled, sorted by priority
+  const allPending = useMemo(() =>
     todaysForTeam
-      .filter(d => !d[pulledAtField])
+      .filter(d => !isPulled(d))
       .sort((a, b) =>
         (a.priorityOrder ?? 9999) - (b.priorityOrder ?? 9999) ||
         (a.deliveryTime || "").localeCompare(b.deliveryTime || "") ||
         (a.createdAt || "").localeCompare(b.createdAt || "")
       ),
-    [todaysForTeam, pulledAtField]
+    [todaysForTeam] // eslint-disable-line
   );
 
-  const current = pending[0] || null;
-  const pulledCount = todaysForTeam.length - pending.length;
+  // Current order for this person:
+  // - Bluff: first show my claimed order if any, otherwise first unclaimed
+  // - Sprague/HP: just the first pending
+  const myClaimed = isBluff ? allPending.find(d => isClaimedByMe(d)) : null;
+  const nextUnclaimed = isBluff
+    ? allPending.find(d => !d.bluffClaimedBy)
+    : allPending[0];
+  const current = myClaimed || (isBluff ? null : nextUnclaimed);
+  const needsClaim = isBluff && !myClaimed && !!nextUnclaimed;
+
+  // Stats
+  const pulledCount = todaysForTeam.filter(d => isPulled(d)).length;
   const totalDollars = todaysForTeam.reduce((s, d) => s + (d.orderValueCents || 0), 0);
-  const pulledDollars = todaysForTeam.filter(d => d[pulledAtField]).reduce((s, d) => s + (d.orderValueCents || 0), 0);
+  const pulledDollars = todaysForTeam.filter(d => isPulled(d)).reduce((s, d) => s + (d.orderValueCents || 0), 0);
   const remainingDollars = totalDollars - pulledDollars;
   const pct = todaysForTeam.length === 0 ? 0 : Math.round((pulledCount / todaysForTeam.length) * 100);
 
+  // Claim an order (bluff only)
+  async function claimOrder() {
+    if (!nextUnclaimed) return;
+    await update(nextUnclaimed.id, {
+      bluffClaimedBy: displayName,
+      bluffClaimedAt: new Date().toISOString(),
+    });
+  }
+
+  // Submit pick sheet photos + mark pulled
   async function submitPhotos(files) {
     if (!current || files.length === 0) return;
     const sb = getSupabase();
@@ -77,11 +125,25 @@ export default function TeamPullView({ team: teamProp, onSwitchMode }) {
       });
     }
     const existing = Array.isArray(current.pickSheetPhotos) ? current.pickSheetPhotos : [];
-    await update(current.id, {
-      pickSheetPhotos: [...existing, ...uploaded],
-      [pulledAtField]: new Date().toISOString(),
-      [pulledByField]: displayName || "team",
-    });
+
+    // Determine which pulled fields to set
+    const patch = { pickSheetPhotos: [...existing, ...uploaded] };
+    if (isBluff) {
+      // Mark whichever bluff portion this team handles
+      if (team === "bluff1" || team === "loader") {
+        if (current.needsBluff1) { patch.bluff1PulledAt = new Date().toISOString(); patch.bluff1PulledBy = displayName; }
+      }
+      if (team === "bluff2") {
+        if (current.needsBluff2) { patch.bluff2PulledAt = new Date().toISOString(); patch.bluff2PulledBy = displayName; }
+      }
+      // Clear the claim so the order shows as available if the other bluff portion still needs pulling
+      patch.bluffClaimedBy = null;
+      patch.bluffClaimedAt = null;
+    } else {
+      patch[`${effectiveTeam}PulledAt`] = new Date().toISOString();
+      patch[`${effectiveTeam}PulledBy`] = displayName;
+    }
+    await update(current.id, patch);
     setShowPhotoModal(false);
   }
 
@@ -108,6 +170,23 @@ export default function TeamPullView({ team: teamProp, onSwitchMode }) {
     setShowProblem(false);
   }
 
+  // Team pull icons using letters
+  function pullIcons(d) {
+    const b1Done = !d.needsBluff1 || d.bluff1PulledAt;
+    const b2Done = !d.needsBluff2 || d.bluff2PulledAt;
+    const bluffDone = b1Done && b2Done;
+    const bluffNeeded = d.needsBluff1 || d.needsBluff2;
+    return (
+      <div style={{ display: "flex", gap: 6, fontSize: 13, fontWeight: 800 }}>
+        {bluffNeeded && <span style={{ color: bluffDone ? GREEN : "#9cb894" }}>B{bluffDone ? "✓" : "○"}</span>}
+        {d.needsSprague && <span style={{ color: d.spraguePulledAt ? GREEN : "#9cb894" }}>S{d.spraguePulledAt ? "✓" : "○"}</span>}
+        {d.needsHouseplants && <span style={{ color: d.houseplantsPulledAt ? GREEN : "#9cb894" }}>H{d.houseplantsPulledAt ? "✓" : "○"}</span>}
+      </div>
+    );
+  }
+
+  const activeOrder = current || nextUnclaimed;
+
   return (
     <div style={{ ...FONT, minHeight: "100vh", background: DARK, color: "#fff", paddingBottom: 60 }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
@@ -121,9 +200,45 @@ export default function TeamPullView({ team: teamProp, onSwitchMode }) {
       </div>
 
       <div style={{ padding: 16 }}>
-        {current ? (
+        {/* Claim flow for Bluff teams */}
+        {needsClaim && nextUnclaimed && (
           <div style={{ background: "#263821", border: `1px solid ${GREEN}44`, borderRadius: 14, padding: 24 }}>
-            <div style={{ fontSize: 11, fontWeight: 800, color: GREEN, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Next up</div>
+            <div style={{ fontSize: 11, fontWeight: 800, color: GREEN, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Next available</div>
+            <div style={{ fontSize: 28, fontWeight: 800, color: CREAM, fontFamily: "'DM Serif Display',Georgia,serif", marginBottom: 6, lineHeight: 1.15 }}>
+              {nextUnclaimed.customerSnapshot?.company_name || "—"}
+            </div>
+            {(nextUnclaimed.customerSnapshot?.address1 || nextUnclaimed.customerSnapshot?.city) && (
+              <div style={{ fontSize: 13, color: "#9cb894", marginBottom: 8 }}>
+                {nextUnclaimed.customerSnapshot.address1 && <div>{nextUnclaimed.customerSnapshot.address1}</div>}
+                <div>{[nextUnclaimed.customerSnapshot.city, nextUnclaimed.customerSnapshot.state].filter(Boolean).join(", ")} {nextUnclaimed.customerSnapshot.zip || ""}</div>
+              </div>
+            )}
+            <div style={{ fontSize: 15, color: "#9cb894", marginBottom: 6 }}>
+              {nextUnclaimed.deliveryTime || "—"} · {nextUnclaimed.cartCount || 0} carts · {fmtMoney(nextUnclaimed.orderValueCents)}
+            </div>
+            {pullIcons(nextUnclaimed)}
+            {(nextUnclaimed.customerSnapshot?.terms || "").toUpperCase().includes("COD") && (
+              <div style={{ background: RED, color: "#fff", padding: 12, borderRadius: 10, fontWeight: 800, marginTop: 10, fontSize: 15 }}>
+                💰 COD — collect {fmtMoney(nextUnclaimed.orderValueCents)}
+              </div>
+            )}
+
+            <button onClick={claimOrder}
+              style={{ width: "100%", background: GREEN, color: DARK, border: "none", padding: "20px 0", borderRadius: 12, fontSize: 18, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", marginTop: 16, minHeight: 56 }}>
+              🖐 Claim this order
+            </button>
+          </div>
+        )}
+
+        {/* Active claimed/current order */}
+        {current && (
+          <div style={{ background: "#263821", border: `2px solid ${GREEN}`, borderRadius: 14, padding: 24 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: GREEN, textTransform: "uppercase", letterSpacing: 1 }}>
+                {isBluff ? "Your claimed order" : "Next up"}
+              </div>
+              {isBluff && <div style={{ fontSize: 10, fontWeight: 800, color: CREAM, background: GREEN, padding: "3px 10px", borderRadius: 999 }}>CLAIMED</div>}
+            </div>
             <div style={{ fontSize: 30, fontWeight: 800, color: CREAM, fontFamily: "'DM Serif Display',Georgia,serif", marginBottom: 6, lineHeight: 1.15 }}>
               {current.customerSnapshot?.company_name || "—"}
             </div>
@@ -133,33 +248,37 @@ export default function TeamPullView({ team: teamProp, onSwitchMode }) {
                 <div>{[current.customerSnapshot.city, current.customerSnapshot.state].filter(Boolean).join(", ")} {current.customerSnapshot.zip || ""}</div>
               </div>
             )}
-            <div style={{ fontSize: 15, color: "#9cb894", marginBottom: 14 }}>
+            <div style={{ fontSize: 15, color: "#9cb894", marginBottom: 6 }}>
               {current.deliveryTime || "—"} · {current.cartCount || 0} carts · {fmtMoney(current.orderValueCents)}
             </div>
+            {pullIcons(current)}
             {(current.customerSnapshot?.terms || "").toUpperCase().includes("COD") && (
-              <div style={{ background: RED, color: "#fff", padding: 12, borderRadius: 10, fontWeight: 800, marginBottom: 10, fontSize: 15 }}>
+              <div style={{ background: RED, color: "#fff", padding: 12, borderRadius: 10, fontWeight: 800, marginTop: 10, fontSize: 15 }}>
                 💰 COD — collect {fmtMoney(current.orderValueCents)}
               </div>
             )}
             {current.customerSnapshot?.shipping_notes && (
-              <div style={{ background: "#1e2d1a", color: CREAM, padding: 12, borderRadius: 10, marginBottom: 10, fontSize: 14 }}>
+              <div style={{ background: "#1e2d1a", color: CREAM, padding: 12, borderRadius: 10, marginTop: 10, fontSize: 14 }}>
                 📝 {current.customerSnapshot.shipping_notes}
               </div>
             )}
             {current.notes && (
-              <div style={{ fontSize: 14, color: CREAM, marginBottom: 14, whiteSpace: "pre-wrap" }}>{current.notes}</div>
+              <div style={{ fontSize: 14, color: CREAM, marginTop: 10, whiteSpace: "pre-wrap" }}>{current.notes}</div>
             )}
 
             <button onClick={() => setShowPhotoModal(true)}
-              style={{ width: "100%", background: GREEN, color: DARK, border: "none", padding: "20px 0", borderRadius: 12, fontSize: 18, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", marginBottom: 12, minHeight: 56 }}>
-              ✓ Mark {TEAM_LABELS[team].replace(" Team", "")} done
+              style={{ width: "100%", background: GREEN, color: DARK, border: "none", padding: "20px 0", borderRadius: 12, fontSize: 18, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", marginTop: 16, minHeight: 56 }}>
+              ✓ Mark done
             </button>
             <button onClick={() => setShowProblem(true)}
-              style={{ width: "100%", background: "transparent", color: "#ffb3a8", border: `1.5px solid ${RED}`, padding: "16px 0", borderRadius: 12, fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", minHeight: 52 }}>
+              style={{ width: "100%", background: "transparent", color: "#ffb3a8", border: `1.5px solid ${RED}`, padding: "16px 0", borderRadius: 12, fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", marginTop: 8, minHeight: 52 }}>
               ⚠ Report problem
             </button>
           </div>
-        ) : (
+        )}
+
+        {/* All caught up */}
+        {!current && !needsClaim && (
           <div style={{ background: "#263821", border: `1px solid ${GREEN}44`, borderRadius: 14, padding: 40, textAlign: "center", color: CREAM }}>
             <div style={{ fontSize: 40, marginBottom: 10 }}>☀️</div>
             <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 6 }}>All caught up</div>
@@ -171,63 +290,53 @@ export default function TeamPullView({ team: teamProp, onSwitchMode }) {
         <div style={{ background: "#263821", border: `1px solid ${GREEN}44`, borderRadius: 12, padding: 16, marginTop: 16 }}>
           <div style={{ fontSize: 11, fontWeight: 800, color: GREEN, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Today's progress</div>
           <div style={{ height: 10, background: "#1e2d1a", borderRadius: 5, overflow: "hidden", marginBottom: 8 }}>
-            <div style={{ width: `${pct}%`, height: "100%", background: GREEN }} />
+            <div style={{ width: `${pct}%`, height: "100%", background: GREEN, transition: "width 0.3s" }} />
           </div>
           <div style={{ fontSize: 13, color: CREAM }}>{pulledCount} of {todaysForTeam.length} pulled</div>
-          <div style={{ fontSize: 13, color: "#9cb894" }}>{fmtMoney(pulledDollars)} of {fmtMoney(totalDollars)} pulled</div>
-          <div style={{ fontSize: 13, color: "#9cb894" }}>{fmtMoney(remainingDollars)} remaining</div>
+          <div style={{ fontSize: 13, color: "#9cb894" }}>{fmtMoney(pulledDollars)} of {fmtMoney(totalDollars)} pulled · {fmtMoney(remainingDollars)} remaining</div>
         </div>
       </div>
 
-      {showPhotoModal && current && (
-        <PickSheetModal onCancel={() => setShowPhotoModal(false)} onSubmit={submitPhotos} />
-      )}
-      {showProblem && current && (
-        <ProblemModal onCancel={() => setShowProblem(false)} onSubmit={submitProblem} />
-      )}
+      {/* Photo modal */}
+      {showPhotoModal && <PhotoModal onSubmit={submitPhotos} onCancel={() => setShowPhotoModal(false)} />}
+
+      {/* Problem modal */}
+      {showProblem && <ProblemModal onSubmit={submitProblem} onCancel={() => setShowProblem(false)} />}
     </div>
   );
 }
 
-function PickSheetModal({ onCancel, onSubmit }) {
+function PhotoModal({ onSubmit, onCancel }) {
   const [files, setFiles] = useState([]);
-  const [uploading, setUploading] = useState(false);
-
   function addFile(e) {
-    const f = e.target.files?.[0];
-    if (f) setFiles(prev => [...prev, f]);
-    e.target.value = "";
+    if (e.target.files?.length) setFiles(prev => [...prev, ...Array.from(e.target.files)]);
   }
-
-  async function handleSubmit() {
-    setUploading(true);
-    try { await onSubmit(files); } finally { setUploading(false); }
-  }
-
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, ...FONT }}>
-      <div style={{ background: DARK, borderRadius: 14, width: "100%", maxWidth: 420, border: `1px solid ${GREEN}44`, padding: 20 }}>
-        <div style={{ fontSize: 17, fontWeight: 800, color: CREAM, marginBottom: 12 }}>Upload pick sheet pages</div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 9999, display: "flex", alignItems: "flex-end", ...FONT }}>
+      <div style={{ width: "100%", background: "#fff", borderRadius: "20px 20px 0 0", padding: "24px 20px 32px", maxHeight: "80vh", overflowY: "auto" }}>
+        <div style={{ fontSize: 20, fontWeight: 800, color: DARK, marginBottom: 12, fontFamily: "'DM Serif Display',Georgia,serif" }}>Upload pick sheet pages</div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
           {files.map((f, i) => (
-            <div key={i} style={{ position: "relative" }}>
-              <img src={URL.createObjectURL(f)} alt="" style={{ width: 80, height: 80, objectFit: "cover", borderRadius: 8 }} />
-              <button onClick={() => setFiles(ps => ps.filter((_, j) => j !== i))}
-                style={{ position: "absolute", top: 2, right: 2, width: 22, height: 22, borderRadius: "50%", background: "rgba(0,0,0,.7)", color: "#fff", border: "none", cursor: "pointer" }}>×</button>
+            <div key={i} style={{ position: "relative", width: 70, height: 70, borderRadius: 8, overflow: "hidden", border: `1px solid #e0ead8` }}>
+              <img src={URL.createObjectURL(f)} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              <button onClick={() => setFiles(prev => prev.filter((_, j) => j !== i))}
+                style={{ position: "absolute", top: 2, right: 2, background: RED, color: "#fff", border: "none", borderRadius: "50%", width: 20, height: 20, fontSize: 12, fontWeight: 900, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
             </div>
           ))}
-          <label style={{ width: 80, height: 80, borderRadius: 8, border: `2px dashed ${GREEN}66`, background: "#263821", display: "flex", alignItems: "center", justifyContent: "center", color: CREAM, fontSize: 30, cursor: "pointer" }}>
+          <label style={{ width: 70, height: 70, borderRadius: 8, border: `2px dashed #c8d8c0`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: 28, color: MUTED }}>
             +
             <input type="file" accept="image/*" capture="environment" onChange={addFile} style={{ display: "none" }} />
           </label>
         </div>
-        <div style={{ fontSize: 12, color: "#9cb894", marginBottom: 12 }}>At least 1 page required.</div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={onCancel} disabled={uploading}
-            style={{ flex: 1, padding: "14px 0", borderRadius: 10, background: "transparent", border: `1.5px solid #4a6a3a`, color: CREAM, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
-          <button onClick={handleSubmit} disabled={files.length === 0 || uploading}
-            style={{ flex: 2, padding: "14px 0", borderRadius: 10, background: files.length === 0 || uploading ? "#4a6a3a" : GREEN, color: DARK, border: "none", fontWeight: 800, cursor: files.length === 0 ? "default" : "pointer", fontFamily: "inherit" }}>
-            {uploading ? "Uploading…" : "Submit & mark done"}
+        <div style={{ fontSize: 12, color: MUTED, marginBottom: 12 }}>At least 1 page required</div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={onCancel}
+            style={{ flex: 1, padding: "14px 0", borderRadius: 12, border: `1.5px solid #e0ead8`, background: "#fff", color: MUTED, fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", minHeight: 52 }}>
+            Cancel
+          </button>
+          <button onClick={() => onSubmit(files)} disabled={files.length === 0}
+            style={{ flex: 2, padding: "14px 0", borderRadius: 12, border: "none", background: files.length > 0 ? GREEN : "#c8d8c0", color: files.length > 0 ? "#fff" : MUTED, fontSize: 15, fontWeight: 800, cursor: files.length > 0 ? "pointer" : "default", fontFamily: "inherit", minHeight: 52 }}>
+            Submit & mark done
           </button>
         </div>
       </div>
@@ -235,24 +344,26 @@ function PickSheetModal({ onCancel, onSubmit }) {
   );
 }
 
-function ProblemModal({ onCancel, onSubmit }) {
+function ProblemModal({ onSubmit, onCancel }) {
   const [text, setText] = useState("");
   const [file, setFile] = useState(null);
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, ...FONT }}>
-      <div style={{ background: DARK, borderRadius: 14, width: "100%", maxWidth: 420, border: `1px solid ${RED}`, padding: 20 }}>
-        <div style={{ fontSize: 17, fontWeight: 800, color: CREAM, marginBottom: 12 }}>Report problem</div>
-        <textarea value={text} onChange={e => setText(e.target.value)} placeholder="What happened?"
-          style={{ width: "100%", minHeight: 100, padding: 12, borderRadius: 10, border: `1.5px solid #4a6a3a`, background: "#263821", color: CREAM, fontSize: 14, fontFamily: "inherit", boxSizing: "border-box", outline: "none", marginBottom: 10, resize: "vertical" }} />
-        <label style={{ display: "inline-block", padding: "10px 14px", borderRadius: 10, background: "#263821", color: CREAM, border: `1px dashed ${GREEN}66`, cursor: "pointer", fontWeight: 700, fontSize: 12, marginBottom: 12 }}>
-          📷 {file ? "Photo attached" : "Attach photo (optional)"}
-          <input type="file" accept="image/*" capture="environment" onChange={e => setFile(e.target.files?.[0] || null)} style={{ display: "none" }} />
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 9999, display: "flex", alignItems: "flex-end", ...FONT }}>
+      <div style={{ width: "100%", background: "#fff", borderRadius: "20px 20px 0 0", padding: "24px 20px 32px" }}>
+        <div style={{ fontSize: 20, fontWeight: 800, color: DARK, marginBottom: 12, fontFamily: "'DM Serif Display',Georgia,serif" }}>Report a problem</div>
+        <textarea value={text} onChange={e => setText(e.target.value)} placeholder="What's the issue?"
+          style={{ width: "100%", padding: 14, borderRadius: 10, border: `1.5px solid #e0ead8`, fontSize: 15, fontFamily: "inherit", minHeight: 80, boxSizing: "border-box", marginBottom: 12 }} />
+        <label style={{ display: "block", marginBottom: 16, color: MUTED, fontSize: 13, cursor: "pointer" }}>
+          📷 Attach photo (optional)
+          <input type="file" accept="image/*" capture="environment" onChange={e => setFile(e.target.files?.[0] || null)} style={{ display: "block", marginTop: 6 }} />
         </label>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 10 }}>
           <button onClick={onCancel}
-            style={{ flex: 1, padding: "14px 0", borderRadius: 10, background: "transparent", border: `1.5px solid #4a6a3a`, color: CREAM, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+            style={{ flex: 1, padding: "14px 0", borderRadius: 12, border: `1.5px solid #e0ead8`, background: "#fff", color: MUTED, fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", minHeight: 52 }}>
+            Cancel
+          </button>
           <button onClick={() => onSubmit(text, file)} disabled={!text.trim()}
-            style={{ flex: 2, padding: "14px 0", borderRadius: 10, background: text.trim() ? RED : "#4a6a3a", color: "#fff", border: "none", fontWeight: 800, cursor: text.trim() ? "pointer" : "default", fontFamily: "inherit" }}>
+            style={{ flex: 2, padding: "14px 0", borderRadius: 12, border: "none", background: text.trim() ? RED : "#c8d8c0", color: "#fff", fontSize: 15, fontWeight: 800, cursor: text.trim() ? "pointer" : "default", fontFamily: "inherit", minHeight: 52 }}>
             Submit
           </button>
         </div>

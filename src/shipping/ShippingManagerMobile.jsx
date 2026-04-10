@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from "react";
-import { useDeliveries, useShippingCustomers, useShippingRoutes } from "../supabase";
+import { useDeliveries, useShippingCustomers, useShippingRoutes, useDrivers } from "../supabase";
 import { useAuth } from "../Auth";
 import { customerConfirmationValid } from "./ShippingCommand";
 import DeliveryImporter from "./DeliveryImporter";
@@ -39,9 +39,10 @@ function weekLabel(monday) {
 }
 
 export default function ShippingManagerMobile({ onSwitchMode }) {
-  const { rows: deliveries, update, insert, refresh } = useDeliveries();
+  const { rows: deliveries, update, insert, remove, refresh } = useDeliveries();
   const { rows: customers } = useShippingCustomers();
   const { rows: routes } = useShippingRoutes();
+  const { rows: drivers } = useDrivers();
   const { displayName, signOut } = useAuth();
 
   const [weekOffset, setWeekOffset] = useState(0);
@@ -224,14 +225,19 @@ export default function ShippingManagerMobile({ onSwitchMode }) {
     const b1Done = !d.needsBluff1 || d.bluff1PulledAt;
     const b2Done = !d.needsBluff2 || d.bluff2PulledAt;
     const bluffDone = b1Done && b2Done;
+    const spragueDone = !d.needsSprague || d.spraguePulledAt;
+    const hpDone = !d.needsHouseplants || d.houseplantsPulledAt;
+    const allPulled = bluffDone && spragueDone && hpDone;
+    const isShipped = !!d.shippedAt;
 
     const wasRescheduled = !!d.dateChangedAt;
 
     return (
       <div key={d.id} style={{
-        background: "#fff", borderRadius: 14,
-        border: wasRescheduled ? `1.5px solid ${AMBER}` : `1.5px solid ${BORDER}`,
-        borderLeft: wasRescheduled ? `4px solid ${AMBER}` : undefined,
+        background: isShipped ? "#f0f9ec" : "#fff", borderRadius: 14,
+        border: isShipped ? `1.5px solid ${GREEN}` : wasRescheduled ? `1.5px solid ${AMBER}` : `1.5px solid ${BORDER}`,
+        borderLeft: isShipped ? `4px solid ${GREEN}` : wasRescheduled ? `4px solid ${AMBER}` : undefined,
+        opacity: isShipped ? 0.7 : 1,
         boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
         padding: "14px 16px", marginBottom: 10,
       }}>
@@ -266,13 +272,14 @@ export default function ShippingManagerMobile({ onSwitchMode }) {
               {d.notes && <span style={{ fontSize: 12 }}>📝</span>}
               {isCOD && <span style={{ background: RED, color: "#fff", borderRadius: 999, padding: "1px 8px", fontSize: 10, fontWeight: 800 }}>COD</span>}
               {wasRescheduled && <span style={{ background: AMBER, color: "#fff", borderRadius: 999, padding: "1px 8px", fontSize: 10, fontWeight: 800 }}>MOVED</span>}
+              {isShipped && <span style={{ background: GREEN, color: "#fff", borderRadius: 999, padding: "1px 8px", fontSize: 10, fontWeight: 800 }}>SHIPPED {new Date(d.shippedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}</span>}
               {selectedDayIdx === null && <span style={{ fontSize: 11, color: MUTED, fontWeight: 600 }}>{dateLabel(d.deliveryDate)}</span>}
             </div>
             {/* Team pull status */}
             <div style={{ marginTop: 4, fontSize: 13 }}>
-              {(d.needsBluff1 || d.needsBluff2) && <span title="Bluff">🌱{bluffDone ? "✅" : "⬜"} </span>}
-              {d.needsSprague && <span title="Sprague">🌿{d.spraguePulledAt ? "✅" : "⬜"} </span>}
-              {d.needsHouseplants && <span title="Houseplants">🪴{d.houseplantsPulledAt ? "✅" : "⬜"} </span>}
+              {(d.needsBluff1 || d.needsBluff2) && <span title="Bluff" style={{ fontWeight: 800 }}>B{bluffDone ? "✓" : "○"} </span>}
+              {d.needsSprague && <span title="Sprague" style={{ fontWeight: 800 }}>S{d.spraguePulledAt ? "✓" : "○"} </span>}
+              {d.needsHouseplants && <span title="Houseplants" style={{ fontWeight: 800 }}>H{d.houseplantsPulledAt ? "✓" : "○"} </span>}
             </div>
           </div>
         </div>
@@ -310,13 +317,88 @@ export default function ShippingManagerMobile({ onSwitchMode }) {
                 📅 Originally: {dateLabel(d.originalDate)} → moved by {d.dateChangedBy}
               </div>
             )}
-            {/* Move to date */}
-            <div style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "center" }}>
-              <input type="date" defaultValue={d.deliveryDate}
-                onChange={e => { if (e.target.value) moveDeliveryToDate(d, e.target.value); }}
-                style={{ padding: "8px 10px", borderRadius: 8, border: `1px solid ${BORDER}`, fontSize: 13, fontFamily: "inherit", flex: 1 }} />
-              <span style={{ fontSize: 11, color: MUTED, fontWeight: 600 }}>Move to date</span>
+
+            {/* Timing data */}
+            {(d.bluffClaimedAt || d.bluff1PulledAt || d.spraguePulledAt || d.houseplantsPulledAt || d.shippedAt) && (
+              <div style={{ marginTop: 8, fontSize: 11, color: MUTED, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                {d.bluffClaimedAt && <span>Claimed: {new Date(d.bluffClaimedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}</span>}
+                {d.bluff1PulledAt && <span>B pulled: {new Date(d.bluff1PulledAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}</span>}
+                {d.spraguePulledAt && <span>S pulled: {new Date(d.spraguePulledAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}</span>}
+                {d.houseplantsPulledAt && <span>H pulled: {new Date(d.houseplantsPulledAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}</span>}
+                {d.shippedAt && <span style={{ color: GREEN, fontWeight: 700 }}>Shipped: {new Date(d.shippedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}</span>}
+              </div>
+            )}
+
+            {/* Shipped checkbox — only when all teams are done */}
+            {allPulled && (
+              <div style={{ marginTop: 10, padding: 12, background: isShipped ? "#e8f5e0" : "#f7faf4", borderRadius: 10, border: `1.5px solid ${isShipped ? GREEN : BORDER}` }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", fontWeight: 800, fontSize: 14, color: DARK }}>
+                  <input type="checkbox" checked={isShipped}
+                    onChange={async () => {
+                      if (isShipped) {
+                        await update(d.id, { shippedAt: null, shippedBy: null });
+                      } else {
+                        await update(d.id, { shippedAt: new Date().toISOString(), shippedBy: displayName });
+                      }
+                    }}
+                    style={{ width: 22, height: 22 }} />
+                  {isShipped
+                    ? `Shipped at ${new Date(d.shippedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`
+                    : "Mark as shipped"}
+                </label>
+              </div>
+            )}
+            {!allPulled && (
+              <div style={{ marginTop: 10, fontSize: 11, color: MUTED, fontStyle: "italic" }}>
+                Waiting on {!bluffDone ? "B " : ""}{!spragueDone ? "S " : ""}{!hpDone ? "H " : ""}to finish pulling before shipping
+              </div>
+            )}
+
+            {/* Driver assignment */}
+            <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: MUTED, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Driver</div>
+              <select
+                value={d.driverId || ""}
+                onChange={e => update(d.id, { driverId: e.target.value || null })}
+                style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: `1px solid ${BORDER}`, fontSize: 14, fontFamily: "inherit", background: "#fff" }}>
+                <option value="">— No driver assigned —</option>
+                {drivers.map(dr => <option key={dr.id} value={dr.id}>{dr.name}{dr.phone ? ` (${dr.phone})` : ""}</option>)}
+              </select>
+              {d.driverId && (() => {
+                const dr = drivers.find(x => x.id === d.driverId);
+                return dr?.phone ? (
+                  <div style={{ marginTop: 6, display: "flex", gap: 8 }}>
+                    <a href={`tel:${dr.phone}`} style={{ padding: "8px 14px", background: GREEN, color: "#fff", borderRadius: 8, textDecoration: "none", fontWeight: 800, fontSize: 12 }}>📞 Call</a>
+                    <a href={`sms:${dr.phone}`} style={{ padding: "8px 14px", background: DARK, color: CREAM, borderRadius: 8, textDecoration: "none", fontWeight: 800, fontSize: 12 }}>💬 Text</a>
+                  </div>
+                ) : null;
+              })()}
             </div>
+
+            {/* Move to date + AM/PM */}
+            <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: MUTED, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Move to date</div>
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <input type="date" defaultValue={d.deliveryDate}
+                  onChange={e => { if (e.target.value) moveDeliveryToDate(d, e.target.value); }}
+                  style={{ padding: "8px 10px", borderRadius: 8, border: `1px solid ${BORDER}`, fontSize: 13, fontFamily: "inherit", flex: 1 }} />
+                <button onClick={() => update(d.id, { deliveryTime: "08:00" })}
+                  style={{ padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${d.deliveryTime && parseInt(d.deliveryTime) < 12 ? DARK : BORDER}`, background: d.deliveryTime && parseInt(d.deliveryTime) < 12 ? DARK : "#fff", color: d.deliveryTime && parseInt(d.deliveryTime) < 12 ? CREAM : MUTED, fontWeight: 800, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+                  AM
+                </button>
+                <button onClick={() => update(d.id, { deliveryTime: "13:00" })}
+                  style={{ padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${d.deliveryTime && parseInt(d.deliveryTime) >= 12 ? DARK : BORDER}`, background: d.deliveryTime && parseInt(d.deliveryTime) >= 12 ? DARK : "#fff", color: d.deliveryTime && parseInt(d.deliveryTime) >= 12 ? CREAM : MUTED, fontWeight: 800, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+                  PM
+                </button>
+              </div>
+            </div>
+            <button onClick={async () => {
+                if (!window.confirm(`Delete delivery for ${cust.company_name || "this customer"}?`)) return;
+                await remove(d.id);
+              }}
+              style={{ marginTop: 10, width: "100%", padding: "10px 0", background: "#fff", color: RED, border: `1.5px solid ${RED}`, borderRadius: 8, fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+              🗑 Delete delivery
+            </button>
           </div>
         )}
       </div>
@@ -543,9 +625,9 @@ export default function ShippingManagerMobile({ onSwitchMode }) {
               <div style={{ fontSize: 11, fontWeight: 800, color: MUTED, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 8 }}>Teams needed</div>
               <div style={{ display: "flex", gap: 8 }}>
                 {[
-                  { key: "bluff", label: "🌱 Bluff", val: qaBluff, set: setQaBluff },
-                  { key: "sprague", label: "🌿 Sprague", val: qaSprague, set: setQaSprague },
-                  { key: "houseplants", label: "🪴 HP", val: qaHouseplants, set: setQaHouseplants },
+                  { key: "bluff", label: "B — Bluff", val: qaBluff, set: setQaBluff },
+                  { key: "sprague", label: "S — Sprague", val: qaSprague, set: setQaSprague },
+                  { key: "houseplants", label: "H — Houseplants", val: qaHouseplants, set: setQaHouseplants },
                 ].map(t => (
                   <button key={t.key} onClick={() => t.set(!t.val)}
                     style={{
