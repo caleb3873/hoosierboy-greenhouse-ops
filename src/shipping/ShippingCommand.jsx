@@ -1,5 +1,5 @@
-import { useMemo, useState, useEffect } from "react";
-import { useDeliveries, useShippingCustomers, useDeliveryClaims, getSupabase } from "../supabase";
+import { useMemo, useState, useEffect, useCallback, useRef } from "react";
+import { useDeliveries, useShippingCustomers, useDeliveryClaims, useDrivers, useTrucks, getSupabase } from "../supabase";
 import { useAuth } from "../Auth";
 import DeliveryImporter from "./DeliveryImporter";
 
@@ -54,11 +54,28 @@ export default function ShippingCommand() {
   const { rows: deliveries, update } = useDeliveries();
   const { rows: customers } = useShippingCustomers();
   const { rows: claims } = useDeliveryClaims();
+  const { rows: drivers } = useDrivers();
+  const { rows: trucks } = useTrucks();
   const { displayName } = useAuth();
 
   const [weekOffset, setWeekOffset] = useState(0);
   const [selected, setSelected] = useState(null);
   const [modal, setModal] = useState(null); // 'reconfirm' | 'late' | 'import' | null
+
+  // Filters
+  const [filterShipVia, setFilterShipVia] = useState("");
+  const [filterCity, setFilterCity] = useState("");
+  const [filterState, setFilterState] = useState("");
+  const [filterMinDollars, setFilterMinDollars] = useState("");
+  const [filterMaxDollars, setFilterMaxDollars] = useState("");
+  const [showFilters, setShowFilters] = useState(false);
+
+  // Customer name search filter
+  const [filterCustomer, setFilterCustomer] = useState("");
+  const [custChecked, setCustChecked] = useState(new Set()); // set of customer IDs to include
+
+  // Drag state
+  const [dragId, setDragId] = useState(null);
 
   const monday = useMemo(() => addDays(weekMonday(), weekOffset * 7), [weekOffset]);
   const days = useMemo(() => Array.from({ length: 6 }, (_, i) => addDays(monday, i)), [monday]);
@@ -79,11 +96,92 @@ export default function ShippingCommand() {
     return map;
   }, [claims, deliveries]);
 
-  const weekDeliveries = useMemo(() => {
+  const allWeekDeliveries = useMemo(() => {
     const start = toISODate(monday);
     const end = toISODate(addDays(monday, 7));
     return deliveries.filter(d => d.deliveryDate && d.deliveryDate >= start && d.deliveryDate < end && d.lifecycle !== "cancelled");
   }, [deliveries, monday]);
+
+  // Extract unique filter values from all deliveries (not just filtered)
+  const filterOptions = useMemo(() => {
+    const shipVias = new Set(), cities = new Set(), states = new Set();
+    for (const d of allWeekDeliveries) {
+      const c = d.customerSnapshot || {};
+      const fc = customers.find(x => x.id === d.customerId);
+      if (d.shipVia) shipVias.add(d.shipVia);
+      if (fc?.city) cities.add(fc.city);
+      else if (c.city) cities.add(c.city);
+      if (fc?.state) states.add(fc.state);
+      else if (c.state) states.add(c.state);
+    }
+    return {
+      shipVias: [...shipVias].sort(),
+      cities: [...cities].sort(),
+      states: [...states].sort(),
+    };
+  }, [allWeekDeliveries, customers]);
+
+  // Apply filters
+  const weekDeliveries = useMemo(() => {
+    return allWeekDeliveries.filter(d => {
+      const c = d.customerSnapshot || {};
+      const fc = customers.find(x => x.id === d.customerId) || {};
+      if (filterShipVia && !(d.shipVia || "").toUpperCase().includes(filterShipVia.toUpperCase())) return false;
+      if (filterCity) {
+        const city = (fc.city || c.city || "").toUpperCase();
+        if (!city.includes(filterCity.toUpperCase())) return false;
+      }
+      if (filterState) {
+        const state = (fc.state || c.state || "").toUpperCase();
+        if (!state.includes(filterState.toUpperCase())) return false;
+      }
+      const dollars = (d.orderValueCents || 0) / 100;
+      if (filterMinDollars && dollars < parseFloat(filterMinDollars)) return false;
+      if (filterMaxDollars && dollars > parseFloat(filterMaxDollars)) return false;
+      if (custChecked.size > 0 && !custChecked.has(d.customerId)) return false;
+      return true;
+    });
+  }, [allWeekDeliveries, customers, filterShipVia, filterCity, filterState, filterMinDollars, filterMaxDollars, custChecked]);
+
+  // Customer search matches (for filter UI)
+  const custMatches = useMemo(() => {
+    if (!filterCustomer || filterCustomer.length < 2) return [];
+    const q = filterCustomer.toUpperCase();
+    const seen = new Set();
+    const results = [];
+    for (const d of allWeekDeliveries) {
+      if (!d.customerId || seen.has(d.customerId)) continue;
+      const name = (d.customerSnapshot?.company_name || "").toUpperCase();
+      const fc = customers.find(x => x.id === d.customerId);
+      const fcName = (fc?.companyName || "").toUpperCase();
+      if (name.includes(q) || fcName.includes(q)) {
+        seen.add(d.customerId);
+        results.push({ id: d.customerId, name: d.customerSnapshot?.company_name || fc?.companyName || "—" });
+      }
+    }
+    return results.sort((a, b) => a.name.localeCompare(b.name));
+  }, [filterCustomer, allWeekDeliveries, customers]);
+
+  function toggleCustFilter(custId) {
+    setCustChecked(prev => {
+      const next = new Set(prev);
+      if (next.has(custId)) next.delete(custId); else next.add(custId);
+      return next;
+    });
+  }
+
+  // Drag handlers
+  async function handleDrop(e, targetDate, targetSlot) {
+    e.preventDefault();
+    const id = e.dataTransfer.getData("text/deliveryId");
+    if (!id) return;
+    const del = deliveries.find(d => d.id === id);
+    if (!del || del.dateLocked) return;
+    const iso = toISODate(targetDate);
+    if (del.deliveryDate === iso) return;
+    await update(id, { deliveryDate: iso });
+    setDragId(null);
+  }
 
   const lateChanges = useMemo(() => weekDeliveries.filter(tooLateToAdd), [weekDeliveries]);
   const needReconfirm = useMemo(() => {
@@ -141,6 +239,65 @@ export default function ShippingCommand() {
         </button>
       </div>
 
+      {/* Filter bar */}
+      <div style={{ marginBottom: 10 }}>
+        <button onClick={() => setShowFilters(f => !f)}
+          style={{ ...navBtn, fontSize: 12, marginBottom: showFilters ? 8 : 0 }}>
+          🔍 {showFilters ? "Hide filters" : "Filters"}
+          {(filterShipVia || filterCity || filterState || filterMinDollars || filterMaxDollars || custChecked.size > 0) && " (active)"}
+        </button>
+        {showFilters && (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <FilterSelect label="Route" value={filterShipVia} onChange={setFilterShipVia} options={filterOptions.shipVias} />
+            <FilterSelect label="City" value={filterCity} onChange={setFilterCity} options={filterOptions.cities} />
+            <FilterSelect label="State" value={filterState} onChange={setFilterState} options={filterOptions.states} />
+            <label style={{ fontSize: 11, fontWeight: 700, color: MUTED }}>
+              Min $
+              <input type="number" value={filterMinDollars} onChange={e => setFilterMinDollars(e.target.value)}
+                style={{ marginLeft: 4, width: 70, padding: "6px 8px", borderRadius: 6, border: `1px solid ${BORDER}`, fontSize: 12, fontFamily: "inherit" }} />
+            </label>
+            <label style={{ fontSize: 11, fontWeight: 700, color: MUTED }}>
+              Max $
+              <input type="number" value={filterMaxDollars} onChange={e => setFilterMaxDollars(e.target.value)}
+                style={{ marginLeft: 4, width: 70, padding: "6px 8px", borderRadius: 6, border: `1px solid ${BORDER}`, fontSize: 12, fontFamily: "inherit" }} />
+            </label>
+            <div style={{ position: "relative" }}>
+              <label style={{ fontSize: 11, fontWeight: 700, color: MUTED }}>
+                Customer
+                <input type="text" value={filterCustomer} onChange={e => setFilterCustomer(e.target.value)} placeholder="Type to search…"
+                  style={{ marginLeft: 4, width: 140, padding: "6px 8px", borderRadius: 6, border: `1px solid ${BORDER}`, fontSize: 12, fontFamily: "inherit" }} />
+              </label>
+              {custMatches.length > 0 && (
+                <div style={{ position: "absolute", top: "100%", left: 0, background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,0.1)", zIndex: 50, maxHeight: 180, overflowY: "auto", width: 240, marginTop: 4 }}>
+                  {custMatches.map(cm => (
+                    <label key={cm.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", cursor: "pointer", fontSize: 12, fontWeight: custChecked.has(cm.id) ? 800 : 500 }}
+                      onMouseDown={e => e.preventDefault()}>
+                      <input type="checkbox" checked={custChecked.has(cm.id)} onChange={() => toggleCustFilter(cm.id)} />
+                      {cm.name}
+                    </label>
+                  ))}
+                </div>
+              )}
+              {custChecked.size > 0 && (
+                <div style={{ marginTop: 4, display: "flex", gap: 4, flexWrap: "wrap" }}>
+                  {[...custChecked].map(id => {
+                    const name = custMatches.find(c => c.id === id)?.name || customers.find(c => c.id === id)?.companyName || id;
+                    return (
+                      <span key={id} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", background: CREAM, borderRadius: 999, fontSize: 10, fontWeight: 700, color: DARK }}>
+                        {name}
+                        <span onClick={() => toggleCustFilter(id)} style={{ cursor: "pointer", fontWeight: 900 }}>×</span>
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+            <button onClick={() => { setFilterShipVia(""); setFilterCity(""); setFilterState(""); setFilterMinDollars(""); setFilterMaxDollars(""); setFilterCustomer(""); setCustChecked(new Set()); }}
+              style={{ ...navBtn, fontSize: 11, color: RED }}>Clear</button>
+          </div>
+        )}
+      </div>
+
       {/* Week grid */}
       <div style={{
         display: "grid",
@@ -163,9 +320,17 @@ export default function ShippingCommand() {
           <>
             <div key={slot + "-lbl"} style={{ fontSize: 11, fontWeight: 800, color: MUTED, textAlign: "right", paddingRight: 6, paddingTop: 6 }}>{slot}</div>
             {days.map((d, i) => (
-              <div key={slot + i} style={{ minHeight: 120, background: "#f7faf4", borderRadius: 8, padding: 4, border: `1px solid ${BORDER}` }}>
+              <div key={slot + i}
+                onDragOver={e => { e.preventDefault(); e.currentTarget.style.background = "#e8f5e0"; }}
+                onDragLeave={e => { e.currentTarget.style.background = "#f7faf4"; }}
+                onDrop={e => { e.currentTarget.style.background = "#f7faf4"; handleDrop(e, d, slot); }}
+                style={{ minHeight: 120, background: "#f7faf4", borderRadius: 8, padding: 4, border: `1px solid ${BORDER}`, transition: "background 0.15s" }}>
                 {bucket(d, slot).map(del => (
-                  <Chip key={del.id} delivery={del} customers={customers} claimsCount={claimsByCustomer.get(del.customerId) || 0} onClick={() => setSelected(del)} />
+                  <Chip key={del.id} delivery={del} customers={customers} claimsCount={claimsByCustomer.get(del.customerId) || 0}
+                    onClick={() => setSelected(del)}
+                    onDragStart={() => setDragId(del.id)}
+                    onDragEnd={() => setDragId(null)}
+                    isDragging={dragId === del.id} />
                 ))}
               </div>
             ))}
@@ -177,6 +342,8 @@ export default function ShippingCommand() {
         <DetailDrawer
           delivery={selected}
           displayName={displayName}
+          drivers={drivers}
+          trucks={trucks}
           onClose={() => setSelected(null)}
           onUpdate={async patch => {
             await update(selected.id, patch);
@@ -224,7 +391,7 @@ export default function ShippingCommand() {
 const navBtn = { background: "#f2f5ef", border: `1px solid ${BORDER}`, padding: "8px 12px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 700, fontFamily: "inherit", color: DARK };
 
 // ── Chip ────────────────────────────────────────────────────────────────────
-function Chip({ delivery: d, customers, claimsCount, onClick }) {
+function Chip({ delivery: d, customers, claimsCount, onClick, onDragStart, onDragEnd, isDragging }) {
   const cust = d.customerSnapshot || {};
   const fullCust = customers.find(c => c.id === d.customerId) || {};
   const isProposed = d.lifecycle === "proposed" || (!d.lifecycle);
@@ -239,11 +406,16 @@ function Chip({ delivery: d, customers, claimsCount, onClick }) {
   const latestAlert = Array.isArray(d.alerts) && d.alerts.length > 0 ? d.alerts[d.alerts.length - 1] : null;
 
   return (
-    <div onClick={onClick} style={{
+    <div
+      draggable={!d.dateLocked}
+      onDragStart={e => { e.dataTransfer.setData("text/deliveryId", d.id); e.dataTransfer.effectAllowed = "move"; onDragStart?.(); }}
+      onDragEnd={() => onDragEnd?.()}
+      onClick={onClick}
+      style={{
       background: isCancelled ? "#f0f0f0" : "#fff",
       border: isProposed ? `1.5px dashed ${MUTED}` : `1.5px solid ${DARK}`,
-      borderRadius: 6, padding: 6, marginBottom: 4, cursor: "pointer",
-      opacity: isProposed ? 0.75 : isCancelled ? 0.5 : 1,
+      borderRadius: 6, padding: 6, marginBottom: 4, cursor: d.dateLocked ? "pointer" : "grab",
+      opacity: isDragging ? 0.4 : isProposed ? 0.75 : isCancelled ? 0.5 : 1,
       fontSize: 10, lineHeight: 1.3,
     }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 4, fontWeight: 800, color: DARK }}>
@@ -286,7 +458,7 @@ function Chip({ delivery: d, customers, claimsCount, onClick }) {
 }
 
 // ── Detail Drawer ──────────────────────────────────────────────────────────
-function DetailDrawer({ delivery: d, displayName, onClose, onUpdate }) {
+function DetailDrawer({ delivery: d, displayName, drivers = [], trucks = [], onClose, onUpdate }) {
   const cust = d.customerSnapshot || {};
   const [alertText, setAlertText] = useState("");
   const [moveDate, setMoveDate] = useState(d.deliveryDate || "");
@@ -357,6 +529,31 @@ function DetailDrawer({ delivery: d, displayName, onClose, onUpdate }) {
               {(cust.terms || "").toUpperCase().includes("COD") && <div style={{ color: RED, fontWeight: 700 }}>💰 COD</div>}
               {cust.shipping_notes && <div>📝 {cust.shipping_notes}</div>}
               {d.dateLocked && <div>🔒 Date locked (fundraiser)</div>}
+            </div>
+          </Section>
+
+          <Section title="Driver & Truck">
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <label style={{ flex: 1, minWidth: 140 }}>
+                <div style={{ fontSize: 10, fontWeight: 800, color: MUTED, marginBottom: 4 }}>Driver</div>
+                <select
+                  value={d.driverId || ""}
+                  onChange={e => onUpdate({ driverId: e.target.value || null })}
+                  style={{ width: "100%", padding: "8px 10px", borderRadius: 6, border: `1px solid ${BORDER}`, fontSize: 13, fontFamily: "inherit", background: "#fff" }}>
+                  <option value="">— Unassigned —</option>
+                  {drivers.map(dr => <option key={dr.id} value={dr.id}>{dr.name}</option>)}
+                </select>
+              </label>
+              <label style={{ flex: 1, minWidth: 140 }}>
+                <div style={{ fontSize: 10, fontWeight: 800, color: MUTED, marginBottom: 4 }}>Truck</div>
+                <select
+                  value={d.truckId || ""}
+                  onChange={e => onUpdate({ truckId: e.target.value || null })}
+                  style={{ width: "100%", padding: "8px 10px", borderRadius: 6, border: `1px solid ${BORDER}`, fontSize: 13, fontFamily: "inherit", background: "#fff" }}>
+                  <option value="">— Unassigned —</option>
+                  {trucks.map(tr => <option key={tr.id} value={tr.id}>{tr.name}</option>)}
+                </select>
+              </label>
             </div>
           </Section>
 
@@ -475,6 +672,19 @@ function PhotoThumb({ path, bucket }) {
   }, [path, bucket]);
   if (!url) return <div style={{ width: 60, height: 60, background: "#eee", borderRadius: 6 }} />;
   return <a href={url} target="_blank" rel="noopener noreferrer"><img src={url} alt="" style={{ width: 60, height: 60, objectFit: "cover", borderRadius: 6 }} /></a>;
+}
+
+function FilterSelect({ label, value, onChange, options }) {
+  return (
+    <label style={{ fontSize: 11, fontWeight: 700, color: MUTED }}>
+      {label}
+      <select value={value} onChange={e => onChange(e.target.value)}
+        style={{ marginLeft: 4, padding: "6px 8px", borderRadius: 6, border: `1px solid ${BORDER}`, fontSize: 12, fontFamily: "inherit", background: "#fff", minWidth: 80 }}>
+        <option value="">All</option>
+        {options.map(o => <option key={o} value={o}>{o}</option>)}
+      </select>
+    </label>
+  );
 }
 
 function ListModal({ title, items, onClose, renderAction }) {

@@ -227,6 +227,7 @@ export default function DeliveryImporter({ onDone }) {
               orderValueCents: group.totalValueCents,
               cartCount: 0,
               notes: group.notes || null,
+              shipVia: group.shipVia || null,
               status: "scheduled",
               lifecycle: "proposed",
               salesConfirmedAt: new Date().toISOString(),
