@@ -528,7 +528,7 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
     if (weekFilter !== "all") result = result.filter(i => i.shipWeek === weekFilter);
     if (statusFilter === "confirmed") result = result.filter(i => i.orderNumber);
     if (statusFilter === "unconfirmed") result = result.filter(i => !i.orderNumber);
-    if (timingFilter !== "all") result = result.filter(i => i.timing === timingFilter);
+    if (timingFilter !== "all") result = result.filter(i => i.responseWeek === timingFilter || (!i.responseWeek && i.timing === timingFilter));
     if (searchQ.trim()) {
       const q = searchQ.toLowerCase();
       result = result.filter(i =>
@@ -588,6 +588,7 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
           color: isTricolor ? "TRICOLOR" : i.color,
           breeder: i.breeder,
           timing: i.timing,
+          responseWeek: i.responseWeek,
           status: i.status,
           vigor: i.vigor,
           flowerWeek: i.flowerWeek,
@@ -649,6 +650,7 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
         case "color":      av = (a.color || "").toLowerCase(); bv = (b.color || "").toLowerCase(); break;
         case "shipWeek":   av = (a.shipWeeks && [...a.shipWeeks].sort()[0]) || ""; bv = (b.shipWeeks && [...b.shipWeeks].sort()[0]) || ""; break;
         case "plantWeek":  av = a.plantWeek || ""; bv = b.plantWeek || ""; break;
+        case "responseWeek": av = parseFloat(a.responseWeek) || 99; bv = parseFloat(b.responseWeek) || 99; break;
         case "timing":     av = (a.timing || "").toLowerCase(); bv = (b.timing || "").toLowerCase(); break;
         case "totalCost":  av = a.totalCost || 0; bv = b.totalCost || 0; break;
         case "totalQty":
@@ -735,22 +737,22 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
           )}
         </div>
 
-        {/* Timing/response time chips */}
+        {/* Response week filter chips */}
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", marginRight: 6, alignSelf: "center" }}>Response Time:</span>
+          <span style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", marginRight: 6, alignSelf: "center" }}>Response Wk:</span>
           <button onClick={() => setTimingFilter("all")}
             style={{ padding: "4px 12px", borderRadius: 16, fontSize: 11, fontWeight: timingFilter === "all" ? 800 : 600,
               background: timingFilter === "all" ? "#1e2d1a" : "#fff",
               color: timingFilter === "all" ? "#c8e6b8" : "#7a8c74",
               border: `1.5px solid ${timingFilter === "all" ? "#1e2d1a" : "#c8d8c0"}`,
               cursor: "pointer", fontFamily: "inherit" }}>All</button>
-          {timings.map(t => (
-            <button key={t} onClick={() => setTimingFilter(t)}
-              style={{ padding: "4px 12px", borderRadius: 16, fontSize: 11, fontWeight: timingFilter === t ? 800 : 600,
-                background: timingFilter === t ? "#1e2d1a" : "#fff",
-                color: timingFilter === t ? "#c8e6b8" : "#7a8c74",
-                border: `1.5px solid ${timingFilter === t ? "#1e2d1a" : "#c8d8c0"}`,
-                cursor: "pointer", fontFamily: "inherit" }}>{t}</button>
+          {[...new Set(items.map(i => i.responseWeek).filter(Boolean))].sort((a, b) => parseFloat(a) - parseFloat(b)).map(rw => (
+            <button key={rw} onClick={() => setTimingFilter(rw)}
+              style={{ padding: "4px 12px", borderRadius: 16, fontSize: 11, fontWeight: timingFilter === rw ? 800 : 600,
+                background: timingFilter === rw ? "#1e2d1a" : "#fff",
+                color: timingFilter === rw ? "#c8e6b8" : "#7a8c74",
+                border: `1.5px solid ${timingFilter === rw ? "#1e2d1a" : "#c8d8c0"}`,
+                cursor: "pointer", fontFamily: "inherit" }}>Wk {rw}</button>
           ))}
         </div>
       </div>
@@ -762,7 +764,7 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
           <div onClick={() => toggleSort("color")} style={{ cursor: "pointer", userSelect: "none" }}>Color {sortCol === "color" ? (sortDir === "asc" ? "↑" : "↓") : ""}</div>
           <div onClick={() => toggleSort("shipWeek")} style={{ cursor: "pointer", userSelect: "none" }}>Ship Wk {sortCol === "shipWeek" ? (sortDir === "asc" ? "↑" : "↓") : ""}</div>
           <div onClick={() => toggleSort("plantWeek")} style={{ cursor: "pointer", userSelect: "none" }}>Plant Wk {sortCol === "plantWeek" ? (sortDir === "asc" ? "↑" : "↓") : ""}</div>
-          <div onClick={() => toggleSort("timing")} style={{ cursor: "pointer", userSelect: "none" }}>Response {sortCol === "timing" ? (sortDir === "asc" ? "↑" : "↓") : ""}</div>
+          <div onClick={() => toggleSort("responseWeek")} style={{ cursor: "pointer", userSelect: "none" }}>Resp Wk {sortCol === "responseWeek" ? (sortDir === "asc" ? "↑" : "↓") : ""}</div>
           <div>Locations</div>
           <div onClick={() => toggleSort("totalQty")} style={{ textAlign: "right", cursor: "pointer", userSelect: "none" }}>Qty {sortCol === "totalQty" ? (sortDir === "asc" ? "↑" : "↓") : ""}</div>
           <div onClick={() => toggleSort("totalCost")} style={{ textAlign: "right", cursor: "pointer", userSelect: "none" }}>Cost {sortCol === "totalCost" ? (sortDir === "asc" ? "↑" : "↓") : ""}</div>
@@ -804,7 +806,7 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
                 </div>
                 <div style={{ fontSize: 10, color: "#c8791a", fontWeight: 700 }}>{[...c.shipWeeks].sort().join(", ")}</div>
                 <div style={{ fontSize: 10, color: "#4a90d9", fontWeight: 700 }}>{c.plantWeek || ""}</div>
-                <div style={{ fontSize: 10, color: "#7a8c74" }}>{c.timing || ""}</div>
+                <div style={{ fontSize: 11, color: "#1e2d1a", fontWeight: 700 }}>{c.responseWeek ? `Wk ${c.responseWeek}` : (c.timing || "—")}</div>
                 <div style={{ fontSize: 10, color: "#7a8c74", lineHeight: 1.4 }}>
                   {[...new Set(c.locations.map(l => l.location).filter(Boolean))].slice(0, 4).join(", ")}
                   {[...new Set(c.locations.map(l => l.location).filter(Boolean))].length > 4 && ` +${[...new Set(c.locations.map(l => l.location).filter(Boolean))].length - 4} more`}
