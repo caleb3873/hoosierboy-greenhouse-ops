@@ -104,7 +104,7 @@ const PROP_BADGE = {
 };
 
 export default function FallProgram() {
-  const { rows: items, upsert, remove } = useFallProgramItems();
+  const { rows: items, upsert, update: updateItem, remove } = useFallProgramItems();
   const { rows: soilMixes } = useSoilMixes();
   const { rows: containers } = useContainers();
 
@@ -169,7 +169,7 @@ export default function FallProgram() {
       ) : (
         <>
           {section === "overview" && <OverviewTab items={yearItems} year={year} />}
-          {section === "items" && <ItemsTab items={yearItems} soilMixes={soilMixes} containers={containers} upsert={upsert} remove={remove} />}
+          {section === "items" && <ItemsTab items={yearItems} soilMixes={soilMixes} containers={containers} upsert={upsert} updateItem={updateItem} remove={remove} />}
           {section === "color" && <ColorTab items={yearItems} />}
           {section === "schedule" && <ScheduleTab items={yearItems} />}
           {section === "sowing" && <SowingTab items={yearItems} />}
@@ -483,7 +483,7 @@ function ScheduleTab({ items }) {
 // ══════════════════════════════════════════════════════════════════════════════
 // ── ITEMS LIST (consolidated by variety with drill-down) ────────────────────
 // ══════════════════════════════════════════════════════════════════════════════
-function ItemsTab({ items, soilMixes, containers, upsert }) {
+function ItemsTab({ items, soilMixes, containers, upsert, updateItem }) {
   const [searchQ, setSearchQ] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [colorFilters, setColorFilters] = useState([]); // multi-select
@@ -787,7 +787,7 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
                   const newVal = !c.b2bAdded;
                   const now = newVal ? new Date().toISOString() : null;
                   for (const loc of c.locations) {
-                    await upsert({ ...loc, b2bAdded: newVal, b2bAddedAt: now });
+                    await updateItem(loc.id, { b2bAdded: newVal, b2bAddedAt: now });
                   }
                 }}>
                   <div style={{
