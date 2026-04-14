@@ -589,6 +589,7 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
           breeder: i.breeder,
           timing: i.timing,
           responseWeek: i.responseWeek,
+          b2bAdded: true,
           status: i.status,
           vigor: i.vigor,
           flowerWeek: i.flowerWeek,
@@ -610,6 +611,7 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
       if (i.shipWeek) map[key].shipWeeks.add(i.shipWeek);
       if (i.orderNumber) map[key].confirmed++;
       else map[key].unconfirmed++;
+      if (!i.b2bAdded) map[key].b2bAdded = false;
     });
 
     // Re-name tricolor items with common prefix
@@ -758,8 +760,9 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
       </div>
 
       <div style={{ background: "#fff", borderRadius: 14, border: "1.5px solid #e0ead8", overflow: "hidden" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "30px 1fr 85px 90px 90px 100px 1.2fr 80px 85px 95px", padding: "12px 16px", background: "#fafcf8", borderBottom: "2px solid #e0ead8", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "30px 50px 1fr 85px 90px 90px 100px 1.2fr 80px 85px 95px", padding: "12px 16px", background: "#fafcf8", borderBottom: "2px solid #e0ead8", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .5 }}>
           <div></div>
+          <div style={{ textAlign: "center" }}>B2B</div>
           <div onClick={() => toggleSort("variety")} style={{ cursor: "pointer", userSelect: "none" }}>Variety {sortCol === "variety" ? (sortDir === "asc" ? "↑" : "↓") : ""}</div>
           <div onClick={() => toggleSort("color")} style={{ cursor: "pointer", userSelect: "none" }}>Color {sortCol === "color" ? (sortDir === "asc" ? "↑" : "↓") : ""}</div>
           <div onClick={() => toggleSort("shipWeek")} style={{ cursor: "pointer", userSelect: "none" }}>Ship Wk {sortCol === "shipWeek" ? (sortDir === "asc" ? "↑" : "↓") : ""}</div>
@@ -777,8 +780,23 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
           return (
             <div key={c.key}>
               <div onClick={() => setExpandedKey(isOpen ? null : c.key)}
-                style={{ display: "grid", gridTemplateColumns: "30px 1fr 85px 90px 90px 100px 1.2fr 80px 85px 95px", padding: "10px 16px", borderBottom: "1px solid #f0f5ee", cursor: "pointer", alignItems: "center", background: idx % 2 === 0 ? "#fff" : "#fafcf8" }}>
+                style={{ display: "grid", gridTemplateColumns: "30px 50px 1fr 85px 90px 90px 100px 1.2fr 80px 85px 95px", padding: "10px 16px", borderBottom: "1px solid #f0f5ee", cursor: "pointer", alignItems: "center", background: c.b2bAdded ? "#f0f9ec" : idx % 2 === 0 ? "#fff" : "#fafcf8" }}>
                 <div style={{ color: "#7a8c74", fontSize: 14 }}>{isOpen ? "▼" : "▶"}</div>
+                <div style={{ textAlign: "center" }} onClick={async (e) => {
+                  e.stopPropagation();
+                  const newVal = !c.b2bAdded;
+                  const now = newVal ? new Date().toISOString() : null;
+                  for (const loc of c.locations) {
+                    await upsert({ ...loc, b2bAdded: newVal, b2bAddedAt: now });
+                  }
+                }}>
+                  <div style={{
+                    width: 22, height: 22, borderRadius: 6, display: "inline-flex", alignItems: "center", justifyContent: "center",
+                    background: c.b2bAdded ? "#7fb069" : "#fff",
+                    border: c.b2bAdded ? "2px solid #7fb069" : "2px solid #c8d8c0",
+                    color: "#fff", fontSize: 14, fontWeight: 900, cursor: "pointer",
+                  }}>{c.b2bAdded ? "✓" : ""}</div>
+                </div>
                 <div>
                   <div style={{ fontSize: 13, fontWeight: 800, color: "#1e2d1a" }}>
                     {c.variety}
@@ -852,8 +870,9 @@ function ItemsTab({ items, soilMixes, containers, upsert }) {
           <div style={{ padding: "40px", textAlign: "center", color: "#7a8c74" }}>No items match these filters</div>
         )}
         {sortedConsolidated.length > 0 && (
-          <div style={{ display: "grid", gridTemplateColumns: "30px 1fr 85px 90px 90px 100px 1.2fr 80px 85px 95px", padding: "14px 16px", background: "#1e2d1a", color: "#c8e6b8", fontWeight: 800, fontSize: 12, alignItems: "center" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "30px 50px 1fr 85px 90px 90px 100px 1.2fr 80px 85px 95px", padding: "14px 16px", background: "#1e2d1a", color: "#c8e6b8", fontWeight: 800, fontSize: 12, alignItems: "center" }}>
             <div></div>
+            <div style={{ fontSize: 10, textAlign: "center" }}>{sortedConsolidated.filter(c => c.b2bAdded).length}/{sortedConsolidated.length}</div>
             <div>TOTALS ({sortedConsolidated.length} {sortedConsolidated.length === 1 ? "variety" : "varieties"})</div>
             <div></div>
             <div></div>
