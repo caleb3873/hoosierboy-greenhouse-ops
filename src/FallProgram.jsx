@@ -1098,9 +1098,9 @@ function SowingTab({ items, upsert }) {
                 { name: "SUPERCAL YELLOW SUN", perPot: 2 },
               ],
               "SUPERCAL GUMBALL MIX": [
-                { name: "SUPERCAL LIGHT YELLOW", perPot: 2 },
-                { name: "SUPERCAL ROSE", perPot: 2 },
-                { name: "SUPERCAL ROYAL RED", perPot: 2 },
+                { name: "SUPERCAL PINK MIST", perPot: 2 },
+                { name: "SUPERCAL ROSE STAR", perPot: 2 },
+                { name: "SUPERCAL YELLOW SUN", perPot: 2 },
               ],
             };
 
