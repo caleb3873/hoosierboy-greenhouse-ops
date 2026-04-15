@@ -664,6 +664,9 @@ function ItemsTab({ items, soilMixes, containers, upsert, updateItem }) {
           shipWeeks: new Set(),
           confirmed: 0,
           unconfirmed: 0,
+          companionVariety: i.companionVariety || null,
+          transplantFrom: i.transplantFrom || null,
+          transplantWeek: i.transplantWeek || null,
         };
       }
       if (isTricolor) map[key].tricolorVarieties.add(i.variety);
@@ -904,6 +907,38 @@ function ItemsTab({ items, soilMixes, containers, upsert, updateItem }) {
               {/* Drill-down rows */}
               {isOpen && (
                 <div style={{ background: "#fafcf8", padding: "10px 16px 14px 56px", borderBottom: "1px solid #e0ead8" }}>
+                  {/* Companion / combo info for 14" mums */}
+                  {c.companionVariety && (
+                    <div style={{ marginBottom: 10, padding: "10px 12px", background: "#fff4e8", borderRadius: 8, border: "1.5px solid #e89a3a44" }}>
+                      <div style={{ fontSize: 11, fontWeight: 800, color: "#c8791a", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Combo Pot — Companion</div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#1e2d1a" }}>{c.companionVariety}</div>
+                      {(() => {
+                        // Find the companion items to compute combo cost
+                        const grassItems = items.filter(i => i.category === c.category && (i.variety || "").toUpperCase().includes("PURPLE FOUNTAIN") || (i.variety || "").toUpperCase().includes("GRASS"));
+                        const grassCostPerUnit = grassItems.length > 0 ? (parseFloat(grassItems[0].cost) || 0) / (parseFloat(grassItems[0].qty) || 1) : 0;
+                        const mumCostPerUnit = c.totalQty > 0 ? c.totalCost / c.totalQty : 0;
+                        const comboCost = mumCostPerUnit + grassCostPerUnit;
+                        return (
+                          <div style={{ fontSize: 12, color: "#7a8c74", marginTop: 4 }}>
+                            Mum: {fmt$(mumCostPerUnit * 100)}/unit + Grass: ${grassCostPerUnit.toFixed(2)}/unit = <strong style={{ color: "#1e2d1a" }}>${comboCost.toFixed(2)}/pot combo cost</strong>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
+
+                  {/* Transplant info */}
+                  {c.transplantFrom && (
+                    <div style={{ marginBottom: 10, padding: "10px 12px", background: "#f0f8eb", borderRadius: 8, border: "1.5px solid #7fb06944" }}>
+                      <div style={{ fontSize: 11, fontWeight: 800, color: "#4a7a35", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Transplant</div>
+                      <div style={{ fontSize: 12, color: "#1e2d1a" }}>
+                        Arrives in: <strong>{c.transplantFrom}</strong>
+                        {c.transplantWeek && <span> · Transplant: <strong>{c.transplantWeek}</strong></span>}
+                        {!c.transplantWeek && <span style={{ color: "#e89a3a", fontWeight: 700 }}> · Transplant date TBD</span>}
+                      </div>
+                    </div>
+                  )}
+
                   <div style={{ display: "flex", gap: 16, marginBottom: 10, padding: "6px 10px", background: "#fff", borderRadius: 8, fontSize: 11 }}>
                     <div><span style={{ color: "#aabba0" }}>Vigor:</span> <strong style={{ color: "#1e2d1a" }}>{c.vigor || "—"}</strong></div>
                     <div><span style={{ color: "#aabba0" }}>Flower Wk:</span> <strong style={{ color: "#1e2d1a" }}>{c.flowerWeek || "—"}</strong></div>
