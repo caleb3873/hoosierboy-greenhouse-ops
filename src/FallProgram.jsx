@@ -87,6 +87,12 @@ function computeSowWeek(item) {
       return `WEEK ${wkNum}`;
     }
   }
+
+  // For seed/URC items with a plain "WEEK XX" ship_week, that IS the sow week
+  if (isSeedSow(item) && sw.match(/^WEEK\s+\d+$/)) {
+    return sw;
+  }
+
   return null;
 }
 
