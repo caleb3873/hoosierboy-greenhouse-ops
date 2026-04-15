@@ -1099,7 +1099,7 @@ function SowingTab({ items, upsert }) {
                       <th style={thStyle}>Variety</th>
                       <th style={thStyle}>Type</th>
                       <th style={thStyle}>Plant Wk</th>
-                      <th style={{ ...thStyle, textAlign: "right" }}>Plants</th>
+                      <th style={{ ...thStyle, textAlign: "right" }}>Pots</th>
                       <th style={{ ...thStyle, textAlign: "right" }}>{propTab === "seed" ? "Seeds/Pot" : "/Plant"}</th>
                       <th style={{ ...thStyle, textAlign: "right" }}>{propTab === "seed" ? "Seeds Needed" : "Cuttings"}</th>
                       <th style={{ ...thStyle, textAlign: "right" }}>Germ %</th>
