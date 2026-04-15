@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { useFallProgramItems, useSoilMixes, useContainers } from "./supabase";
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from "recharts";
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
 const card = { background: "#fff", borderRadius: 14, border: "1.5px solid #e0ead8", padding: "18px 20px", marginBottom: 12 };
@@ -418,6 +418,28 @@ function ColorTab({ items }) {
               {colorStats.map((c, i) => <Cell key={i} fill={COLOR_PALETTE[c.name] || "#7a8c74"} />)}
             </Bar>
           </BarChart>
+        </ResponsiveContainer>
+      </div>
+
+      <div style={card}>
+        <div style={{ fontSize: 13, fontWeight: 800, color: "#1e2d1a", marginBottom: 16 }}>Color Mix — Pie Chart</div>
+        <ResponsiveContainer width="100%" height={350}>
+          <PieChart>
+            <Pie
+              data={colorStats}
+              dataKey="qty"
+              nameKey="name"
+              cx="50%"
+              cy="50%"
+              outerRadius={130}
+              label={({ name, percent }) => `${name} ${(percent * 100).toFixed(1)}%`}
+              labelLine={{ stroke: "#7a8c74" }}
+              style={{ fontSize: 11, fontWeight: 700 }}
+            >
+              {colorStats.map((c, i) => <Cell key={i} fill={COLOR_PALETTE[c.name] || "#7a8c74"} />)}
+            </Pie>
+            <Tooltip formatter={v => fmtN(v)} />
+          </PieChart>
         </ResponsiveContainer>
       </div>
 
