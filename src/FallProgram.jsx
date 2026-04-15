@@ -1080,20 +1080,41 @@ function SowingTab({ items, upsert }) {
             const isMix = variety.includes("MIX");
             const qty = parseFloat(i.qty) || 0;
 
-            if (isMix && variety.includes("CELOSIA KIMONO")) {
-              // Break mix into component colors: 1 seed each of Orange, Salmon Pink, Yellow per pot
-              const mixColors = [
-                { name: "CELOSIA KIMONO ORANGE", ordered: 1000, orderNum: i.seedOrderNumber },
-                { name: "CELOSIA KIMONO SALMON PINK", ordered: 1000, orderNum: i.seedOrderNumber },
-                { name: "CELOSIA KIMONO YELLOW", ordered: 0, orderNum: i.seedOrderNumber }, // yellow ordered is on the standalone row
-              ];
-              mixColors.forEach(mc => {
+            // Mix definitions: product name → component varieties with per-basket count
+            const MIX_DEFS = {
+              "CELOSIA KIMONO MIX": [
+                { name: "CELOSIA KIMONO ORANGE", perPot: 1 },
+                { name: "CELOSIA KIMONO SALMON PINK", perPot: 1 },
+                { name: "CELOSIA KIMONO YELLOW", perPot: 1 },
+              ],
+              "SUPERCAL PREMIUM BONFIRE MIX": [
+                { name: "SUPERCAL CARAMEL YELLOW", perPot: 2 },
+                { name: "SUPERCAL CINNAMON", perPot: 2 },
+                { name: "SUPERCAL PREMIUM FRENCH VANILLA", perPot: 2 },
+              ],
+              "SUPERCAL PREMIUM CITRUS MIX": [
+                { name: "SUPERCAL PEARL WHITE", perPot: 2 },
+                { name: "SUPERCAL SUNSET ORANGE", perPot: 2 },
+                { name: "SUPERCAL YELLOW SUN", perPot: 2 },
+              ],
+              "SUPERCAL GUMBALL MIX": [
+                { name: "SUPERCAL LIGHT YELLOW", perPot: 2 },
+                { name: "SUPERCAL ROSE", perPot: 2 },
+                { name: "SUPERCAL ROYAL RED", perPot: 2 },
+              ],
+            };
+
+            // Check if this is a known mix
+            const mixKey = Object.keys(MIX_DEFS).find(k => variety.includes(k));
+            if (isMix && mixKey) {
+              const components = MIX_DEFS[mixKey];
+              components.forEach(mc => {
                 if (!consolidated[mc.name]) {
-                  consolidated[mc.name] = { variety: mc.name, category: i.category, shipWeek: i.shipWeek, plantWeek: i.plantWeek, propMethod: i.propMethod, seedsPerPot: 1, seedsOrdered: mc.ordered, seedsOnHand: i.seedsOnHand || 0, seedShortage: false, seedOrderNumber: mc.orderNum, germinationRate: i.germinationRate || null, qty: 0, seedsNeededOverride: 0, usedIn: [] };
+                  consolidated[mc.name] = { variety: mc.name, category: i.category, shipWeek: i.shipWeek, plantWeek: i.plantWeek, propMethod: i.propMethod, seedsPerPot: mc.perPot, seedsOrdered: 0, seedsOnHand: i.seedsOnHand || 0, seedShortage: false, seedOrderNumber: i.seedOrderNumber, germinationRate: i.germinationRate || null, qty: 0, seedsNeededOverride: 0, usedIn: [] };
                 }
-                consolidated[mc.name].qty += qty; // pots using this color
-                consolidated[mc.name].seedsNeededOverride += qty; // 1 seed per mix pot
-                consolidated[mc.name].usedIn.push({ product: i.variety, pots: qty, seedsPerPot: 1 });
+                consolidated[mc.name].qty += qty;
+                consolidated[mc.name].seedsNeededOverride += qty * mc.perPot;
+                consolidated[mc.name].usedIn.push({ product: i.variety, pots: qty, seedsPerPot: mc.perPot });
               });
             } else {
               const key = variety;
