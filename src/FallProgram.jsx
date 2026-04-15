@@ -178,7 +178,7 @@ export default function FallProgram() {
           {section === "items" && <ItemsTab items={yearItems} soilMixes={soilMixes} containers={containers} upsert={upsert} updateItem={updateItem} remove={remove} />}
           {section === "color" && <ColorTab items={yearItems} />}
           {section === "schedule" && <ScheduleTab items={yearItems} />}
-          {section === "sowing" && <SowingTab items={yearItems} />}
+          {section === "sowing" && <SowingTab items={yearItems} upsert={upsert} />}
           {section === "cost" && <CostTab items={yearItems} containers={containers} soilMixes={soilMixes} />}
           {section === "shortfalls" && <ShortfallsTab items={yearItems} />}
         </>
@@ -989,8 +989,9 @@ function ItemsTab({ items, soilMixes, containers, upsert, updateItem }) {
 // ══════════════════════════════════════════════════════════════════════════════
 // ── SOWING & PROP TAB ────────────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════════════
-function SowingTab({ items }) {
+function SowingTab({ items, upsert }) {
   const [propTab, setPropTab] = useState("seed"); // "seed" | "urc"
+  const thStyle = { padding: "8px 10px", textAlign: "left", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" };
 
   // Split items by prop method
   const seedOnly = useMemo(() => items.filter(i => {
@@ -1077,7 +1078,7 @@ function SowingTab({ items }) {
           sowItems.forEach(i => {
             const key = (i.variety || "").toUpperCase();
             if (!consolidated[key]) {
-              consolidated[key] = { variety: i.variety, category: i.category, shipWeek: i.shipWeek, plantWeek: i.plantWeek, propMethod: i.propMethod, isDirectSow: (i.shipWeek || "").toUpperCase().startsWith("DIRECT SOW"), qty: 0, locations: new Set() };
+              consolidated[key] = { variety: i.variety, category: i.category, shipWeek: i.shipWeek, plantWeek: i.plantWeek, propMethod: i.propMethod, isDirectSow: (i.shipWeek || "").toUpperCase().startsWith("DIRECT SOW"), seedsPerPot: i.seedsPerPot || 0, seedsOrdered: i.seedsOrdered || 0, seedsOnHand: i.seedsOnHand || 0, seedShortage: i.seedShortage || false, seedOrderNumber: i.seedOrderNumber || null, qty: 0, locations: new Set() };
             }
             consolidated[key].qty += parseFloat(i.qty) || 0;
             if (i.location) consolidated[key].locations.add(i.location);
@@ -1095,30 +1096,58 @@ function SowingTab({ items }) {
                 <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 600 }}>
                   <thead>
                     <tr style={{ background: "#fafcf8", borderBottom: "1px solid #e0ead8" }}>
-                      <th style={{ padding: "8px 10px", textAlign: "left", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Variety</th>
-                      <th style={{ padding: "8px 10px", textAlign: "left", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Type</th>
-                      <th style={{ padding: "8px 10px", textAlign: "left", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Category</th>
-                      <th style={{ padding: "8px 10px", textAlign: "left", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Plant Wk</th>
-                      <th style={{ padding: "8px 10px", textAlign: "left", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Locations</th>
-                      <th style={{ padding: "8px 10px", textAlign: "right", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Total Qty</th>
+                      <th style={thStyle}>Variety</th>
+                      <th style={thStyle}>Type</th>
+                      <th style={thStyle}>Category</th>
+                      <th style={thStyle}>Plant Wk</th>
+                      <th style={{ ...thStyle, textAlign: "right" }}>Plants</th>
+                      <th style={{ ...thStyle, textAlign: "right" }}>{propTab === "seed" ? "Seeds/Pot" : "Per Plant"}</th>
+                      <th style={{ ...thStyle, textAlign: "right" }}>{propTab === "seed" ? "Seeds Needed" : "Cuttings Needed"}</th>
+                      <th style={{ ...thStyle, textAlign: "right" }}>Ordered</th>
+                      <th style={{ ...thStyle, textAlign: "right" }}>On Hand</th>
+                      <th style={{ ...thStyle, textAlign: "center" }}>Status</th>
                     </tr>
                   </thead>
                   <tbody>
                     {rows.map((r, idx) => {
                       const propBadge = PROP_BADGE[r.propMethod];
+                      const seedsNeeded = r.seedsPerPot > 0 ? r.qty * r.seedsPerPot : r.qty;
+                      const totalAvail = (r.seedsOrdered || 0) + (r.seedsOnHand || 0);
+                      const isShort = seedsNeeded > totalAvail && totalAvail > 0;
                       return (
-                      <tr key={r.variety} style={{ borderBottom: "1px solid #f0f5ee", background: idx % 2 === 0 ? "#fff" : "#fafcf8" }}>
+                      <tr key={r.variety} style={{ borderBottom: "1px solid #f0f5ee", background: isShort ? "#fff3f1" : r.seedShortage ? "#fff3f1" : idx % 2 === 0 ? "#fff" : "#fafcf8" }}>
                         <td style={{ padding: "8px 10px", fontSize: 13, fontWeight: 700, color: "#1e2d1a" }}>
                           {r.variety}
-                          {r.isDirectSow && <span style={{ marginLeft: 8, background: "#e89a3a", color: "#fff", borderRadius: 10, padding: "2px 8px", fontSize: 9, fontWeight: 800 }}>DIRECT SOW INTO POT</span>}
+                          {r.isDirectSow && <span style={{ marginLeft: 8, background: "#e89a3a", color: "#fff", borderRadius: 10, padding: "2px 8px", fontSize: 9, fontWeight: 800 }}>DIRECT SOW</span>}
+                          {r.seedOrderNumber && <span style={{ marginLeft: 6, fontSize: 9, color: "#7a8c74" }}>#{r.seedOrderNumber}</span>}
                         </td>
                         <td style={{ padding: "8px 10px" }}>
                           {propBadge ? <span style={{ background: propBadge.bg, color: propBadge.color, borderRadius: 10, padding: "2px 8px", fontSize: 10, fontWeight: 700 }}>{propBadge.label}</span> : <span style={{ fontSize: 11, color: "#7a8c74" }}>{r.propMethod || "—"}</span>}
                         </td>
                         <td style={{ padding: "8px 10px", fontSize: 11, color: "#7a8c74" }}>{r.category}</td>
                         <td style={{ padding: "8px 10px", fontSize: 11, color: "#4a90d9", fontWeight: 700 }}>{r.plantWeek}</td>
-                        <td style={{ padding: "8px 10px", fontSize: 11, color: "#7a8c74" }}>{r.locations.size} location{r.locations.size !== 1 ? "s" : ""}</td>
                         <td style={{ padding: "8px 10px", textAlign: "right", fontSize: 13, fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>{fmtN(r.qty)}</td>
+                        <td style={{ padding: "8px 10px", textAlign: "right", fontSize: 12, color: "#7a8c74" }}>{r.seedsPerPot || "—"}</td>
+                        <td style={{ padding: "8px 10px", textAlign: "right", fontSize: 12, fontWeight: 700, color: isShort ? "#d94f3d" : "#1e2d1a" }}>{fmtN(seedsNeeded)}</td>
+                        <td style={{ padding: "8px 10px", textAlign: "right", fontSize: 12, color: "#7a8c74" }}>{r.seedsOrdered ? fmtN(r.seedsOrdered) : "—"}</td>
+                        <td style={{ padding: "8px 10px", textAlign: "right" }}>
+                          <input type="number" defaultValue={r.seedsOnHand || ""} placeholder="0"
+                            onBlur={async (e) => {
+                              const val = parseInt(e.target.value) || 0;
+                              // Update all items of this variety in this sow week
+                              for (const item of sowItems.filter(i => (i.variety || "").toUpperCase() === (r.variety || "").toUpperCase())) {
+                                await upsert({ ...item, seedsOnHand: val });
+                              }
+                            }}
+                            style={{ width: 60, padding: "4px 6px", borderRadius: 6, border: "1.5px solid #e0ead8", fontSize: 12, fontFamily: "inherit", textAlign: "right" }} />
+                        </td>
+                        <td style={{ padding: "8px 10px", textAlign: "center" }}>
+                          {isShort || r.seedShortage
+                            ? <span style={{ background: "#fde8e8", color: "#d94f3d", borderRadius: 10, padding: "2px 8px", fontSize: 10, fontWeight: 800 }}>SHORT {isShort ? fmtN(seedsNeeded - totalAvail) : ""}</span>
+                            : totalAvail > 0
+                              ? <span style={{ background: "#e8f5e0", color: "#4a7a35", borderRadius: 10, padding: "2px 8px", fontSize: 10, fontWeight: 700 }}>OK</span>
+                              : <span style={{ color: "#7a8c74", fontSize: 10 }}>—</span>}
+                        </td>
                       </tr>
                       );
                     })}
