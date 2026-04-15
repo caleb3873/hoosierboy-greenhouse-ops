@@ -1039,37 +1039,53 @@ function SowingTab({ items }) {
       ) : (
         bySowWeek.map(([sowWeek, sowItems]) => {
           const wkQty = sowItems.reduce((s, i) => s + (parseFloat(i.qty) || 0), 0);
+          // Consolidate by variety within this sow week
+          const consolidated = {};
+          sowItems.forEach(i => {
+            const key = (i.variety || "").toUpperCase();
+            if (!consolidated[key]) {
+              consolidated[key] = { variety: i.variety, category: i.category, shipWeek: i.shipWeek, plantWeek: i.plantWeek, propMethod: i.propMethod, qty: 0, locations: new Set() };
+            }
+            consolidated[key].qty += parseFloat(i.qty) || 0;
+            if (i.location) consolidated[key].locations.add(i.location);
+          });
+          const rows = Object.values(consolidated).sort((a, b) => b.qty - a.qty);
           return (
             <div key={sowWeek} style={card}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
                 <div>
                   <span style={{ fontSize: 16, fontWeight: 800, color: "#1e2d1a" }}>{sowWeek}</span>
-                  <span style={{ fontSize: 12, color: "#7a8c74", marginLeft: 10 }}>{sowItems.length} items / {fmtN(wkQty)} qty</span>
+                  <span style={{ fontSize: 12, color: "#7a8c74", marginLeft: 10 }}>{rows.length} {rows.length === 1 ? "variety" : "varieties"} / {fmtN(wkQty)} total</span>
                 </div>
               </div>
               <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 700 }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 600 }}>
                   <thead>
                     <tr style={{ background: "#fafcf8", borderBottom: "1px solid #e0ead8" }}>
                       <th style={{ padding: "8px 10px", textAlign: "left", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Variety</th>
+                      <th style={{ padding: "8px 10px", textAlign: "left", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Type</th>
                       <th style={{ padding: "8px 10px", textAlign: "left", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Category</th>
-                      <th style={{ padding: "8px 10px", textAlign: "left", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Original</th>
                       <th style={{ padding: "8px 10px", textAlign: "left", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Plant Wk</th>
-                      <th style={{ padding: "8px 10px", textAlign: "left", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Location</th>
-                      <th style={{ padding: "8px 10px", textAlign: "right", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Qty</th>
+                      <th style={{ padding: "8px 10px", textAlign: "left", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Locations</th>
+                      <th style={{ padding: "8px 10px", textAlign: "right", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Total Qty</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {sowItems.map((i, idx) => (
-                      <tr key={i.id} style={{ borderBottom: "1px solid #f0f5ee", background: idx % 2 === 0 ? "#fff" : "#fafcf8" }}>
-                        <td style={{ padding: "8px 10px", fontSize: 13, fontWeight: 700, color: "#1e2d1a" }}>{i.variety}</td>
-                        <td style={{ padding: "8px 10px", fontSize: 11, color: "#7a8c74" }}>{i.category}</td>
-                        <td style={{ padding: "8px 10px", fontSize: 11, color: "#aabba0", fontStyle: "italic" }}>{i.shipWeek}</td>
-                        <td style={{ padding: "8px 10px", fontSize: 11, color: "#4a90d9", fontWeight: 700 }}>{i.plantWeek}</td>
-                        <td style={{ padding: "8px 10px", fontSize: 11, color: "#7a8c74" }}>{i.location}</td>
-                        <td style={{ padding: "8px 10px", textAlign: "right", fontSize: 13, fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{fmtN(i.qty)}</td>
+                    {rows.map((r, idx) => {
+                      const propBadge = PROP_BADGE[r.propMethod];
+                      return (
+                      <tr key={r.variety} style={{ borderBottom: "1px solid #f0f5ee", background: idx % 2 === 0 ? "#fff" : "#fafcf8" }}>
+                        <td style={{ padding: "8px 10px", fontSize: 13, fontWeight: 700, color: "#1e2d1a" }}>{r.variety}</td>
+                        <td style={{ padding: "8px 10px" }}>
+                          {propBadge ? <span style={{ background: propBadge.bg, color: propBadge.color, borderRadius: 10, padding: "2px 8px", fontSize: 10, fontWeight: 700 }}>{propBadge.label}</span> : <span style={{ fontSize: 11, color: "#7a8c74" }}>{r.propMethod || "—"}</span>}
+                        </td>
+                        <td style={{ padding: "8px 10px", fontSize: 11, color: "#7a8c74" }}>{r.category}</td>
+                        <td style={{ padding: "8px 10px", fontSize: 11, color: "#4a90d9", fontWeight: 700 }}>{r.plantWeek}</td>
+                        <td style={{ padding: "8px 10px", fontSize: 11, color: "#7a8c74" }}>{r.locations.size} location{r.locations.size !== 1 ? "s" : ""}</td>
+                        <td style={{ padding: "8px 10px", textAlign: "right", fontSize: 13, fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>{fmtN(r.qty)}</td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
