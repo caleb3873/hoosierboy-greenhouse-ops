@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import React, { useState, useMemo } from "react";
 import { useFallProgramItems, useSoilMixes, useContainers } from "./supabase";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from "recharts";
 
@@ -1072,18 +1072,43 @@ function SowingTab({ items, upsert }) {
         </div>
       ) : (
         byWeek.map(([sowWeek, sowItems]) => {
-          const wkQty = sowItems.reduce((s, i) => s + (parseFloat(i.qty) || 0), 0);
-          // Consolidate by variety within this sow week
+          // Consolidate by seed color — break mix items into component colors
           const consolidated = {};
+          const mixUsages = []; // track which products use each seed color
           sowItems.forEach(i => {
-            const key = (i.variety || "").toUpperCase();
-            if (!consolidated[key]) {
-              consolidated[key] = { variety: i.variety, category: i.category, shipWeek: i.shipWeek, plantWeek: i.plantWeek, propMethod: i.propMethod, isDirectSow: (i.shipWeek || "").toUpperCase().startsWith("DIRECT SOW"), seedsPerPot: i.seedsPerPot || 0, seedsOrdered: i.seedsOrdered || 0, seedsOnHand: i.seedsOnHand || 0, seedShortage: i.seedShortage || false, seedOrderNumber: i.seedOrderNumber || null, germinationRate: i.germinationRate || null, qty: 0, locations: new Set() };
+            const variety = (i.variety || "").toUpperCase();
+            const isMix = variety.includes("MIX");
+            const qty = parseFloat(i.qty) || 0;
+
+            if (isMix && variety.includes("CELOSIA KIMONO")) {
+              // Break mix into component colors: 1 seed each of Orange, Salmon Pink, Yellow per pot
+              const mixColors = [
+                { name: "CELOSIA KIMONO ORANGE", ordered: 1000, orderNum: i.seedOrderNumber },
+                { name: "CELOSIA KIMONO SALMON PINK", ordered: 1000, orderNum: i.seedOrderNumber },
+                { name: "CELOSIA KIMONO YELLOW", ordered: 0, orderNum: i.seedOrderNumber }, // yellow ordered is on the standalone row
+              ];
+              mixColors.forEach(mc => {
+                if (!consolidated[mc.name]) {
+                  consolidated[mc.name] = { variety: mc.name, category: i.category, shipWeek: i.shipWeek, plantWeek: i.plantWeek, propMethod: i.propMethod, seedsPerPot: 1, seedsOrdered: mc.ordered, seedsOnHand: i.seedsOnHand || 0, seedShortage: false, seedOrderNumber: mc.orderNum, germinationRate: i.germinationRate || null, qty: 0, seedsNeededOverride: 0, usedIn: [] };
+                }
+                consolidated[mc.name].qty += qty; // pots using this color
+                consolidated[mc.name].seedsNeededOverride += qty; // 1 seed per mix pot
+                consolidated[mc.name].usedIn.push({ product: i.variety, pots: qty, seedsPerPot: 1 });
+              });
+            } else {
+              const key = variety;
+              if (!consolidated[key]) {
+                consolidated[key] = { variety: i.variety, category: i.category, shipWeek: i.shipWeek, plantWeek: i.plantWeek, propMethod: i.propMethod, seedsPerPot: i.seedsPerPot || 0, seedsOrdered: i.seedsOrdered || 0, seedsOnHand: i.seedsOnHand || 0, seedShortage: i.seedShortage || false, seedOrderNumber: i.seedOrderNumber || null, germinationRate: i.germinationRate || null, qty: 0, seedsNeededOverride: 0, usedIn: [] };
+              }
+              consolidated[key].qty += qty;
+              const spp = i.seedsPerPot || 0;
+              consolidated[key].seedsNeededOverride += qty * spp;
+              consolidated[key].usedIn.push({ product: i.variety, pots: qty, seedsPerPot: spp });
+              if (i.location) ; // locations not critical for seed view
             }
-            consolidated[key].qty += parseFloat(i.qty) || 0;
-            if (i.location) consolidated[key].locations.add(i.location);
           });
-          const rows = Object.values(consolidated).sort((a, b) => b.qty - a.qty);
+          const rows = Object.values(consolidated).sort((a, b) => (a.variety || "").localeCompare(b.variety || ""));
+          const wkQty = rows.reduce((s, r) => s + r.seedsNeededOverride, 0);
           return (
             <div key={sowWeek} style={card}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
@@ -1112,13 +1137,14 @@ function SowingTab({ items, upsert }) {
                   <tbody>
                     {rows.map((r, idx) => {
                       const propBadge = PROP_BADGE[r.propMethod];
-                      const seedsNeeded = r.seedsPerPot > 0 ? r.qty * r.seedsPerPot : r.qty;
+                      const seedsNeeded = r.seedsNeededOverride || (r.seedsPerPot > 0 ? r.qty * r.seedsPerPot : r.qty);
                       const germRate = r.germinationRate ? r.germinationRate / 100 : 1;
                       const seedsToSow = germRate < 1 ? Math.ceil(seedsNeeded / germRate / 100) * 100 : seedsNeeded;
+                      const hasUsedIn = r.usedIn && r.usedIn.length > 1;
                       const totalAvail = (r.seedsOrdered || 0) + (r.seedsOnHand || 0);
                       const isShort = seedsToSow > totalAvail && totalAvail > 0;
-                      return (
-                      <tr key={r.variety} style={{ borderBottom: "1px solid #f0f5ee", background: isShort ? "#fff3f1" : r.seedShortage ? "#fff3f1" : idx % 2 === 0 ? "#fff" : "#fafcf8" }}>
+                      return (<React.Fragment key={r.variety || idx}>
+                      <tr style={{ borderBottom: r.usedIn?.length > 1 ? "none" : "1px solid #f0f5ee", background: isShort ? "#fff3f1" : r.seedShortage ? "#fff3f1" : idx % 2 === 0 ? "#fff" : "#fafcf8" }}>
                         <td style={{ padding: "8px 10px", fontSize: 13, fontWeight: 700, color: "#1e2d1a" }}>
                           {r.variety}
                           {r.seedOrderNumber && <span style={{ marginLeft: 6, fontSize: 9, color: "#7a8c74" }}>#{r.seedOrderNumber}</span>}
@@ -1160,7 +1186,20 @@ function SowingTab({ items, upsert }) {
                               : <span style={{ color: "#7a8c74", fontSize: 10 }}>—</span>}
                         </td>
                       </tr>
-                      );
+                      {r.usedIn && r.usedIn.length > 1 && (
+                        <tr style={{ background: "#fafcf8", borderBottom: "1px solid #f0f5ee" }}>
+                          <td colSpan={11} style={{ padding: "2px 10px 6px 30px" }}>
+                            <div style={{ fontSize: 10, color: "#7a8c74" }}>
+                              {r.usedIn.map((u, ui) => (
+                                <span key={ui} style={{ marginRight: 14 }}>
+                                  <span style={{ fontWeight: 700, color: "#1e2d1a" }}>{u.product}</span>: {fmtN(u.pots)} pots × {u.seedsPerPot} seed{u.seedsPerPot !== 1 ? "s" : ""} = {fmtN(u.pots * u.seedsPerPot)}
+                                </span>
+                              ))}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                      </React.Fragment>);
                     })}
                   </tbody>
                 </table>
