@@ -990,61 +990,94 @@ function ItemsTab({ items, soilMixes, containers, upsert, updateItem }) {
 // ── SOWING & PROP TAB ────────────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════════════
 function SowingTab({ items }) {
-  // Filter to only items that are seed-sown or need prop
-  const seedItems = useMemo(() => items.filter(isSeedSow), [items]);
+  const [propTab, setPropTab] = useState("seed"); // "seed" | "urc"
 
-  // Group by sow week
-  const bySowWeek = useMemo(() => {
+  // Split items by prop method
+  const seedOnly = useMemo(() => items.filter(i => {
+    const pm = (i.propMethod || "").toUpperCase();
+    return pm === "SEED" || (isSeedSow(i) && pm !== "URC");
+  }), [items]);
+
+  const urcOnly = useMemo(() => items.filter(i => (i.propMethod || "").toUpperCase() === "URC"), [items]);
+
+  const activeItems = propTab === "seed" ? seedOnly : urcOnly;
+
+  // Group by sow/arrival week
+  const byWeek = useMemo(() => {
     const map = {};
-    seedItems.forEach(i => {
-      const sowWk = computeSowWeek(i) || "Unknown";
-      if (!map[sowWk]) map[sowWk] = [];
-      map[sowWk].push(i);
+    activeItems.forEach(i => {
+      const wk = computeSowWeek(i) || i.shipWeek || "Unknown";
+      if (!map[wk]) map[wk] = [];
+      map[wk].push(i);
     });
     return Object.entries(map).sort(([a], [b]) => {
       const na = parseInt((a.match(/\d+/) || [0])[0]) || 999;
       const nb = parseInt((b.match(/\d+/) || [0])[0]) || 999;
       return na - nb;
     });
-  }, [seedItems]);
+  }, [activeItems]);
 
-  const totalSeed = seedItems.reduce((s, i) => s + (parseFloat(i.qty) || 0), 0);
+  const totalQty = activeItems.reduce((s, i) => s + (parseFloat(i.qty) || 0), 0);
+  const seedTotalQty = seedOnly.reduce((s, i) => s + (parseFloat(i.qty) || 0), 0);
+  const urcTotalQty = urcOnly.reduce((s, i) => s + (parseFloat(i.qty) || 0), 0);
 
   return (
     <div>
-      <div style={{ background: "#fff4e8", border: "1.5px solid #e8d0a0", borderRadius: 10, padding: "12px 16px", marginBottom: 16, fontSize: 13, color: "#6a4a20" }}>
-        🌱 This tab shows items that need to be sown from seed or propagated from cuttings before planting.
-        "SOW X WKS BEFORE" entries are auto-calculated based on the plant week.
+      {/* Seed vs URC toggle */}
+      <div style={{ display: "flex", gap: 0, marginBottom: 16, borderRadius: 12, overflow: "hidden", border: "1.5px solid #e0ead8" }}>
+        <button onClick={() => setPropTab("seed")}
+          style={{
+            flex: 1, padding: "14px 0", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", border: "none",
+            background: propTab === "seed" ? "#1e2d1a" : "#fff",
+            color: propTab === "seed" ? "#c8e6b8" : "#7a8c74",
+          }}>
+          🌱 Seed ({fmtN(seedTotalQty)})
+        </button>
+        <button onClick={() => setPropTab("urc")}
+          style={{
+            flex: 1, padding: "14px 0", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", border: "none",
+            borderLeft: "1.5px solid #e0ead8",
+            background: propTab === "urc" ? "#1e2d1a" : "#fff",
+            color: propTab === "urc" ? "#c8e6b8" : "#7a8c74",
+          }}>
+          ✂️ Unrooted Cuttings ({fmtN(urcTotalQty)})
+        </button>
+      </div>
+
+      <div style={{ background: propTab === "seed" ? "#fff4e8" : "#f5f0ff", border: `1.5px solid ${propTab === "seed" ? "#e8d0a0" : "#d0c0e8"}`, borderRadius: 10, padding: "12px 16px", marginBottom: 16, fontSize: 13, color: propTab === "seed" ? "#6a4a20" : "#5a3a8a" }}>
+        {propTab === "seed"
+          ? '🌱 Seed items that need to be sown before planting. Items marked "DIRECT SOW" are sown directly into the pot.'
+          : '✂️ Unrooted cuttings that arrive and need to be stuck/rooted before planting.'}
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 16 }}>
         <div style={{ ...card, padding: "16px 20px", margin: 0 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase" }}>Sowing/Prop Items</div>
-          <div style={{ fontSize: 28, fontWeight: 800, color: "#7fb069", marginTop: 4 }}>{seedItems.length}</div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase" }}>{propTab === "seed" ? "Seed Varieties" : "URC Varieties"}</div>
+          <div style={{ fontSize: 28, fontWeight: 800, color: "#7fb069", marginTop: 4 }}>{activeItems.length}</div>
         </div>
         <div style={{ ...card, padding: "16px 20px", margin: 0 }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase" }}>Total Quantity</div>
-          <div style={{ fontSize: 28, fontWeight: 800, color: "#4a90d9", marginTop: 4 }}>{fmtN(totalSeed)}</div>
+          <div style={{ fontSize: 28, fontWeight: 800, color: "#4a90d9", marginTop: 4 }}>{fmtN(totalQty)}</div>
         </div>
         <div style={{ ...card, padding: "16px 20px", margin: 0 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase" }}>Sow Weeks</div>
-          <div style={{ fontSize: 28, fontWeight: 800, color: "#c8791a", marginTop: 4 }}>{bySowWeek.length}</div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase" }}>{propTab === "seed" ? "Sow Weeks" : "Arrival Weeks"}</div>
+          <div style={{ fontSize: 28, fontWeight: 800, color: "#c8791a", marginTop: 4 }}>{byWeek.length}</div>
         </div>
       </div>
 
-      {seedItems.length === 0 ? (
+      {activeItems.length === 0 ? (
         <div style={{ ...card, textAlign: "center", padding: "60px 40px", border: "1.5px dashed #c8d8c0" }}>
-          <div style={{ fontSize: 13, color: "#7a8c74" }}>No seed-sown or prop items in this year</div>
+          <div style={{ fontSize: 13, color: "#7a8c74" }}>No {propTab === "seed" ? "seed" : "URC"} items in this year</div>
         </div>
       ) : (
-        bySowWeek.map(([sowWeek, sowItems]) => {
+        byWeek.map(([sowWeek, sowItems]) => {
           const wkQty = sowItems.reduce((s, i) => s + (parseFloat(i.qty) || 0), 0);
           // Consolidate by variety within this sow week
           const consolidated = {};
           sowItems.forEach(i => {
             const key = (i.variety || "").toUpperCase();
             if (!consolidated[key]) {
-              consolidated[key] = { variety: i.variety, category: i.category, shipWeek: i.shipWeek, plantWeek: i.plantWeek, propMethod: i.propMethod, qty: 0, locations: new Set() };
+              consolidated[key] = { variety: i.variety, category: i.category, shipWeek: i.shipWeek, plantWeek: i.plantWeek, propMethod: i.propMethod, isDirectSow: (i.shipWeek || "").toUpperCase().startsWith("DIRECT SOW"), qty: 0, locations: new Set() };
             }
             consolidated[key].qty += parseFloat(i.qty) || 0;
             if (i.location) consolidated[key].locations.add(i.location);
@@ -1075,7 +1108,10 @@ function SowingTab({ items }) {
                       const propBadge = PROP_BADGE[r.propMethod];
                       return (
                       <tr key={r.variety} style={{ borderBottom: "1px solid #f0f5ee", background: idx % 2 === 0 ? "#fff" : "#fafcf8" }}>
-                        <td style={{ padding: "8px 10px", fontSize: 13, fontWeight: 700, color: "#1e2d1a" }}>{r.variety}</td>
+                        <td style={{ padding: "8px 10px", fontSize: 13, fontWeight: 700, color: "#1e2d1a" }}>
+                          {r.variety}
+                          {r.isDirectSow && <span style={{ marginLeft: 8, background: "#e89a3a", color: "#fff", borderRadius: 10, padding: "2px 8px", fontSize: 9, fontWeight: 800 }}>DIRECT SOW INTO POT</span>}
+                        </td>
                         <td style={{ padding: "8px 10px" }}>
                           {propBadge ? <span style={{ background: propBadge.bg, color: propBadge.color, borderRadius: 10, padding: "2px 8px", fontSize: 10, fontWeight: 700 }}>{propBadge.label}</span> : <span style={{ fontSize: 11, color: "#7a8c74" }}>{r.propMethod || "—"}</span>}
                         </td>
