@@ -325,12 +325,17 @@ function chipStyle(active, color) {
 // ══════════════════════════════════════════════════════════════════════════════
 function ColorTab({ items }) {
   const [categoryFilter, setCategoryFilter] = useState("all");
+  const [respWeekFilter, setRespWeekFilter] = useState("all");
 
   const categories = useMemo(() => [...new Set(items.map(i => i.category).filter(Boolean))].sort(), [items]);
+  const respWeeks = useMemo(() => [...new Set(items.map(i => i.responseWeek).filter(Boolean))].sort((a, b) => parseFloat(a) - parseFloat(b)), [items]);
 
-  const filteredItems = useMemo(() =>
-    categoryFilter === "all" ? items : items.filter(i => i.category === categoryFilter)
-  , [items, categoryFilter]);
+  const filteredItems = useMemo(() => {
+    let r = items;
+    if (categoryFilter !== "all") r = r.filter(i => i.category === categoryFilter);
+    if (respWeekFilter !== "all") r = r.filter(i => i.responseWeek === respWeekFilter);
+    return r;
+  }, [items, categoryFilter, respWeekFilter]);
 
   const colorStats = useMemo(() => {
     const byColor = {};
@@ -350,30 +355,59 @@ function ColorTab({ items }) {
 
   return (
     <div>
-      <div style={{ ...card, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", padding: "12px 18px" }}>
-        <button onClick={() => setCategoryFilter("all")}
-          style={{ padding: "6px 14px", borderRadius: 20, fontSize: 12, fontWeight: categoryFilter === "all" ? 800 : 600,
-            background: categoryFilter === "all" ? "#1e2d1a" : "#fff",
-            color: categoryFilter === "all" ? "#c8e6b8" : "#7a8c74",
-            border: `1.5px solid ${categoryFilter === "all" ? "#1e2d1a" : "#c8d8c0"}`,
-            cursor: "pointer", fontFamily: "inherit" }}>
-          All Items
-        </button>
-        {categories.map(c => (
-          <button key={c} onClick={() => setCategoryFilter(c)}
-            style={{ padding: "6px 14px", borderRadius: 20, fontSize: 12, fontWeight: categoryFilter === c ? 800 : 600,
-              background: categoryFilter === c ? "#1e2d1a" : "#fff",
-              color: categoryFilter === c ? "#c8e6b8" : "#7a8c74",
-              border: `1.5px solid ${categoryFilter === c ? "#1e2d1a" : "#c8d8c0"}`,
+      <div style={{ ...card, padding: "12px 18px" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
+          <span style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: 0.5 }}>Product:</span>
+          <button onClick={() => setCategoryFilter("all")}
+            style={{ padding: "6px 14px", borderRadius: 20, fontSize: 12, fontWeight: categoryFilter === "all" ? 800 : 600,
+              background: categoryFilter === "all" ? "#1e2d1a" : "#fff",
+              color: categoryFilter === "all" ? "#c8e6b8" : "#7a8c74",
+              border: `1.5px solid ${categoryFilter === "all" ? "#1e2d1a" : "#c8d8c0"}`,
               cursor: "pointer", fontFamily: "inherit" }}>
-            {c}
+            All
           </button>
-        ))}
+          {categories.map(c => (
+            <button key={c} onClick={() => setCategoryFilter(c)}
+              style={{ padding: "6px 14px", borderRadius: 20, fontSize: 12, fontWeight: categoryFilter === c ? 800 : 600,
+                background: categoryFilter === c ? "#1e2d1a" : "#fff",
+                color: categoryFilter === c ? "#c8e6b8" : "#7a8c74",
+                border: `1.5px solid ${categoryFilter === c ? "#1e2d1a" : "#c8d8c0"}`,
+                cursor: "pointer", fontFamily: "inherit" }}>
+              {c}
+            </button>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: 0.5 }}>Resp Wk:</span>
+          <button onClick={() => setRespWeekFilter("all")}
+            style={{ padding: "6px 14px", borderRadius: 20, fontSize: 12, fontWeight: respWeekFilter === "all" ? 800 : 600,
+              background: respWeekFilter === "all" ? "#1e2d1a" : "#fff",
+              color: respWeekFilter === "all" ? "#c8e6b8" : "#7a8c74",
+              border: `1.5px solid ${respWeekFilter === "all" ? "#1e2d1a" : "#c8d8c0"}`,
+              cursor: "pointer", fontFamily: "inherit" }}>
+            All
+          </button>
+          {respWeeks.map(rw => {
+            const rwQty = items.filter(i => i.responseWeek === rw && (categoryFilter === "all" || i.category === categoryFilter)).reduce((s, i) => s + (parseFloat(i.qty) || 0), 0);
+            return (
+              <button key={rw} onClick={() => setRespWeekFilter(rw)}
+                style={{ padding: "6px 14px", borderRadius: 20, fontSize: 12, fontWeight: respWeekFilter === rw ? 800 : 600,
+                  background: respWeekFilter === rw ? "#1e2d1a" : "#fff",
+                  color: respWeekFilter === rw ? "#c8e6b8" : "#7a8c74",
+                  border: `1.5px solid ${respWeekFilter === rw ? "#1e2d1a" : "#c8d8c0"}`,
+                  cursor: "pointer", fontFamily: "inherit" }}>
+                Wk {rw} <span style={{ fontSize: 10, opacity: 0.7 }}>({fmtN(rwQty)})</span>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       <div style={card}>
         <div style={{ fontSize: 13, fontWeight: 800, color: "#1e2d1a", marginBottom: 16 }}>
-          Color Distribution by Liner Count {categoryFilter !== "all" && <span style={{ color: "#7a8c74", fontWeight: 600 }}>— {categoryFilter}</span>}
+          Color Distribution by Liner Count
+          {categoryFilter !== "all" && <span style={{ color: "#7a8c74", fontWeight: 600 }}> — {categoryFilter}</span>}
+          {respWeekFilter !== "all" && <span style={{ color: "#c8791a", fontWeight: 600 }}> — Wk {respWeekFilter}</span>}
         </div>
         <ResponsiveContainer width="100%" height={300}>
           <BarChart data={colorStats} margin={{ left: 10, right: 10, top: 10 }}>
