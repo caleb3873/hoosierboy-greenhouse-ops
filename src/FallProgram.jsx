@@ -1083,24 +1083,24 @@ function SowingTab({ items, upsert }) {
             // Mix definitions: product name → component varieties with per-basket count
             const MIX_DEFS = {
               "CELOSIA KIMONO MIX": [
-                { name: "CELOSIA KIMONO ORANGE", perPot: 1 },
-                { name: "CELOSIA KIMONO SALMON PINK", perPot: 1 },
-                { name: "CELOSIA KIMONO YELLOW", perPot: 1 },
+                { name: "CELOSIA KIMONO ORANGE", perPot: 1, ordered: 1000 },
+                { name: "CELOSIA KIMONO SALMON PINK", perPot: 1, ordered: 1000 },
+                { name: "CELOSIA KIMONO YELLOW", perPot: 1, ordered: 0 }, // ordered is on the standalone row
               ],
               "SUPERCAL PREMIUM BONFIRE MIX": [
-                { name: "SUPERCAL CARAMEL YELLOW", perPot: 2 },
-                { name: "SUPERCAL CINNAMON", perPot: 2 },
-                { name: "SUPERCAL PREMIUM FRENCH VANILLA", perPot: 2 },
+                { name: "SUPERCAL CARAMEL YELLOW", perPot: 2, ordered: 100 },
+                { name: "SUPERCAL CINNAMON", perPot: 2, ordered: 100 },
+                { name: "SUPERCAL PREMIUM FRENCH VANILLA", perPot: 2, ordered: 0 }, // ordered is on the straight row
               ],
               "SUPERCAL PREMIUM CITRUS MIX": [
-                { name: "SUPERCAL PEARL WHITE", perPot: 2 },
-                { name: "SUPERCAL SUNSET ORANGE", perPot: 2 },
-                { name: "SUPERCAL YELLOW SUN", perPot: 2 },
+                { name: "SUPERCAL PEARL WHITE", perPot: 2, ordered: 100 },
+                { name: "SUPERCAL SUNSET ORANGE", perPot: 2, ordered: 100 },
+                { name: "SUPERCAL YELLOW SUN", perPot: 2, ordered: 0 }, // split across citrus + gumball
               ],
               "SUPERCAL GUMBALL MIX": [
-                { name: "SUPERCAL PINK MIST", perPot: 2 },
-                { name: "SUPERCAL ROSE STAR", perPot: 2 },
-                { name: "SUPERCAL YELLOW SUN", perPot: 2 },
+                { name: "SUPERCAL PINK MIST", perPot: 2, ordered: 100 },
+                { name: "SUPERCAL ROSE STAR", perPot: 2, ordered: 100 },
+                { name: "SUPERCAL YELLOW SUN", perPot: 2, ordered: 200 }, // 200 ordered total for yellow sun
               ],
             };
 
@@ -1110,7 +1110,9 @@ function SowingTab({ items, upsert }) {
               const components = MIX_DEFS[mixKey];
               components.forEach(mc => {
                 if (!consolidated[mc.name]) {
-                  consolidated[mc.name] = { variety: mc.name, category: i.category, shipWeek: i.shipWeek, plantWeek: i.plantWeek, propMethod: i.propMethod, seedsPerPot: mc.perPot, seedsOrdered: 0, seedsOnHand: i.seedsOnHand || 0, seedShortage: false, seedOrderNumber: i.seedOrderNumber, germinationRate: i.germinationRate || null, qty: 0, seedsNeededOverride: 0, usedIn: [] };
+                  consolidated[mc.name] = { variety: mc.name, category: i.category, shipWeek: i.shipWeek, plantWeek: i.plantWeek, propMethod: i.propMethod, seedsPerPot: mc.perPot, seedsOrdered: mc.ordered || 0, seedsOnHand: 0, seedShortage: false, seedOrderNumber: i.seedOrderNumber, germinationRate: i.germinationRate || null, qty: 0, seedsNeededOverride: 0, usedIn: [] };
+                } else if (mc.ordered) {
+                  consolidated[mc.name].seedsOrdered += mc.ordered; // accumulate if shared across mixes
                 }
                 consolidated[mc.name].qty += qty;
                 consolidated[mc.name].seedsNeededOverride += qty * mc.perPot;
