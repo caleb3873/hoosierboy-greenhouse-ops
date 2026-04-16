@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import { useManagerTasks } from "./supabase";
 import { useAuth } from "./Auth";
+import { BrehobManagerView } from "./BrehobList";
 import { getCurrentWeek } from "./shared";
 import { NotificationBanner } from "./PushNotifications";
 
@@ -62,8 +63,17 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
 
   const today = useMemo(() => getWeekInfo(), []);
   const [selectedWeek, setSelectedWeek] = useState(today);
-  const [category, setCategory] = useState(canCreateGrowing ? "growing" : "production"); // production | growing
+  const [category, setCategory] = useState(canCreateGrowing ? "growing" : "production"); // production | growing | brehob
   const [statusFilter, setStatusFilter] = useState("pending"); // all | pending | completed
+  const [locationFilter, setLocationFilter] = useState("all"); // all | bluff | sprague
+
+  // Default task location based on who's logged in
+  const defaultLocation = useMemo(() => {
+    const name = (displayName || "").toLowerCase();
+    if (name.includes("reese") || name.includes("amanda")) return "sprague";
+    if (name.includes("paul")) return "bluff";
+    return "bluff"; // default for others
+  }, [displayName]);
   const [selectedTask, setSelectedTask] = useState(null);
   const [showRecorder, setShowRecorder] = useState(false);
   const [showCodes, setShowCodes] = useState(false);
@@ -86,12 +96,13 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
     let r = tasks.filter(t => t.status !== "requested" && t.year === selectedWeek.year && t.weekNumber === selectedWeek.week && (t.category || "production") === category);
     if (statusFilter === "pending") r = r.filter(t => t.status !== "completed");
     else if (statusFilter === "completed") r = r.filter(t => t.status === "completed");
+    if (locationFilter !== "all") r = r.filter(t => (t.location || "").toLowerCase() === locationFilter);
     return [...r].sort((a, b) => (b.priority || 0) - (a.priority || 0));
-  }, [tasks, selectedWeek, statusFilter, category]);
+  }, [tasks, selectedWeek, statusFilter, category, locationFilter]);
 
   const canCreateInCurrentCategory = category === "production" || canCreateGrowing;
 
-  async function createTask(title, bucket = "today") {
+  async function createTask(title, bucket = "today", location) {
     if (!title.trim()) return;
     const maxPriority = Math.max(0, ...tasks.filter(t => t.year === today.year && t.weekNumber === today.week && (t.category || "production") === category).map(t => t.priority || 0));
     await upsert({
@@ -106,6 +117,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       targetDate: bucketToDate(bucket),
       carriedOver: false,
       createdBy: displayName || "Manager",
+      location: location || defaultLocation,
       photos: [],
     });
     setShowRecorder(false);
@@ -333,7 +345,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
 
       {/* Category tabs */}
       <div style={{ padding: "12px 20px 0", background: "#fff", display: "flex", gap: 8 }}>
-        {[{id:"production",label:"Production"},{id:"growing",label:"Growing"}].map(c => (
+        {[{id:"production",label:"Production"},{id:"growing",label:"Growing"},{id:"brehob",label:"🛒 Brehob"}].map(c => (
           <button key={c.id} onClick={() => setCategory(c.id)}
             style={{
               flex: 1, padding: "12px 0", borderRadius: "12px 12px 0 0", fontSize: 13, fontWeight: 800,
@@ -347,7 +359,15 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
         ))}
       </div>
 
-      {/* Status filter */}
+      {/* Brehob shopping list — renders in place of tasks when selected */}
+      {category === "brehob" && (
+        <div style={{ padding: "20px" }}>
+          <BrehobManagerView />
+        </div>
+      )}
+
+      {/* Status filter — hidden on Brehob tab */}
+      {category !== "brehob" && (
       <div style={{ padding: "12px 20px", background: "#fff", borderBottom: "1.5px solid #e0ead8", display: "flex", gap: 8 }}>
         {[{id:"pending",label:"To Do"},{id:"completed",label:"Done"},{id:"all",label:"All"}].map(f => (
           <button key={f.id} onClick={() => setStatusFilter(f.id)}
@@ -362,8 +382,28 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
           </button>
         ))}
       </div>
+      )}
+
+      {/* Location filter — Sprague vs Bluff */}
+      {category !== "brehob" && (
+      <div style={{ padding: "0 20px 12px", background: "#fff", borderBottom: "1.5px solid #e0ead8", display: "flex", gap: 8 }}>
+        {[{id:"all",label:"All"},{id:"bluff",label:"🌱 Bluff"},{id:"sprague",label:"🌿 Sprague"}].map(f => (
+          <button key={f.id} onClick={() => setLocationFilter(f.id)}
+            style={{
+              flex: 1, padding: "8px 0", borderRadius: 8, fontSize: 12, fontWeight: 700,
+              background: locationFilter === f.id ? "#c8e6b8" : "#f2f5ef",
+              color: locationFilter === f.id ? "#1e2d1a" : "#7a8c74",
+              border: `1.5px solid ${locationFilter === f.id ? "#7fb069" : "#c8d8c0"}`,
+              cursor: "pointer", fontFamily: "inherit",
+            }}>
+            {f.label}
+          </button>
+        ))}
+      </div>
+      )}
 
       {/* Task list grouped by bucket */}
+      {category !== "brehob" && (
       <div style={{ padding: 16 }}>
         {visibleTasks.length === 0 ? (
           <div style={{ textAlign: "center", padding: "60px 20px", color: "#7a8c74" }}>
@@ -404,9 +444,10 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
           })
         )}
       </div>
+      )}
 
-      {/* Mic button - only on current week + only if allowed in this category */}
-      {isCurrentWeek && canCreateInCurrentCategory && (
+      {/* Mic button - only on current week + only if allowed in this category + not brehob */}
+      {isCurrentWeek && canCreateInCurrentCategory && category !== "brehob" && (
         <button onClick={() => setShowRecorder(true)}
           style={{
             position: "fixed", bottom: 20, left: "50%", transform: "translateX(-50%)",
@@ -418,7 +459,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
         </button>
       )}
 
-      {showRecorder && <VoiceRecorderModal onSave={createTask} onCancel={() => setShowRecorder(false)} />}
+      {showRecorder && <VoiceRecorderModal onSave={createTask} onCancel={() => setShowRecorder(false)} defaultLocation={defaultLocation} />}
       {showCodes && <CodesModal onClose={() => setShowCodes(false)} />}
       {showRequests && (
         <RequestsModal
@@ -680,9 +721,10 @@ function CodesModal({ onClose }) {
 // ══════════════════════════════════════════════════════════════════════════════
 // ── VOICE RECORDER MODAL ────────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════════════
-function VoiceRecorderModal({ onSave, onCancel }) {
+function VoiceRecorderModal({ onSave, onCancel, defaultLocation = "bluff" }) {
   const [transcript, setTranscript] = useState("");
   const [bucket, setBucket] = useState("today");
+  const [location, setLocation] = useState(defaultLocation);
   const [isListening, setIsListening] = useState(false);
   const [error, setError] = useState("");
   const recognitionRef = useRef(null);
@@ -749,7 +791,7 @@ function VoiceRecorderModal({ onSave, onCancel }) {
   function save() {
     if (!transcript.trim()) return;
     try { recognitionRef.current?.stop(); } catch {}
-    onSave(transcript, bucket);
+    onSave(transcript, bucket, location);
   }
 
   return (
@@ -790,6 +832,25 @@ function VoiceRecorderModal({ onSave, onCancel }) {
                 cursor: "pointer", fontFamily: "inherit",
               }}>
               {b.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Location selection */}
+        <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+          {[
+            { id: "bluff", label: "🌱 Bluff" },
+            { id: "sprague", label: "🌿 Sprague" },
+          ].map(l => (
+            <button key={l.id} onClick={() => setLocation(l.id)}
+              style={{
+                flex: 1, padding: "10px 6px", borderRadius: 10, fontSize: 12, fontWeight: 800,
+                background: location === l.id ? "#7fb069" : "#f2f5ef",
+                color: location === l.id ? "#1e2d1a" : "#7a8c74",
+                border: `1.5px solid ${location === l.id ? "#7fb069" : "#c8d8c0"}`,
+                cursor: "pointer", fontFamily: "inherit",
+              }}>
+              {l.label}
             </button>
           ))}
         </div>

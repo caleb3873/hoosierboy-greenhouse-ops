@@ -3,6 +3,7 @@ import { useManagerTasks } from "./supabase";
 import { useAuth } from "./Auth";
 import { CompletionPromptModal, TaskViewer, formatTargetDate, bucketToDate } from "./ManagerTasksView";
 import { NotificationBanner } from "./PushNotifications";
+import { BrehobWorkerView } from "./BrehobList";
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
 const GREEN_DARK = "#1e2d1a";
@@ -34,6 +35,7 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
   const [viewingTask, setViewingTask] = useState(null);
   const [releasingTask, setReleasingTask] = useState(null);
   const [suggesting, setSuggesting] = useState(false);
+  const [showBrehob, setShowBrehob] = useState(false);
   // Language: Eulogio defaults to Spanish, everyone else English. Stored per-device.
   const [lang, setLang] = useState(() => {
     const saved = localStorage.getItem("gh_worker_lang_" + (displayName || ""));
@@ -248,6 +250,9 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
               + Tasks
             </button>
           )}
+          <button onClick={() => setShowBrehob(true)} style={{ background: "#c8e6b8", border: "none", color: GREEN_DARK, padding: "6px 12px", borderRadius: 6, cursor: "pointer", fontWeight: 800, ...FONT }}>
+            🛒 Brehob
+          </button>
           {onBackToApp && (
             <button onClick={onBackToApp} style={{ background: GREEN, border: "none", color: GREEN_DARK, padding: "6px 12px", borderRadius: 6, cursor: "pointer", fontWeight: 800, ...FONT }}>
               App →
@@ -430,6 +435,18 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
             refresh();
           }}
         />
+      )}
+
+      {/* Brehob modal */}
+      {showBrehob && (
+        <div onClick={() => setShowBrehob(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 9999, display: "flex", alignItems: "flex-end", ...FONT }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: "#f2f5ef", borderRadius: "20px 20px 0 0", padding: "16px 14px 24px", width: "100%", maxHeight: "90vh", overflowY: "auto" }}>
+            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+              <button onClick={() => setShowBrehob(false)} style={{ background: "none", border: "none", fontSize: 24, cursor: "pointer", color: "#7a8c74" }}>✕</button>
+            </div>
+            <BrehobWorkerView />
+          </div>
+        </div>
       )}
     </div>
   );
