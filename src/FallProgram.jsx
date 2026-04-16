@@ -793,8 +793,47 @@ function ItemsTab({ items, soilMixes, containers, upsert, updateItem }) {
     unconfirmedLines: filtered.filter(i => !i.orderNumber).length,
   }), [consolidated, filtered]);
 
+  const missingRespWeek = useMemo(() =>
+    consolidated.filter(c => !c.responseWeek && c.category !== "4.5\" PRODUCTION" || (!c.responseWeek && c.totalQty > 0))
+  , [consolidated]);
+
+  // Actually, let's keep it simple — any consolidated row with no response_week
+  const missingRW = useMemo(() =>
+    consolidated.filter(c => !c.responseWeek)
+  , [consolidated]);
+  const [showMissingRW, setShowMissingRW] = useState(false);
+
   return (
     <div>
+      {missingRW.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <button onClick={() => setShowMissingRW(!showMissingRW)}
+            style={{ width: "100%", padding: "12px 16px", borderRadius: 12, border: "1.5px solid #e89a3a", background: "#fff7ec", color: "#1e2d1a", fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+            📅 {missingRW.length} variet{missingRW.length !== 1 ? "ies" : "y"} missing response week (ready date) {showMissingRW ? "▾" : "▸"}
+          </button>
+          {showMissingRW && (
+            <div style={{ marginTop: 8, background: "#fff", border: "1.5px solid #e0ead8", borderRadius: 12, overflow: "hidden" }}>
+              {missingRW.map(c => (
+                <div key={c.key} style={{ padding: "10px 14px", borderBottom: "1px solid #f0f5ee", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "#1e2d1a" }}>{c.variety}</div>
+                    <div style={{ fontSize: 11, color: "#7a8c74" }}>{c.category} · {fmtN(c.totalQty)} pots</div>
+                  </div>
+                  <input type="text" placeholder="Week #" defaultValue=""
+                    onBlur={async (e) => {
+                      if (e.target.value.trim()) {
+                        for (const loc of c.locations) {
+                          await updateItem(loc.id, { responseWeek: e.target.value.trim() });
+                        }
+                      }
+                    }}
+                    style={{ width: 100, padding: "6px 10px", borderRadius: 6, border: "1.5px solid #c8d8c0", fontSize: 13, fontFamily: "inherit" }} />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       {/* Filter section with chips */}
       <div style={{ ...card, padding: "14px 18px" }}>
         <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 10, flexWrap: "wrap" }}>
@@ -1069,7 +1108,15 @@ function ConfirmationModal({ row, items, upsert, updateItem, onClose }) {
   const [subName, setSubName] = useState("");
   const [subCost, setSubCost] = useState("");
   const [subOrderNumber, setSubOrderNumber] = useState("");
+  const [respWeek, setRespWeek] = useState(row.responseWeek || "");
   const fileRef = useRef(null);
+
+  async function saveResponseWeek() {
+    if (respWeek === (row.responseWeek || "")) return;
+    for (const loc of row.locations) {
+      await updateItem(loc.id, { responseWeek: respWeek || null });
+    }
+  }
 
   const sb = getSupabase();
 
@@ -1150,6 +1197,27 @@ function ConfirmationModal({ row, items, upsert, updateItem, onClose }) {
           ) : (
             <div style={{ fontSize: 13, color: "#d94f3d", fontWeight: 700 }}>⚠ Not yet confirmed</div>
           )}
+        </div>
+
+        {/* Response Week (Ready Date) */}
+        <div style={{ padding: "12px 14px", background: row.responseWeek ? "#f0f8eb" : "#fff3f1", border: `1.5px solid ${row.responseWeek ? "#7fb069" : "#d94f3d"}`, borderRadius: 10, marginBottom: 14 }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>Response Week — Ready Date</div>
+          {!row.responseWeek && (
+            <div style={{ fontSize: 12, color: "#d94f3d", fontWeight: 700, marginBottom: 6 }}>
+              ⚠ No response week assigned. Add one so this item shows up correctly on the schedule.
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <input type="text" value={respWeek} onChange={e => setRespWeek(e.target.value)} placeholder="e.g. 37 or 37/38"
+              style={{ flex: 1, padding: "8px 10px", borderRadius: 6, border: "1.5px solid #c8d8c0", fontSize: 13, fontFamily: "inherit" }} />
+            <button onClick={saveResponseWeek} disabled={respWeek === (row.responseWeek || "")}
+              style={{ padding: "8px 14px", background: respWeek === (row.responseWeek || "") ? "#c8d8c0" : "#7fb069", color: "#fff", border: "none", borderRadius: 6, fontWeight: 800, fontSize: 12, cursor: respWeek === (row.responseWeek || "") ? "default" : "pointer", fontFamily: "inherit" }}>
+              Save
+            </button>
+          </div>
+          <div style={{ fontSize: 10, color: "#7a8c74", marginTop: 4 }}>
+            Enter the week number the plant is expected to be shippable/ready (e.g. 35, 37, 37/38).
+          </div>
         </div>
 
         {/* PDF view + replace */}
