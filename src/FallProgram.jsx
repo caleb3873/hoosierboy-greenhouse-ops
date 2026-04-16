@@ -667,6 +667,7 @@ function ItemsTab({ items, soilMixes, containers, upsert, updateItem }) {
           companionVariety: i.companionVariety || null,
           transplantFrom: i.transplantFrom || null,
           transplantWeek: i.transplantWeek || null,
+          isComboComponent: i.isComboComponent || false,
         };
       }
       if (isTricolor) map[key].tricolorVarieties.add(i.variety);
@@ -876,6 +877,11 @@ function ItemsTab({ items, soilMixes, containers, upsert, updateItem }) {
                         <span style={{ marginLeft: 6, background: propBadge.bg, color: propBadge.color, borderRadius: 10, padding: "1px 8px", fontSize: 10, fontWeight: 700 }}>{propBadge.label}</span>
                       ) : null;
                     })()}
+                    {c.isComboComponent && (
+                      <span style={{ marginLeft: 6, background: "#e89a3a", color: "#fff", borderRadius: 10, padding: "1px 8px", fontSize: 10, fontWeight: 800 }} title="Grown as combo component — not sold individually">
+                        🎨 FOR COMBO
+                      </span>
+                    )}
                   </div>
                   <div style={{ fontSize: 10, color: "#aabba0" }}>{c.category} • {c.breeder}</div>
                 </div>
