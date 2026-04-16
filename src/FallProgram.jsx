@@ -222,7 +222,7 @@ export default function FallProgram() {
         </div>
       ) : (
         <>
-          {section === "overview" && <OverviewTab items={yearItems} year={year} />}
+          {section === "overview" && <OverviewTab items={yearItems} year={year} upsert={upsert} />}
           {section === "items" && <ItemsTab items={yearItems} soilMixes={soilMixes} containers={containers} upsert={upsert} updateItem={updateItem} remove={remove} />}
           {section === "color" && <ColorTab items={yearItems} />}
           {section === "schedule" && <ScheduleTab items={yearItems} />}
@@ -240,22 +240,36 @@ export default function FallProgram() {
 // ══════════════════════════════════════════════════════════════════════════════
 // ── OVERVIEW ─────────────────────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════════════
-function OverviewTab({ items, year }) {
+function OverviewTab({ items, year, upsert }) {
   const [shipFilter, setShipFilter] = useState("all");
   const [plantFilter, setPlantFilter] = useState("all");
   const [timingFilter, setTimingFilter] = useState("all");
 
   const shipWeeks = useMemo(() => [...new Set(items.map(i => i.shipWeek).filter(Boolean))].sort(), [items]);
   const plantWeeks = useMemo(() => [...new Set(items.map(i => i.plantWeek).filter(Boolean))].sort(), [items]);
-  const timings = useMemo(() => [...new Set(items.map(i => i.timing).filter(Boolean))].sort(), [items]);
+  const respWeeks = useMemo(() => [...new Set(items.map(i => i.responseWeek).filter(Boolean))].sort((a, b) => parseFloat(a) - parseFloat(b)), [items]);
 
   const filtered = useMemo(() => {
     let r = items;
     if (shipFilter !== "all") r = r.filter(i => i.shipWeek === shipFilter);
     if (plantFilter !== "all") r = r.filter(i => i.plantWeek === plantFilter);
-    if (timingFilter !== "all") r = r.filter(i => i.timing === timingFilter);
+    if (timingFilter !== "all") {
+      if (timingFilter === "missing") r = r.filter(i => !i.responseWeek);
+      else r = r.filter(i => i.responseWeek === timingFilter);
+    }
     return r;
   }, [items, shipFilter, plantFilter, timingFilter]);
+
+  // Missing response week varieties (consolidated)
+  const missingRW = useMemo(() => {
+    const m = {};
+    items.filter(i => (i.status || "").toUpperCase() !== "CANCELLED" && !i.responseWeek).forEach(i => {
+      const key = i.variety || "—";
+      if (!m[key]) m[key] = { variety: key, category: i.category, qty: 0 };
+      m[key].qty += parseFloat(i.qty) || 0;
+    });
+    return Object.values(m).sort((a, b) => b.qty - a.qty);
+  }, [items]);
 
   const stats = useMemo(() => {
     // qty = items being produced (finished pots), ord_qty = liners needed
@@ -316,18 +330,49 @@ function OverviewTab({ items, year }) {
               style={chipStyle(plantFilter === w, "#4a90d9")}>{w}</button>
           ))}
         </div>
-        {timings.length > 0 && (
-          <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-            <span style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", marginRight: 6 }}>Response Time:</span>
-            <button onClick={() => setTimingFilter("all")}
-              style={chipStyle(timingFilter === "all", "#7fb069")}>All</button>
-            {timings.map(t => (
-              <button key={t} onClick={() => setTimingFilter(t)}
-                style={chipStyle(timingFilter === t, "#7fb069")}>{t}</button>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", marginRight: 6 }}>Response Wk:</span>
+          <button onClick={() => setTimingFilter("all")}
+            style={chipStyle(timingFilter === "all", "#7fb069")}>All</button>
+          {respWeeks.map(w => (
+            <button key={w} onClick={() => setTimingFilter(w)}
+              style={chipStyle(timingFilter === w, "#7fb069")}>Wk {w}</button>
+          ))}
+          {missingRW.length > 0 && (
+            <button onClick={() => setTimingFilter("missing")}
+              style={{ ...chipStyle(timingFilter === "missing", "#d94f3d"), background: timingFilter === "missing" ? "#d94f3d" : "#fff3f1", color: timingFilter === "missing" ? "#fff" : "#d94f3d", border: `1.5px solid ${timingFilter === "missing" ? "#d94f3d" : "#d94f3d66"}` }}>⚠ Missing ({missingRW.length})</button>
+          )}
+        </div>
+      </div>
+
+      {/* Missing response week banner */}
+      {missingRW.length > 0 && (
+        <div style={{ background: "#fff3f1", border: "1.5px solid #d94f3d", borderRadius: 10, padding: "12px 16px", marginBottom: 14, fontSize: 12, color: "#1e2d1a" }}>
+          <div style={{ fontWeight: 800, color: "#d94f3d", marginBottom: 6 }}>
+            ⚠ {missingRW.length} variet{missingRW.length !== 1 ? "ies" : "y"} missing response week (ready date)
+          </div>
+          <div style={{ fontSize: 11, color: "#7a8c74", marginBottom: 8 }}>
+            These items won't show up on the ready-week schedule until assigned. Add a week number to each:
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {missingRW.map(m => (
+              <div key={m.variety} style={{ display: "flex", gap: 4, alignItems: "center", background: "#fff", padding: "6px 10px", borderRadius: 8, border: "1px solid #e0ead8" }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: "#1e2d1a" }}>{m.variety}</span>
+                <span style={{ fontSize: 10, color: "#7a8c74" }}>({fmtN(m.qty)})</span>
+                <input type="text" placeholder="Wk #" defaultValue=""
+                  onBlur={async e => {
+                    if (!e.target.value.trim()) return;
+                    const matches = items.filter(i => (i.variety || "") === m.variety);
+                    for (const loc of matches) {
+                      if (upsert) await upsert({ ...loc, responseWeek: e.target.value.trim() });
+                    }
+                  }}
+                  style={{ width: 60, padding: "4px 8px", borderRadius: 6, border: "1.5px solid #c8d8c0", fontSize: 12, fontFamily: "inherit" }} />
+              </div>
             ))}
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 16 }}>
         <KPI label="Items Producing" value={fmtN(stats.itemsProducing)} color="#7fb069" sub="finished pots" />
