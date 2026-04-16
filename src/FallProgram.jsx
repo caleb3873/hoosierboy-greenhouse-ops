@@ -1,5 +1,5 @@
-import React, { useState, useMemo } from "react";
-import { useFallProgramItems, useSoilMixes, useContainers } from "./supabase";
+import React, { useState, useMemo, useEffect, useRef } from "react";
+import { useFallProgramItems, useSoilMixes, useContainers, getSupabase } from "./supabase";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from "recharts";
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
@@ -553,6 +553,7 @@ function ItemsTab({ items, soilMixes, containers, upsert, updateItem }) {
   const [statusFilter, setStatusFilter] = useState("all"); // all | confirmed | unconfirmed
   const [timingFilter, setTimingFilter] = useState("all");
   const [expandedKey, setExpandedKey] = useState(null);
+  const [confirmationModal, setConfirmationModal] = useState(null); // opened row data
   const [sortCol, setSortCol] = useState("totalQty");
   const [sortDir, setSortDir] = useState("desc");
 
@@ -668,6 +669,12 @@ function ItemsTab({ items, soilMixes, containers, upsert, updateItem }) {
           transplantFrom: i.transplantFrom || null,
           transplantWeek: i.transplantWeek || null,
           isComboComponent: i.isComboComponent || false,
+          orderNumber: i.orderNumber || null,
+          confirmationPdfPath: i.confirmationPdfPath || null,
+          broker: i.broker || null,
+          supplier: i.supplier || null,
+          substitutedFrom: i.substitutedFrom || null,
+          substitutedAt: i.substitutedAt || null,
         };
       }
       if (isTricolor) map[key].tricolorVarieties.add(i.variety);
@@ -903,10 +910,17 @@ function ItemsTab({ items, soilMixes, containers, upsert, updateItem }) {
                 </div>
                 <div style={{ textAlign: "right", fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{fmtN(c.totalQty)}</div>
                 <div style={{ textAlign: "right", fontSize: 12, color: "#4a7a35", fontWeight: 600 }}>{c.totalCost > 0 ? fmt$(c.totalCost) : "—"}</div>
-                <div style={{ textAlign: "center", fontSize: 10 }}>
-                  {allConfirmed ? <span style={{ background: "#e8f5e0", color: "#4a7a35", borderRadius: 10, padding: "2px 8px", fontWeight: 700 }}>✓ All</span>
-                    : noneConfirmed ? <span style={{ background: "#fde8e8", color: "#d94f3d", borderRadius: 10, padding: "2px 8px", fontWeight: 700 }}>⚠ None</span>
-                    : <span style={{ background: "#fff4e8", color: "#c8791a", borderRadius: 10, padding: "2px 8px", fontWeight: 700 }}>{c.confirmed}/{c.locations.length}</span>}
+                <div style={{ textAlign: "center", fontSize: 10 }}
+                  onClick={(e) => { e.stopPropagation(); setConfirmationModal(c); }}>
+                  {allConfirmed ? (
+                    <span style={{ background: "#e8f5e0", color: "#4a7a35", borderRadius: 10, padding: "2px 8px", fontWeight: 700, cursor: "pointer", display: "inline-block" }}>
+                      ✓{c.orderNumber ? ` #${c.orderNumber}` : " All"}
+                    </span>
+                  ) : noneConfirmed ? (
+                    <span style={{ background: "#fde8e8", color: "#d94f3d", borderRadius: 10, padding: "2px 8px", fontWeight: 700, cursor: "pointer", display: "inline-block" }}>⚠ None</span>
+                  ) : (
+                    <span style={{ background: "#fff4e8", color: "#c8791a", borderRadius: 10, padding: "2px 8px", fontWeight: 700, cursor: "pointer", display: "inline-block" }}>{c.confirmed}/{c.locations.length}</span>
+                  )}
                 </div>
               </div>
 
@@ -987,6 +1001,167 @@ function ItemsTab({ items, soilMixes, containers, upsert, updateItem }) {
             <div></div>
           </div>
         )}
+      </div>
+      {confirmationModal && (
+        <ConfirmationModal row={confirmationModal} items={items} upsert={upsert} updateItem={updateItem} onClose={() => setConfirmationModal(null)} />
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ── CONFIRMATION MODAL ───────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+function ConfirmationModal({ row, items, upsert, updateItem, onClose }) {
+  const [pdfUrl, setPdfUrl] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [substituting, setSubstituting] = useState(false);
+  const [subName, setSubName] = useState("");
+  const [subCost, setSubCost] = useState("");
+  const [subOrderNumber, setSubOrderNumber] = useState("");
+  const fileRef = useRef(null);
+
+  const sb = getSupabase();
+
+  useEffect(() => {
+    if (!sb || !row.confirmationPdfPath) return;
+    sb.storage.from("order-confirmations").createSignedUrl(row.confirmationPdfPath, 3600).then(({ data }) => {
+      if (data?.signedUrl) setPdfUrl(data.signedUrl);
+    });
+  }, [row.confirmationPdfPath]);
+
+  async function handleReplace(file) {
+    if (!file) return;
+    setLoading(true);
+    try {
+      const path = row.confirmationPdfPath || `${row.orderNumber || crypto.randomUUID()}.pdf`;
+      // Remove existing then upload
+      try { await sb.storage.from("order-confirmations").remove([path]); } catch {}
+      const { error } = await sb.storage.from("order-confirmations").upload(path, file, { contentType: "application/pdf", upsert: true });
+      if (error) throw error;
+      // Update all items in this variety group
+      for (const loc of row.locations) {
+        await updateItem(loc.id, { confirmationPdfPath: path });
+      }
+      // Refresh signed url
+      const { data } = await sb.storage.from("order-confirmations").createSignedUrl(path, 3600);
+      if (data?.signedUrl) setPdfUrl(data.signedUrl + "&t=" + Date.now());
+      alert("Confirmation replaced successfully.");
+    } catch (err) {
+      alert("Replace failed: " + err.message);
+    }
+    setLoading(false);
+  }
+
+  async function handleSubstitute() {
+    if (!subName.trim()) return;
+    const newName = subName.trim().toUpperCase();
+    const cost = parseFloat(subCost) || null;
+    const origVariety = row.variety;
+    const now = new Date().toISOString();
+    for (const loc of row.locations) {
+      const patch = { variety: newName, substitutedFrom: origVariety, substitutedAt: now };
+      if (cost !== null) patch.cost = cost;
+      if (subOrderNumber.trim()) patch.orderNumber = subOrderNumber.trim();
+      await updateItem(loc.id, patch);
+    }
+    onClose();
+  }
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, fontFamily: "'DM Sans','Segoe UI',sans-serif" }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 16, padding: 24, maxWidth: 520, width: "100%", maxHeight: "85vh", overflowY: "auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
+          <div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: "#1e2d1a", fontFamily: "'DM Serif Display',Georgia,serif" }}>{row.variety}</div>
+            <div style={{ fontSize: 12, color: "#7a8c74", marginTop: 2 }}>{row.category} · {row.totalQty} total</div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#7a8c74" }}>✕</button>
+        </div>
+
+        {row.substitutedFrom && (
+          <div style={{ padding: "10px 12px", background: "#fff7ec", border: "1.5px solid #e89a3a", borderRadius: 8, marginBottom: 14 }}>
+            <div style={{ fontSize: 11, fontWeight: 800, color: "#c8791a", textTransform: "uppercase", letterSpacing: 0.5 }}>Substitution</div>
+            <div style={{ fontSize: 13, color: "#1e2d1a", marginTop: 2 }}>
+              Substituted from <strong>{row.substitutedFrom}</strong>
+              {row.substitutedAt && <span style={{ color: "#7a8c74" }}> · {new Date(row.substitutedAt).toLocaleDateString()}</span>}
+            </div>
+          </div>
+        )}
+
+        <div style={{ padding: "12px 14px", background: "#f2f5ef", borderRadius: 10, marginBottom: 14 }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>Order Details</div>
+          {row.orderNumber ? (
+            <>
+              <div style={{ fontSize: 13, color: "#1e2d1a" }}><strong>Sales Order #:</strong> {row.orderNumber}</div>
+              {row.broker && <div style={{ fontSize: 13, color: "#1e2d1a" }}><strong>Broker:</strong> {row.broker}</div>}
+              {row.supplier && <div style={{ fontSize: 13, color: "#1e2d1a" }}><strong>Supplier:</strong> {row.supplier}</div>}
+            </>
+          ) : (
+            <div style={{ fontSize: 13, color: "#d94f3d", fontWeight: 700 }}>⚠ Not yet confirmed</div>
+          )}
+        </div>
+
+        {/* PDF view + replace */}
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>Confirmation PDF</div>
+          {pdfUrl ? (
+            <div style={{ display: "flex", gap: 8 }}>
+              <a href={pdfUrl} target="_blank" rel="noopener noreferrer"
+                style={{ flex: 1, padding: "10px 14px", background: "#7fb069", color: "#fff", borderRadius: 8, textDecoration: "none", fontWeight: 800, fontSize: 13, textAlign: "center" }}>
+                📄 View PDF
+              </a>
+              <button onClick={() => fileRef.current?.click()} disabled={loading}
+                style={{ padding: "10px 14px", background: "#fff", color: "#1e2d1a", border: "1.5px solid #c8d8c0", borderRadius: 8, fontWeight: 800, fontSize: 13, cursor: loading ? "default" : "pointer", fontFamily: "inherit" }}>
+                {loading ? "..." : "Replace"}
+              </button>
+            </div>
+          ) : (
+            <div>
+              <button onClick={() => fileRef.current?.click()} disabled={loading}
+                style={{ width: "100%", padding: "14px 0", background: "#fff4e8", color: "#c8791a", border: "1.5px dashed #e89a3a", borderRadius: 8, fontWeight: 800, fontSize: 13, cursor: loading ? "default" : "pointer", fontFamily: "inherit" }}>
+                {loading ? "Uploading..." : "📎 Upload confirmation PDF"}
+              </button>
+            </div>
+          )}
+          <input ref={fileRef} type="file" accept="application/pdf" style={{ display: "none" }}
+            onChange={e => handleReplace(e.target.files?.[0])} />
+        </div>
+
+        {/* Substitute */}
+        <div style={{ marginBottom: 14 }}>
+          {!substituting ? (
+            <button onClick={() => setSubstituting(true)}
+              style={{ width: "100%", padding: "10px 0", background: "#fff", color: "#7a8c74", border: "1.5px solid #c8d8c0", borderRadius: 8, fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+              🔄 Substitute with different variety
+            </button>
+          ) : (
+            <div style={{ padding: "12px 14px", background: "#fff7ec", border: "1.5px solid #e89a3a", borderRadius: 8 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#c8791a", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>Substitute Variety</div>
+              <input value={subName} onChange={e => setSubName(e.target.value)} placeholder="New variety name" autoFocus
+                style={{ width: "100%", padding: "10px 12px", borderRadius: 6, border: "1.5px solid #c8d8c0", fontSize: 13, fontFamily: "inherit", boxSizing: "border-box", marginBottom: 6 }} />
+              <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+                <input value={subOrderNumber} onChange={e => setSubOrderNumber(e.target.value)} placeholder="Order # (optional)"
+                  style={{ flex: 2, padding: "10px 12px", borderRadius: 6, border: "1.5px solid #c8d8c0", fontSize: 13, fontFamily: "inherit", boxSizing: "border-box" }} />
+                <input type="number" step="0.01" value={subCost} onChange={e => setSubCost(e.target.value)} placeholder="New cost"
+                  style={{ flex: 1, padding: "10px 12px", borderRadius: 6, border: "1.5px solid #c8d8c0", fontSize: 13, fontFamily: "inherit", boxSizing: "border-box" }} />
+              </div>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button onClick={() => setSubstituting(false)}
+                  style={{ flex: 1, padding: "10px 0", background: "#fff", color: "#7a8c74", border: "1.5px solid #c8d8c0", borderRadius: 6, fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+                  Cancel
+                </button>
+                <button onClick={handleSubstitute} disabled={!subName.trim()}
+                  style={{ flex: 2, padding: "10px 0", background: subName.trim() ? "#7fb069" : "#c8d8c0", color: "#fff", border: "none", borderRadius: 6, fontWeight: 800, fontSize: 12, cursor: subName.trim() ? "pointer" : "default", fontFamily: "inherit" }}>
+                  Apply substitution
+                </button>
+              </div>
+              <div style={{ fontSize: 10, color: "#7a8c74", marginTop: 6 }}>
+                The original variety "{row.variety}" will be saved as the substitution source.
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
