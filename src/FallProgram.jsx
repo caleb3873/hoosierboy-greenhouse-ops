@@ -1121,13 +1121,17 @@ function SowingTab({ items, upsert }) {
             } else {
               const key = variety;
               if (!consolidated[key]) {
-                consolidated[key] = { variety: i.variety, category: i.category, shipWeek: i.shipWeek, plantWeek: i.plantWeek, propMethod: i.propMethod, seedsPerPot: i.seedsPerPot || 0, seedsOrdered: i.seedsOrdered || 0, seedsOnHand: i.seedsOnHand || 0, seedShortage: i.seedShortage || false, seedOrderNumber: i.seedOrderNumber || null, germinationRate: i.germinationRate || null, qty: 0, seedsNeededOverride: 0, usedIn: [] };
+                consolidated[key] = { variety: i.variety, category: i.category, shipWeek: i.shipWeek, plantWeek: i.plantWeek, propMethod: i.propMethod, seedsPerPot: i.seedsPerPot || 0, seedsOrdered: 0, seedsOnHand: 0, seedShortage: i.seedShortage || false, seedOrderNumber: i.seedOrderNumber || null, germinationRate: i.germinationRate || null, qty: 0, seedsNeededOverride: 0, usedIn: [] };
               }
+              // Take max seedsOrdered/seedsOnHand across all rows (they should all be the same for a variety's total order)
+              if ((i.seedsOrdered || 0) > consolidated[key].seedsOrdered) consolidated[key].seedsOrdered = i.seedsOrdered;
+              if ((i.seedsOnHand || 0) > consolidated[key].seedsOnHand) consolidated[key].seedsOnHand = i.seedsOnHand;
+              if (!consolidated[key].seedOrderNumber && i.seedOrderNumber) consolidated[key].seedOrderNumber = i.seedOrderNumber;
+              if (!consolidated[key].seedsPerPot && i.seedsPerPot) consolidated[key].seedsPerPot = i.seedsPerPot;
               consolidated[key].qty += qty;
               const spp = i.seedsPerPot || 0;
               consolidated[key].seedsNeededOverride += qty * spp;
               consolidated[key].usedIn.push({ product: i.variety, pots: qty, seedsPerPot: spp });
-              if (i.location) ; // locations not critical for seed view
             }
           });
           const rows = Object.values(consolidated).sort((a, b) => (a.variety || "").localeCompare(b.variety || ""));
