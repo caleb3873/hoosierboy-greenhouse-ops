@@ -1,11 +1,52 @@
 import { useState, useMemo, useEffect, useRef } from "react";
-import { useManagerTasks } from "./supabase";
+import { useManagerTasks, getSupabase } from "./supabase";
 import { useAuth } from "./Auth";
 import { BrehobManagerView } from "./BrehobList";
 import { getCurrentWeek } from "./shared";
 import { NotificationBanner } from "./PushNotifications";
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
+
+// ── Photo helpers ───────────────────────────────────────────────────────────
+// Photos are stored in Supabase storage bucket 'task-photos'.
+// The `photos` JSONB array on manager_tasks stores storage paths (new) or
+// data URLs (legacy). TaskPhoto component handles both.
+export async function uploadTaskPhoto(file) {
+  const sb = getSupabase();
+  if (!sb) throw new Error("Supabase not configured");
+  const ts = Date.now();
+  const ext = (file.name || "photo.jpg").split(".").pop() || "jpg";
+  const path = `${ts}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+  const { error } = await sb.storage.from("task-photos").upload(path, file, { contentType: file.type || "image/jpeg" });
+  if (error) throw error;
+  return path;
+}
+
+export function TaskPhoto({ src, onRemove, size = 90 }) {
+  const [url, setUrl] = useState(null);
+  useEffect(() => {
+    if (!src) return;
+    if (src.startsWith("data:") || src.startsWith("http")) { setUrl(src); return; }
+    const sb = getSupabase();
+    if (!sb) return;
+    sb.storage.from("task-photos").createSignedUrl(src, 3600).then(({ data }) => {
+      if (data?.signedUrl) setUrl(data.signedUrl);
+    });
+  }, [src]);
+  return (
+    <div style={{ position: "relative" }}>
+      {url ? (
+        <img src={url} alt="" style={{ width: size, height: size, objectFit: "cover", borderRadius: 10, border: "1.5px solid #e0ead8" }} />
+      ) : (
+        <div style={{ width: size, height: size, borderRadius: 10, background: "#f0f5ee", display: "flex", alignItems: "center", justifyContent: "center", color: "#7a8c74", fontSize: 11 }}>...</div>
+      )}
+      {onRemove && (
+        <button onClick={onRemove}
+          style={{ position: "absolute", top: 4, right: 4, width: 22, height: 22, borderRadius: "50%", background: "rgba(0,0,0,0.7)", color: "#fff", border: "none", fontSize: 12, cursor: "pointer" }}>&times;</button>
+      )}
+    </div>
+  );
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function getWeekInfo(date = new Date()) {
@@ -506,15 +547,25 @@ const FLOOR_CODE_LIST = [
 // ══════════════════════════════════════════════════════════════════════════════
 export function CompletionPromptModal({ task, onCancel, onSave }) {
   const [notes, setNotes] = useState("");
-  const [photo, setPhoto] = useState(null);
+  const [photo, setPhoto] = useState(null); // storage path
+  const [uploading, setUploading] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState(null);
   const fileRef = useRef(null);
 
-  function handlePhoto(e) {
+  async function handlePhoto(e) {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = ev => setPhoto(ev.target.result);
-    reader.readAsDataURL(file);
+    // Show local preview instantly
+    setPreviewUrl(URL.createObjectURL(file));
+    setUploading(true);
+    try {
+      const path = await uploadTaskPhoto(file);
+      setPhoto(path);
+    } catch (err) {
+      alert("Upload failed: " + err.message);
+      setPreviewUrl(null);
+    }
+    setUploading(false);
   }
 
   return (
@@ -537,17 +588,20 @@ export function CompletionPromptModal({ task, onCancel, onSave }) {
 
         <label style={{ fontSize: 12, fontWeight: 700, color: "#7a8c74" }}>Take a photo? (optional)</label>
         <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={handlePhoto} style={{ display: "none" }} />
-        {photo ? (
+        {previewUrl ? (
           <div style={{ position: "relative", marginTop: 6 }}>
-            <img src={photo} alt="" style={{ width: "100%", maxHeight: 180, objectFit: "cover", borderRadius: 10 }} />
-            <button onClick={() => setPhoto(null)}
-              style={{ position: "absolute", top: 6, right: 6, background: "rgba(0,0,0,0.6)", border: "none", color: "#fff", borderRadius: "50%", width: 28, height: 28, cursor: "pointer", fontSize: 14 }}>×</button>
+            <img src={previewUrl} alt="" style={{ width: "100%", maxHeight: 180, objectFit: "cover", borderRadius: 10, opacity: uploading ? 0.6 : 1 }} />
+            {uploading && <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 800, textShadow: "0 0 4px rgba(0,0,0,0.8)" }}>Uploading...</div>}
+            {!uploading && (
+              <button onClick={() => { setPhoto(null); setPreviewUrl(null); }}
+                style={{ position: "absolute", top: 6, right: 6, background: "rgba(0,0,0,0.6)", border: "none", color: "#fff", borderRadius: "50%", width: 28, height: 28, cursor: "pointer", fontSize: 14 }}>×</button>
+            )}
           </div>
         ) : (
-          <button onClick={() => fileRef.current?.click()}
+          <button onClick={() => fileRef.current?.click()} disabled={uploading}
             style={{
               width: "100%", padding: "14px", borderRadius: 10, border: "1.5px dashed #c8d8c0",
-              background: "#fafcf8", color: "#7a8c74", fontSize: 14, fontWeight: 700, cursor: "pointer",
+              background: "#fafcf8", color: "#7a8c74", fontSize: 14, fontWeight: 700, cursor: uploading ? "default" : "pointer",
               fontFamily: "inherit", marginTop: 6,
             }}>
             📷 Take Photo
@@ -600,7 +654,7 @@ function RequestsModal({ requests, onClose, onApprove, onReject }) {
                 {r.description && <div style={{ fontSize: 13, color: "#7a8c74", marginTop: 6, whiteSpace: "pre-wrap" }}>{r.description}</div>}
                 {Array.isArray(r.photos) && r.photos.length > 0 && (
                   <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
-                    {r.photos.map((p, i) => <img key={i} src={p} alt="" style={{ width: 90, height: 90, objectFit: "cover", borderRadius: 8 }} />)}
+                    {r.photos.map((p, i) => <TaskPhoto key={i} src={p} />)}
                   </div>
                 )}
                 <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
@@ -1003,7 +1057,7 @@ export function TaskViewer({ task, onBack, onAppend, readOnly = true }) {
             <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", marginBottom: 4 }}>Photos</div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               {task.photos.map((p, i) => (
-                <img key={i} src={p} alt="" style={{ width: 90, height: 90, objectFit: "cover", borderRadius: 10, border: "1.5px solid #e0ead8" }} />
+                <TaskPhoto key={i} src={p} />
               ))}
             </div>
           </>}
@@ -1058,15 +1112,20 @@ function TaskDetail({ task, onBack, onSave }) {
     return () => window.removeEventListener("beforeunload", handler);
   }, [dirty]);
 
-  function handlePhoto(e) {
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  async function handlePhoto(e) {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = ev => {
-      const photos = [...(t.photos || []), ev.target.result];
+    setUploadingPhoto(true);
+    try {
+      const path = await uploadTaskPhoto(file);
+      const photos = [...(t.photos || []), path];
       upd("photos", photos);
-    };
-    reader.readAsDataURL(file);
+    } catch (err) {
+      alert("Upload failed: " + err.message);
+    }
+    setUploadingPhoto(false);
+    e.target.value = ""; // allow re-selecting same file
   }
 
   function removePhoto(idx) {
@@ -1139,15 +1198,11 @@ function TaskDetail({ task, onBack, onSave }) {
           <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", marginBottom: 6 }}>Photos</div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
             {(t.photos || []).map((p, i) => (
-              <div key={i} style={{ position: "relative" }}>
-                <img src={p} alt="" style={{ width: 90, height: 90, objectFit: "cover", borderRadius: 10, border: "1.5px solid #e0ead8" }} />
-                <button onClick={() => removePhoto(i)}
-                  style={{ position: "absolute", top: 4, right: 4, width: 22, height: 22, borderRadius: "50%", background: "rgba(0,0,0,0.7)", color: "#fff", border: "none", fontSize: 12, cursor: "pointer" }}>&times;</button>
-              </div>
+              <TaskPhoto key={i} src={p} onRemove={() => removePhoto(i)} />
             ))}
-            <label style={{ width: 90, height: 90, borderRadius: 10, border: "2px dashed #c8d8c0", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: 24, color: "#7a8c74", background: "#fafcf8" }}>
-              +
-              <input type="file" accept="image/*" capture="environment" onChange={handlePhoto} style={{ display: "none" }} />
+            <label style={{ width: 90, height: 90, borderRadius: 10, border: "2px dashed #c8d8c0", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: 24, color: "#7a8c74", background: uploadingPhoto ? "#f0f5ee" : "#fafcf8" }}>
+              {uploadingPhoto ? "..." : "+"}
+              <input type="file" accept="image/*" capture="environment" onChange={handlePhoto} style={{ display: "none" }} disabled={uploadingPhoto} />
             </label>
           </div>
         </div>

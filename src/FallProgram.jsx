@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
-import { useFallProgramItems, useSoilMixes, useContainers, getSupabase } from "./supabase";
+import { useFallProgramItems, useSoilMixes, useContainers, useProgramInputs, useInputProducts, getSupabase } from "./supabase";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from "recharts";
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
@@ -25,9 +25,41 @@ const SECTIONS = [
   { id: "color", label: "Color Mix" },
   { id: "schedule", label: "Schedule" },
   { id: "sowing", label: "Sowing & Prop" },
+  { id: "inputs", label: "Inputs" },
   { id: "cost", label: "Cost Estimate" },
   { id: "shortfalls", label: "Shortfalls" },
 ];
+
+// Approximate soil volume per pot by category (cu ft)
+// Used to allocate per-pot overhead costs (fertilizer, soil, labor) proportionally
+const POT_CU_FT = {
+  '4.5" PRODUCTION': 0.047,
+  '8" ANNUAL': 0.067,
+  '09" ASTERS': 0.100,
+  '09" KALE': 0.100,
+  '09" MUM': 0.100,
+  '10" PREMIUM ANNUAL': 0.134,
+  '12" HB': 0.200,
+  '12" MUM': 0.200,
+  '14" MUM W/ GRASS': 0.267,
+  'MUM BASKET': 0.167,
+  'MUM BSKT ACORN': 0.167,
+  'MUM BSKT INDIAN': 0.167,
+};
+function potCuFtFor(item) {
+  const key = item.category || item.displayCategory || "";
+  // Exact match first
+  if (POT_CU_FT[key]) return POT_CU_FT[key];
+  // Fallback by substring
+  if (key.includes("14\"")) return 0.267;
+  if (key.includes("12\"")) return 0.200;
+  if (key.includes("10\"")) return 0.134;
+  if (key.includes("9\"") || key.includes("09\"")) return 0.100;
+  if (key.includes("8\"")) return 0.067;
+  if (key.includes("4.5")) return 0.047;
+  if (key.toUpperCase().includes("BASKET")) return 0.167;
+  return 0.1; // default
+}
 
 // Volume conversion to cu ft
 function volumeToCuFt(val, unit) {
@@ -113,6 +145,8 @@ export default function FallProgram() {
   const { rows: items, upsert, update: updateItem, remove } = useFallProgramItems();
   const { rows: soilMixes } = useSoilMixes();
   const { rows: containers } = useContainers();
+  const { rows: programInputs, insert: insertProgramInput, update: updateProgramInput, remove: removeProgramInput } = useProgramInputs();
+  const { rows: inputsLibrary } = useInputProducts();
 
   const allYears = useMemo(() => {
     const ys = [...new Set(items.map(i => i.year).filter(Boolean))].sort((a, b) => b - a);
@@ -179,7 +213,8 @@ export default function FallProgram() {
           {section === "color" && <ColorTab items={yearItems} />}
           {section === "schedule" && <ScheduleTab items={yearItems} />}
           {section === "sowing" && <SowingTab items={yearItems} upsert={upsert} />}
-          {section === "cost" && <CostTab items={yearItems} containers={containers} soilMixes={soilMixes} />}
+          {section === "inputs" && <InputsTab year={year} items={yearItems} programInputs={programInputs.filter(p => p.year === year)} inputsLibrary={inputsLibrary} insertProgramInput={insertProgramInput} updateProgramInput={updateProgramInput} removeProgramInput={removeProgramInput} />}
+          {section === "cost" && <CostTab items={yearItems} containers={containers} soilMixes={soilMixes} programInputs={programInputs.filter(p => p.year === year)} />}
           {section === "shortfalls" && <ShortfallsTab items={yearItems} />}
         </>
       )}
@@ -1421,9 +1456,227 @@ function SowingTab({ items, upsert }) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// ── INPUTS TAB ───────────────────────────────────────────────────────────────
+// Pull inputs from the general library and allocate their cost across program items
+// ══════════════════════════════════════════════════════════════════════════════
+function InputsTab({ year, items, programInputs, inputsLibrary, insertProgramInput, updateProgramInput, removeProgramInput }) {
+  const [adding, setAdding] = useState(false);
+  const [selectedId, setSelectedId] = useState("");
+  const [qty, setQty] = useState("");
+  const [method, setMethod] = useState("soil_volume");
+  const [search, setSearch] = useState("");
+
+  // Join programInputs with library data
+  const joined = useMemo(() => programInputs.map(pi => {
+    const lib = inputsLibrary.find(l => l.id === pi.inputId);
+    return { ...pi, libraryItem: lib };
+  }), [programInputs, inputsLibrary]);
+
+  // Total soil volume for allocation base
+  const totalSoilVol = useMemo(() =>
+    items.filter(i => (i.status || "").toUpperCase() !== "CANCELLED")
+      .reduce((s, i) => s + (parseFloat(i.qty) || 0) * potCuFtFor(i), 0)
+  , [items]);
+
+  const totalPots = useMemo(() =>
+    items.filter(i => (i.status || "").toUpperCase() !== "CANCELLED")
+      .reduce((s, i) => s + (parseFloat(i.qty) || 0), 0)
+  , [items]);
+
+  const totalInputsCost = joined.reduce((s, p) => s + (parseFloat(p.totalCost) || 0), 0);
+
+  // Library filtered by search
+  const libMatches = useMemo(() => {
+    if (!search || search.length < 2) return inputsLibrary.slice(0, 10);
+    const q = search.toLowerCase();
+    return inputsLibrary.filter(l =>
+      (l.name || "").toLowerCase().includes(q) ||
+      (l.category || "").toLowerCase().includes(q) ||
+      (l.supplier || "").toLowerCase().includes(q)
+    ).slice(0, 15);
+  }, [search, inputsLibrary]);
+
+  async function addInput() {
+    const lib = inputsLibrary.find(l => l.id === selectedId);
+    if (!lib || !qty) return;
+    const quantity = parseFloat(qty) || 0;
+    const unitCost = parseFloat(lib.costPerUnit) || 0;
+    const totalCost = quantity * unitCost;
+    await insertProgramInput({
+      id: crypto.randomUUID(),
+      year,
+      inputId: lib.id,
+      name: lib.name,
+      category: lib.category,
+      supplier: lib.supplier,
+      quantity,
+      unit: lib.unitSizeUnit || "unit",
+      unitCost,
+      totalCost,
+      allocationMethod: method,
+    });
+    setSelectedId(""); setQty(""); setSearch(""); setAdding(false);
+  }
+
+  return (
+    <div>
+      <div style={{ ...card, padding: "18px 20px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 800, color: "#1e2d1a" }}>Program Inputs — {year}</div>
+            <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2 }}>
+              {totalPots.toLocaleString()} pots · {totalSoilVol.toFixed(1)} cu ft soil total · {joined.length} input{joined.length !== 1 ? "s" : ""}
+            </div>
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 11, color: "#7a8c74", fontWeight: 700, textTransform: "uppercase" }}>Total Inputs Cost</div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: "#4a7a35" }}>{fmt$(totalInputsCost)}</div>
+            <div style={{ fontSize: 11, color: "#7a8c74" }}>
+              {totalPots > 0 ? fmt$(totalInputsCost / totalPots) : "—"}/pot (avg)
+            </div>
+          </div>
+        </div>
+
+        {joined.length === 0 ? (
+          <div style={{ padding: 30, textAlign: "center", color: "#7a8c74", fontSize: 13, border: "1.5px dashed #c8d8c0", borderRadius: 10 }}>
+            No inputs added yet. Pull one from the library below.
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {joined.map(p => (
+              <div key={p.id} style={{ padding: "12px 14px", background: "#fafcf8", border: "1px solid #e0ead8", borderRadius: 10, display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: "#1e2d1a" }}>{p.name}</div>
+                  <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2 }}>
+                    {p.category}{p.supplier ? ` · ${p.supplier}` : ""}{p.libraryItem ? " · from library" : " · (unlinked)"}
+                  </div>
+                  <div style={{ fontSize: 12, color: "#1e2d1a", marginTop: 6 }}>
+                    {p.quantity} {p.unit} × {fmt$(p.unitCost)} = <strong>{fmt$(p.totalCost)}</strong>
+                  </div>
+                  <div style={{ fontSize: 10, color: "#7a8c74", marginTop: 2 }}>
+                    Allocated by: {p.allocationMethod === "soil_volume" ? "soil volume" : p.allocationMethod === "per_pot" ? "per pot (even)" : p.allocationMethod}
+                    {p.allocationMethod === "soil_volume" && totalSoilVol > 0 && <span> · {fmt$(p.totalCost / totalSoilVol)}/cu ft</span>}
+                    {p.allocationMethod === "per_pot" && totalPots > 0 && <span> · {fmt$(p.totalCost / totalPots)}/pot</span>}
+                  </div>
+                </div>
+                <button onClick={() => { if (window.confirm(`Remove "${p.name}" from ${year} program?`)) removeProgramInput(p.id); }}
+                  style={{ background: "none", border: "none", color: "#d94f3d", fontSize: 18, cursor: "pointer" }}>🗑</button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {!adding ? (
+          <button onClick={() => setAdding(true)} style={{ ...BTN, marginTop: 14 }}>+ Pull from Inputs Library</button>
+        ) : (
+          <div style={{ marginTop: 14, padding: 14, background: "#f2f5ef", borderRadius: 10, border: "1.5px solid #c8d8c0" }}>
+            <div style={{ fontSize: 11, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>Pull from library</div>
+            {!selectedId ? (
+              <>
+                <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search library (name, category, supplier)..." autoFocus
+                  style={{ ...IS(true), marginBottom: 8 }} />
+                {inputsLibrary.length === 0 && (
+                  <div style={{ fontSize: 12, color: "#d94f3d", padding: 10, background: "#fff3f1", borderRadius: 8 }}>
+                    ⚠ No items in the inputs library yet. Add them via the Libraries section first.
+                  </div>
+                )}
+                {libMatches.length > 0 && (
+                  <div style={{ maxHeight: 240, overflowY: "auto", background: "#fff", border: "1px solid #e0ead8", borderRadius: 8 }}>
+                    {libMatches.map(lib => (
+                      <button key={lib.id} onClick={() => setSelectedId(lib.id)}
+                        style={{ display: "block", width: "100%", textAlign: "left", padding: "10px 12px", background: "none", border: "none", borderBottom: "1px solid #f0f5ee", cursor: "pointer", fontFamily: "inherit" }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: "#1e2d1a" }}>{lib.name}</div>
+                        <div style={{ fontSize: 11, color: "#7a8c74" }}>
+                          {lib.category || "Uncategorized"}{lib.supplier ? ` · ${lib.supplier}` : ""}{lib.costPerUnit ? ` · ${fmt$(lib.costPerUnit)}/${lib.unitSizeUnit || "unit"}` : ""}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
+            ) : (() => {
+              const lib = inputsLibrary.find(l => l.id === selectedId);
+              return (
+                <>
+                  <div style={{ padding: "10px 12px", background: "#fff", border: "1.5px solid #7fb069", borderRadius: 8, marginBottom: 10 }}>
+                    <div style={{ fontSize: 14, fontWeight: 800, color: "#1e2d1a" }}>{lib?.name}</div>
+                    <div style={{ fontSize: 11, color: "#7a8c74" }}>
+                      {lib?.category}{lib?.supplier ? ` · ${lib.supplier}` : ""} · {fmt$(lib?.costPerUnit)}/{lib?.unitSizeUnit || "unit"}
+                    </div>
+                  </div>
+                  <FL>Expected quantity this season ({lib?.unitSizeUnit || "unit"}s)</FL>
+                  <input type="number" value={qty} onChange={e => setQty(e.target.value)} placeholder="e.g. 720 bags"
+                    style={{ ...IS(!!qty), marginBottom: 8 }} />
+                  {qty && <div style={{ fontSize: 11, color: "#7a8c74", marginBottom: 8 }}>Total cost: {fmt$((parseFloat(qty) || 0) * (parseFloat(lib?.costPerUnit) || 0))}</div>}
+                  <FL>Allocation method</FL>
+                  <select value={method} onChange={e => setMethod(e.target.value)} style={{ ...IS(true), marginBottom: 10 }}>
+                    <option value="soil_volume">Soil volume (larger pots get more)</option>
+                    <option value="per_pot">Per pot (even split)</option>
+                  </select>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button onClick={() => { setSelectedId(""); setQty(""); }} style={BTN_SEC}>← Back</button>
+                    <button onClick={addInput} disabled={!qty} style={{ ...BTN, flex: 1, opacity: qty ? 1 : 0.5 }}>Add to program</button>
+                  </div>
+                </>
+              );
+            })()}
+            <button onClick={() => { setAdding(false); setSelectedId(""); setQty(""); }} style={{ ...BTN_SEC, marginTop: 10, width: "100%" }}>Cancel</button>
+          </div>
+        )}
+      </div>
+
+      {/* Per-category allocation preview */}
+      {joined.length > 0 && totalSoilVol > 0 && (
+        <div style={{ ...card, padding: "18px 20px" }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: "#1e2d1a", marginBottom: 10 }}>Allocation Preview — Input Cost per Pot by Category</div>
+          <div style={{ fontSize: 11, color: "#7a8c74", marginBottom: 12 }}>
+            Soil volume used for allocation: larger pots pay proportionally more
+          </div>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+            <thead>
+              <tr style={{ background: "#fafcf8", borderBottom: "2px solid #e0ead8" }}>
+                <th style={{ padding: 8, textAlign: "left", fontWeight: 800, color: "#7a8c74" }}>Category</th>
+                <th style={{ padding: 8, textAlign: "right", fontWeight: 800, color: "#7a8c74" }}>Pots</th>
+                <th style={{ padding: 8, textAlign: "right", fontWeight: 800, color: "#7a8c74" }}>Cu Ft/Pot</th>
+                <th style={{ padding: 8, textAlign: "right", fontWeight: 800, color: "#7a8c74" }}>$/Pot</th>
+                <th style={{ padding: 8, textAlign: "right", fontWeight: 800, color: "#7a8c74" }}>Total $</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(() => {
+                const byCategory = {};
+                items.filter(i => (i.status || "").toUpperCase() !== "CANCELLED").forEach(i => {
+                  const key = i.category || "Unknown";
+                  if (!byCategory[key]) byCategory[key] = { pots: 0, cuFtPer: potCuFtFor(i) };
+                  byCategory[key].pots += parseFloat(i.qty) || 0;
+                });
+                const soilVolCost = totalInputsCost / totalSoilVol;
+                return Object.entries(byCategory).sort(([a], [b]) => a.localeCompare(b)).map(([cat, d]) => {
+                  const perPot = d.cuFtPer * soilVolCost;
+                  const total = d.pots * perPot;
+                  return (
+                    <tr key={cat} style={{ borderBottom: "1px solid #f0f5ee" }}>
+                      <td style={{ padding: 8, fontWeight: 700, color: "#1e2d1a" }}>{cat}</td>
+                      <td style={{ padding: 8, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtN(d.pots)}</td>
+                      <td style={{ padding: 8, textAlign: "right", color: "#7a8c74" }}>{d.cuFtPer.toFixed(3)}</td>
+                      <td style={{ padding: 8, textAlign: "right", color: "#4a7a35", fontWeight: 700 }}>{fmt$(perPot)}</td>
+                      <td style={{ padding: 8, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt$(total)}</td>
+                    </tr>
+                  );
+                });
+              })()}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // ── COST ESTIMATE TAB ────────────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════════════
-function CostTab({ items, containers, soilMixes }) {
+function CostTab({ items, containers, soilMixes, programInputs = [] }) {
   const defaultSoil = pickDefaultSoil(soilMixes);
   const soilCpf = soilCostPerCuFt(defaultSoil);
 
