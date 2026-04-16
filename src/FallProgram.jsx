@@ -33,6 +33,15 @@ const SECTIONS = [
 
 // Approximate soil volume per pot by category (cu ft)
 // Used to allocate per-pot overhead costs (fertilizer, soil, labor) proportionally
+// Normalize categories for pricing/cost rollup — mum baskets (acorn, indian, regular)
+// all have same pot, plant count, and costs — just different color mixes
+function normalizeCategoryForPricing(cat) {
+  if (!cat) return cat;
+  const c = cat.toUpperCase();
+  if (c.includes("MUM") && (c.includes("BASKET") || c.includes("BSKT"))) return "MUM BASKET";
+  return cat;
+}
+
 const POT_CU_FT = {
   '4.5" PRODUCTION': 0.047,
   '8" ANNUAL': 0.067,
@@ -1727,7 +1736,7 @@ function CostTab({ items, containers, soilMixes, programInputs = [] }) {
   const costRows = useMemo(() => {
     const map = {};
     filteredItems.forEach(i => {
-      const key = `${i.category || "Other"}`;
+      const key = normalizeCategoryForPricing(i.category || "Other");
       const container = pickContainerForCategory(i.category, containers);
       const potCost = container ? parseFloat(container.costPerUnit) || 0 : 0;
       const potCuFt = container ? volumeToCuFt(container.volumeVal, container.volumeUnit) : potCuFtFor(i);
@@ -1737,7 +1746,7 @@ function CostTab({ items, containers, soilMixes, programInputs = [] }) {
 
       if (!map[key]) {
         map[key] = {
-          category: i.category,
+          category: key,
           container,
           potCost,
           potCuFt,
@@ -1891,7 +1900,7 @@ function PricingTab({ year, items, containers, soilMixes, programInputs }) {
 
     const map = {};
     items.filter(i => (i.status || "").toUpperCase() !== "CANCELLED").forEach(i => {
-      const key = i.category || "Other";
+      const key = normalizeCategoryForPricing(i.category || "Other");
       const container = pickContainerForCategory(i.category, containers);
       const potCost = container ? parseFloat(container.costPerUnit) || 0 : 0;
       const potCuFt = container ? volumeToCuFt(container.volumeVal, container.volumeUnit) : potCuFtFor(i);
