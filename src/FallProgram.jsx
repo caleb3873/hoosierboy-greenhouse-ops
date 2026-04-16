@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
-import { useFallProgramItems, useSoilMixes, useContainers, useProgramInputs, useInputProducts, getSupabase } from "./supabase";
+import { useFallProgramItems, useSoilMixes, useContainers, useProgramInputs, useInputProducts, useCategoryPricing, getSupabase } from "./supabase";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from "recharts";
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
@@ -27,6 +27,7 @@ const SECTIONS = [
   { id: "sowing", label: "Sowing & Prop" },
   { id: "inputs", label: "Inputs" },
   { id: "cost", label: "Cost Estimate" },
+  { id: "pricing", label: "Pricing" },
   { id: "shortfalls", label: "Shortfalls" },
 ];
 
@@ -68,7 +69,9 @@ function volumeToCuFt(val, unit) {
   if (unit === "cu ft") return v;
   if (unit === "gal")   return v * 0.134;
   if (unit === "qt")    return v * 0.0334;
+  if (unit === "pt")    return v * 0.0167;
   if (unit === "L")     return v * 0.0353;
+  if (unit === "ml")    return v * 0.0000353;
   return 0;
 }
 
@@ -80,6 +83,8 @@ function pickContainerForCategory(category, containers) {
   if (c.includes('9"') || c.includes("09\"")) return containers.find(x => x.sku === "XAM09001");
   if (c.includes('12"') && c.includes('MUM'))  return containers.find(x => x.sku === "PA.12000" && (x.name || "").includes("Cl"));
   if (c.includes('14"'))                       return containers.find(x => x.sku === "PA.14000");
+  // 4.5" PRODUCTION → 4.5 Azalea Pot with Schlegel logo
+  if (c.includes("4.5"))                       return containers.find(x => x.sku === "SP 450" && (x.name || "").toLowerCase().includes("schlegel logo"));
   return null;
 }
 
@@ -215,6 +220,7 @@ export default function FallProgram() {
           {section === "sowing" && <SowingTab items={yearItems} upsert={upsert} />}
           {section === "inputs" && <InputsTab year={year} items={yearItems} programInputs={programInputs.filter(p => p.year === year)} inputsLibrary={inputsLibrary} insertProgramInput={insertProgramInput} updateProgramInput={updateProgramInput} removeProgramInput={removeProgramInput} />}
           {section === "cost" && <CostTab items={yearItems} containers={containers} soilMixes={soilMixes} programInputs={programInputs.filter(p => p.year === year)} />}
+          {section === "pricing" && <PricingTab year={year} items={yearItems} containers={containers} soilMixes={soilMixes} programInputs={programInputs.filter(p => p.year === year)} />}
           {section === "shortfalls" && <ShortfallsTab items={yearItems} />}
         </>
       )}
@@ -1696,15 +1702,37 @@ function CostTab({ items, containers, soilMixes, programInputs = [] }) {
     return r;
   }, [items, shipFilter, plantFilter, categoryFilter]);
 
-  // Compute per-row cost: liner + soil + pot
+  // Total cu ft + pot count across all items for input allocation
+  const allTotals = useMemo(() => {
+    let totalCuFt = 0;
+    let totalPots = 0;
+    items.filter(i => (i.status || "").toUpperCase() !== "CANCELLED").forEach(i => {
+      const container = pickContainerForCategory(i.category, containers);
+      const cuFt = container ? volumeToCuFt(container.volumeVal, container.volumeUnit) : potCuFtFor(i);
+      const qty = parseFloat(i.qty) || 0;
+      totalCuFt += qty * cuFt;
+      totalPots += qty;
+    });
+    return { totalCuFt, totalPots };
+  }, [items, containers]);
+
+  // Input cost per cu ft / per pot (for overhead allocation)
+  const soilVolInputs = programInputs.filter(p => (p.allocationMethod || "soil_volume") === "soil_volume").reduce((s, p) => s + (parseFloat(p.totalCost) || 0), 0);
+  const perPotInputs = programInputs.filter(p => p.allocationMethod === "per_pot").reduce((s, p) => s + (parseFloat(p.totalCost) || 0), 0);
+  const inputCostPerCuFt = allTotals.totalCuFt > 0 ? soilVolInputs / allTotals.totalCuFt : 0;
+  const inputCostPerPotFixed = allTotals.totalPots > 0 ? perPotInputs / allTotals.totalPots : 0;
+  const totalInputsCost = soilVolInputs + perPotInputs;
+
+  // Compute per-row cost: liner + soil + pot + inputs
   const costRows = useMemo(() => {
     const map = {};
     filteredItems.forEach(i => {
       const key = `${i.category || "Other"}`;
       const container = pickContainerForCategory(i.category, containers);
       const potCost = container ? parseFloat(container.costPerUnit) || 0 : 0;
-      const potCuFt = container ? volumeToCuFt(container.volumeVal, container.volumeUnit) : 0;
+      const potCuFt = container ? volumeToCuFt(container.volumeVal, container.volumeUnit) : potCuFtFor(i);
       const soilCostPerPot = potCuFt * soilCpf;
+      const inputCostPerPot = (potCuFt * inputCostPerCuFt) + inputCostPerPotFixed;
       const linerCostPerPot = (parseFloat(i.qty) || 0) > 0 ? (parseFloat(i.cost) || 0) / parseFloat(i.qty) : 0;
 
       if (!map[key]) {
@@ -1714,6 +1742,7 @@ function CostTab({ items, containers, soilMixes, programInputs = [] }) {
           potCost,
           potCuFt,
           soilCostPerPot,
+          inputCostPerPot,
           linerCostPerPot: 0,
           totalQty: 0,
           totalLinerCost: 0,
@@ -1728,19 +1757,21 @@ function CostTab({ items, containers, soilMixes, programInputs = [] }) {
     // Compute averages
     Object.values(map).forEach(e => {
       e.linerCostPerPot = e.totalQty > 0 ? e.totalLinerCost / e.totalQty : 0;
-      e.totalCostPerPot = e.linerCostPerPot + e.soilCostPerPot + e.potCost;
+      e.totalCostPerPot = e.linerCostPerPot + e.soilCostPerPot + e.potCost + e.inputCostPerPot;
       e.totalProductionCost = e.totalCostPerPot * e.totalQty;
       e.totalSoilCost = e.soilCostPerPot * e.totalQty;
       e.totalPotCost = e.potCost * e.totalQty;
+      e.totalInputCost = e.inputCostPerPot * e.totalQty;
     });
     return Object.values(map).sort((a, b) => b.totalProductionCost - a.totalProductionCost);
-  }, [filteredItems, containers, soilCpf]);
+  }, [filteredItems, containers, soilCpf, inputCostPerCuFt, inputCostPerPotFixed]);
 
   const grand = useMemo(() => ({
     qty: costRows.reduce((s, r) => s + r.totalQty, 0),
     liner: costRows.reduce((s, r) => s + r.totalLinerCost, 0),
     soil: costRows.reduce((s, r) => s + r.totalSoilCost, 0),
     pot: costRows.reduce((s, r) => s + r.totalPotCost, 0),
+    inputs: costRows.reduce((s, r) => s + (r.totalInputCost || 0), 0),
     total: costRows.reduce((s, r) => s + r.totalProductionCost, 0),
   }), [costRows]);
 
@@ -1786,10 +1817,11 @@ function CostTab({ items, containers, soilMixes, programInputs = [] }) {
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 16 }}>
         <KPI label="Total Items" value={fmtN(grand.qty)} color="#7fb069" sub="finished pots" />
-        <KPI label="Avg Cost / Pot" value={grand.qty > 0 ? fmt$2(grand.total / grand.qty) : "—"} color="#1e2d1a" sub="liner + soil + pot" />
+        <KPI label="Avg Cost / Pot" value={grand.qty > 0 ? fmt$2(grand.total / grand.qty) : "—"} color="#1e2d1a" sub="liner + soil + pot + inputs" />
         <KPI label="Liner Cost" value={fmt$(grand.liner)} color="#4a90d9" />
         <KPI label="Soil Cost" value={fmt$(grand.soil)} color="#8e44ad" />
         <KPI label="Pot Cost" value={fmt$(grand.pot)} color="#c8791a" />
+        <KPI label="Inputs (Fertilizer+)" value={fmt$(grand.inputs)} color="#e89a3a" sub={programInputs.length + " input" + (programInputs.length !== 1 ? "s" : "")} />
         <KPI label="Total Production Cost" value={fmt$(grand.total)} color="#4a7a35" />
       </div>
 
@@ -1832,6 +1864,171 @@ function CostTab({ items, containers, soilMixes, programInputs = [] }) {
 }
 
 const fmt$2 = (n) => "$" + Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════════
+// ── PRICING TAB ──────────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+function PricingTab({ year, items, containers, soilMixes, programInputs }) {
+  const { rows: pricing, upsert: upsertPrice } = useCategoryPricing();
+  const defaultSoil = pickDefaultSoil(soilMixes);
+  const soilCpf = soilCostPerCuFt(defaultSoil);
+
+  // Compute per-category cost rollup (same logic as CostTab)
+  const costByCategory = useMemo(() => {
+    let totalCuFt = 0, totalPots = 0;
+    items.filter(i => (i.status || "").toUpperCase() !== "CANCELLED").forEach(i => {
+      const container = pickContainerForCategory(i.category, containers);
+      const cuFt = container ? volumeToCuFt(container.volumeVal, container.volumeUnit) : potCuFtFor(i);
+      const qty = parseFloat(i.qty) || 0;
+      totalCuFt += qty * cuFt;
+      totalPots += qty;
+    });
+    const soilVolInputs = programInputs.filter(p => (p.allocationMethod || "soil_volume") === "soil_volume").reduce((s, p) => s + (parseFloat(p.totalCost) || 0), 0);
+    const perPotInputs = programInputs.filter(p => p.allocationMethod === "per_pot").reduce((s, p) => s + (parseFloat(p.totalCost) || 0), 0);
+    const inputCostPerCuFt = totalCuFt > 0 ? soilVolInputs / totalCuFt : 0;
+    const inputCostPerPotFixed = totalPots > 0 ? perPotInputs / totalPots : 0;
+
+    const map = {};
+    items.filter(i => (i.status || "").toUpperCase() !== "CANCELLED").forEach(i => {
+      const key = i.category || "Other";
+      const container = pickContainerForCategory(i.category, containers);
+      const potCost = container ? parseFloat(container.costPerUnit) || 0 : 0;
+      const potCuFt = container ? volumeToCuFt(container.volumeVal, container.volumeUnit) : potCuFtFor(i);
+      const soilCostPerPot = potCuFt * soilCpf;
+      const inputCostPerPot = (potCuFt * inputCostPerCuFt) + inputCostPerPotFixed;
+      if (!map[key]) {
+        map[key] = {
+          category: key,
+          container,
+          potCost,
+          soilCostPerPot,
+          inputCostPerPot,
+          totalQty: 0,
+          totalLinerCost: 0,
+        };
+      }
+      map[key].totalQty += parseFloat(i.qty) || 0;
+      map[key].totalLinerCost += parseFloat(i.cost) || 0;
+    });
+    Object.values(map).forEach(e => {
+      e.linerCostPerPot = e.totalQty > 0 ? e.totalLinerCost / e.totalQty : 0;
+      e.totalCostPerPot = e.linerCostPerPot + e.soilCostPerPot + e.potCost + e.inputCostPerPot;
+    });
+    return Object.values(map).sort((a, b) => (b.totalQty || 0) - (a.totalQty || 0));
+  }, [items, containers, soilCpf, programInputs]);
+
+  // Pricing lookup by year + category
+  const priceByCat = useMemo(() => {
+    const m = {};
+    pricing.filter(p => p.year === year).forEach(p => { m[p.category] = p; });
+    return m;
+  }, [pricing, year]);
+
+  async function setPrice(category, proposedPrice, notes) {
+    const existing = priceByCat[category];
+    await upsertPrice({
+      id: existing?.id || crypto.randomUUID(),
+      year,
+      category,
+      proposedPrice: parseFloat(proposedPrice) || 0,
+      notes: notes || null,
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  const totals = useMemo(() => {
+    let cost = 0, revenue = 0;
+    costByCategory.forEach(c => {
+      const p = priceByCat[c.category]?.proposedPrice || 0;
+      cost += c.totalCostPerPot * c.totalQty;
+      revenue += p * c.totalQty;
+    });
+    return { cost, revenue, margin: revenue - cost, marginPct: revenue > 0 ? ((revenue - cost) / revenue) * 100 : 0 };
+  }, [costByCategory, priceByCat]);
+
+  return (
+    <div>
+      <div style={{ background: "#fff4e8", border: "1.5px solid #e8d0a0", borderRadius: 10, padding: "12px 16px", marginBottom: 16, fontSize: 12, color: "#6a4a20" }}>
+        💰 Set a proposed wholesale price per category. Costs include liner + soil + pot + allocated inputs. Prices save automatically as you type.
+      </div>
+
+      {/* KPIs */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 16 }}>
+        <div style={{ ...card, padding: "16px 20px", margin: 0 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase" }}>Total Cost</div>
+          <div style={{ fontSize: 24, fontWeight: 800, color: "#d94f3d", marginTop: 4 }}>{fmt$(totals.cost)}</div>
+        </div>
+        <div style={{ ...card, padding: "16px 20px", margin: 0 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase" }}>Projected Revenue</div>
+          <div style={{ fontSize: 24, fontWeight: 800, color: "#4a90d9", marginTop: 4 }}>{fmt$(totals.revenue)}</div>
+        </div>
+        <div style={{ ...card, padding: "16px 20px", margin: 0 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase" }}>Gross Margin $</div>
+          <div style={{ fontSize: 24, fontWeight: 800, color: totals.margin >= 0 ? "#4a7a35" : "#d94f3d", marginTop: 4 }}>{fmt$(totals.margin)}</div>
+        </div>
+        <div style={{ ...card, padding: "16px 20px", margin: 0 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase" }}>Gross Margin %</div>
+          <div style={{ fontSize: 24, fontWeight: 800, color: totals.marginPct >= 30 ? "#4a7a35" : totals.marginPct >= 15 ? "#e89a3a" : "#d94f3d", marginTop: 4 }}>{totals.marginPct.toFixed(1)}%</div>
+        </div>
+      </div>
+
+      {/* Pricing table */}
+      <div style={{ background: "#fff", borderRadius: 14, border: "1.5px solid #e0ead8", overflow: "hidden", overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 900 }}>
+          <thead>
+            <tr style={{ background: "#fafcf8", borderBottom: "2px solid #e0ead8" }}>
+              <th style={{ padding: "10px", textAlign: "left", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Category</th>
+              <th style={{ padding: "10px", textAlign: "right", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Pots</th>
+              <th style={{ padding: "10px", textAlign: "right", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Liner $/pot</th>
+              <th style={{ padding: "10px", textAlign: "right", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Soil $/pot</th>
+              <th style={{ padding: "10px", textAlign: "right", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Pot $/pot</th>
+              <th style={{ padding: "10px", textAlign: "right", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Inputs $/pot</th>
+              <th style={{ padding: "10px", textAlign: "right", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Cost $/pot</th>
+              <th style={{ padding: "10px", textAlign: "right", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Proposed Price</th>
+              <th style={{ padding: "10px", textAlign: "right", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Margin $/pot</th>
+              <th style={{ padding: "10px", textAlign: "right", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Margin %</th>
+            </tr>
+          </thead>
+          <tbody>
+            {costByCategory.map(r => {
+              const existing = priceByCat[r.category];
+              const proposedPrice = parseFloat(existing?.proposedPrice) || 0;
+              const marginDollar = proposedPrice - r.totalCostPerPot;
+              const marginPct = proposedPrice > 0 ? (marginDollar / proposedPrice) * 100 : 0;
+              return (
+                <tr key={r.category} style={{ borderBottom: "1px solid #f0f5ee" }}>
+                  <td style={{ padding: "10px", fontWeight: 800, color: "#1e2d1a" }}>{r.category}</td>
+                  <td style={{ padding: "10px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtN(r.totalQty)}</td>
+                  <td style={{ padding: "10px", textAlign: "right", color: "#4a90d9", fontVariantNumeric: "tabular-nums" }}>{fmt$2(r.linerCostPerPot)}</td>
+                  <td style={{ padding: "10px", textAlign: "right", color: "#8e44ad", fontVariantNumeric: "tabular-nums" }}>{fmt$2(r.soilCostPerPot)}</td>
+                  <td style={{ padding: "10px", textAlign: "right", color: "#c8791a", fontVariantNumeric: "tabular-nums" }}>{fmt$2(r.potCost)}</td>
+                  <td style={{ padding: "10px", textAlign: "right", color: "#e89a3a", fontVariantNumeric: "tabular-nums" }}>{fmt$2(r.inputCostPerPot)}</td>
+                  <td style={{ padding: "10px", textAlign: "right", fontWeight: 800, color: "#1e2d1a", fontVariantNumeric: "tabular-nums" }}>{fmt$2(r.totalCostPerPot)}</td>
+                  <td style={{ padding: "10px", textAlign: "right" }}>
+                    <input type="number" step="0.01" defaultValue={existing?.proposedPrice || ""} placeholder="0.00"
+                      onBlur={e => {
+                        if (e.target.value && parseFloat(e.target.value) !== (existing?.proposedPrice || 0)) {
+                          setPrice(r.category, e.target.value, existing?.notes);
+                        }
+                      }}
+                      style={{ width: 90, padding: "6px 8px", borderRadius: 6, border: "1.5px solid #c8d8c0", fontSize: 13, fontFamily: "inherit", textAlign: "right", fontWeight: 700, color: "#4a7a35" }} />
+                  </td>
+                  <td style={{ padding: "10px", textAlign: "right", fontWeight: 800, color: marginDollar >= 0 ? "#4a7a35" : "#d94f3d", fontVariantNumeric: "tabular-nums" }}>
+                    {proposedPrice > 0 ? fmt$2(marginDollar) : "—"}
+                  </td>
+                  <td style={{ padding: "10px", textAlign: "right", fontWeight: 800, color: marginPct >= 30 ? "#4a7a35" : marginPct >= 15 ? "#e89a3a" : marginPct > 0 ? "#c8791a" : "#d94f3d", fontVariantNumeric: "tabular-nums" }}>
+                    {proposedPrice > 0 ? marginPct.toFixed(1) + "%" : "—"}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // ── SHORTFALLS & SUBSTITUTIONS ──────────────────────────────────────────────
