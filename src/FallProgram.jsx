@@ -1882,6 +1882,7 @@ function PricingTab({ year, items, containers, soilMixes, programInputs }) {
   const { rows: pricing, upsert: upsertPrice } = useCategoryPricing();
   const defaultSoil = pickDefaultSoil(soilMixes);
   const soilCpf = soilCostPerCuFt(defaultSoil);
+  const [expandedCat, setExpandedCat] = useState(null);
 
   // Compute per-category cost rollup (same logic as CostTab)
   const costByCategory = useMemo(() => {
@@ -2005,16 +2006,41 @@ function PricingTab({ year, items, containers, soilMixes, programInputs }) {
               const proposedPrice = parseFloat(existing?.proposedPrice) || 0;
               const marginDollar = proposedPrice - r.totalCostPerPot;
               const marginPct = proposedPrice > 0 ? (marginDollar / proposedPrice) * 100 : 0;
+              const isOpen = expandedCat === r.category;
+              // Items in this normalized category
+              const catItems = items.filter(i => normalizeCategoryForPricing(i.category) === r.category && (i.status || "").toUpperCase() !== "CANCELLED");
+              // Build per-item drill-down data
+              const itemRows = isOpen ? (() => {
+                const perVariety = {};
+                catItems.forEach(i => {
+                  const v = i.variety || "—";
+                  if (!perVariety[v]) perVariety[v] = { variety: v, color: i.color, qty: 0, linerCost: 0, subCategory: i.category };
+                  perVariety[v].qty += parseFloat(i.qty) || 0;
+                  perVariety[v].linerCost += parseFloat(i.cost) || 0;
+                });
+                return Object.values(perVariety).map(v => {
+                  const linerPerPot = v.qty > 0 ? v.linerCost / v.qty : 0;
+                  const totalPerPot = linerPerPot + r.soilCostPerPot + r.potCost + r.inputCostPerPot;
+                  const margin = proposedPrice - totalPerPot;
+                  const mPct = proposedPrice > 0 ? (margin / proposedPrice) * 100 : 0;
+                  return { ...v, linerPerPot, totalPerPot, margin, mPct };
+                }).sort((a, b) => b.qty - a.qty);
+              })() : [];
               return (
-                <tr key={r.category} style={{ borderBottom: "1px solid #f0f5ee" }}>
-                  <td style={{ padding: "10px", fontWeight: 800, color: "#1e2d1a" }}>{r.category}</td>
+                <React.Fragment key={r.category}>
+                <tr onDoubleClick={() => setExpandedCat(isOpen ? null : r.category)}
+                    style={{ borderBottom: "1px solid #f0f5ee", cursor: "pointer", background: isOpen ? "#f0f8eb" : "transparent" }}>
+                  <td style={{ padding: "10px", fontWeight: 800, color: "#1e2d1a" }}>
+                    <span style={{ color: "#7a8c74", marginRight: 6 }}>{isOpen ? "▼" : "▶"}</span>
+                    {r.category}
+                  </td>
                   <td style={{ padding: "10px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtN(r.totalQty)}</td>
                   <td style={{ padding: "10px", textAlign: "right", color: "#4a90d9", fontVariantNumeric: "tabular-nums" }}>{fmt$2(r.linerCostPerPot)}</td>
                   <td style={{ padding: "10px", textAlign: "right", color: "#8e44ad", fontVariantNumeric: "tabular-nums" }}>{fmt$2(r.soilCostPerPot)}</td>
                   <td style={{ padding: "10px", textAlign: "right", color: "#c8791a", fontVariantNumeric: "tabular-nums" }}>{fmt$2(r.potCost)}</td>
                   <td style={{ padding: "10px", textAlign: "right", color: "#e89a3a", fontVariantNumeric: "tabular-nums" }}>{fmt$2(r.inputCostPerPot)}</td>
                   <td style={{ padding: "10px", textAlign: "right", fontWeight: 800, color: "#1e2d1a", fontVariantNumeric: "tabular-nums" }}>{fmt$2(r.totalCostPerPot)}</td>
-                  <td style={{ padding: "10px", textAlign: "right" }}>
+                  <td style={{ padding: "10px", textAlign: "right" }} onDoubleClick={e => e.stopPropagation()}>
                     <input type="number" step="0.01" defaultValue={existing?.proposedPrice || ""} placeholder="0.00"
                       onBlur={e => {
                         if (e.target.value && parseFloat(e.target.value) !== (existing?.proposedPrice || 0)) {
@@ -2030,6 +2056,59 @@ function PricingTab({ year, items, containers, soilMixes, programInputs }) {
                     {proposedPrice > 0 ? marginPct.toFixed(1) + "%" : "—"}
                   </td>
                 </tr>
+                {isOpen && (
+                  <tr style={{ background: "#fafcf8", borderBottom: "2px solid #e0ead8" }}>
+                    <td colSpan={10} style={{ padding: "10px 16px 14px 32px" }}>
+                      <div style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>
+                        {itemRows.length} varieties · prices apply uniformly across category
+                      </div>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                        <thead>
+                          <tr style={{ borderBottom: "1px solid #e0ead8", color: "#7a8c74" }}>
+                            <th style={{ padding: "6px 8px", textAlign: "left", fontWeight: 700 }}>Variety</th>
+                            <th style={{ padding: "6px 8px", textAlign: "left", fontWeight: 700 }}>Color</th>
+                            <th style={{ padding: "6px 8px", textAlign: "right", fontWeight: 700 }}>Pots</th>
+                            <th style={{ padding: "6px 8px", textAlign: "right", fontWeight: 700 }}>Liner $/pot</th>
+                            <th style={{ padding: "6px 8px", textAlign: "right", fontWeight: 700 }}>Cost $/pot</th>
+                            <th style={{ padding: "6px 8px", textAlign: "right", fontWeight: 700 }}>Price</th>
+                            <th style={{ padding: "6px 8px", textAlign: "right", fontWeight: 700 }}>Margin $</th>
+                            <th style={{ padding: "6px 8px", textAlign: "right", fontWeight: 700 }}>Margin %</th>
+                            <th style={{ padding: "6px 8px", textAlign: "right", fontWeight: 700 }}>Total Margin</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {itemRows.map(v => (
+                            <tr key={v.variety} style={{ borderBottom: "1px solid #f0f5ee" }}>
+                              <td style={{ padding: "6px 8px", fontWeight: 700, color: "#1e2d1a" }}>{v.variety}</td>
+                              <td style={{ padding: "6px 8px", color: "#7a8c74" }}>
+                                {v.color && (
+                                  <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                                    <span style={{ width: 10, height: 10, borderRadius: 3, background: COLOR_PALETTE[v.color] || "#7a8c74" }}></span>
+                                    {v.color}
+                                  </span>
+                                )}
+                              </td>
+                              <td style={{ padding: "6px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtN(v.qty)}</td>
+                              <td style={{ padding: "6px 8px", textAlign: "right", color: "#4a90d9", fontVariantNumeric: "tabular-nums" }}>{fmt$2(v.linerPerPot)}</td>
+                              <td style={{ padding: "6px 8px", textAlign: "right", fontWeight: 700, color: "#1e2d1a", fontVariantNumeric: "tabular-nums" }}>{fmt$2(v.totalPerPot)}</td>
+                              <td style={{ padding: "6px 8px", textAlign: "right", color: "#7a8c74", fontVariantNumeric: "tabular-nums" }}>{proposedPrice > 0 ? fmt$2(proposedPrice) : "—"}</td>
+                              <td style={{ padding: "6px 8px", textAlign: "right", fontWeight: 700, color: v.margin >= 0 ? "#4a7a35" : "#d94f3d", fontVariantNumeric: "tabular-nums" }}>
+                                {proposedPrice > 0 ? fmt$2(v.margin) : "—"}
+                              </td>
+                              <td style={{ padding: "6px 8px", textAlign: "right", fontWeight: 700, color: v.mPct >= 30 ? "#4a7a35" : v.mPct >= 15 ? "#e89a3a" : v.mPct > 0 ? "#c8791a" : "#d94f3d", fontVariantNumeric: "tabular-nums" }}>
+                                {proposedPrice > 0 ? v.mPct.toFixed(1) + "%" : "—"}
+                              </td>
+                              <td style={{ padding: "6px 8px", textAlign: "right", fontWeight: 700, color: v.margin >= 0 ? "#4a7a35" : "#d94f3d", fontVariantNumeric: "tabular-nums" }}>
+                                {proposedPrice > 0 ? fmt$(v.margin * v.qty) : "—"}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </td>
+                  </tr>
+                )}
+                </React.Fragment>
               );
             })}
           </tbody>
