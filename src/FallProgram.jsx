@@ -642,6 +642,56 @@ const TASK_COLORS = {
   tags:     { bg: "#f5f0ff", color: "#8e44ad", label: "Tags" },
 };
 
+function ExpandableTaskRow({ task: t, section }) {
+  const [expanded, setExpanded] = useState(false);
+  const hasDetail = (t.rowList && t.rowList.length > 0) || t.destinations;
+  const tc = TASK_COLORS[section] || TASK_COLORS.prop;
+  return (
+    <div style={{
+      background: tc.bg, borderRadius: 8, marginBottom: 4,
+      borderLeft: `3px solid ${tc.color}`,
+    }}>
+      <div onClick={() => hasDetail && setExpanded(!expanded)} style={{
+        padding: "8px 12px", fontSize: 13, color: "#1e2d1a",
+        cursor: hasDetail ? "pointer" : "default",
+        display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8,
+      }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 700 }}>{t.title}</div>
+          <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2, display: "flex", gap: 10, flexWrap: "wrap" }}>
+            {t.location && <span>📍 {t.location}</span>}
+            {t.soilMix && <span>Soil: {t.soilMix}</span>}
+            {t.rowCount > 0 && <span>{t.rowCount} row{t.rowCount !== 1 ? "s" : ""}</span>}
+            {section === "prop" && t.propTrayCost > 0 && <span>Tray cost: {fmt$(t.propTrayCost)}</span>}
+          </div>
+          {section === "prop" && t.destinations && (
+            <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2 }}>→ {t.destinations}</div>
+          )}
+        </div>
+        {hasDetail && <span style={{ fontSize: 11, color: "#7a8c74", flexShrink: 0 }}>{expanded ? "▾" : "▸"}</span>}
+      </div>
+      {expanded && t.rowList && t.rowList.length > 0 && (
+        <div style={{ padding: "4px 12px 8px 20px", fontSize: 11, color: "#7a8c74", borderTop: "1px solid #e0ead8" }}>
+          {section === "planting" ? (
+            t.rowList.map((r, i) => (
+              <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "2px 0" }}>
+                <span>{r.rowId} — {r.location || ""}</span>
+                <span>{fmtN(r.qty)} pots</span>
+              </div>
+            ))
+          ) : (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {t.rowList.map((r, i) => (
+                <span key={i} style={{ background: "#fff", padding: "2px 8px", borderRadius: 4, border: "1px solid #e0ead8" }}>{r}</span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ProductionScheduleTab({ items, containers, soilMixes = [], year, upsertTask, managerTasks }) {
   const [expandedWeeks, setExpandedWeeks] = useState({});
   const [pushedWeeks, setPushedWeeks] = useState({});
@@ -724,10 +774,9 @@ function ProductionScheduleTab({ items, containers, soilMixes = [], year, upsert
         const loc = (item.location || "").replace(/\s*(EQ|WP|SP)\d+.*/i, "").trim() || "TBD";
         const fillKey = `${fillWeek}||${containerName}||${loc}`;
         if (!potfillAccum[fillKey]) {
-          potfillAccum[fillKey] = { fillWeek, containerName, location: loc, totalQty: 0, varieties: [], rows: new Set() };
+          potfillAccum[fillKey] = { fillWeek, containerName, location: loc, totalQty: 0, rows: new Set() };
         }
         potfillAccum[fillKey].totalQty += qty;
-        potfillAccum[fillKey].varieties.push({ variety, qty, color: item.color });
         if (item.rowId) potfillAccum[fillKey].rows.add(item.rowId);
       }
 
@@ -738,23 +787,23 @@ function ProductionScheduleTab({ items, containers, soilMixes = [], year, upsert
         const isPropagated = isSeedSow(item);
         const plantKey = `${plantWeekNum}||${variety.toUpperCase()}`;
         if (!plantingAccum[plantKey]) {
-          plantingAccum[plantKey] = { plantWeekNum, variety, containerName, pm, sameDayArrival, isPropagated, ppp: item.ppp || 1, totalQty: 0, rows: new Set(), locations: new Set(), colors: new Set() };
+          plantingAccum[plantKey] = { plantWeekNum, variety, containerName, category: item.category, pm, sameDayArrival, isPropagated, ppp: item.ppp || 1, totalQty: 0, rows: [], locations: new Set(), color: item.color };
         }
         plantingAccum[plantKey].totalQty += qty;
-        if (item.rowId) plantingAccum[plantKey].rows.add(item.rowId);
+        if (item.rowId) plantingAccum[plantKey].rows.push({ rowId: item.rowId, qty, location: item.location });
         if (item.location) plantingAccum[plantKey].locations.add((item.location || "").replace(/\s*(EQ|WP|SP)\d+.*/i, "").trim());
-        if (item.color) plantingAccum[plantKey].colors.add(item.color);
       }
 
-      // ── Tag tasks — accumulate by variety ──
+      // ── Tag tasks — accumulate by variety with retail info ──
       if (plantWeekNum) {
         if (!category.includes('4.5" PRODUCTION') && !category.includes("4.5") && !category.includes("1801")) {
           const tagWeek = plantWeekNum - 1;
           const tagKey = `${tagWeek}||${variety.toUpperCase()}`;
           if (!tagAccum[tagKey]) {
-            tagAccum[tagKey] = { tagWeek, variety, totalQty: 0 };
+            tagAccum[tagKey] = { tagWeek, variety, category: item.category, color: item.color, upc: item.upc || null, totalQty: 0 };
           }
           tagAccum[tagKey].totalQty += qty;
+          if (item.upc && !tagAccum[tagKey].upc) tagAccum[tagKey].upc = item.upc;
         }
       }
     });
@@ -788,49 +837,59 @@ function ProductionScheduleTab({ items, containers, soilMixes = [], year, upsert
     const defaultSoilName = pickDefaultSoil(soilMixes)?.name || "BM5HP Compressed";
     Object.values(potfillAccum).forEach(p => {
       ensureWeek(p.fillWeek);
-      const varietyList = p.varieties.map(v => `${v.variety}${v.color ? " (" + v.color + ")" : ""}: ${fmtN(v.qty)}`).join(", ");
+      const rowList = [...p.rows].sort();
       weeks[p.fillWeek].potfill.push({
         variety: p.containerName, qty: p.totalQty,
-        title: `Fill ${fmtN(p.totalQty)} ${p.containerName} at ${p.location}`,
+        title: `${fmtN(p.totalQty)} ${p.containerName}`,
         location: p.location,
         soilMix: defaultSoilName,
-        rows: p.rows.size > 0 ? `${p.rows.size} rows (${[...p.rows].slice(0, 5).join(", ")}${p.rows.size > 5 ? "..." : ""})` : null,
-        varieties: varietyList,
+        rowCount: rowList.length,
+        rowList,
         containerName: p.containerName,
-        emoji: "\u{1F4E6}", item: p.varieties[0],
+        emoji: "\u{1F4E6}", item: null,
       });
     });
 
     // ── Consolidate planting tasks ──
     Object.values(plantingAccum).forEach(p => {
       ensureWeek(p.plantWeekNum);
-      const colorList = p.colors.size > 0 ? [...p.colors].join(", ") : null;
       const locList = p.locations.size > 0 ? [...p.locations].join(", ") : null;
+      const rowList = p.rows.sort((a, b) => (a.rowId || "").localeCompare(b.rowId || ""));
       let title;
       if (p.sameDayArrival && !p.isPropagated) {
-        title = `Plant ${fmtN(p.totalQty)} ${p.variety} liners → ${p.containerName}`;
+        title = `${p.variety} — ${fmtN(p.totalQty)} pots (liners on arrival)`;
       } else if (p.isPropagated) {
-        title = `Transplant ${fmtN(p.totalQty)} ${p.variety} from prop → ${p.containerName}`;
+        title = `${p.variety} — ${fmtN(p.totalQty)} pots (from prop)`;
       } else {
-        title = `Plant ${fmtN(p.totalQty)} ${p.variety} → ${p.containerName} (${p.ppp}/pot)`;
+        title = `${p.variety} — ${fmtN(p.totalQty)} pots (${p.ppp}/pot)`;
       }
-      if (colorList) title += ` — ${colorList}`;
+      if (p.color) title += ` · ${p.color}`;
       weeks[p.plantWeekNum].planting.push({
         variety: p.variety, qty: p.totalQty, title,
         location: locList,
-        rows: p.rows.size > 0 ? `${p.rows.size} rows` : null,
+        rowCount: rowList.length,
+        rowList,
+        containerName: p.containerName,
+        category: p.category,
         emoji: "\u{1F33F}", item: null,
       });
     });
 
-    // ── Consolidate tag tasks ──
+    // ── Consolidate tag tasks — sorted by category then variety for printing ──
     Object.values(tagAccum).forEach(t => {
       ensureWeek(t.tagWeek);
       weeks[t.tagWeek].tags.push({
         variety: t.variety, qty: t.totalQty,
-        title: `Print tags: ${t.variety} × ${fmtN(t.totalQty)}`,
+        category: t.category,
+        color: t.color,
+        upc: t.upc,
+        title: t.variety,
         emoji: "\u{1F3F7}", item: null,
       });
+    });
+    // Sort tags within each week by category then variety
+    Object.values(weeks).forEach(w => {
+      w.tags.sort((a, b) => (a.category || "").localeCompare(b.category || "") || (a.variety || "").localeCompare(b.variety || ""));
     });
 
     // Sort weeks and compute totals
@@ -1051,38 +1110,32 @@ function ProductionScheduleTab({ items, containers, soilMixes = [], year, upsert
                         );
                       })()}
                     </div>
-                    {section.tasks.map((t, idx) => (
-                      <div key={idx} style={{
-                        padding: "8px 12px", fontSize: 13, color: "#1e2d1a",
-                        background: TASK_COLORS[section.key].bg, borderRadius: 8,
-                        marginBottom: 4, borderLeft: `3px solid ${TASK_COLORS[section.key].color}`,
-                      }}>
-                        {t.title}
-                        {section.key === "prop" && t.propTrayCost > 0 && (
-                          <span style={{ marginLeft: 8, fontSize: 11, color: "#7a8c74" }}>
-                            (tray cost: {fmt$(t.propTrayCost)})
-                          </span>
-                        )}
-                        {section.key === "prop" && t.destinations && (
-                          <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2 }}>
-                            → {t.destinations}
-                          </div>
-                        )}
-                        {section.key === "potfill" && (t.location || t.varieties) && (
-                          <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2 }}>
-                            {t.location && <span>📍 {t.location}</span>}
-                            {t.soilMix && <span> · Soil: {t.soilMix}</span>}
-                            {t.rows && <span> · {t.rows}</span>}
-                            {t.varieties && <div style={{ marginTop: 2 }}>Varieties: {t.varieties}</div>}
-                          </div>
-                        )}
-                        {section.key === "planting" && (t.location || t.rows) && (
-                          <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2 }}>
-                            {t.location && <span>📍 {t.location}</span>}
-                            {t.rows && <span> · {t.rows}</span>}
-                          </div>
-                        )}
-                      </div>
+                    {section.key === "tags" ? (
+                      /* Tags — formatted as a printable table */
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                        <thead>
+                          <tr style={{ borderBottom: "2px solid #e0ead8", color: "#7a8c74", fontSize: 10, fontWeight: 800, textTransform: "uppercase" }}>
+                            <th style={{ padding: "6px 8px", textAlign: "left" }}>Size</th>
+                            <th style={{ padding: "6px 8px", textAlign: "left" }}>Variety</th>
+                            <th style={{ padding: "6px 8px", textAlign: "left" }}>Color</th>
+                            <th style={{ padding: "6px 8px", textAlign: "left" }}>UPC</th>
+                            <th style={{ padding: "6px 8px", textAlign: "right" }}>Qty</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {section.tasks.map((t, idx) => (
+                            <tr key={idx} style={{ borderBottom: "1px solid #f0f5ee", background: idx % 2 === 0 ? "#faf5ff" : "#fff" }}>
+                              <td style={{ padding: "6px 8px", fontWeight: 700, color: "#8e44ad", whiteSpace: "nowrap" }}>{t.category || "—"}</td>
+                              <td style={{ padding: "6px 8px", fontWeight: 700, color: "#1e2d1a" }}>{t.variety}</td>
+                              <td style={{ padding: "6px 8px", color: "#7a8c74" }}>{t.color || "—"}</td>
+                              <td style={{ padding: "6px 8px", fontFamily: "monospace", color: t.upc ? "#1e2d1a" : "#c8d8c0", fontSize: 11 }}>{t.upc || "—"}</td>
+                              <td style={{ padding: "6px 8px", textAlign: "right", fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{fmtN(t.qty)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    ) : section.tasks.map((t, idx) => (
+                      <ExpandableTaskRow key={idx} task={t} section={section.key} />
                     ))}
                   </div>
                 ))}
