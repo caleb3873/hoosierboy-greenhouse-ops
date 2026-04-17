@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
-import { useFallProgramItems, useSoilMixes, useContainers, useProgramInputs, useInputProducts, useCategoryPricing, getSupabase } from "./supabase";
+import { useFallProgramItems, useSoilMixes, useContainers, useProgramInputs, useInputProducts, useCategoryPricing, useManagerTasks, getSupabase } from "./supabase";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from "recharts";
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
@@ -55,6 +55,7 @@ const POT_CU_FT = {
   'MUM BASKET': 0.167,
   'MUM BSKT ACORN': 0.167,
   'MUM BSKT INDIAN': 0.167,
+  '1801 COMBO': 0.016, // per cell: ~0.47 qt = 0.016 cu ft
 };
 function potCuFtFor(item) {
   const key = item.category || item.displayCategory || "";
@@ -94,6 +95,8 @@ function pickContainerForCategory(category, containers) {
   if (c.includes('14"'))                       return containers.find(x => x.sku === "PA.14000");
   // 4.5" PRODUCTION → 4.5 Azalea Pot with Schlegel logo
   if (c.includes("4.5"))                       return containers.find(x => x.sku === "SP 450" && (x.name || "").toLowerCase().includes("schlegel logo"));
+  // 1801 COMBO → 1801 Landscape Tray
+  if (c.includes("1801"))                      return containers.find(x => x.sku === "1801-LAND");
   return null;
 }
 
@@ -161,6 +164,7 @@ export default function FallProgram() {
   const { rows: containers } = useContainers();
   const { rows: programInputs, insert: insertProgramInput, update: updateProgramInput, remove: removeProgramInput } = useProgramInputs();
   const { rows: inputsLibrary } = useInputProducts();
+  const { rows: managerTasks, upsert: upsertTask } = useManagerTasks();
 
   const allYears = useMemo(() => {
     const ys = [...new Set(items.map(i => i.year).filter(Boolean))].sort((a, b) => b - a);
@@ -225,7 +229,7 @@ export default function FallProgram() {
           {section === "overview" && <OverviewTab items={yearItems} year={year} upsert={upsert} />}
           {section === "items" && <ItemsTab items={yearItems} soilMixes={soilMixes} containers={containers} upsert={upsert} updateItem={updateItem} remove={remove} />}
           {section === "color" && <ColorTab items={yearItems} />}
-          {section === "schedule" && <ScheduleTab items={yearItems} />}
+          {section === "schedule" && <ProductionScheduleTab items={yearItems} containers={containers} year={year} upsertTask={upsertTask} managerTasks={managerTasks} />}
           {section === "sowing" && <SowingTab items={yearItems} upsert={upsert} />}
           {section === "inputs" && <InputsTab year={year} items={yearItems} programInputs={programInputs.filter(p => p.year === year)} inputsLibrary={inputsLibrary} insertProgramInput={insertProgramInput} updateProgramInput={updateProgramInput} removeProgramInput={removeProgramInput} />}
           {section === "cost" && <CostTab items={yearItems} containers={containers} soilMixes={soilMixes} programInputs={programInputs.filter(p => p.year === year)} />}
@@ -579,60 +583,384 @@ function ColorTab({ items }) {
 // ══════════════════════════════════════════════════════════════════════════════
 // ── SCHEDULE (by ship week) ──────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════════════
-function ScheduleTab({ items }) {
-  const byWeek = useMemo(() => {
-    const map = {};
-    items.forEach(i => {
-      const w = i.shipWeek || "Unknown";
-      if (!map[w]) map[w] = { name: w, qty: 0, cost: 0, lines: 0, locations: new Set() };
-      map[w].qty += parseFloat(i.qty) || 0;
-      map[w].cost += parseFloat(i.cost) || 0;
-      map[w].lines++;
-      if (i.location) map[w].locations.add(i.location);
+// ── PRODUCTION SCHEDULE ─────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+
+function weekToDate(weekNum, year = 2026) {
+  const jan4 = new Date(year, 0, 4);
+  const dayOfWeek = jan4.getDay() || 7;
+  const monday = new Date(jan4);
+  monday.setDate(jan4.getDate() - dayOfWeek + 1 + (weekNum - 1) * 7);
+  return monday;
+}
+
+function parseWeekNum(str) {
+  if (!str) return null;
+  const m = String(str).match(/WEEK\s+(\d+)/i);
+  return m ? parseInt(m[1]) : null;
+}
+
+// Deterministic ID from components — simple hash to UUID-like string
+function deterministicId(parts) {
+  const str = parts.join("|");
+  let h = 0;
+  for (let i = 0; i < str.length; i++) {
+    h = ((h << 5) - h + str.charCodeAt(i)) | 0;
+  }
+  const hex = Math.abs(h).toString(16).padStart(8, "0");
+  return `f${hex.slice(0,7)}-${hex.slice(0,4)}-4${hex.slice(1,4)}-a${hex.slice(2,5)}-${hex.padEnd(12, "0").slice(0,12)}`;
+}
+
+const TASK_COLORS = {
+  prop:     { bg: "#eaf2fb", color: "#4a90d9", label: "Prop/Seed" },
+  potfill:  { bg: "#fef5e8", color: "#c8791a", label: "Pot Filling" },
+  planting: { bg: "#f0f8eb", color: "#7fb069", label: "Planting" },
+  tags:     { bg: "#f5f0ff", color: "#8e44ad", label: "Tags" },
+};
+
+function ProductionScheduleTab({ items, containers, year, upsertTask, managerTasks }) {
+  const [expandedWeeks, setExpandedWeeks] = useState({});
+  const [pushedWeeks, setPushedWeeks] = useState({});
+  const [pushing, setPushing] = useState({});
+
+  // Find prop tray for cost calculation
+  const propTray = useMemo(() => {
+    return containers.find(c => c.name && c.name.toLowerCase().includes("50") && c.name.toLowerCase().includes("plug"));
+  }, [containers]);
+
+  // Compute all tasks from items
+  const weeklySchedule = useMemo(() => {
+    const weeks = {}; // weekNum → { prop: [], potfill: [], planting: [], tags: [] }
+
+    function ensureWeek(wk) {
+      if (!weeks[wk]) weeks[wk] = { prop: [], potfill: [], planting: [], tags: [] };
+    }
+
+    items.forEach(item => {
+      const qty = parseFloat(item.qty) || 0;
+      if (qty <= 0) return;
+      const variety = item.variety || "Unknown";
+      const pm = (item.propMethod || "").toUpperCase();
+      const category = (item.category || "").toUpperCase();
+      const container = pickContainerForCategory(item.category, containers);
+      const containerName = container ? container.name : (item.category || "pot");
+      const plantWeekNum = parseWeekNum(item.plantWeek);
+
+      // ── Prop/Seed tasks ──
+      if (isSeedSow(item)) {
+        const sowWeekStr = computeSowWeek(item);
+        const sowWk = parseWeekNum(sowWeekStr);
+        if (sowWk) {
+          ensureWeek(sowWk);
+          const trayCount = Math.ceil(qty / 50);
+          const germRate = item.germinationRate ? item.germinationRate / 100 : 1;
+          const adjQty = germRate < 1 ? Math.ceil(qty / germRate) : qty;
+          const adjTrayCount = Math.ceil(adjQty / 50);
+          let title;
+          if (pm === "SEED") {
+            title = `Sow ${fmtN(adjQty)} ${variety} (1/cell in prop trays) — ${adjTrayCount} trays`;
+            if (germRate < 1) title += ` (adj. for ${Math.round(germRate * 100)}% germ)`;
+          } else {
+            title = `Stick ${fmtN(qty)} ${variety} URCs into prop trays — ${trayCount} trays`;
+          }
+          const propTrayCost = propTray ? adjTrayCount * (parseFloat(propTray.costPerUnit) || 0) : 0;
+          weeks[sowWk].prop.push({ variety, qty: adjQty, title, trayCount: adjTrayCount, propTrayCost, emoji: "\u{1F331}", item });
+        }
+      }
+
+      // ── Pot Filling tasks ──
+      if (plantWeekNum) {
+        const shipWk = parseWeekNum(item.shipWeek);
+        const sameDayArrival = shipWk && shipWk === plantWeekNum;
+        const fillWeek = sameDayArrival ? plantWeekNum : plantWeekNum - 1;
+        ensureWeek(fillWeek);
+        const note = sameDayArrival ? " (fill day-of)" : "";
+        weeks[fillWeek].potfill.push({
+          variety, qty,
+          title: `Fill ${fmtN(qty)} ${containerName} for ${variety}${note}`,
+          containerName, emoji: "\u{1F4E6}", item,
+        });
+      }
+
+      // ── Planting tasks ──
+      if (plantWeekNum) {
+        ensureWeek(plantWeekNum);
+        const shipWk = parseWeekNum(item.shipWeek);
+        const sameDayArrival = shipWk && shipWk === plantWeekNum;
+        const isPropagated = isSeedSow(item);
+        const seedsPerPot = item.seedsPerPot || 1;
+        let title;
+        if (sameDayArrival && !isPropagated) {
+          title = `Plant ${variety} liners on arrival — ${fmtN(qty)} into ${containerName}`;
+        } else if (isPropagated) {
+          title = `Transplant ${fmtN(qty)} ${variety} from prop trays \u2192 ${containerName} (${seedsPerPot}/pot)`;
+        } else {
+          title = `Plant ${fmtN(qty)} ${variety} into ${containerName} (${seedsPerPot}/pot)`;
+        }
+        weeks[plantWeekNum].planting.push({ variety, qty, title, emoji: "\u{1F33F}", item });
+      }
+
+      // ── Tag tasks ──
+      if (plantWeekNum) {
+        // Exclude 4.5" PRODUCTION and 1801 COMBO (intermediate containers, no tags)
+        if (!category.includes('4.5" PRODUCTION') && !category.includes("4.5") && !category.includes("1801")) {
+          const tagWeek = plantWeekNum - 1;
+          ensureWeek(tagWeek);
+          weeks[tagWeek].tags.push({ variety, qty, title: `Print tags: ${variety} x ${fmtN(qty)}`, emoji: "\u{1F3F7}", item });
+        }
+      }
     });
-    return Object.values(map)
-      .map(w => ({ ...w, locationCount: w.locations.size }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [items]);
+
+    // Sort weeks and compute totals
+    return Object.entries(weeks)
+      .map(([wk, tasks]) => {
+        const weekNum = parseInt(wk);
+        const monday = weekToDate(weekNum, year);
+        const totalPots = tasks.potfill.reduce((s, t) => s + t.qty, 0);
+        const totalPlants = tasks.planting.reduce((s, t) => s + t.qty, 0);
+        const totalTags = tasks.tags.reduce((s, t) => s + t.qty, 0);
+        const totalTrays = tasks.prop.reduce((s, t) => s + t.trayCount, 0);
+        const totalPropCost = tasks.prop.reduce((s, t) => s + (t.propTrayCost || 0), 0);
+        const allTasks = [...tasks.prop, ...tasks.potfill, ...tasks.planting, ...tasks.tags];
+        return { weekNum, monday, tasks, totalPots, totalPlants, totalTags, totalTrays, totalPropCost, taskCount: allTasks.length };
+      })
+      .filter(w => w.taskCount > 0)
+      .sort((a, b) => a.weekNum - b.weekNum);
+  }, [items, containers, year, propTray]);
+
+  // Check which weeks have already been pushed
+  useEffect(() => {
+    const pushed = {};
+    weeklySchedule.forEach(w => {
+      const prefix = `f${Math.abs(["fall", String(year), `wk${w.weekNum}`, "prop"].join("|").split("").reduce((h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0, 0)).toString(16).padStart(8, "0").slice(0, 7)}`;
+      const hasTasks = managerTasks.some(t => t.id && t.id.startsWith("f") && (t.createdBy || "").includes("Production Schedule") && t.weekNumber === w.weekNum && t.year === year);
+      if (hasTasks) pushed[w.weekNum] = true;
+    });
+    setPushedWeeks(pushed);
+  }, [managerTasks, weeklySchedule, year]);
+
+  function toggleWeek(wk) {
+    setExpandedWeeks(prev => ({ ...prev, [wk]: !prev[wk] }));
+  }
+
+  const [pushingAll, setPushingAll] = useState(false);
+  const allPushed = weeklySchedule.length > 0 && weeklySchedule.every(w => pushedWeeks[w.weekNum]);
+
+  async function pushAllWeeks() {
+    setPushingAll(true);
+    try {
+      for (const w of weeklySchedule) {
+        if (!pushedWeeks[w.weekNum]) await pushWeekToTasks(w);
+      }
+    } catch (err) {
+      alert("Error: " + err.message);
+    }
+    setPushingAll(false);
+  }
+
+  async function pushWeekToTasks(weekData) {
+    const wk = weekData.weekNum;
+    setPushing(p => ({ ...p, [wk]: true }));
+    try {
+      const monday = weekData.monday;
+      const targetDate = monday.toISOString().split("T")[0];
+      const allTasks = [
+        ...weekData.tasks.prop.map(t => ({ ...t, type: "prop" })),
+        ...weekData.tasks.potfill.map(t => ({ ...t, type: "potfill" })),
+        ...weekData.tasks.planting.map(t => ({ ...t, type: "planting" })),
+        ...weekData.tasks.tags.map(t => ({ ...t, type: "tags" })),
+      ];
+      for (const t of allTasks) {
+        const id = deterministicId(["fall", String(year), `wk${wk}`, t.type, t.variety]);
+        await upsertTask({
+          id,
+          title: `${t.emoji} ${t.title}`,
+          priority: 50,
+          weekNumber: wk,
+          year,
+          status: "pending",
+          category: "production",
+          bucket: "this_week",
+          targetDate,
+          location: "bluff",
+          createdBy: "Production Schedule",
+        });
+      }
+      setPushedWeeks(p => ({ ...p, [wk]: true }));
+    } catch (err) {
+      console.error("Failed to push tasks:", err);
+      alert("Failed to push tasks: " + err.message);
+    } finally {
+      setPushing(p => ({ ...p, [wk]: false }));
+    }
+  }
+
+  const formatDate = (d) => {
+    if (!d) return "";
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  };
 
   return (
     <div>
-      <div style={card}>
-        <div style={{ fontSize: 13, fontWeight: 800, color: "#1e2d1a", marginBottom: 16 }}>Liners Arriving by Ship Week</div>
-        <ResponsiveContainer width="100%" height={300}>
-          <BarChart data={byWeek} margin={{ left: 10, right: 10 }}>
-            <XAxis dataKey="name" tick={{ fontSize: 10, fill: "#7a8c74" }} angle={-30} textAnchor="end" height={70} />
-            <YAxis tickFormatter={v => fmtN(v)} tick={{ fontSize: 10, fill: "#7a8c74" }} />
-            <Tooltip formatter={v => fmtN(v)} />
-            <Bar dataKey="qty" name="Liners" fill="#c8791a" radius={[6, 6, 0, 0]} />
-          </BarChart>
-        </ResponsiveContainer>
+      {/* Summary bar */}
+      <div style={{ ...card, display: "flex", gap: 20, flexWrap: "wrap", alignItems: "center" }}>
+        <div style={{ fontSize: 16, fontWeight: 800, color: "#1e2d1a", fontFamily: "'DM Serif Display',serif" }}>
+          Production Schedule
+        </div>
+        <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginLeft: "auto" }}>
+          {Object.entries(TASK_COLORS).map(([k, v]) => (
+            <span key={k} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 600 }}>
+              <span style={{ width: 10, height: 10, borderRadius: 3, background: v.color, display: "inline-block" }} />
+              {v.label}
+            </span>
+          ))}
+        </div>
       </div>
 
-      <div style={card}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead>
-            <tr>
-              <th style={{ padding: "10px", textAlign: "left", fontSize: 11, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", borderBottom: "2px solid #e0ead8" }}>Ship Week</th>
-              <th style={{ padding: "10px", textAlign: "right", fontSize: 11, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", borderBottom: "2px solid #e0ead8" }}>Liners</th>
-              <th style={{ padding: "10px", textAlign: "right", fontSize: 11, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", borderBottom: "2px solid #e0ead8" }}>Lines</th>
-              <th style={{ padding: "10px", textAlign: "right", fontSize: 11, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", borderBottom: "2px solid #e0ead8" }}>Locations</th>
-              <th style={{ padding: "10px", textAlign: "right", fontSize: 11, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", borderBottom: "2px solid #e0ead8" }}>Cost</th>
-            </tr>
-          </thead>
-          <tbody>
-            {byWeek.map(w => (
-              <tr key={w.name} style={{ borderBottom: "1px solid #f0f5ee" }}>
-                <td style={{ padding: "10px", fontWeight: 700, color: "#1e2d1a" }}>{w.name}</td>
-                <td style={{ padding: "10px", textAlign: "right", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{fmtN(w.qty)}</td>
-                <td style={{ padding: "10px", textAlign: "right", color: "#7a8c74" }}>{w.lines}</td>
-                <td style={{ padding: "10px", textAlign: "right", color: "#7a8c74" }}>{w.locationCount}</td>
-                <td style={{ padding: "10px", textAlign: "right", color: "#4a7a35", fontWeight: 600 }}>{fmt$(w.cost)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {/* Push all button */}
+      {weeklySchedule.length > 0 && (
+        <div style={{ ...card, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+          <div style={{ fontSize: 13, color: "#7a8c74" }}>
+            {Object.keys(pushedWeeks).length} of {weeklySchedule.length} weeks pushed to tasks
+          </div>
+          <button onClick={pushAllWeeks} disabled={allPushed || pushingAll}
+            style={{
+              padding: "12px 24px", borderRadius: 10, border: "none",
+              background: allPushed ? "#c8e6b8" : pushingAll ? "#b0c8a0" : "#1e2d1a",
+              color: allPushed ? "#4a7a35" : "#c8e6b8",
+              fontSize: 14, fontWeight: 800, cursor: allPushed ? "default" : "pointer", fontFamily: "inherit",
+            }}>
+            {allPushed ? "✓ All weeks pushed" : pushingAll ? "Pushing all..." : "Push All Weeks to Tasks"}
+          </button>
+        </div>
+      )}
+
+      {propTray && (
+        <div style={{ ...card, background: "#f9f9f5", fontSize: 12, color: "#7a8c74" }}>
+          Prop tray: {propTray.name} @ {fmt$(propTray.costPerUnit)}/tray (50-cell)
+        </div>
+      )}
+
+      {weeklySchedule.length === 0 && (
+        <div style={{ ...card, textAlign: "center", padding: "40px", color: "#7a8c74" }}>
+          No schedule data. Items need ship_week and plant_week values.
+        </div>
+      )}
+
+      {/* Week cards */}
+      {weeklySchedule.map(w => {
+        const expanded = expandedWeeks[w.weekNum];
+        const pushed = pushedWeeks[w.weekNum];
+        const isPushing = pushing[w.weekNum];
+
+        return (
+          <div key={w.weekNum} style={{ ...card, padding: 0, overflow: "hidden" }}>
+            {/* Week header — always visible */}
+            <div
+              onClick={() => toggleWeek(w.weekNum)}
+              style={{
+                display: "flex", alignItems: "center", gap: 12, padding: "14px 20px",
+                cursor: "pointer", background: expanded ? "#f4f9f0" : "#fff",
+                borderBottom: expanded ? "1.5px solid #e0ead8" : "none",
+              }}
+            >
+              <div style={{ fontSize: 15, fontWeight: 800, color: "#1e2d1a", minWidth: 90 }}>
+                Week {w.weekNum}
+              </div>
+              <div style={{ fontSize: 12, color: "#7a8c74", fontWeight: 600 }}>
+                {formatDate(w.monday)}
+              </div>
+
+              {/* Compact totals */}
+              <div style={{ display: "flex", gap: 10, marginLeft: "auto", flexWrap: "wrap" }}>
+                {w.tasks.prop.length > 0 && (
+                  <span style={{ fontSize: 11, fontWeight: 700, color: TASK_COLORS.prop.color, background: TASK_COLORS.prop.bg, borderRadius: 8, padding: "2px 8px" }}>
+                    {"\u{1F331}"} {w.totalTrays} trays
+                  </span>
+                )}
+                {w.tasks.potfill.length > 0 && (
+                  <span style={{ fontSize: 11, fontWeight: 700, color: TASK_COLORS.potfill.color, background: TASK_COLORS.potfill.bg, borderRadius: 8, padding: "2px 8px" }}>
+                    {"\u{1F4E6}"} {fmtN(w.totalPots)} pots
+                  </span>
+                )}
+                {w.tasks.planting.length > 0 && (
+                  <span style={{ fontSize: 11, fontWeight: 700, color: TASK_COLORS.planting.color, background: TASK_COLORS.planting.bg, borderRadius: 8, padding: "2px 8px" }}>
+                    {"\u{1F33F}"} {fmtN(w.totalPlants)} plants
+                  </span>
+                )}
+                {w.tasks.tags.length > 0 && (
+                  <span style={{ fontSize: 11, fontWeight: 700, color: TASK_COLORS.tags.color, background: TASK_COLORS.tags.bg, borderRadius: 8, padding: "2px 8px" }}>
+                    {"\u{1F3F7}"} {fmtN(w.totalTags)} tags
+                  </span>
+                )}
+              </div>
+
+              <span style={{ fontSize: 14, color: "#7a8c74", transform: expanded ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}>
+                {"\u25BC"}
+              </span>
+            </div>
+
+            {/* Expanded content */}
+            {expanded && (
+              <div style={{ padding: "16px 20px" }}>
+                {/* Task type sections */}
+                {[
+                  { key: "prop", tasks: w.tasks.prop },
+                  { key: "potfill", tasks: w.tasks.potfill },
+                  { key: "planting", tasks: w.tasks.planting },
+                  { key: "tags", tasks: w.tasks.tags },
+                ].filter(s => s.tasks.length > 0).map(section => (
+                  <div key={section.key} style={{ marginBottom: 14 }}>
+                    <div style={{
+                      fontSize: 12, fontWeight: 800, color: TASK_COLORS[section.key].color,
+                      textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6,
+                      display: "flex", alignItems: "center", gap: 6,
+                    }}>
+                      <span style={{ width: 6, height: 6, borderRadius: 2, background: TASK_COLORS[section.key].color, display: "inline-block" }} />
+                      {TASK_COLORS[section.key].label} ({section.tasks.length})
+                    </div>
+                    {section.tasks.map((t, idx) => (
+                      <div key={idx} style={{
+                        padding: "8px 12px", fontSize: 13, color: "#1e2d1a",
+                        background: TASK_COLORS[section.key].bg, borderRadius: 8,
+                        marginBottom: 4, borderLeft: `3px solid ${TASK_COLORS[section.key].color}`,
+                      }}>
+                        {t.title}
+                        {section.key === "prop" && t.propTrayCost > 0 && (
+                          <span style={{ marginLeft: 8, fontSize: 11, color: "#7a8c74" }}>
+                            (tray cost: {fmt$(t.propTrayCost)})
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ))}
+
+                {/* Summary + Push button */}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, paddingTop: 12, borderTop: "1px solid #e0ead8" }}>
+                  <div style={{ fontSize: 12, color: "#7a8c74" }}>
+                    {w.taskCount} tasks total
+                    {w.totalPropCost > 0 && <span> &middot; Prop tray cost: {fmt$(w.totalPropCost)}</span>}
+                  </div>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); pushWeekToTasks(w); }}
+                    disabled={pushed || isPushing}
+                    style={{
+                      ...BTN,
+                      background: pushed ? "#c8e6b8" : isPushing ? "#b0c8a0" : "#7fb069",
+                      fontSize: 13, padding: "8px 18px",
+                      opacity: pushed ? 0.8 : 1,
+                      cursor: pushed ? "default" : "pointer",
+                    }}
+                  >
+                    {pushed ? "\u2713 Pushed" : isPushing ? "Pushing..." : "Push to Tasks"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
