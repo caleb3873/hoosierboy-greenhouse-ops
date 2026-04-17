@@ -57,6 +57,30 @@ const POT_CU_FT = {
   'MUM BSKT INDIAN': 0.167,
   '1801 COMBO': 0.016, // per cell: ~0.47 qt = 0.016 cu ft
 };
+// Mix definitions: product name → component varieties for sowing/sticking
+const MIX_DEFS = {
+  "CELOSIA KIMONO MIX": [
+    { name: "CELOSIA KIMONO ORANGE", perPot: 1 },
+    { name: "CELOSIA KIMONO SALMON PINK", perPot: 1 },
+    { name: "CELOSIA KIMONO YELLOW", perPot: 1 },
+  ],
+  "SUPERCAL PREMIUM BONFIRE MIX": [
+    { name: "SUPERCAL CARAMEL YELLOW", perPot: 2 },
+    { name: "SUPERCAL CINNAMON", perPot: 2 },
+    { name: "SUPERCAL PREMIUM FRENCH VANILLA", perPot: 2 },
+  ],
+  "SUPERCAL PREMIUM CITRUS MIX": [
+    { name: "SUPERCAL PEARL WHITE", perPot: 2 },
+    { name: "SUPERCAL SUNSET ORANGE", perPot: 2 },
+    { name: "SUPERCAL YELLOW SUN", perPot: 2 },
+  ],
+  "SUPERCAL GUMBALL MIX": [
+    { name: "SUPERCAL PINK MIST", perPot: 2 },
+    { name: "SUPERCAL ROSE STAR", perPot: 2 },
+    { name: "SUPERCAL YELLOW SUN", perPot: 2 },
+  ],
+};
+
 function potCuFtFor(item) {
   const key = item.category || item.displayCategory || "";
   // Exact match first
@@ -657,20 +681,38 @@ function ProductionScheduleTab({ items, containers, soilMixes = [], year, upsert
       const containerName = container ? container.name : (item.category || "pot");
       const plantWeekNum = parseWeekNum(item.plantWeek);
 
-      // ── Prop/Seed tasks — accumulate by variety+sowWeek, consolidated below ──
+      // ── Prop/Seed tasks — accumulate by individual seed/cutting variety ──
       if (isSeedSow(item)) {
         const sowWeekStr = computeSowWeek(item);
         const sowWk = parseWeekNum(sowWeekStr);
         if (sowWk) {
           ensureWeek(sowWk);
           const germRate = item.germinationRate ? item.germinationRate / 100 : 1;
-          const adjQty = germRate < 1 ? Math.ceil(qty / germRate) : qty;
-          const propKey = `${sowWk}||${variety.toUpperCase()}`;
-          if (!propAccum[propKey]) {
-            propAccum[propKey] = { variety, sowWk, pm, germRate, totalQty: 0, destinations: [] };
+          const varUpper = variety.toUpperCase();
+
+          // Check if this is a mix product — break into component seeds/cuttings
+          const mixKey = Object.keys(MIX_DEFS).find(k => varUpper.includes(k));
+          if (mixKey) {
+            const components = MIX_DEFS[mixKey];
+            components.forEach(mc => {
+              const compQty = qty * mc.perPot; // e.g., 60 pots × 1 seed/color = 60
+              const adjCompQty = germRate < 1 ? Math.ceil(compQty / germRate) : compQty;
+              const propKey = `${sowWk}||${mc.name}`;
+              if (!propAccum[propKey]) {
+                propAccum[propKey] = { variety: mc.name, sowWk, pm, germRate, totalQty: 0, destinations: [] };
+              }
+              propAccum[propKey].totalQty += adjCompQty;
+              propAccum[propKey].destinations.push({ category: item.category || "", qty: compQty, containerName: `${containerName} (${variety})` });
+            });
+          } else {
+            const adjQty = germRate < 1 ? Math.ceil(qty / germRate) : qty;
+            const propKey = `${sowWk}||${varUpper}`;
+            if (!propAccum[propKey]) {
+              propAccum[propKey] = { variety, sowWk, pm, germRate, totalQty: 0, destinations: [] };
+            }
+            propAccum[propKey].totalQty += adjQty;
+            propAccum[propKey].destinations.push({ category: item.category || "", qty, containerName });
           }
-          propAccum[propKey].totalQty += adjQty;
-          propAccum[propKey].destinations.push({ category: item.category || "", qty, containerName });
         }
       }
 
