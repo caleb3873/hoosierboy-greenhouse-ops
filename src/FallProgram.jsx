@@ -669,15 +669,19 @@ function ProductionScheduleTab({ items, containers, year, upsertTask, managerTas
       }
 
       // ── Pot Filling tasks ──
+      // For liners (ship=plant): fill pots week BEFORE ship_week (ready when liners arrive)
+      // For propagated (seed/URC): fill pots week BEFORE plant_week (ready when transplant happens)
       if (plantWeekNum) {
         const shipWk = parseWeekNum(item.shipWeek);
-        const sameDayArrival = shipWk && shipWk === plantWeekNum;
-        const fillWeek = sameDayArrival ? plantWeekNum : plantWeekNum - 1;
+        const isLiner = pm === "LINER" || (shipWk && shipWk === plantWeekNum);
+        const fillWeek = isLiner ? (shipWk || plantWeekNum) - 1 : plantWeekNum - 1;
         ensureWeek(fillWeek);
-        const note = sameDayArrival ? " (fill day-of)" : "";
+        const fillNote = isLiner
+          ? ` (liners arrive Wk ${shipWk || plantWeekNum})`
+          : ` (transplant Wk ${plantWeekNum})`;
         weeks[fillWeek].potfill.push({
           variety, qty,
-          title: `Fill ${fmtN(qty)} ${containerName} for ${variety}${note}`,
+          title: `Fill ${fmtN(qty)} ${containerName} for ${variety}${fillNote}`,
           containerName, emoji: "\u{1F4E6}", item,
         });
       }
