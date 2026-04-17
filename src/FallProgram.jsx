@@ -1099,16 +1099,30 @@ function ProductionScheduleTab({ items, containers, soilMixes = [], year, upsert
                     }}>
                       <span style={{ width: 6, height: 6, borderRadius: 2, background: TASK_COLORS[section.key].color, display: "inline-block" }} />
                       {TASK_COLORS[section.key].label} ({section.tasks.length})
-                      {section.key === "prop" && (() => {
-                        const seedTrays = section.tasks.filter(t => t.trayType && t.trayType.includes("105")).reduce((s, t) => s + t.trayCount, 0);
-                        const urcTrays = section.tasks.filter(t => t.trayType && t.trayType.includes("50")).reduce((s, t) => s + t.trayCount, 0);
-                        return (
-                          <span style={{ fontWeight: 600, textTransform: "none", fontSize: 11, marginLeft: 8 }}>
+                      <span style={{ fontWeight: 600, textTransform: "none", fontSize: 11, marginLeft: 8 }}>
+                        {section.key === "prop" && (() => {
+                          const seedTrays = section.tasks.filter(t => t.trayType && t.trayType.includes("105")).reduce((s, t) => s + t.trayCount, 0);
+                          const urcTrays = section.tasks.filter(t => t.trayType && t.trayType.includes("50")).reduce((s, t) => s + t.trayCount, 0);
+                          return <>
                             {seedTrays > 0 && `${seedTrays} × 105-cell`}{seedTrays > 0 && urcTrays > 0 && " + "}{urcTrays > 0 && `${urcTrays} × 50-cell`}
                             {" = "}{seedTrays + urcTrays} trays total
-                          </span>
-                        );
-                      })()}
+                          </>;
+                        })()}
+                        {section.key === "potfill" && (() => {
+                          const totalPots = section.tasks.reduce((s, t) => s + t.qty, 0);
+                          const totalRows = section.tasks.reduce((s, t) => s + (t.rowCount || 0), 0);
+                          return <>{fmtN(totalPots)} pots · {totalRows} rows</>;
+                        })()}
+                        {section.key === "planting" && (() => {
+                          const totalPots = section.tasks.reduce((s, t) => s + t.qty, 0);
+                          const totalRows = section.tasks.reduce((s, t) => s + (t.rowCount || 0), 0);
+                          return <>{fmtN(totalPots)} pots · {totalRows} rows</>;
+                        })()}
+                        {section.key === "tags" && (() => {
+                          const totalTags = section.tasks.reduce((s, t) => s + t.qty, 0);
+                          return <>{fmtN(totalTags)} tags · {section.tasks.length} varieties</>;
+                        })()}
+                      </span>
                     </div>
                     {section.key === "tags" ? (
                       /* Tags — formatted as a printable table */
