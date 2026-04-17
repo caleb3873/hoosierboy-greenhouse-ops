@@ -229,7 +229,7 @@ export default function FallProgram() {
           {section === "overview" && <OverviewTab items={yearItems} year={year} upsert={upsert} />}
           {section === "items" && <ItemsTab items={yearItems} soilMixes={soilMixes} containers={containers} upsert={upsert} updateItem={updateItem} remove={remove} />}
           {section === "color" && <ColorTab items={yearItems} />}
-          {section === "schedule" && <ProductionScheduleTab items={yearItems} containers={containers} year={year} upsertTask={upsertTask} managerTasks={managerTasks} />}
+          {section === "schedule" && <ProductionScheduleTab items={yearItems} containers={containers} soilMixes={soilMixes} year={year} upsertTask={upsertTask} managerTasks={managerTasks} />}
           {section === "sowing" && <SowingTab items={yearItems} upsert={upsert} />}
           {section === "inputs" && <InputsTab year={year} items={yearItems} programInputs={programInputs.filter(p => p.year === year)} inputsLibrary={inputsLibrary} insertProgramInput={insertProgramInput} updateProgramInput={updateProgramInput} removeProgramInput={removeProgramInput} />}
           {section === "cost" && <CostTab items={yearItems} containers={containers} soilMixes={soilMixes} programInputs={programInputs.filter(p => p.year === year)} />}
@@ -618,7 +618,7 @@ const TASK_COLORS = {
   tags:     { bg: "#f5f0ff", color: "#8e44ad", label: "Tags" },
 };
 
-function ProductionScheduleTab({ items, containers, year, upsertTask, managerTasks }) {
+function ProductionScheduleTab({ items, containers, soilMixes = [], year, upsertTask, managerTasks }) {
   const [expandedWeeks, setExpandedWeeks] = useState({});
   const [pushedWeeks, setPushedWeeks] = useState({});
   const [pushing, setPushing] = useState({});
@@ -636,6 +636,17 @@ function ProductionScheduleTab({ items, containers, year, upsertTask, managerTas
       if (!weeks[wk]) weeks[wk] = { prop: [], potfill: [], planting: [], tags: [] };
     }
 
+    const propAccum = {}; // key: "sowWk||VARIETY" → consolidated prop data
+    const potfillAccum = {}; // key: "fillWk||container||location"
+    const plantingAccum = {}; // key: "plantWk||VARIETY"
+    const tagAccum = {}; // key: "tagWk||VARIETY"
+
+    // Find prop trays from library
+    const seedTray = containers.find(c => c.name && c.name.toLowerCase().includes("105") && c.name.toLowerCase().includes("hex"));
+    const urcTray = containers.find(c => c.sku === "PTT 50 V");
+    const seedCells = seedTray ? (parseInt(seedTray.cellsPerFlat) || 100) : 100;
+    const urcCells = urcTray ? (parseInt(urcTray.cellsPerFlat) || 50) : 50;
+
     items.forEach(item => {
       const qty = parseFloat(item.qty) || 0;
       if (qty <= 0) return;
@@ -646,73 +657,138 @@ function ProductionScheduleTab({ items, containers, year, upsertTask, managerTas
       const containerName = container ? container.name : (item.category || "pot");
       const plantWeekNum = parseWeekNum(item.plantWeek);
 
-      // ── Prop/Seed tasks ──
+      // ── Prop/Seed tasks — accumulate by variety+sowWeek, consolidated below ──
       if (isSeedSow(item)) {
         const sowWeekStr = computeSowWeek(item);
         const sowWk = parseWeekNum(sowWeekStr);
         if (sowWk) {
           ensureWeek(sowWk);
-          const trayCount = Math.ceil(qty / 50);
           const germRate = item.germinationRate ? item.germinationRate / 100 : 1;
           const adjQty = germRate < 1 ? Math.ceil(qty / germRate) : qty;
-          const adjTrayCount = Math.ceil(adjQty / 50);
-          let title;
-          if (pm === "SEED") {
-            title = `Sow ${fmtN(adjQty)} ${variety} (1/cell in prop trays) — ${adjTrayCount} trays`;
-            if (germRate < 1) title += ` (adj. for ${Math.round(germRate * 100)}% germ)`;
-          } else {
-            title = `Stick ${fmtN(qty)} ${variety} URCs into prop trays — ${trayCount} trays`;
+          const propKey = `${sowWk}||${variety.toUpperCase()}`;
+          if (!propAccum[propKey]) {
+            propAccum[propKey] = { variety, sowWk, pm, germRate, totalQty: 0, destinations: [] };
           }
-          const propTrayCost = propTray ? adjTrayCount * (parseFloat(propTray.costPerUnit) || 0) : 0;
-          weeks[sowWk].prop.push({ variety, qty: adjQty, title, trayCount: adjTrayCount, propTrayCost, emoji: "\u{1F331}", item });
+          propAccum[propKey].totalQty += adjQty;
+          propAccum[propKey].destinations.push({ category: item.category || "", qty, containerName });
         }
       }
 
-      // ── Pot Filling tasks ──
-      // For liners (ship=plant): fill pots week BEFORE ship_week (ready when liners arrive)
-      // For propagated (seed/URC): fill pots week BEFORE plant_week (ready when transplant happens)
+      // ── Pot Filling — accumulate by fillWeek + container + location ──
       if (plantWeekNum) {
         const shipWk = parseWeekNum(item.shipWeek);
         const isLiner = pm === "LINER" || (shipWk && shipWk === plantWeekNum);
         const fillWeek = isLiner ? (shipWk || plantWeekNum) - 1 : plantWeekNum - 1;
-        ensureWeek(fillWeek);
-        const fillNote = isLiner
-          ? ` (liners arrive Wk ${shipWk || plantWeekNum})`
-          : ` (transplant Wk ${plantWeekNum})`;
-        weeks[fillWeek].potfill.push({
-          variety, qty,
-          title: `Fill ${fmtN(qty)} ${containerName} for ${variety}${fillNote}`,
-          containerName, emoji: "\u{1F4E6}", item,
-        });
+        const loc = (item.location || "").replace(/\s*(EQ|WP|SP)\d+.*/i, "").trim() || "TBD";
+        const fillKey = `${fillWeek}||${containerName}||${loc}`;
+        if (!potfillAccum[fillKey]) {
+          potfillAccum[fillKey] = { fillWeek, containerName, location: loc, totalQty: 0, varieties: [], rows: new Set() };
+        }
+        potfillAccum[fillKey].totalQty += qty;
+        potfillAccum[fillKey].varieties.push({ variety, qty, color: item.color });
+        if (item.rowId) potfillAccum[fillKey].rows.add(item.rowId);
       }
 
-      // ── Planting tasks ──
+      // ── Planting — accumulate by plantWeek + variety ──
       if (plantWeekNum) {
-        ensureWeek(plantWeekNum);
         const shipWk = parseWeekNum(item.shipWeek);
         const sameDayArrival = shipWk && shipWk === plantWeekNum;
         const isPropagated = isSeedSow(item);
-        const seedsPerPot = item.seedsPerPot || 1;
-        let title;
-        if (sameDayArrival && !isPropagated) {
-          title = `Plant ${variety} liners on arrival — ${fmtN(qty)} into ${containerName}`;
-        } else if (isPropagated) {
-          title = `Transplant ${fmtN(qty)} ${variety} from prop trays \u2192 ${containerName} (${seedsPerPot}/pot)`;
-        } else {
-          title = `Plant ${fmtN(qty)} ${variety} into ${containerName} (${seedsPerPot}/pot)`;
+        const plantKey = `${plantWeekNum}||${variety.toUpperCase()}`;
+        if (!plantingAccum[plantKey]) {
+          plantingAccum[plantKey] = { plantWeekNum, variety, containerName, pm, sameDayArrival, isPropagated, ppp: item.ppp || 1, totalQty: 0, rows: new Set(), locations: new Set(), colors: new Set() };
         }
-        weeks[plantWeekNum].planting.push({ variety, qty, title, emoji: "\u{1F33F}", item });
+        plantingAccum[plantKey].totalQty += qty;
+        if (item.rowId) plantingAccum[plantKey].rows.add(item.rowId);
+        if (item.location) plantingAccum[plantKey].locations.add((item.location || "").replace(/\s*(EQ|WP|SP)\d+.*/i, "").trim());
+        if (item.color) plantingAccum[plantKey].colors.add(item.color);
       }
 
-      // ── Tag tasks ──
+      // ── Tag tasks — accumulate by variety ──
       if (plantWeekNum) {
-        // Exclude 4.5" PRODUCTION and 1801 COMBO (intermediate containers, no tags)
         if (!category.includes('4.5" PRODUCTION') && !category.includes("4.5") && !category.includes("1801")) {
           const tagWeek = plantWeekNum - 1;
-          ensureWeek(tagWeek);
-          weeks[tagWeek].tags.push({ variety, qty, title: `Print tags: ${variety} x ${fmtN(qty)}`, emoji: "\u{1F3F7}", item });
+          const tagKey = `${tagWeek}||${variety.toUpperCase()}`;
+          if (!tagAccum[tagKey]) {
+            tagAccum[tagKey] = { tagWeek, variety, totalQty: 0 };
+          }
+          tagAccum[tagKey].totalQty += qty;
         }
       }
+    });
+
+    // ── Consolidate prop/seed tasks by variety ──
+    Object.values(propAccum).forEach(p => {
+      const { variety, sowWk, pm, germRate, totalQty, destinations } = p;
+      ensureWeek(sowWk);
+      const roundedQty = Math.ceil(totalQty / 50) * 50; // round up to nearest 50
+      const isSeed = pm === "SEED";
+      const tray = isSeed ? seedTray : urcTray;
+      const cells = isSeed ? seedCells : urcCells;
+      const trayCount = Math.ceil(roundedQty / cells);
+      const trayCost = tray ? trayCount * (parseFloat(tray.costPerUnit) || 0) : 0;
+      const trayName = isSeed ? "105-cell hex" : "50-cell square";
+      const destStr = destinations.map(d => `${fmtN(d.qty)} → ${d.containerName}`).join(", ");
+      let title;
+      if (isSeed) {
+        title = `Sow ${fmtN(roundedQty)} ${variety} — ${trayCount} ${trayName} trays`;
+        if (germRate < 1) title += ` (${Math.round(germRate * 100)}% germ)`;
+      } else {
+        title = `Stick ${fmtN(roundedQty)} ${variety} URCs — ${trayCount} ${trayName} trays`;
+      }
+      weeks[sowWk].prop.push({
+        variety, qty: roundedQty, title, trayCount, propTrayCost: trayCost,
+        trayType: trayName, destinations: destStr, emoji: "\u{1F331}", item: destinations[0],
+      });
+    });
+
+    // ── Consolidate pot filling tasks ──
+    const defaultSoilName = pickDefaultSoil(soilMixes)?.name || "BM5HP Compressed";
+    Object.values(potfillAccum).forEach(p => {
+      ensureWeek(p.fillWeek);
+      const varietyList = p.varieties.map(v => `${v.variety}${v.color ? " (" + v.color + ")" : ""}: ${fmtN(v.qty)}`).join(", ");
+      weeks[p.fillWeek].potfill.push({
+        variety: p.containerName, qty: p.totalQty,
+        title: `Fill ${fmtN(p.totalQty)} ${p.containerName} at ${p.location}`,
+        location: p.location,
+        soilMix: defaultSoilName,
+        rows: p.rows.size > 0 ? `${p.rows.size} rows (${[...p.rows].slice(0, 5).join(", ")}${p.rows.size > 5 ? "..." : ""})` : null,
+        varieties: varietyList,
+        containerName: p.containerName,
+        emoji: "\u{1F4E6}", item: p.varieties[0],
+      });
+    });
+
+    // ── Consolidate planting tasks ──
+    Object.values(plantingAccum).forEach(p => {
+      ensureWeek(p.plantWeekNum);
+      const colorList = p.colors.size > 0 ? [...p.colors].join(", ") : null;
+      const locList = p.locations.size > 0 ? [...p.locations].join(", ") : null;
+      let title;
+      if (p.sameDayArrival && !p.isPropagated) {
+        title = `Plant ${fmtN(p.totalQty)} ${p.variety} liners → ${p.containerName}`;
+      } else if (p.isPropagated) {
+        title = `Transplant ${fmtN(p.totalQty)} ${p.variety} from prop → ${p.containerName}`;
+      } else {
+        title = `Plant ${fmtN(p.totalQty)} ${p.variety} → ${p.containerName} (${p.ppp}/pot)`;
+      }
+      if (colorList) title += ` — ${colorList}`;
+      weeks[p.plantWeekNum].planting.push({
+        variety: p.variety, qty: p.totalQty, title,
+        location: locList,
+        rows: p.rows.size > 0 ? `${p.rows.size} rows` : null,
+        emoji: "\u{1F33F}", item: null,
+      });
+    });
+
+    // ── Consolidate tag tasks ──
+    Object.values(tagAccum).forEach(t => {
+      ensureWeek(t.tagWeek);
+      weeks[t.tagWeek].tags.push({
+        variety: t.variety, qty: t.totalQty,
+        title: `Print tags: ${t.variety} × ${fmtN(t.totalQty)}`,
+        emoji: "\u{1F3F7}", item: null,
+      });
     });
 
     // Sort weeks and compute totals
@@ -922,6 +998,16 @@ function ProductionScheduleTab({ items, containers, year, upsertTask, managerTas
                     }}>
                       <span style={{ width: 6, height: 6, borderRadius: 2, background: TASK_COLORS[section.key].color, display: "inline-block" }} />
                       {TASK_COLORS[section.key].label} ({section.tasks.length})
+                      {section.key === "prop" && (() => {
+                        const seedTrays = section.tasks.filter(t => t.trayType && t.trayType.includes("105")).reduce((s, t) => s + t.trayCount, 0);
+                        const urcTrays = section.tasks.filter(t => t.trayType && t.trayType.includes("50")).reduce((s, t) => s + t.trayCount, 0);
+                        return (
+                          <span style={{ fontWeight: 600, textTransform: "none", fontSize: 11, marginLeft: 8 }}>
+                            {seedTrays > 0 && `${seedTrays} × 105-cell`}{seedTrays > 0 && urcTrays > 0 && " + "}{urcTrays > 0 && `${urcTrays} × 50-cell`}
+                            {" = "}{seedTrays + urcTrays} trays total
+                          </span>
+                        );
+                      })()}
                     </div>
                     {section.tasks.map((t, idx) => (
                       <div key={idx} style={{
@@ -934,6 +1020,25 @@ function ProductionScheduleTab({ items, containers, year, upsertTask, managerTas
                           <span style={{ marginLeft: 8, fontSize: 11, color: "#7a8c74" }}>
                             (tray cost: {fmt$(t.propTrayCost)})
                           </span>
+                        )}
+                        {section.key === "prop" && t.destinations && (
+                          <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2 }}>
+                            → {t.destinations}
+                          </div>
+                        )}
+                        {section.key === "potfill" && (t.location || t.varieties) && (
+                          <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2 }}>
+                            {t.location && <span>📍 {t.location}</span>}
+                            {t.soilMix && <span> · Soil: {t.soilMix}</span>}
+                            {t.rows && <span> · {t.rows}</span>}
+                            {t.varieties && <div style={{ marginTop: 2 }}>Varieties: {t.varieties}</div>}
+                          </div>
+                        )}
+                        {section.key === "planting" && (t.location || t.rows) && (
+                          <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2 }}>
+                            {t.location && <span>📍 {t.location}</span>}
+                            {t.rows && <span> · {t.rows}</span>}
+                          </div>
                         )}
                       </div>
                     ))}
