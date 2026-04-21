@@ -221,40 +221,47 @@ All under PlannerShell's nav groups. See individual files for details.
 - Commands: `greenhouse-ops variety|crop-run|catalog|space|session`
 - Wraps Supabase via Python client, reads creds from env or `.env.local`
 
-## In-Progress: Fall Container & Data Cleanup (2026-04-21)
+## Completed: Fall Container & Data Cleanup (2026-04-21)
 
-### Task 1: Add new containers from Fuchsia/East Jordan backorder
-Source file: `C:/Users/Mario/Desktop/FUchsia/Schlegel's Greenhouse Fall 2026 Backorder Report 4-20-26 (1).xlsx`
+### Containers Added (DONE)
+5 new containers from Fuchsia/East Jordan backorder, all in DB with volumes and mapped to categories via `pickContainerForCategory()`:
+- SPP 1000 (10" Patio, $0.6934, 1.89 gal) → 10" PREMIUM ANNUAL
+- SPP 1300 (13" Patio, $0.9692, 3.50 gal) → 12" MUM
+- SPP 1400 (15" Patio, $2.0956, 5.33 gal est.) → 14" MUM W/ GRASS
+- SHB 900 (9" HB Patio, $0.4541, 1.38 gal est.) → 8" ANNUAL
+- SHB1200 ATH (12" Athena HB, $1.3357 incl BH2250 hanger, 2.00 gal) → 12" HB
+- All mapped onto fall_program_items via container_id/sku/cost fields
 
-New containers to INSERT (all `kind='finished'`, `supplier='EAST JORDAN'`, `material='PLASTIC'`, color=Chocolate):
+### Data Fixes (DONE)
+- Purple Fountain Grass moved from 14" MUM W/ GRASS → 4.5" PRODUCTION (notes: goes in 14" combo)
+- Supercal Gumball Mix + Citrus Mix cancelled from 12" HB
+- Ornamental Pepper Midnight Fire cancelled (n/a 2026 season, order 3668320)
 
-| Container | SKU | Diameter | Cost/unit | Skid/Case | For Category |
-|---|---|---|---|---|---|
-| 10" Patio Pot | SPP 1000 | 10" | $0.6934 | 1,152/skid | 10" PREMIUM ANNUAL |
-| 13" Patio Pot | SPP 1300 | 13" | $0.9692 | 720/skid | 12" MUM |
-| 15" Patio Pot | SPP 1400 | 15" | $2.0956 | 400/skid | 14" MUM W/ GRASS |
-| 9" HB Patio Pot | SHB 900 | 9" | $0.4541 | 2,000/skid | 8" ANNUAL |
-| 12" Athena HB | SHB1200 ATH | 12" | **$1.3357** ($1.0913 basket + $0.2444 hanger) | 100/case | 12" HB |
-
-The 12" Athena includes BH2250 4-strand plastic hanger in cost. Notes should say: "Includes BH2250 4-strand plastic hanger ($0.2444). Order hangers separately: BH2250, 300/case"
-
-### Task 2: Update `pickContainerForCategory()` in FallProgram.jsx (line ~113)
-- `8" ANNUAL` → `SHB 900`
-- `10" PREMIUM` → `SPP 1000`
-- `12" HB` → `SHB1200 ATH`
-- `12" MUM` → `SPP 1300` (replaces PA.12000)
-- `14" MUM W/ GRASS` → `SPP 1400` (replaces PA.14000)
-
-### Task 3: Fix fall_program_items data issues
-- **PURPLE FOUNTAIN GRASS** (550 qty, under `14" MUM W/ GRASS`): Move to `4.5" PRODUCTION` category and add note that it goes in the 14" mum w/grass combo
-- **SUPERCAL GUMBALL MIX** (46 pots, 12" HB): Set status='CANCELLED'
-- **SUPERCAL PREMIUM CITRUS MIX** (46 pots, 12" HB): Set status='CANCELLED'
+### Orders Tab (DONE)
+New tab in Fall Program showing all plants on order. Key columns:
+- **Ordered** = `ord_qty` — what was requested from supplier (from acknowledgment "Order" column)
+- **Confirmed** = `qty × ppp` — what supplier confirmed (from acknowledgment "Confirm" column). This is what matters for production.
+- **Extras** = surplus plants on order
+- Amber mismatch flags when ordered ≠ confirmed
+- Ship week dates on each order card
+- Cancelled items shown but excluded from confirmed/extras totals
+- Orders sorted chronologically by ship week
+- PDF confirmation links from `order-confirmations` storage bucket
 
 ### Fall Program Data Notes
 - `fall_program_items` rows are **bench-level records** (one row per pad/bench position), NOT duplicates. Do NOT dedup them.
-- Correct category totals for 2026: 09" MUM=89,209 | 12" MUM=1,687 | 14" MUM W/ GRASS=569 (after moving grass) | 12" HB=546 (after cancellations)
-- `qty` = pots on that bench, `ord_qty` = plants on order, `ppp` = plants per pot, `extras` = extra plants on order
+- For multi-bench varieties, `ord_qty` should be SPLIT across benches (not duplicated) so the Orders tab sums correctly
+- `qty` = confirmed plants per bench (or pots if ppp>1), `ord_qty` = ordered plants (split across benches), `ppp` = plants per pot, `extras` = extra plants on order
 - 12" HB plants per pot: Ageratum=3/pot, Supercal single color=5/pot, Supercal mix=6/pot (2 of each color)
-- All 12" HB on Ball order #9592051 (Ball Horticultural via Ball FloraPlant, URC, WEEK 22)
-- Cancel from order #9592051: Gumball Mix (276 ord + 44 extras) and Citrus Mix (276 ord + 44 extras)
 - Ageratum bench 3 shows ppp=6 but should likely be 3 like the others — confirm with Mario
+- EHR order acknowledgments: columns are Order | Confirm | Shipped. Source PDF: `C:/Users/Mario/Desktop/FUchsia/Magic - EHR.pdf`
+- `pdftotext -layout` works for extracting EHR PDFs on this machine
+- Anthropic API key is NOT in .env.local — cannot use Claude API for PDF extraction
+
+### Recurring Shortages (as of 2026-04-21)
+- **Sunbeckia Marilyn**: DGI cannot supply (0 confirmed on orders 3668300 wk26 + 3668350 wk27). D S Cole backfills: 52 confirmed wk26 (3669560) + 104 confirmed wk27 (3669570) = 156 total
+- **Sunbeckia Sarah**: DGI cannot supply (0 confirmed on orders 3668300 wk26 + 3668350 wk27). D S Cole backfills: 104 confirmed wk26 (3669560) + 104 confirmed wk27 (3669570) = 208 total
+- **Echinacea Hot Pink**: 0 confirmed (3668340), substituted with Sombrero Adobe Orange (3678030, 72 confirmed)
+- **Echinacea Mango**: 0 confirmed (3668340), substituted with Sombrero Granada Gold (3678030, 72 confirmed)
+- **Echinacea Hot Red**: only 72 of 108 confirmed (3668340)
+- **Sombrero Rosada**: 0 confirmed on 3678030 (n/a until 7/06/26)
