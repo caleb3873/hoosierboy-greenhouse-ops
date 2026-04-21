@@ -220,3 +220,41 @@ All under PlannerShell's nav groups. See individual files for details.
 - Installed via `pip install -e .` in `agent-harness/`
 - Commands: `greenhouse-ops variety|crop-run|catalog|space|session`
 - Wraps Supabase via Python client, reads creds from env or `.env.local`
+
+## In-Progress: Fall Container & Data Cleanup (2026-04-21)
+
+### Task 1: Add new containers from Fuchsia/East Jordan backorder
+Source file: `C:/Users/Mario/Desktop/FUchsia/Schlegel's Greenhouse Fall 2026 Backorder Report 4-20-26 (1).xlsx`
+
+New containers to INSERT (all `kind='finished'`, `supplier='EAST JORDAN'`, `material='PLASTIC'`, color=Chocolate):
+
+| Container | SKU | Diameter | Cost/unit | Skid/Case | For Category |
+|---|---|---|---|---|---|
+| 10" Patio Pot | SPP 1000 | 10" | $0.6934 | 1,152/skid | 10" PREMIUM ANNUAL |
+| 13" Patio Pot | SPP 1300 | 13" | $0.9692 | 720/skid | 12" MUM |
+| 15" Patio Pot | SPP 1400 | 15" | $2.0956 | 400/skid | 14" MUM W/ GRASS |
+| 9" HB Patio Pot | SHB 900 | 9" | $0.4541 | 2,000/skid | 8" ANNUAL |
+| 12" Athena HB | SHB1200 ATH | 12" | **$1.3357** ($1.0913 basket + $0.2444 hanger) | 100/case | 12" HB |
+
+The 12" Athena includes BH2250 4-strand plastic hanger in cost. Notes should say: "Includes BH2250 4-strand plastic hanger ($0.2444). Order hangers separately: BH2250, 300/case"
+
+### Task 2: Update `pickContainerForCategory()` in FallProgram.jsx (line ~113)
+- `8" ANNUAL` → `SHB 900`
+- `10" PREMIUM` → `SPP 1000`
+- `12" HB` → `SHB1200 ATH`
+- `12" MUM` → `SPP 1300` (replaces PA.12000)
+- `14" MUM W/ GRASS` → `SPP 1400` (replaces PA.14000)
+
+### Task 3: Fix fall_program_items data issues
+- **PURPLE FOUNTAIN GRASS** (550 qty, under `14" MUM W/ GRASS`): Move to `4.5" PRODUCTION` category and add note that it goes in the 14" mum w/grass combo
+- **SUPERCAL GUMBALL MIX** (46 pots, 12" HB): Set status='CANCELLED'
+- **SUPERCAL PREMIUM CITRUS MIX** (46 pots, 12" HB): Set status='CANCELLED'
+
+### Fall Program Data Notes
+- `fall_program_items` rows are **bench-level records** (one row per pad/bench position), NOT duplicates. Do NOT dedup them.
+- Correct category totals for 2026: 09" MUM=89,209 | 12" MUM=1,687 | 14" MUM W/ GRASS=569 (after moving grass) | 12" HB=546 (after cancellations)
+- `qty` = pots on that bench, `ord_qty` = plants on order, `ppp` = plants per pot, `extras` = extra plants on order
+- 12" HB plants per pot: Ageratum=3/pot, Supercal single color=5/pot, Supercal mix=6/pot (2 of each color)
+- All 12" HB on Ball order #9592051 (Ball Horticultural via Ball FloraPlant, URC, WEEK 22)
+- Cancel from order #9592051: Gumball Mix (276 ord + 44 extras) and Citrus Mix (276 ord + 44 extras)
+- Ageratum bench 3 shows ppp=6 but should likely be 3 like the others — confirm with Mario

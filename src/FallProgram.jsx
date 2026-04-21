@@ -25,6 +25,7 @@ const SECTIONS = [
   { id: "color", label: "Color Mix" },
   { id: "schedule", label: "Schedule" },
   { id: "sowing", label: "Sowing & Prop" },
+  { id: "orders", label: "Orders" },
   { id: "inputs", label: "Inputs" },
   { id: "cost", label: "Cost Estimate" },
   { id: "pricing", label: "Pricing" },
@@ -115,8 +116,11 @@ function pickContainerForCategory(category, containers) {
   const c = category.toUpperCase();
   // All 9" items (Mum, Aster, Kale) use the same 9" pot
   if (c.includes('9"') || c.includes("09\"")) return containers.find(x => x.sku === "XAM09001");
-  if (c.includes('12"') && c.includes('MUM'))  return containers.find(x => x.sku === "PA.12000" && (x.name || "").includes("Cl"));
-  if (c.includes('14"'))                       return containers.find(x => x.sku === "PA.14000");
+  if (c.includes('12"') && c.includes('HB'))   return containers.find(x => x.sku === "SHB1200 ATH");
+  if (c.includes('12"') && c.includes('MUM'))  return containers.find(x => x.sku === "SPP 1300");
+  if (c.includes('14"'))                       return containers.find(x => x.sku === "SPP 1400");
+  if (c.includes('10"') || c.includes("PREMIUM ANNUAL")) return containers.find(x => x.sku === "SPP 1000");
+  if (c.includes('8"') && c.includes("ANNUAL")) return containers.find(x => x.sku === "SHB 900");
   // 4.5" PRODUCTION → 4.5 Azalea Pot with Schlegel logo
   if (c.includes("4.5"))                       return containers.find(x => x.sku === "SP 450" && (x.name || "").toLowerCase().includes("schlegel logo"));
   // 1801 COMBO → 1801 Landscape Tray
@@ -255,6 +259,7 @@ export default function FallProgram() {
           {section === "color" && <ColorTab items={yearItems} />}
           {section === "schedule" && <ProductionScheduleTab items={yearItems} containers={containers} soilMixes={soilMixes} year={year} upsertTask={upsertTask} managerTasks={managerTasks} />}
           {section === "sowing" && <SowingTab items={yearItems} upsert={upsert} />}
+          {section === "orders" && <OrdersTab items={yearItems} />}
           {section === "inputs" && <InputsTab year={year} items={yearItems} programInputs={programInputs.filter(p => p.year === year)} inputsLibrary={inputsLibrary} insertProgramInput={insertProgramInput} updateProgramInput={updateProgramInput} removeProgramInput={removeProgramInput} />}
           {section === "cost" && <CostTab items={yearItems} containers={containers} soilMixes={soilMixes} programInputs={programInputs.filter(p => p.year === year)} />}
           {section === "pricing" && <PricingTab year={year} items={yearItems} containers={containers} soilMixes={soilMixes} programInputs={programInputs.filter(p => p.year === year)} />}
@@ -2124,6 +2129,281 @@ function SowingTab({ items, upsert }) {
             </div>
           );
         })
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ── ORDERS TAB ───────────────────────────────────────────────────────────────
+// View all plants on order grouped by order number / supplier
+// ══════════════════════════════════════════════════════════════════════════════
+function OrdersTab({ items }) {
+  const [expandedOrder, setExpandedOrder] = useState(null);
+  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [supplierFilter, setSupplierFilter] = useState("all");
+  const [pdfUrls, setPdfUrls] = useState({});
+  const sb = getSupabase();
+
+  // Build order-level rollup
+  const orders = useMemo(() => {
+    const map = {};
+    items.filter(i => i.orderNumber).forEach(i => {
+      const key = i.orderNumber;
+      if (!map[key]) map[key] = {
+        orderNumber: key,
+        supplier: i.supplier || "Unknown Supplier",
+        broker: i.broker || null,
+        confirmationPdfPath: i.confirmationPdfPath || null,
+        lines: [],
+        categories: new Set(),
+      };
+      if (i.confirmationPdfPath && !map[key].confirmationPdfPath) map[key].confirmationPdfPath = i.confirmationPdfPath;
+      map[key].lines.push(i);
+      map[key].categories.add(i.category);
+    });
+    return Object.values(map).sort((a, b) => a.supplier.localeCompare(b.supplier) || a.orderNumber.localeCompare(b.orderNumber));
+  }, [items]);
+
+  // Build variety-level rollup within each order
+  function buildVarietyRows(lines) {
+    const map = {};
+    lines.forEach(i => {
+      const key = `${i.variety}||${i.category}||${i.shipWeek}||${i.propMethod}`;
+      if (!map[key]) map[key] = {
+        variety: i.variety,
+        category: i.category,
+        shipWeek: i.shipWeek,
+        propMethod: i.propMethod,
+        ppp: parseInt(i.ppp) || 1,
+        pots: 0,
+        ordQty: 0,
+        extras: 0,
+        cost: 0,
+        status: i.status,
+        benches: 0,
+      };
+      const e = map[key];
+      e.pots += parseInt(i.qty) || 0;
+      e.ordQty += parseInt(i.ordQty) || 0;
+      e.extras += parseInt(i.extras) || 0;
+      e.cost += parseFloat(i.cost) || 0;
+      e.benches++;
+      if (i.status) e.status = i.status;
+    });
+    return Object.values(map).sort((a, b) => a.category.localeCompare(b.category) || a.variety.localeCompare(b.variety));
+  }
+
+  // Filters
+  const allCategories = useMemo(() => [...new Set(items.filter(i => i.orderNumber).map(i => i.category))].sort(), [items]);
+  const allSuppliers = useMemo(() => [...new Set(orders.map(o => o.supplier))].sort(), [orders]);
+
+  const filteredOrders = useMemo(() => {
+    let result = orders;
+    if (supplierFilter !== "all") result = result.filter(o => o.supplier === supplierFilter);
+    if (categoryFilter !== "all") result = result.filter(o => o.categories.has(categoryFilter));
+    return result;
+  }, [orders, categoryFilter, supplierFilter]);
+
+  // Totals
+  const totals = useMemo(() => {
+    let ordered = 0, used = 0, extras = 0, cost = 0;
+    filteredOrders.forEach(o => o.lines.forEach(i => {
+      ordered += parseInt(i.ordQty) || 0;
+      used += (parseInt(i.qty) || 0) * (parseInt(i.ppp) || 1);
+      extras += parseInt(i.extras) || 0;
+      cost += parseFloat(i.cost) || 0;
+    }));
+    return { ordered, used, extras, cost };
+  }, [filteredOrders]);
+
+  // Load PDF signed URLs for expanded orders
+  useEffect(() => {
+    if (!sb || !expandedOrder) return;
+    const order = orders.find(o => o.orderNumber === expandedOrder);
+    if (!order?.confirmationPdfPath || pdfUrls[expandedOrder]) return;
+    sb.storage.from("order-confirmations").createSignedUrl(order.confirmationPdfPath, 3600).then(({ data }) => {
+      if (data?.signedUrl) setPdfUrls(prev => ({ ...prev, [expandedOrder]: data.signedUrl }));
+    });
+  }, [expandedOrder, orders, sb, pdfUrls]);
+
+  const chipStyle = (active, color) => ({
+    padding: "5px 12px", borderRadius: 20, fontSize: 11, fontWeight: 700, cursor: "pointer", border: "none",
+    background: active ? color : "#f2f5ef", color: active ? "#fff" : "#7a8c74", fontFamily: "inherit",
+  });
+
+  const statusBadge = (status) => {
+    if (!status) return null;
+    const s = status.toUpperCase();
+    if (s === "CANCELLED") return { bg: "#fde8e8", color: "#d94f3d", label: "CANCELLED" };
+    if (s === "NOT NEEDED") return { bg: "#fde8e8", color: "#d94f3d", label: "NOT NEEDED" };
+    if (s === "SHORT") return { bg: "#fff4e8", color: "#c8791a", label: "SHORT" };
+    return null;
+  };
+
+  return (
+    <div>
+      {/* Summary KPIs */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10, marginBottom: 16 }}>
+        <div style={{ ...card, padding: "14px 18px", margin: 0 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase" }}>Orders</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: "#1e2d1a", marginTop: 4 }}>{filteredOrders.length}</div>
+        </div>
+        <div style={{ ...card, padding: "14px 18px", margin: 0 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase" }}>Plants Ordered</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: "#4a90d9", marginTop: 4 }}>{fmtN(totals.ordered)}</div>
+        </div>
+        <div style={{ ...card, padding: "14px 18px", margin: 0 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase" }}>Being Used</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: "#4a7a35", marginTop: 4 }}>{fmtN(totals.used)}</div>
+        </div>
+        <div style={{ ...card, padding: "14px 18px", margin: 0 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase" }}>Extras</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: "#c8791a", marginTop: 4 }}>{fmtN(totals.extras)}</div>
+        </div>
+        <div style={{ ...card, padding: "14px 18px", margin: 0 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase" }}>Total Cost</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: "#1e2d1a", marginTop: 4 }}>{fmt$(totals.cost)}</div>
+        </div>
+      </div>
+
+      {/* Filters */}
+      <div style={{ ...card, padding: "12px 18px", display: "flex", gap: 16, flexWrap: "wrap", alignItems: "flex-start" }}>
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", marginBottom: 6 }}>Supplier</div>
+          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+            <button onClick={() => setSupplierFilter("all")} style={chipStyle(supplierFilter === "all", "#1e2d1a")}>All</button>
+            {allSuppliers.map(s => <button key={s} onClick={() => setSupplierFilter(s)} style={chipStyle(supplierFilter === s, "#1e2d1a")}>{s}</button>)}
+          </div>
+        </div>
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", marginBottom: 6 }}>Category</div>
+          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+            <button onClick={() => setCategoryFilter("all")} style={chipStyle(categoryFilter === "all", "#1e2d1a")}>All</button>
+            {allCategories.map(c => <button key={c} onClick={() => setCategoryFilter(c)} style={chipStyle(categoryFilter === c, "#1e2d1a")}>{c}</button>)}
+          </div>
+        </div>
+      </div>
+
+      {/* Order cards */}
+      {filteredOrders.map(order => {
+        const isExpanded = expandedOrder === order.orderNumber;
+        const lines = categoryFilter !== "all" ? order.lines.filter(l => l.category === categoryFilter) : order.lines;
+        const rows = buildVarietyRows(lines);
+        const orderOrdered = lines.reduce((s, i) => s + (parseInt(i.ordQty) || 0), 0);
+        const orderUsed = lines.reduce((s, i) => s + (parseInt(i.qty) || 0) * (parseInt(i.ppp) || 1), 0);
+        const orderExtras = lines.reduce((s, i) => s + (parseInt(i.extras) || 0), 0);
+        const orderCost = lines.reduce((s, i) => s + (parseFloat(i.cost) || 0), 0);
+        const cancelledCount = rows.filter(r => r.status && (r.status.toUpperCase() === "CANCELLED" || r.status.toUpperCase() === "NOT NEEDED")).length;
+
+        return (
+          <div key={order.orderNumber} style={{ ...card, padding: 0, overflow: "hidden" }}>
+            {/* Order header */}
+            <div onClick={() => setExpandedOrder(isExpanded ? null : order.orderNumber)}
+              style={{ padding: "14px 18px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10,
+                background: isExpanded ? "#f0f8eb" : "#fff", borderBottom: isExpanded ? "1.5px solid #c8e0b8" : "none" }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 800, color: "#1e2d1a" }}>
+                  Order #{order.orderNumber}
+                  {order.confirmationPdfPath && <span style={{ marginLeft: 8, fontSize: 11, color: "#4a90d9" }}>📄 PDF</span>}
+                  {cancelledCount > 0 && <span style={{ marginLeft: 8, fontSize: 10, background: "#fde8e8", color: "#d94f3d", padding: "2px 8px", borderRadius: 10, fontWeight: 700 }}>{cancelledCount} cancelled</span>}
+                </div>
+                <div style={{ fontSize: 12, color: "#7a8c74", marginTop: 2 }}>
+                  {order.supplier}{order.broker ? ` (via ${order.broker})` : ""} — {[...order.categories].sort().join(", ")}
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 16, alignItems: "center", fontSize: 12 }}>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontWeight: 800, color: "#4a90d9" }}>{fmtN(orderOrdered)} ordered</div>
+                  <div style={{ color: "#7a8c74" }}>{fmtN(orderUsed)} used · {fmtN(orderExtras)} extras</div>
+                </div>
+                <div style={{ fontSize: 14, fontWeight: 800, color: "#1e2d1a" }}>{fmt$(orderCost)}</div>
+                <div style={{ fontSize: 18, color: "#7a8c74" }}>{isExpanded ? "▲" : "▼"}</div>
+              </div>
+            </div>
+
+            {/* Expanded detail */}
+            {isExpanded && (
+              <div style={{ padding: "0" }}>
+                {/* PDF link */}
+                {pdfUrls[order.orderNumber] && (
+                  <div style={{ padding: "10px 18px", background: "#f8fbf5", borderBottom: "1px solid #e0ead8" }}>
+                    <a href={pdfUrls[order.orderNumber]} target="_blank" rel="noopener noreferrer"
+                      style={{ fontSize: 12, color: "#4a90d9", fontWeight: 700, textDecoration: "none" }}>
+                      📄 View Order Confirmation PDF — #{order.orderNumber}
+                    </a>
+                  </div>
+                )}
+
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 800 }}>
+                    <thead>
+                      <tr style={{ background: "#fafcf8", borderBottom: "2px solid #e0ead8" }}>
+                        <th style={{ padding: 8, textAlign: "left", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Variety</th>
+                        <th style={{ padding: 8, textAlign: "left", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Category</th>
+                        <th style={{ padding: 8, textAlign: "center", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Ship Wk</th>
+                        <th style={{ padding: 8, textAlign: "center", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Prop</th>
+                        <th style={{ padding: 8, textAlign: "right", fontSize: 10, fontWeight: 800, color: "#4a90d9", textTransform: "uppercase" }}>On Order</th>
+                        <th style={{ padding: 8, textAlign: "right", fontSize: 10, fontWeight: 800, color: "#4a7a35", textTransform: "uppercase" }}>Being Used</th>
+                        <th style={{ padding: 8, textAlign: "right", fontSize: 10, fontWeight: 800, color: "#c8791a", textTransform: "uppercase" }}>Extras</th>
+                        <th style={{ padding: 8, textAlign: "right", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>PPP</th>
+                        <th style={{ padding: 8, textAlign: "right", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Pots</th>
+                        <th style={{ padding: 8, textAlign: "right", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Cost</th>
+                        <th style={{ padding: 8, textAlign: "center", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((r, idx) => {
+                        const badge = statusBadge(r.status);
+                        const isCancelled = badge && (r.status.toUpperCase() === "CANCELLED" || r.status.toUpperCase() === "NOT NEEDED");
+                        const used = r.pots * r.ppp;
+                        return (
+                          <tr key={idx} style={{ borderBottom: "1px solid #f0f5ee", background: isCancelled ? "#fef8f8" : idx % 2 === 0 ? "#fff" : "#fafcf8",
+                            opacity: isCancelled ? 0.5 : 1, textDecoration: isCancelled ? "line-through" : "none" }}>
+                            <td style={{ padding: 8, fontSize: 12, fontWeight: 700, color: "#1e2d1a" }}>{r.variety}</td>
+                            <td style={{ padding: 8, fontSize: 11, color: "#7a8c74" }}>{r.category}</td>
+                            <td style={{ padding: 8, fontSize: 11, color: "#7a8c74", textAlign: "center" }}>{r.shipWeek}</td>
+                            <td style={{ padding: 8, fontSize: 10, textAlign: "center" }}>
+                              {r.propMethod && <span style={{ background: r.propMethod === "SEED" ? "#fff4e8" : r.propMethod === "URC" ? "#f5f0ff" : "#f0f8eb",
+                                color: r.propMethod === "SEED" ? "#c8791a" : r.propMethod === "URC" ? "#8e44ad" : "#4a7a35",
+                                padding: "2px 8px", borderRadius: 8, fontSize: 10, fontWeight: 700 }}>{r.propMethod}</span>}
+                            </td>
+                            <td style={{ padding: 8, textAlign: "right", fontSize: 12, fontWeight: 800, color: "#4a90d9", fontVariantNumeric: "tabular-nums" }}>{fmtN(r.ordQty)}</td>
+                            <td style={{ padding: 8, textAlign: "right", fontSize: 12, fontWeight: 700, color: "#4a7a35", fontVariantNumeric: "tabular-nums" }}>{fmtN(used)}</td>
+                            <td style={{ padding: 8, textAlign: "right", fontSize: 12, fontWeight: 700, color: "#c8791a", fontVariantNumeric: "tabular-nums" }}>{fmtN(r.extras)}</td>
+                            <td style={{ padding: 8, textAlign: "right", fontSize: 11, color: "#7a8c74", fontVariantNumeric: "tabular-nums" }}>{r.ppp}</td>
+                            <td style={{ padding: 8, textAlign: "right", fontSize: 11, color: "#7a8c74", fontVariantNumeric: "tabular-nums" }}>{fmtN(r.pots)}</td>
+                            <td style={{ padding: 8, textAlign: "right", fontSize: 12, fontVariantNumeric: "tabular-nums" }}>{fmt$(r.cost)}</td>
+                            <td style={{ padding: 8, textAlign: "center" }}>
+                              {badge && <span style={{ background: badge.bg, color: badge.color, padding: "2px 8px", borderRadius: 8, fontSize: 10, fontWeight: 700 }}>{badge.label}</span>}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                    <tfoot>
+                      <tr style={{ borderTop: "2px solid #e0ead8", background: "#fafcf8" }}>
+                        <td colSpan={4} style={{ padding: 8, fontSize: 12, fontWeight: 800, color: "#1e2d1a" }}>Total — {rows.length} varieties</td>
+                        <td style={{ padding: 8, textAlign: "right", fontSize: 12, fontWeight: 800, color: "#4a90d9" }}>{fmtN(orderOrdered)}</td>
+                        <td style={{ padding: 8, textAlign: "right", fontSize: 12, fontWeight: 800, color: "#4a7a35" }}>{fmtN(orderUsed)}</td>
+                        <td style={{ padding: 8, textAlign: "right", fontSize: 12, fontWeight: 800, color: "#c8791a" }}>{fmtN(orderExtras)}</td>
+                        <td colSpan={2} />
+                        <td style={{ padding: 8, textAlign: "right", fontSize: 12, fontWeight: 800, color: "#1e2d1a" }}>{fmt$(orderCost)}</td>
+                        <td />
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {filteredOrders.length === 0 && (
+        <div style={{ ...card, textAlign: "center", padding: "40px 20px", color: "#7a8c74" }}>
+          No orders found{supplierFilter !== "all" || categoryFilter !== "all" ? " matching filters" : ""}.
+        </div>
       )}
     </div>
   );
