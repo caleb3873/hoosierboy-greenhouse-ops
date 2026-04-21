@@ -2216,18 +2216,18 @@ function OrdersTab({ items }) {
     return result;
   }, [orders, categoryFilter, supplierFilter]);
 
-  // Totals — "ordered" counts everything, "used" and "extras" only count confirmed (non-cancelled)
+  // Totals — "confirmed" and "extras" only count non-cancelled items
   const totals = useMemo(() => {
-    let ordered = 0, used = 0, extras = 0, cost = 0;
+    let ordered = 0, confirmed = 0, extras = 0, cost = 0;
     filteredOrders.forEach(o => o.lines.forEach(i => {
       ordered += parseInt(i.ordQty) || 0;
       cost += parseFloat(i.cost) || 0;
       if (!isCancelled(i.status)) {
-        used += (parseInt(i.qty) || 0) * (parseInt(i.ppp) || 1);
+        confirmed += (parseInt(i.qty) || 0) * (parseInt(i.ppp) || 1);
         extras += parseInt(i.extras) || 0;
       }
     }));
-    return { ordered, used, extras, cost };
+    return { ordered, confirmed, extras, cost };
   }, [filteredOrders]);
 
   // Load PDF signed URLs for expanded orders
@@ -2263,12 +2263,13 @@ function OrdersTab({ items }) {
           <div style={{ fontSize: 22, fontWeight: 800, color: "#1e2d1a", marginTop: 4 }}>{filteredOrders.length}</div>
         </div>
         <div style={{ ...card, padding: "14px 18px", margin: 0 }}>
-          <div style={{ fontSize: 10, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase" }}>Plants Ordered</div>
+          <div style={{ fontSize: 10, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase" }}>Ordered</div>
           <div style={{ fontSize: 22, fontWeight: 800, color: "#4a90d9", marginTop: 4 }}>{fmtN(totals.ordered)}</div>
         </div>
         <div style={{ ...card, padding: "14px 18px", margin: 0 }}>
-          <div style={{ fontSize: 10, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase" }}>Being Used</div>
-          <div style={{ fontSize: 22, fontWeight: 800, color: "#4a7a35", marginTop: 4 }}>{fmtN(totals.used)}</div>
+          <div style={{ fontSize: 10, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase" }}>Confirmed</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: "#4a7a35", marginTop: 4 }}>{fmtN(totals.confirmed)}</div>
+          {totals.ordered !== totals.confirmed && totals.ordered > 0 && <div style={{ fontSize: 10, color: "#c8791a", marginTop: 2 }}>{totals.ordered > totals.confirmed ? `${fmtN(totals.ordered - totals.confirmed)} short` : `${fmtN(totals.confirmed - totals.ordered)} over`}</div>}
         </div>
         <div style={{ ...card, padding: "14px 18px", margin: 0 }}>
           <div style={{ fontSize: 10, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase" }}>Extras</div>
@@ -2305,7 +2306,7 @@ function OrdersTab({ items }) {
         const rows = buildVarietyRows(lines);
         const orderOrdered = lines.reduce((s, i) => s + (parseInt(i.ordQty) || 0), 0);
         const confirmedLines = lines.filter(i => !isCancelled(i.status));
-        const orderUsed = confirmedLines.reduce((s, i) => s + (parseInt(i.qty) || 0) * (parseInt(i.ppp) || 1), 0);
+        const orderConfirmed = confirmedLines.reduce((s, i) => s + (parseInt(i.qty) || 0) * (parseInt(i.ppp) || 1), 0);
         const orderExtras = confirmedLines.reduce((s, i) => s + (parseInt(i.extras) || 0), 0);
         const orderCost = lines.reduce((s, i) => s + (parseFloat(i.cost) || 0), 0);
         const cancelledCount = rows.filter(r => isCancelled(r.status)).length;
@@ -2332,7 +2333,7 @@ function OrdersTab({ items }) {
               <div style={{ display: "flex", gap: 16, alignItems: "center", fontSize: 12 }}>
                 <div style={{ textAlign: "right" }}>
                   <div style={{ fontWeight: 800, color: "#4a90d9" }}>{fmtN(orderOrdered)} ordered</div>
-                  <div style={{ color: "#7a8c74" }}>{fmtN(orderUsed)} used · {fmtN(orderExtras)} extras</div>
+                  <div style={{ color: orderOrdered !== orderConfirmed && orderOrdered > 0 ? "#c8791a" : "#4a7a35", fontWeight: 700 }}>{fmtN(orderConfirmed)} confirmed{orderExtras > 0 ? ` · ${fmtN(orderExtras)} extras` : ""}</div>
                 </div>
                 <div style={{ fontSize: 14, fontWeight: 800, color: "#1e2d1a" }}>{fmt$(orderCost)}</div>
                 <div style={{ fontSize: 18, color: "#7a8c74" }}>{isExpanded ? "▲" : "▼"}</div>
@@ -2360,8 +2361,8 @@ function OrdersTab({ items }) {
                         <th style={{ padding: 8, textAlign: "left", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Category</th>
                         <th style={{ padding: 8, textAlign: "center", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Ship Wk</th>
                         <th style={{ padding: 8, textAlign: "center", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Prop</th>
-                        <th style={{ padding: 8, textAlign: "right", fontSize: 10, fontWeight: 800, color: "#4a90d9", textTransform: "uppercase" }}>On Order</th>
-                        <th style={{ padding: 8, textAlign: "right", fontSize: 10, fontWeight: 800, color: "#4a7a35", textTransform: "uppercase" }}>Being Used</th>
+                        <th style={{ padding: 8, textAlign: "right", fontSize: 10, fontWeight: 800, color: "#4a90d9", textTransform: "uppercase" }}>Ordered</th>
+                        <th style={{ padding: 8, textAlign: "right", fontSize: 10, fontWeight: 800, color: "#4a7a35", textTransform: "uppercase" }}>Confirmed</th>
                         <th style={{ padding: 8, textAlign: "right", fontSize: 10, fontWeight: 800, color: "#c8791a", textTransform: "uppercase" }}>Extras</th>
                         <th style={{ padding: 8, textAlign: "right", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>PPP</th>
                         <th style={{ padding: 8, textAlign: "right", fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Pots</th>
@@ -2372,11 +2373,12 @@ function OrdersTab({ items }) {
                     <tbody>
                       {rows.map((r, idx) => {
                         const badge = statusBadge(r.status);
-                        const isCancelled = badge && (r.status.toUpperCase() === "CANCELLED" || r.status.toUpperCase() === "NOT NEEDED");
-                        const used = r.pots * r.ppp;
+                        const rowCancelled = badge && (r.status.toUpperCase() === "CANCELLED" || r.status.toUpperCase() === "NOT NEEDED");
+                        const confirmed = r.pots * r.ppp;
+                        const mismatch = r.ordQty > 0 && confirmed > 0 && r.ordQty !== confirmed;
                         return (
-                          <tr key={idx} style={{ borderBottom: "1px solid #f0f5ee", background: isCancelled ? "#fef8f8" : idx % 2 === 0 ? "#fff" : "#fafcf8",
-                            opacity: isCancelled ? 0.5 : 1, textDecoration: isCancelled ? "line-through" : "none" }}>
+                          <tr key={idx} style={{ borderBottom: "1px solid #f0f5ee", background: rowCancelled ? "#fef8f8" : mismatch ? "#fffbf0" : idx % 2 === 0 ? "#fff" : "#fafcf8",
+                            opacity: rowCancelled ? 0.5 : 1, textDecoration: rowCancelled ? "line-through" : "none" }}>
                             <td style={{ padding: 8, fontSize: 12, fontWeight: 700, color: "#1e2d1a" }}>{r.variety}</td>
                             <td style={{ padding: 8, fontSize: 11, color: "#7a8c74" }}>{r.category}</td>
                             <td style={{ padding: 8, fontSize: 11, color: "#7a8c74", textAlign: "center" }}>{r.shipWeek}</td>
@@ -2386,7 +2388,7 @@ function OrdersTab({ items }) {
                                 padding: "2px 8px", borderRadius: 8, fontSize: 10, fontWeight: 700 }}>{r.propMethod}</span>}
                             </td>
                             <td style={{ padding: 8, textAlign: "right", fontSize: 12, fontWeight: 800, color: "#4a90d9", fontVariantNumeric: "tabular-nums" }}>{fmtN(r.ordQty)}</td>
-                            <td style={{ padding: 8, textAlign: "right", fontSize: 12, fontWeight: 700, color: "#4a7a35", fontVariantNumeric: "tabular-nums" }}>{fmtN(used)}</td>
+                            <td style={{ padding: 8, textAlign: "right", fontSize: 12, fontWeight: 700, color: mismatch ? "#c8791a" : "#4a7a35", fontVariantNumeric: "tabular-nums" }}>{fmtN(confirmed)}{mismatch && <span style={{ fontSize: 9, color: "#c8791a", marginLeft: 4 }}>{confirmed < r.ordQty ? "▼" : "▲"}</span>}</td>
                             <td style={{ padding: 8, textAlign: "right", fontSize: 12, fontWeight: 700, color: "#c8791a", fontVariantNumeric: "tabular-nums" }}>{fmtN(r.extras)}</td>
                             <td style={{ padding: 8, textAlign: "right", fontSize: 11, color: "#7a8c74", fontVariantNumeric: "tabular-nums" }}>{r.ppp}</td>
                             <td style={{ padding: 8, textAlign: "right", fontSize: 11, color: "#7a8c74", fontVariantNumeric: "tabular-nums" }}>{fmtN(r.pots)}</td>
@@ -2402,7 +2404,7 @@ function OrdersTab({ items }) {
                       <tr style={{ borderTop: "2px solid #e0ead8", background: "#fafcf8" }}>
                         <td colSpan={4} style={{ padding: 8, fontSize: 12, fontWeight: 800, color: "#1e2d1a" }}>Total — {rows.length} varieties ({rows.filter(r => !isCancelled(r.status)).length} confirmed)</td>
                         <td style={{ padding: 8, textAlign: "right", fontSize: 12, fontWeight: 800, color: "#4a90d9" }}>{fmtN(orderOrdered)}</td>
-                        <td style={{ padding: 8, textAlign: "right", fontSize: 12, fontWeight: 800, color: "#4a7a35" }}>{fmtN(orderUsed)}</td>
+                        <td style={{ padding: 8, textAlign: "right", fontSize: 12, fontWeight: 800, color: "#4a7a35" }}>{fmtN(orderConfirmed)}</td>
                         <td style={{ padding: 8, textAlign: "right", fontSize: 12, fontWeight: 800, color: "#c8791a" }}>{fmtN(orderExtras)}</td>
                         <td colSpan={2} />
                         <td style={{ padding: 8, textAlign: "right", fontSize: 12, fontWeight: 800, color: "#1e2d1a" }}>{fmt$(orderCost)}</td>
