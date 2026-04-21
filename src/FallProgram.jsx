@@ -2145,6 +2145,12 @@ function OrdersTab({ items }) {
   const [pdfUrls, setPdfUrls] = useState({});
   const sb = getSupabase();
 
+  const isCancelled = (status) => {
+    if (!status) return false;
+    const s = status.toUpperCase();
+    return s === "CANCELLED" || s === "NOT NEEDED";
+  };
+
   // Build order-level rollup
   const orders = useMemo(() => {
     const map = {};
@@ -2157,10 +2163,12 @@ function OrdersTab({ items }) {
         confirmationPdfPath: i.confirmationPdfPath || null,
         lines: [],
         categories: new Set(),
+        shipWeeks: new Set(),
       };
       if (i.confirmationPdfPath && !map[key].confirmationPdfPath) map[key].confirmationPdfPath = i.confirmationPdfPath;
       map[key].lines.push(i);
       map[key].categories.add(i.category);
+      if (i.shipWeek) map[key].shipWeeks.add(i.shipWeek);
     });
     return Object.values(map).sort((a, b) => a.supplier.localeCompare(b.supplier) || a.orderNumber.localeCompare(b.orderNumber));
   }, [items]);
@@ -2205,14 +2213,16 @@ function OrdersTab({ items }) {
     return result;
   }, [orders, categoryFilter, supplierFilter]);
 
-  // Totals
+  // Totals — "ordered" counts everything, "used" and "extras" only count confirmed (non-cancelled)
   const totals = useMemo(() => {
     let ordered = 0, used = 0, extras = 0, cost = 0;
     filteredOrders.forEach(o => o.lines.forEach(i => {
       ordered += parseInt(i.ordQty) || 0;
-      used += (parseInt(i.qty) || 0) * (parseInt(i.ppp) || 1);
-      extras += parseInt(i.extras) || 0;
       cost += parseFloat(i.cost) || 0;
+      if (!isCancelled(i.status)) {
+        used += (parseInt(i.qty) || 0) * (parseInt(i.ppp) || 1);
+        extras += parseInt(i.extras) || 0;
+      }
     }));
     return { ordered, used, extras, cost };
   }, [filteredOrders]);
@@ -2291,10 +2301,13 @@ function OrdersTab({ items }) {
         const lines = categoryFilter !== "all" ? order.lines.filter(l => l.category === categoryFilter) : order.lines;
         const rows = buildVarietyRows(lines);
         const orderOrdered = lines.reduce((s, i) => s + (parseInt(i.ordQty) || 0), 0);
-        const orderUsed = lines.reduce((s, i) => s + (parseInt(i.qty) || 0) * (parseInt(i.ppp) || 1), 0);
-        const orderExtras = lines.reduce((s, i) => s + (parseInt(i.extras) || 0), 0);
+        const confirmedLines = lines.filter(i => !isCancelled(i.status));
+        const orderUsed = confirmedLines.reduce((s, i) => s + (parseInt(i.qty) || 0) * (parseInt(i.ppp) || 1), 0);
+        const orderExtras = confirmedLines.reduce((s, i) => s + (parseInt(i.extras) || 0), 0);
         const orderCost = lines.reduce((s, i) => s + (parseFloat(i.cost) || 0), 0);
-        const cancelledCount = rows.filter(r => r.status && (r.status.toUpperCase() === "CANCELLED" || r.status.toUpperCase() === "NOT NEEDED")).length;
+        const cancelledCount = rows.filter(r => isCancelled(r.status)).length;
+        const shipWeeks = [...order.shipWeeks].sort();
+        const shipLabel = shipWeeks.length === 1 ? shipWeeks[0] : shipWeeks.length > 1 ? `${shipWeeks[0]}–${shipWeeks[shipWeeks.length - 1]}` : "";
 
         return (
           <div key={order.orderNumber} style={{ ...card, padding: 0, overflow: "hidden" }}>
@@ -2310,6 +2323,7 @@ function OrdersTab({ items }) {
                 </div>
                 <div style={{ fontSize: 12, color: "#7a8c74", marginTop: 2 }}>
                   {order.supplier}{order.broker ? ` (via ${order.broker})` : ""} — {[...order.categories].sort().join(", ")}
+                  {shipLabel && <span style={{ marginLeft: 8, background: "#e8f0e3", color: "#4a7a35", padding: "1px 8px", borderRadius: 8, fontSize: 10, fontWeight: 700 }}>{shipLabel}</span>}
                 </div>
               </div>
               <div style={{ display: "flex", gap: 16, alignItems: "center", fontSize: 12 }}>
@@ -2383,7 +2397,7 @@ function OrdersTab({ items }) {
                     </tbody>
                     <tfoot>
                       <tr style={{ borderTop: "2px solid #e0ead8", background: "#fafcf8" }}>
-                        <td colSpan={4} style={{ padding: 8, fontSize: 12, fontWeight: 800, color: "#1e2d1a" }}>Total — {rows.length} varieties</td>
+                        <td colSpan={4} style={{ padding: 8, fontSize: 12, fontWeight: 800, color: "#1e2d1a" }}>Total — {rows.length} varieties ({rows.filter(r => !isCancelled(r.status)).length} confirmed)</td>
                         <td style={{ padding: 8, textAlign: "right", fontSize: 12, fontWeight: 800, color: "#4a90d9" }}>{fmtN(orderOrdered)}</td>
                         <td style={{ padding: 8, textAlign: "right", fontSize: 12, fontWeight: 800, color: "#4a7a35" }}>{fmtN(orderUsed)}</td>
                         <td style={{ padding: 8, textAlign: "right", fontSize: 12, fontWeight: 800, color: "#c8791a" }}>{fmtN(orderExtras)}</td>
