@@ -2170,7 +2170,10 @@ function OrdersTab({ items }) {
       map[key].categories.add(i.category);
       if (i.shipWeek) map[key].shipWeeks.add(i.shipWeek);
     });
-    return Object.values(map).sort((a, b) => a.supplier.localeCompare(b.supplier) || a.orderNumber.localeCompare(b.orderNumber));
+    return Object.values(map).sort((a, b) => {
+      const weekNum = (sw) => { const m = [...sw].sort()[0]?.match(/\d+/); return m ? parseInt(m[0]) : 99; };
+      return weekNum(a.shipWeeks) - weekNum(b.shipWeeks) || a.orderNumber.localeCompare(b.orderNumber);
+    });
   }, [items]);
 
   // Build variety-level rollup within each order
