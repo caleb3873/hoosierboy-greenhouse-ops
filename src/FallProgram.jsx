@@ -2139,7 +2139,7 @@ function SowingTab({ items, upsert }) {
                       const totalAvail = (r.seedsOrdered || 0) + (r.seedsOnHand || 0);
                       const isShort = seedsToSow > totalAvail && totalAvail > 0;
                       return (<React.Fragment key={r.variety || idx}>
-                      <tr style={{ borderBottom: r.usedIn?.length > 1 ? "none" : "1px solid #f0f5ee", background: isShort ? "#fff3f1" : r.seedShortage ? "#fff3f1" : idx % 2 === 0 ? "#fff" : "#fafcf8" }}>
+                      <tr style={{ borderBottom: r.usedIn?.length > 1 ? "none" : "1px solid #f0f5ee", background: isShort ? "#fff3f1" : idx % 2 === 0 ? "#fff" : "#fafcf8" }}>
                         <td style={{ padding: "8px 10px", fontSize: 13, fontWeight: 700, color: "#1e2d1a" }}>
                           {r.variety}
                           {r.seedOrderNumber && <span style={{ marginLeft: 6, fontSize: 9, color: "#7a8c74" }}>#{r.seedOrderNumber}</span>}
@@ -2174,8 +2174,8 @@ function SowingTab({ items, upsert }) {
                             style={{ width: 60, padding: "4px 6px", borderRadius: 6, border: "1.5px solid #e0ead8", fontSize: 12, fontFamily: "inherit", textAlign: "right" }} />
                         </td>
                         <td style={{ padding: "8px 10px", textAlign: "center" }}>
-                          {isShort || r.seedShortage
-                            ? <span style={{ background: "#fde8e8", color: "#d94f3d", borderRadius: 10, padding: "2px 8px", fontSize: 10, fontWeight: 800 }}>SHORT {isShort ? fmtN(seedsToSow - totalAvail) : ""}</span>
+                          {isShort
+                            ? <span style={{ background: "#fde8e8", color: "#d94f3d", borderRadius: 10, padding: "2px 8px", fontSize: 10, fontWeight: 800 }}>SHORT {fmtN(seedsToSow - totalAvail)}</span>
                             : totalAvail > 0
                               ? <span style={{ background: "#e8f5e0", color: "#4a7a35", borderRadius: 10, padding: "2px 8px", fontSize: 10, fontWeight: 700 }}>OK +{fmtN(totalAvail - seedsToSow)}</span>
                               : <span style={{ color: "#7a8c74", fontSize: 10 }}>—</span>}
