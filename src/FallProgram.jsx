@@ -849,8 +849,10 @@ function ProductionScheduleTab({ items, containers, soilMixes = [], year, upsert
     Object.values(propAccum).forEach(p => {
       const { variety, sowWk, pm, germRate, totalQty, destinations } = p;
       ensureWeek(sowWk);
-      const roundedQty = Math.ceil(totalQty / 50) * 50; // round up to nearest 50
       const isSeed = pm === "SEED";
+      // URCs are ordered in 100-plug increments (supplier minimum) — seed rounds to tray (50 cells)
+      const roundIncrement = isSeed ? 50 : 100;
+      const roundedQty = Math.ceil(totalQty / roundIncrement) * roundIncrement;
       const tray = isSeed ? seedTray : urcTray;
       const cells = isSeed ? seedCells : urcCells;
       const trayCount = Math.ceil(roundedQty / cells);
@@ -862,7 +864,9 @@ function ProductionScheduleTab({ items, containers, soilMixes = [], year, upsert
         title = `Sow ${fmtN(roundedQty)} ${variety} — ${trayCount} ${trayName} trays`;
         if (germRate < 1) title += ` (${Math.round(germRate * 100)}% germ)`;
       } else {
+        const surplus = roundedQty - totalQty;
         title = `Stick ${fmtN(roundedQty)} ${variety} URCs — ${trayCount} ${trayName} trays`;
+        if (surplus > 0) title += ` (${fmtN(totalQty)} needed, ${fmtN(surplus)} extra — stick all to cover losses)`;
       }
       weeks[sowWk].prop.push({
         variety, qty: roundedQty, title, trayCount, propTrayCost: trayCost,
