@@ -651,6 +651,7 @@ function ExpandableTaskRow({ task: t, section }) {
   const [expanded, setExpanded] = useState(false);
   const hasDetail = (t.rowList && t.rowList.length > 0) || t.destinations;
   const tc = TASK_COLORS[section] || TASK_COLORS.prop;
+  const showSizeBadge = section === "planting" && t.potSize;
   return (
     <div style={{
       background: tc.bg, borderRadius: 8, marginBottom: 4,
@@ -662,7 +663,24 @@ function ExpandableTaskRow({ task: t, section }) {
         display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8,
       }}>
         <div style={{ flex: 1 }}>
-          <div style={{ fontWeight: 700 }}>{t.title}</div>
+          {section === "planting" ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              {showSizeBadge && (
+                <span style={{
+                  background: "#1e2d1a", color: "#c8e6b8",
+                  fontWeight: 800, fontSize: 12,
+                  padding: "2px 8px", borderRadius: 4,
+                  flexShrink: 0, letterSpacing: 0.3,
+                }}>{t.potSize}</span>
+              )}
+              <span style={{ fontWeight: 700 }}>{t.variety}</span>
+              <span style={{ fontWeight: 600, color: "#4a7a35" }}>— {fmtN(t.qty)} pots</span>
+              <span style={{ fontWeight: 600, color: "#7a8c74", fontSize: 12 }}>({t.ppp || 1}/pot)</span>
+              {t.color && <span style={{ color: "#7a8c74", fontSize: 12 }}>· {t.color}</span>}
+            </div>
+          ) : (
+            <div style={{ fontWeight: 700 }}>{t.title}</div>
+          )}
           <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2, display: "flex", gap: 10, flexWrap: "wrap" }}>
             {t.location && <span>📍 {t.location}</span>}
             {t.soilMix && <span>Soil: {t.soilMix}</span>}
@@ -779,7 +797,7 @@ function ProductionScheduleTab({ items, containers, soilMixes = [], year, upsert
         const loc = (item.location || "").replace(/\s*(EQ|WP|SP)\d+.*/i, "").trim() || "TBD";
         const fillKey = `${fillWeek}||${containerName}||${loc}`;
         if (!potfillAccum[fillKey]) {
-          potfillAccum[fillKey] = { fillWeek, containerName, location: loc, totalQty: 0, rows: new Set() };
+          potfillAccum[fillKey] = { fillWeek, containerName, location: loc, category: item.category, totalQty: 0, rows: new Set() };
         }
         potfillAccum[fillKey].totalQty += qty;
         if (item.rowId) potfillAccum[fillKey].rows.add(item.rowId);
@@ -790,7 +808,7 @@ function ProductionScheduleTab({ items, containers, soilMixes = [], year, upsert
         const shipWk = parseWeekNum(item.shipWeek);
         const sameDayArrival = shipWk && shipWk === plantWeekNum;
         const isPropagated = isSeedSow(item);
-        const plantKey = `${plantWeekNum}||${variety.toUpperCase()}`;
+        const plantKey = `${plantWeekNum}||${item.category || ""}||${variety.toUpperCase()}`;
         if (!plantingAccum[plantKey]) {
           plantingAccum[plantKey] = { plantWeekNum, variety, containerName, category: item.category, pm, sameDayArrival, isPropagated, ppp: item.ppp || 1, totalQty: 0, rows: [], locations: new Set(), color: item.color };
         }
@@ -813,6 +831,20 @@ function ProductionScheduleTab({ items, containers, soilMixes = [], year, upsert
       }
     });
 
+    // Helpers for pot-size extraction + sort
+    function extractPotSize(category) {
+      if (!category) return { label: "", num: 999 };
+      const m = category.match(/^(\d+(?:\.\d+)?)"/);
+      if (m) return { label: `${parseFloat(m[1])}"`, num: parseFloat(m[1]) };
+      return { label: category, num: 999 };
+    }
+    function extractPotSizeFromName(name) {
+      if (!name) return { label: "", num: 999 };
+      const m = name.match(/(\d+(?:\.\d+)?)"/);
+      if (m) return { label: `${parseFloat(m[1])}"`, num: parseFloat(m[1]) };
+      return { label: "", num: 999 };
+    }
+
     // ── Consolidate prop/seed tasks by variety ──
     Object.values(propAccum).forEach(p => {
       const { variety, sowWk, pm, germRate, totalQty, destinations } = p;
@@ -834,7 +866,8 @@ function ProductionScheduleTab({ items, containers, soilMixes = [], year, upsert
       }
       weeks[sowWk].prop.push({
         variety, qty: roundedQty, title, trayCount, propTrayCost: trayCost,
-        trayType: trayName, destinations: destStr, emoji: "\u{1F331}", item: destinations[0],
+        trayType: trayName, destinations: destStr, isSeed,
+        emoji: "\u{1F331}", item: destinations[0],
       });
     });
 
@@ -843,14 +876,21 @@ function ProductionScheduleTab({ items, containers, soilMixes = [], year, upsert
     Object.values(potfillAccum).forEach(p => {
       ensureWeek(p.fillWeek);
       const rowList = [...p.rows].sort();
+      const fromCategory = extractPotSize(p.category);
+      const fromName = extractPotSizeFromName(p.containerName);
+      const potSize = fromCategory.label || fromName.label;
+      const potSizeNum = fromCategory.num !== 999 ? fromCategory.num : fromName.num;
+      const sizePrefix = potSize ? `${potSize} ` : "";
       weeks[p.fillWeek].potfill.push({
         variety: p.containerName, qty: p.totalQty,
-        title: `${fmtN(p.totalQty)} ${p.containerName}`,
+        title: `${sizePrefix}${p.containerName} — ${fmtN(p.totalQty)} pots`,
         location: p.location,
         soilMix: defaultSoilName,
         rowCount: rowList.length,
         rowList,
         containerName: p.containerName,
+        category: p.category,
+        potSize, potSizeNum,
         emoji: "\u{1F4E6}", item: null,
       });
     });
@@ -860,41 +900,70 @@ function ProductionScheduleTab({ items, containers, soilMixes = [], year, upsert
       ensureWeek(p.plantWeekNum);
       const locList = p.locations.size > 0 ? [...p.locations].join(", ") : null;
       const rowList = p.rows.sort((a, b) => (a.rowId || "").localeCompare(b.rowId || ""));
+      const { label: potSize, num: potSizeNum } = extractPotSize(p.category);
+      const sizePrefix = potSize ? `${potSize} ` : "";
+      const pppSuffix = `${p.ppp || 1}/pot`;
       let title;
       if (p.sameDayArrival && !p.isPropagated) {
-        title = `${p.variety} — ${fmtN(p.totalQty)} pots (liners on arrival)`;
+        title = `${sizePrefix}${p.variety} — ${fmtN(p.totalQty)} pots (${pppSuffix}, liners on arrival)`;
       } else if (p.isPropagated) {
-        title = `${p.variety} — ${fmtN(p.totalQty)} pots (from prop)`;
+        title = `${sizePrefix}${p.variety} — ${fmtN(p.totalQty)} pots (${pppSuffix}, from prop)`;
       } else {
-        title = `${p.variety} — ${fmtN(p.totalQty)} pots (${p.ppp}/pot)`;
+        title = `${sizePrefix}${p.variety} — ${fmtN(p.totalQty)} pots (${pppSuffix})`;
       }
       if (p.color) title += ` · ${p.color}`;
       weeks[p.plantWeekNum].planting.push({
         variety: p.variety, qty: p.totalQty, title,
+        ppp: p.ppp || 1, color: p.color,
         location: locList,
         rowCount: rowList.length,
         rowList,
         containerName: p.containerName,
         category: p.category,
+        potSize, potSizeNum,
         emoji: "\u{1F33F}", item: null,
       });
     });
 
-    // ── Consolidate tag tasks — sorted by category then variety for printing ──
+    // ── Consolidate tag tasks — sorted by pot size then variety for printing ──
     Object.values(tagAccum).forEach(t => {
       ensureWeek(t.tagWeek);
+      const { num: potSizeNum } = extractPotSize(t.category);
       weeks[t.tagWeek].tags.push({
         variety: t.variety, qty: t.totalQty,
         category: t.category,
         color: t.color,
         upc: t.upc,
         title: t.variety,
+        potSizeNum,
         emoji: "\u{1F3F7}", item: null,
       });
     });
-    // Sort tags within each week by category then variety
+
+    // Sort each task section within every week
     Object.values(weeks).forEach(w => {
-      w.tags.sort((a, b) => (a.category || "").localeCompare(b.category || "") || (a.variety || "").localeCompare(b.variety || ""));
+      // Prop: group sow (seed) vs stick (URC), then alphabetical by variety
+      w.prop.sort((a, b) =>
+        (a.isSeed === b.isSeed ? 0 : a.isSeed ? -1 : 1) ||
+        (a.variety || "").localeCompare(b.variety || "")
+      );
+      // Pot filling: pot size → container name → location
+      w.potfill.sort((a, b) =>
+        (a.potSizeNum ?? 999) - (b.potSizeNum ?? 999) ||
+        (a.containerName || "").localeCompare(b.containerName || "") ||
+        (a.location || "").localeCompare(b.location || "")
+      );
+      // Planting: pot size → variety → location
+      w.planting.sort((a, b) =>
+        (a.potSizeNum ?? 999) - (b.potSizeNum ?? 999) ||
+        (a.variety || "").localeCompare(b.variety || "") ||
+        (a.location || "").localeCompare(b.location || "")
+      );
+      // Tags: pot size → variety
+      w.tags.sort((a, b) =>
+        (a.potSizeNum ?? 999) - (b.potSizeNum ?? 999) ||
+        (a.variety || "").localeCompare(b.variety || "")
+      );
     });
 
     // Sort weeks and compute totals
@@ -2652,6 +2721,8 @@ function InputsTab({ year, items, programInputs, inputsLibrary, insertProgramInp
 function CostTab({ items, containers, soilMixes, programInputs = [] }) {
   const defaultSoil = pickDefaultSoil(soilMixes);
   const soilCpf = soilCostPerCuFt(defaultSoil);
+  const { rows: pricing } = useCategoryPricing();
+  const priceByCat = useMemo(() => Object.fromEntries((pricing || []).map(p => [p.category, parseFloat(p.proposedPrice) || 0])), [pricing]);
 
   const [shipFilter, setShipFilter] = useState("all");
   const [plantFilter, setPlantFilter] = useState("all");
@@ -2733,14 +2804,21 @@ function CostTab({ items, containers, soilMixes, programInputs = [] }) {
     return Object.values(map).sort((a, b) => b.totalProductionCost - a.totalProductionCost);
   }, [filteredItems, containers, soilCpf, inputCostPerCuFt, inputCostPerPotFixed]);
 
-  const grand = useMemo(() => ({
-    qty: costRows.reduce((s, r) => s + r.totalQty, 0),
-    liner: costRows.reduce((s, r) => s + r.totalLinerCost, 0),
-    soil: costRows.reduce((s, r) => s + r.totalSoilCost, 0),
-    pot: costRows.reduce((s, r) => s + r.totalPotCost, 0),
-    inputs: costRows.reduce((s, r) => s + (r.totalInputCost || 0), 0),
-    total: costRows.reduce((s, r) => s + r.totalProductionCost, 0),
-  }), [costRows]);
+  const grand = useMemo(() => {
+    const sales = costRows.reduce((s, r) => s + ((priceByCat[r.category] || 0) * r.totalQty), 0);
+    const total = costRows.reduce((s, r) => s + r.totalProductionCost, 0);
+    return {
+      qty: costRows.reduce((s, r) => s + r.totalQty, 0),
+      liner: costRows.reduce((s, r) => s + r.totalLinerCost, 0),
+      soil: costRows.reduce((s, r) => s + r.totalSoilCost, 0),
+      pot: costRows.reduce((s, r) => s + r.totalPotCost, 0),
+      inputs: costRows.reduce((s, r) => s + (r.totalInputCost || 0), 0),
+      total,
+      sales,
+      marginDollars: sales - total,
+      marginPct: sales > 0 ? ((sales - total) / sales) * 100 : 0,
+    };
+  }, [costRows, priceByCat]);
 
   const KPI = ({ label, value, color, sub }) => (
     <div style={{ ...card, padding: "16px 20px", margin: 0 }}>
@@ -2790,6 +2868,8 @@ function CostTab({ items, containers, soilMixes, programInputs = [] }) {
         <KPI label="Pot Cost" value={fmt$(grand.pot)} color="#c8791a" />
         <KPI label="Inputs (Fertilizer+)" value={fmt$(grand.inputs)} color="#e89a3a" sub={programInputs.length + " input" + (programInputs.length !== 1 ? "s" : "")} />
         <KPI label="Total Production Cost" value={fmt$(grand.total)} color="#4a7a35" />
+        <KPI label="Expected Sales" value={fmt$(grand.sales)} color="#1e2d1a" sub={grand.sales > 0 ? fmt$2(grand.sales / Math.max(grand.qty, 1)) + "/pot (avg)" : "Set prices on Pricing tab"} />
+        <KPI label="Margin" value={grand.sales > 0 ? grand.marginPct.toFixed(1) + "%" : "—"} color={grand.marginPct >= 30 ? "#4a7a35" : grand.marginPct >= 15 ? "#e89a3a" : "#d94f3d"} sub={grand.sales > 0 ? fmt$(grand.marginDollars) + " gross profit" : undefined} />
       </div>
 
       <div style={{ background: "#fff", borderRadius: 14, border: "1.5px solid #e0ead8", overflow: "hidden", overflowX: "auto" }}>
