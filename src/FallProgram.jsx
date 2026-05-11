@@ -192,7 +192,7 @@ export default function FallProgram() {
   const { rows: containers } = useContainers();
   const { rows: programInputs, insert: insertProgramInput, update: updateProgramInput, remove: removeProgramInput } = useProgramInputs();
   const { rows: inputsLibrary } = useInputProducts();
-  const { rows: managerTasks, upsert: upsertTask } = useManagerTasks();
+  const { rows: managerTasks, upsert: upsertTask, remove: removeTask } = useManagerTasks();
 
   const allYears = useMemo(() => {
     const ys = [...new Set(items.map(i => i.year).filter(Boolean))].sort((a, b) => b - a);
@@ -257,7 +257,7 @@ export default function FallProgram() {
           {section === "overview" && <OverviewTab items={yearItems} year={year} upsert={upsert} />}
           {section === "items" && <ItemsTab items={yearItems} soilMixes={soilMixes} containers={containers} upsert={upsert} updateItem={updateItem} remove={remove} />}
           {section === "color" && <ColorTab items={yearItems} />}
-          {section === "schedule" && <ProductionScheduleTab items={yearItems} containers={containers} soilMixes={soilMixes} year={year} upsertTask={upsertTask} managerTasks={managerTasks} />}
+          {section === "schedule" && <ProductionScheduleTab items={yearItems} containers={containers} soilMixes={soilMixes} year={year} upsertTask={upsertTask} removeTask={removeTask} managerTasks={managerTasks} />}
           {section === "sowing" && <SowingTab items={yearItems} upsert={upsert} />}
           {section === "orders" && <OrdersTab items={yearItems} />}
           {section === "inputs" && <InputsTab year={year} items={yearItems} programInputs={programInputs.filter(p => p.year === year)} inputsLibrary={inputsLibrary} insertProgramInput={insertProgramInput} updateProgramInput={updateProgramInput} removeProgramInput={removeProgramInput} />}
@@ -715,7 +715,7 @@ function ExpandableTaskRow({ task: t, section }) {
   );
 }
 
-function ProductionScheduleTab({ items, containers, soilMixes = [], year, upsertTask, managerTasks }) {
+function ProductionScheduleTab({ items, containers, soilMixes = [], year, upsertTask, removeTask, managerTasks }) {
   const [expandedWeeks, setExpandedWeeks] = useState({});
   const [pushedWeeks, setPushedWeeks] = useState({});
   const [pushing, setPushing] = useState({});
@@ -778,13 +778,16 @@ function ProductionScheduleTab({ items, containers, soilMixes = [], year, upsert
               propAccum[propKey].destinations.push({ category: item.category || "", qty: compQty, containerName: `${containerName} (${variety})` });
             });
           } else {
-            const adjQty = germRate < 1 ? Math.ceil(qty / germRate) : qty;
+            // ppp = seeds (or cuttings) per pot. e.g. 8" Marigold = 3/pot, Supercal HB = 5/pot
+            const perPot = parseFloat(item.ppp) || 1;
+            const baseQty = qty * perPot;
+            const adjQty = germRate < 1 ? Math.ceil(baseQty / germRate) : baseQty;
             const propKey = `${sowWk}||${varUpper}`;
             if (!propAccum[propKey]) {
               propAccum[propKey] = { variety, sowWk, pm, germRate, totalQty: 0, destinations: [] };
             }
             propAccum[propKey].totalQty += adjQty;
-            propAccum[propKey].destinations.push({ category: item.category || "", qty, containerName });
+            propAccum[propKey].destinations.push({ category: item.category || "", qty, perPot, containerName });
           }
         }
       }
@@ -858,7 +861,10 @@ function ProductionScheduleTab({ items, containers, soilMixes = [], year, upsert
       const trayCount = Math.ceil(roundedQty / cells);
       const trayCost = tray ? trayCount * (parseFloat(tray.costPerUnit) || 0) : 0;
       const trayName = isSeed ? "105-cell hex" : "50-cell square";
-      const destStr = destinations.map(d => `${fmtN(d.qty)} → ${d.containerName}`).join(", ");
+      const destStr = destinations.map(d => {
+        const potsStr = d.perPot && d.perPot > 1 ? `${fmtN(d.qty)} pots × ${d.perPot}` : `${fmtN(d.qty)} pots`;
+        return `${potsStr} → ${d.containerName}`;
+      }).join(", ");
       let title;
       if (isSeed) {
         title = `Sow ${fmtN(roundedQty)} ${variety} — ${trayCount} ${trayName} trays`;
@@ -1009,7 +1015,7 @@ function ProductionScheduleTab({ items, containers, soilMixes = [], year, upsert
     setPushingAll(true);
     try {
       for (const w of weeklySchedule) {
-        if (!pushedWeeks[w.weekNum]) await pushWeekToTasks(w);
+        await pushWeekToTasks(w);
       }
     } catch (err) {
       alert("Error: " + err.message);
@@ -1029,22 +1035,56 @@ function ProductionScheduleTab({ items, containers, soilMixes = [], year, upsert
         ...weekData.tasks.planting.map(t => ({ ...t, type: "planting" })),
         ...weekData.tasks.tags.map(t => ({ ...t, type: "tags" })),
       ];
+
+      const newIdSet = new Set();
       for (const t of allTasks) {
         const id = deterministicId(["fall", String(year), `wk${wk}`, t.type, t.variety]);
-        await upsertTask({
-          id,
-          title: `${t.emoji} ${t.title}`,
-          priority: 50,
-          weekNumber: wk,
-          year,
-          status: "pending",
-          category: "production",
-          bucket: "this_week",
-          targetDate,
-          location: "bluff",
-          createdBy: "Production Schedule",
-        });
+        newIdSet.add(id);
+        const existing = managerTasks.find(mt => mt.id === id);
+        const newTitle = `${t.emoji} ${t.title}`;
+
+        if (existing) {
+          // Re-sync: refresh title but preserve manager-side state
+          // (completion, claim, notes, photos, manual bucket/location moves, reordering)
+          await upsertTask({
+            ...existing,
+            title: newTitle,
+            year,
+            weekNumber: wk,
+            category: "production",
+            createdBy: "Production Schedule",
+          });
+        } else {
+          await upsertTask({
+            id,
+            title: newTitle,
+            priority: 50,
+            weekNumber: wk,
+            year,
+            status: "pending",
+            category: "production",
+            bucket: "this_week",
+            targetDate,
+            location: "bluff",
+            createdBy: "Production Schedule",
+          });
+        }
       }
+
+      // Clean up obsolete pending tasks (Fall Program data changed — variety cancelled,
+      // qty zeroed, etc). Leave completed tasks alone to preserve history.
+      const obsolete = managerTasks.filter(t =>
+        t.id && t.id.startsWith("f") &&
+        t.year === year &&
+        t.weekNumber === wk &&
+        (t.createdBy || "").includes("Production Schedule") &&
+        t.status !== "completed" &&
+        !newIdSet.has(t.id)
+      );
+      for (const t of obsolete) {
+        await removeTask(t.id);
+      }
+
       setPushedWeeks(p => ({ ...p, [wk]: true }));
     } catch (err) {
       console.error("Failed to push tasks:", err);
@@ -1081,15 +1121,20 @@ function ProductionScheduleTab({ items, containers, soilMixes = [], year, upsert
         <div style={{ ...card, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
           <div style={{ fontSize: 13, color: "#7a8c74" }}>
             {Object.keys(pushedWeeks).length} of {weeklySchedule.length} weeks pushed to tasks
+            {Object.keys(pushedWeeks).length > 0 && (
+              <span style={{ fontSize: 11, marginLeft: 8, color: "#aabba0" }}>
+                · re-sync preserves done/notes/photos
+              </span>
+            )}
           </div>
-          <button onClick={pushAllWeeks} disabled={allPushed || pushingAll}
+          <button onClick={pushAllWeeks} disabled={pushingAll}
             style={{
               padding: "12px 24px", borderRadius: 10, border: "none",
-              background: allPushed ? "#c8e6b8" : pushingAll ? "#b0c8a0" : "#1e2d1a",
-              color: allPushed ? "#4a7a35" : "#c8e6b8",
-              fontSize: 14, fontWeight: 800, cursor: allPushed ? "default" : "pointer", fontFamily: "inherit",
+              background: pushingAll ? "#b0c8a0" : allPushed ? "#4a90d9" : "#1e2d1a",
+              color: "#c8e6b8",
+              fontSize: 14, fontWeight: 800, cursor: pushingAll ? "default" : "pointer", fontFamily: "inherit",
             }}>
-            {allPushed ? "✓ All weeks pushed" : pushingAll ? "Pushing all..." : "Push All Weeks to Tasks"}
+            {pushingAll ? "Syncing all..." : allPushed ? "↻ Re-sync All Weeks" : "Push All Weeks to Tasks"}
           </button>
         </div>
       )}
@@ -1240,16 +1285,15 @@ function ProductionScheduleTab({ items, containers, soilMixes = [], year, upsert
                   </div>
                   <button
                     onClick={(e) => { e.stopPropagation(); pushWeekToTasks(w); }}
-                    disabled={pushed || isPushing}
+                    disabled={isPushing}
                     style={{
                       ...BTN,
-                      background: pushed ? "#c8e6b8" : isPushing ? "#b0c8a0" : "#7fb069",
+                      background: isPushing ? "#b0c8a0" : pushed ? "#4a90d9" : "#7fb069",
                       fontSize: 13, padding: "8px 18px",
-                      opacity: pushed ? 0.8 : 1,
-                      cursor: pushed ? "default" : "pointer",
+                      cursor: isPushing ? "default" : "pointer",
                     }}
                   >
-                    {pushed ? "\u2713 Pushed" : isPushing ? "Pushing..." : "Push to Tasks"}
+                    {isPushing ? "Syncing..." : pushed ? "\u21bb Re-sync" : "Push to Tasks"}
                   </button>
                 </div>
               </div>
