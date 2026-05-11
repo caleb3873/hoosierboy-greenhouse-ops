@@ -315,6 +315,9 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <div style={{ fontSize: 15, fontWeight: 700, color: isOverdue ? "#d94f3d" : "#1e2d1a", textDecoration: isDone ? "line-through" : "none" }}>{t.title}</div>
               {isOverdue && <span style={{ background: "#d94f3d", color: "#fff", borderRadius: 999, padding: "2px 8px", fontSize: 10, fontWeight: 800 }}>OVERDUE</span>}
+              {(t.createdBy || "").includes("Production Schedule") && (
+                <span style={{ background: "#8e44ad", color: "#fff", borderRadius: 999, padding: "2px 8px", fontSize: 10, fontWeight: 800 }}>🍂 Fall Program</span>
+              )}
               {t.claimedBy && !isDone && (
                 <span style={{ background: "#e89a3a", color: "#fff", borderRadius: 999, padding: "2px 8px", fontSize: 10, fontWeight: 800 }}>🔒 {t.claimedBy}</span>
               )}
@@ -1026,8 +1029,11 @@ export function TaskViewer({ task, onBack, onAppend, readOnly = true }) {
         <div style={{ background: "#fff", borderRadius: 14, padding: 18, border: "1.5px solid #e0ead8", marginBottom: 14 }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", marginBottom: 4 }}>Title</div>
           <div style={{ fontSize: 17, fontWeight: 800, color: "#1e2d1a", marginBottom: 8 }}>{task.title}</div>
-          <div style={{ fontSize: 12, color: "#7a8c74", marginBottom: 14 }}>
-            Assigned by <span style={{ fontWeight: 700, color: "#1e2d1a" }}>{task.createdBy || "Manager"}</span>
+          <div style={{ fontSize: 12, color: "#7a8c74", marginBottom: 14, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span>Assigned by <span style={{ fontWeight: 700, color: "#1e2d1a" }}>{task.createdBy || "Manager"}</span></span>
+            {(task.createdBy || "").includes("Production Schedule") && (
+              <span style={{ background: "#8e44ad", color: "#fff", borderRadius: 999, padding: "2px 8px", fontSize: 10, fontWeight: 800 }}>🍂 Fall Program</span>
+            )}
           </div>
           {task.description && <>
             <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", marginBottom: 4 }}>Details</div>
