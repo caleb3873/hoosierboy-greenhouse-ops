@@ -190,10 +190,16 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
   // Default task location based on who's logged in
   const defaultLocation = useMemo(() => {
     const name = (displayName || "").toLowerCase();
-    if (name.includes("amanda")) return "houseplants";
-    if (name.includes("reese")) return "sprague";
+    if (name.includes("reese") || name.includes("amanda")) return "sprague";
     if (name.includes("paul")) return "bluff";
     return "bluff"; // default for others
+  }, [displayName]);
+
+  // Amanda's tasks get tagged for the Houseplants team automatically.
+  // The task still lives in its normal production sub-tab (Pot Fill, Planting, etc) — the tag is just a label.
+  const defaultTeam = useMemo(() => {
+    const name = (displayName || "").toLowerCase();
+    return name.includes("amanda") ? "houseplants" : null;
   }, [displayName]);
   const [selectedTask, setSelectedTask] = useState(null);
   const [showRecorder, setShowRecorder] = useState(false);
@@ -275,6 +281,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       carriedOver: false,
       createdBy: displayName || "Manager",
       location: location || defaultLocation,
+      team: defaultTeam,
       photos: [],
     });
     setShowRecorder(false);
@@ -494,6 +501,9 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
               {(t.createdBy || "").includes("Sowing Watch") && (
                 <span style={{ background: "#1a8a8a", color: "#fff", borderRadius: 999, padding: "2px 8px", fontSize: 10, fontWeight: 800 }}>🔍 Auto Watch</span>
               )}
+              {t.team === "houseplants" && (
+                <span style={{ background: "#7fb069", color: "#1e2d1a", borderRadius: 999, padding: "2px 8px", fontSize: 10, fontWeight: 800 }}>🪴 Houseplants</span>
+              )}
               {t.claimedBy && !isDone && (
                 <span style={{ background: "#e89a3a", color: "#fff", borderRadius: 999, padding: "2px 8px", fontSize: 10, fontWeight: 800 }}>🔒 {t.claimedBy}</span>
               )}
@@ -648,10 +658,10 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       </div>
       )}
 
-      {/* Location filter — Sprague vs Bluff vs Houseplants */}
+      {/* Location filter — Sprague vs Bluff */}
       {category !== "brehob" && (
-      <div style={{ padding: "0 20px 12px", background: "#fff", borderBottom: "1.5px solid #e0ead8", display: "flex", gap: 6 }}>
-        {[{id:"all",label:"All"},{id:"bluff",label:"🌱 Bluff"},{id:"sprague",label:"🌿 Sprague"},{id:"houseplants",label:"🪴 Houseplants"}].map(f => (
+      <div style={{ padding: "0 20px 12px", background: "#fff", borderBottom: "1.5px solid #e0ead8", display: "flex", gap: 8 }}>
+        {[{id:"all",label:"All"},{id:"bluff",label:"🌱 Bluff"},{id:"sprague",label:"🌿 Sprague"}].map(f => (
           <button key={f.id} onClick={() => setLocationFilter(f.id)}
             style={{
               flex: 1, padding: "8px 0", borderRadius: 8, fontSize: 12, fontWeight: 700,
@@ -1286,7 +1296,6 @@ function VoiceRecorderModal({ onSave, onCancel, defaultLocation = "bluff" }) {
           {[
             { id: "bluff", label: "🌱 Bluff" },
             { id: "sprague", label: "🌿 Sprague" },
-            { id: "houseplants", label: "🪴 Houseplants" },
           ].map(l => (
             <button key={l.id} onClick={() => setLocation(l.id)}
               style={{
@@ -1444,6 +1453,9 @@ export function TaskViewer({ task, onBack, onAppend, readOnly = true }) {
             )}
             {task.assignedTo && (
               <span style={{ background: "#4a90d9", color: "#fff", borderRadius: 999, padding: "2px 8px", fontSize: 10, fontWeight: 800 }}>👤 Assigned to {task.assignedTo}</span>
+            )}
+            {task.team === "houseplants" && (
+              <span style={{ background: "#7fb069", color: "#1e2d1a", borderRadius: 999, padding: "2px 8px", fontSize: 10, fontWeight: 800 }}>🪴 Houseplants</span>
             )}
           </div>
           {task.description && <>
