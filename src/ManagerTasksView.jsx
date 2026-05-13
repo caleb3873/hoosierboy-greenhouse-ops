@@ -190,7 +190,8 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
   // Default task location based on who's logged in
   const defaultLocation = useMemo(() => {
     const name = (displayName || "").toLowerCase();
-    if (name.includes("reese") || name.includes("amanda")) return "sprague";
+    if (name.includes("amanda")) return "houseplants";
+    if (name.includes("reese")) return "sprague";
     if (name.includes("paul")) return "bluff";
     return "bluff"; // default for others
   }, [displayName]);
@@ -647,10 +648,10 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       </div>
       )}
 
-      {/* Location filter — Sprague vs Bluff */}
+      {/* Location filter — Sprague vs Bluff vs Houseplants */}
       {category !== "brehob" && (
-      <div style={{ padding: "0 20px 12px", background: "#fff", borderBottom: "1.5px solid #e0ead8", display: "flex", gap: 8 }}>
-        {[{id:"all",label:"All"},{id:"bluff",label:"🌱 Bluff"},{id:"sprague",label:"🌿 Sprague"}].map(f => (
+      <div style={{ padding: "0 20px 12px", background: "#fff", borderBottom: "1.5px solid #e0ead8", display: "flex", gap: 6 }}>
+        {[{id:"all",label:"All"},{id:"bluff",label:"🌱 Bluff"},{id:"sprague",label:"🌿 Sprague"},{id:"houseplants",label:"🪴 Houseplants"}].map(f => (
           <button key={f.id} onClick={() => setLocationFilter(f.id)}
             style={{
               flex: 1, padding: "8px 0", borderRadius: 8, fontSize: 12, fontWeight: 700,
@@ -1146,10 +1147,22 @@ function CodesModal({ onClose }) {
 // ══════════════════════════════════════════════════════════════════════════════
 // ── VOICE RECORDER MODAL ────────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════════════
+// Task type chips shown in the create-task modal. Selecting a type prepends an
+// emoji (+ verb for sow/stick) so getProdType() picks it up downstream.
+const TASK_TYPE_OPTIONS = [
+  { id: "other",    label: "General",      emoji: "",   verb: "" },
+  { id: "sow",      label: "Sowing",       emoji: "🌱", verb: "Sow" },
+  { id: "stick",    label: "Sticking",     emoji: "🌱", verb: "Stick" },
+  { id: "potfill",  label: "Pot Filling",  emoji: "📦", verb: "" },
+  { id: "planting", label: "Planting",     emoji: "🌿", verb: "" },
+  { id: "tags",     label: "Tags",         emoji: "🏷", verb: "" },
+];
+
 function VoiceRecorderModal({ onSave, onCancel, defaultLocation = "bluff" }) {
   const [transcript, setTranscript] = useState("");
   const [bucket, setBucket] = useState("today");
   const [location, setLocation] = useState(defaultLocation);
+  const [taskType, setTaskType] = useState("other");
   const [isListening, setIsListening] = useState(false);
   const [error, setError] = useState("");
   const recognitionRef = useRef(null);
@@ -1216,7 +1229,14 @@ function VoiceRecorderModal({ onSave, onCancel, defaultLocation = "bluff" }) {
   function save() {
     if (!transcript.trim()) return;
     try { recognitionRef.current?.stop(); } catch {}
-    onSave(transcript, bucket, location);
+    const type = TASK_TYPE_OPTIONS.find(o => o.id === taskType);
+    let finalTitle = transcript.trim();
+    if (type && type.emoji) {
+      finalTitle = type.verb
+        ? `${type.emoji} ${type.verb} ${finalTitle}`
+        : `${type.emoji} ${finalTitle}`;
+    }
+    onSave(finalTitle, bucket, location);
   }
 
   return (
@@ -1266,6 +1286,7 @@ function VoiceRecorderModal({ onSave, onCancel, defaultLocation = "bluff" }) {
           {[
             { id: "bluff", label: "🌱 Bluff" },
             { id: "sprague", label: "🌿 Sprague" },
+            { id: "houseplants", label: "🪴 Houseplants" },
           ].map(l => (
             <button key={l.id} onClick={() => setLocation(l.id)}
               style={{
@@ -1278,6 +1299,25 @@ function VoiceRecorderModal({ onSave, onCancel, defaultLocation = "bluff" }) {
               {l.label}
             </button>
           ))}
+        </div>
+
+        {/* Task type selection — prepends emoji/verb to title so sub-tab filter picks it up */}
+        <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+          {TASK_TYPE_OPTIONS.map(t => {
+            const active = taskType === t.id;
+            return (
+              <button key={t.id} onClick={() => setTaskType(t.id)}
+                style={{
+                  padding: "8px 12px", borderRadius: 999, fontSize: 12, fontWeight: 700,
+                  background: active ? "#4a90d9" : "#f2f5ef",
+                  color: active ? "#fff" : "#7a8c74",
+                  border: `1.5px solid ${active ? "#4a90d9" : "#c8d8c0"}`,
+                  cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap",
+                }}>
+                {t.emoji && <span style={{ marginRight: 4 }}>{t.emoji}</span>}{t.label}
+              </button>
+            );
+          })}
         </div>
 
         <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
