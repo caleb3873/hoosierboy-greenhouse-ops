@@ -149,13 +149,13 @@ export function formatTargetDate(iso) {
 // ══════════════════════════════════════════════════════════════════════════════
 // ── MANAGER VIEW ────────────────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════════════
-export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateGrowing = true }) {
+export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateGrowing = true, defaultCategory }) {
   const { rows: tasks, upsert, remove, refresh } = useManagerTasks();
   const { displayName } = useAuth();
 
   const today = useMemo(() => getWeekInfo(), []);
   const [selectedWeek, setSelectedWeek] = useState(today);
-  const [category, setCategory] = useState(canCreateGrowing ? "growing" : "production"); // production | growing | brehob
+  const [category, setCategory] = useState(defaultCategory || (canCreateGrowing ? "growing" : "production")); // production | growing | brehob
   const [statusFilter, setStatusFilter] = useState("pending"); // all | pending | completed
   const [locationFilter, setLocationFilter] = useState("all"); // all | bluff | sprague
   const [prodTypeFilter, setProdTypeFilter] = useState(() => {
@@ -177,9 +177,22 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
   const [showCodes, setShowCodes] = useState(false);
   const [showRequests, setShowRequests] = useState(false);
   const [approvingRequest, setApprovingRequest] = useState(null);
+  const [showOverdue, setShowOverdue] = useState(false);
   const autoOpenedRef = useRef(false);
+  const overdueCheckedRef = useRef(false);
 
   const pendingRequests = useMemo(() => tasks.filter(t => t.status === "requested"), [tasks]);
+
+  // Overdue scope: this user's category default + any carryover. Surfaces once per session per user.
+  const overdueTasks = useMemo(() =>
+    tasks.filter(t =>
+      t.status !== "completed" &&
+      t.status !== "requested" &&
+      t.carriedOver === true &&
+      t.year === today.year &&
+      t.weekNumber === today.week
+    ).sort((a, b) => (b.priority || 0) - (a.priority || 0)),
+  [tasks, today]);
 
   // Auto-open requests modal on first load if there are any
   useEffect(() => {
@@ -188,6 +201,26 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       setShowRequests(true);
     }
   }, [pendingRequests.length]);
+
+  // Auto-open overdue modal once per session if anything is overdue.
+  // Waits a tick so the carryover effect has a chance to settle.
+  useEffect(() => {
+    if (overdueCheckedRef.current) return;
+    if (!tasks.length) return;
+    const sessionKey = `gh_overdue_seen_${displayName || "anon"}_${today.year}w${today.week}`;
+    if (sessionStorage.getItem(sessionKey)) {
+      overdueCheckedRef.current = true;
+      return;
+    }
+    const id = setTimeout(() => {
+      if (overdueTasks.length > 0) {
+        setShowOverdue(true);
+        sessionStorage.setItem(sessionKey, "1");
+      }
+      overdueCheckedRef.current = true;
+    }, 500);
+    return () => clearTimeout(id);
+  }, [tasks.length, overdueTasks.length, displayName, today.year, today.week]);
 
   // Filter + sort by priority (higher = more important = on top)
   const visibleTasks = useMemo(() => {
@@ -685,6 +718,22 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
           onSave={finishCompletion}
         />
       )}
+      {showOverdue && (
+        <OverdueModal
+          tasks={overdueTasks}
+          displayName={displayName}
+          onClose={() => setShowOverdue(false)}
+          onMarkDone={async (t) => {
+            await upsert({
+              ...t,
+              status: "completed",
+              completedBy: displayName || "Manager",
+              completedAt: new Date().toISOString(),
+            });
+            refresh();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -779,6 +828,101 @@ export function CompletionPromptModal({ task, onCancel, onSave }) {
             ✓ Mark Done
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Overdue tasks modal (shown once per session on login when there are overdue items) ──
+function OverdueModal({ tasks, displayName, onClose, onMarkDone }) {
+  const [dismissed, setDismissed] = useState(new Set());
+  const [busy, setBusy] = useState(null); // task id while a mark-done is in-flight
+  const visible = tasks.filter(t => !dismissed.has(t.id));
+
+  async function handleMarkDone(t) {
+    setBusy(t.id);
+    try { await onMarkDone(t); }
+    finally { setBusy(null); }
+    // Auto-remove from visible list after marking done
+    setDismissed(prev => { const s = new Set(prev); s.add(t.id); return s; });
+  }
+
+  function handleDismiss(t) {
+    setDismissed(prev => { const s = new Set(prev); s.add(t.id); return s; });
+  }
+
+  return (
+    <div onClick={onClose}
+      style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 1000,
+        display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
+      }}>
+      <div onClick={e => e.stopPropagation()}
+        style={{
+          background: "#fff", borderRadius: 16, maxWidth: 560, width: "100%",
+          maxHeight: "85vh", overflow: "auto", padding: 0,
+          fontFamily: "'DM Sans','Segoe UI',sans-serif",
+        }}>
+        <div style={{
+          background: "#d94f3d", color: "#fff", padding: "16px 20px",
+          borderRadius: "16px 16px 0 0", display: "flex", justifyContent: "space-between", alignItems: "center",
+        }}>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 1.2, textTransform: "uppercase", opacity: 0.85 }}>
+              {displayName ? `Welcome back, ${displayName}` : "Welcome back"}
+            </div>
+            <div style={{ fontSize: 20, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif" }}>
+              ⚠ {tasks.length} Overdue Task{tasks.length !== 1 ? "s" : ""}
+            </div>
+          </div>
+          <button onClick={onClose}
+            style={{ background: "transparent", border: "1.5px solid rgba(255,255,255,0.5)", color: "#fff", padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+            Dismiss all
+          </button>
+        </div>
+
+        {visible.length === 0 ? (
+          <div style={{ padding: 40, textAlign: "center", color: "#7a8c74" }}>
+            <div style={{ fontSize: 36, marginBottom: 8 }}>✓</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: "#1e2d1a" }}>All cleared</div>
+            <button onClick={onClose}
+              style={{ marginTop: 14, background: "#7fb069", border: "none", color: "#1e2d1a", padding: "10px 22px", borderRadius: 10, fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+              Close
+            </button>
+          </div>
+        ) : (
+          <>
+            <div style={{ padding: "12px 20px 4px", fontSize: 13, color: "#7a8c74" }}>
+              These were carried over from a prior week. Mark them done or dismiss to move on.
+            </div>
+            <div style={{ padding: "8px 16px 16px" }}>
+              {visible.map(t => (
+                <div key={t.id} style={{
+                  background: "#fff", borderRadius: 12, border: "1.5px solid #f0b8b0",
+                  padding: "12px 14px", marginBottom: 10,
+                }}>
+                  <div style={{ display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 8 }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: "#1e2d1a", flex: 1 }}>{t.title}</div>
+                    <span style={{ background: "#d94f3d", color: "#fff", borderRadius: 999, padding: "2px 8px", fontSize: 10, fontWeight: 800, flexShrink: 0 }}>OVERDUE</span>
+                  </div>
+                  {t.description && (
+                    <div style={{ fontSize: 12, color: "#7a8c74", marginBottom: 8, whiteSpace: "pre-wrap" }}>{t.description}</div>
+                  )}
+                  <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                    <button onClick={() => handleDismiss(t)} disabled={busy === t.id}
+                      style={{ background: "#fff", border: "1.5px solid #c8d8c0", color: "#7a8c74", padding: "8px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                      Dismiss
+                    </button>
+                    <button onClick={() => handleMarkDone(t)} disabled={busy === t.id}
+                      style={{ background: busy === t.id ? "#b0c8a0" : "#7fb069", border: "none", color: "#1e2d1a", padding: "8px 14px", borderRadius: 8, fontSize: 12, fontWeight: 800, cursor: busy === t.id ? "default" : "pointer", fontFamily: "inherit" }}>
+                      {busy === t.id ? "Saving..." : "✓ Mark Done"}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

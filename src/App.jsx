@@ -263,6 +263,9 @@ function PlannerShell() {
 function FloorAppRouter({ role, isManager, growerProfile, signOut }) {
   const name = growerProfile?.name || "";
   const isReese = name === "Reese Morris";
+  // Production-first managers (shipping/ops crew turned production lead) — see Production tab on entry.
+  // Paul/Amanda still see Growing first because that's where they create grower tasks.
+  const productionFirst = ["Evie", "Sam", "Ryan", "Nick", "Tyler"].some(n => name.includes(n));
   // Manager + Reese start in task creator. Other workers start in worker checklist.
   const initial = isManager || isReese ? "creator" : "worker";
   const [view, setView] = useState(initial);
@@ -272,6 +275,7 @@ function FloorAppRouter({ role, isManager, growerProfile, signOut }) {
       onSwitchMode={signOut}
       onBackToApp={() => setView("app")}
       canCreateGrowing={isManager || isReese}
+      defaultCategory={productionFirst ? "production" : undefined}
     />;
   }
   if (view === "worker") {
