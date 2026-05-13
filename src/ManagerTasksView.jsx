@@ -72,6 +72,34 @@ function getProdType(title) {
   return "other";
 }
 
+// Monday of ISO week N in year Y
+function weekMonday(year, week) {
+  const jan4 = new Date(year, 0, 4);
+  const startOfWeek = new Date(jan4);
+  startOfWeek.setDate(jan4.getDate() - ((jan4.getDay() + 6) % 7));
+  const monday = new Date(startOfWeek);
+  monday.setDate(startOfWeek.getDate() + (week - 1) * 7);
+  return monday;
+}
+
+// Stable UUID-shaped ID for an auto watch task — "w" prefix avoids collision
+// with Fall Program push tasks (which use "f") and shields these from re-sync cleanup.
+function watchTaskId(year, week, type) {
+  const str = `watch|${year}|${week}|${type}`;
+  let h = 0;
+  for (let i = 0; i < str.length; i++) h = ((h << 5) - h + str.charCodeAt(i)) | 0;
+  const hex = Math.abs(h).toString(16).padStart(8, "0");
+  return `w${hex.slice(0,7)}-${hex.slice(0,4)}-4${hex.slice(1,4)}-a${hex.slice(2,5)}-${hex.padEnd(12, "0").slice(0,12)}`;
+}
+
+// Extract the variety name from a prop task title like "🌱 Sow 200 MARIGOLD INCA GOLD — 2 105-cell hex trays (90% germ)"
+function extractPropVariety(title) {
+  if (!title) return null;
+  // strip emoji + verb + qty, capture variety up to the first em-dash or parenthesis
+  const m = title.match(/(?:Sow|Stick)\s+[\d,]+\s+(.+?)(?:\s+URCs?)?(?:\s+—|\s+\(|$)/);
+  return m ? m[1].trim() : null;
+}
+
 function getWeekInfo(date = new Date()) {
   const year = date.getFullYear();
   const jan4 = new Date(year, 0, 4);
@@ -288,6 +316,63 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
     });
   }, [tasks.length]); // eslint-disable-line
 
+  // ── AUTO WATCH TASK: when all sow/stick tasks for a given week complete, create a
+  // Sprague growing task to monitor germination/establishment. Fires once per group
+  // (deterministic ID prevents duplicates). Does not re-create if the manager deletes it.
+  useEffect(() => {
+    if (!tasks.length) return;
+    const todayISO = new Date().toISOString().slice(0, 10);
+
+    // Group production sow & stick tasks by (year, week, type)
+    const groups = {};
+    for (const t of tasks) {
+      if ((t.category || "production") !== "production") continue;
+      const type = getProdType(t.title);
+      if (type !== "sow" && type !== "stick") continue;
+      const key = `${t.year}|${t.weekNumber}|${type}`;
+      if (!groups[key]) groups[key] = { year: t.year, week: t.weekNumber, type, tasks: [] };
+      groups[key].tasks.push(t);
+    }
+
+    for (const g of Object.values(groups)) {
+      if (g.tasks.length === 0) continue;
+      const allDone = g.tasks.every(t => t.status === "completed");
+      if (!allDone) continue;
+
+      const id = watchTaskId(g.year, g.week, g.type);
+      if (tasks.some(t => t.id === id)) continue; // already created (or kept after deletion if we ever add tombstones)
+
+      const sowMonday = weekMonday(g.year, g.week);
+      const dateLabel = sowMonday.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      const verb = g.type === "sow" ? "sowing" : "URC";
+      const title = `🔍 Watch ${verb} group — Wk ${g.week} (${dateLabel})`;
+      const varieties = [...new Set(g.tasks.map(t => extractPropVariety(t.title)).filter(Boolean))];
+      const verbAction = g.type === "sow"
+        ? "Monitor germination, water as needed, check for damping off."
+        : "Monitor URC establishment, watch for wilt, mist as needed.";
+      const description =
+        `Auto-created when all ${verb} tasks for Wk ${g.week} (${dateLabel}) finished.\n` +
+        `${verbAction}\n\n` +
+        `VARIETIES (${varieties.length}):\n${varieties.map(v => `  • ${v}`).join("\n")}`;
+
+      upsert({
+        id,
+        title,
+        description,
+        category: "growing",
+        location: "sprague",
+        year: today.year,
+        weekNumber: today.week,
+        bucket: "today",
+        targetDate: todayISO,
+        status: "pending",
+        priority: 60,
+        createdBy: "Sowing Watch (auto)",
+        photos: [],
+      });
+    }
+  }, [tasks]); // eslint-disable-line
+
   async function moveTask(task, direction) {
     const sameWeek = visibleTasks;
     const idx = sameWeek.findIndex(t => t.id === task.id);
@@ -349,6 +434,9 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
               {isOverdue && <span style={{ background: "#d94f3d", color: "#fff", borderRadius: 999, padding: "2px 8px", fontSize: 10, fontWeight: 800 }}>OVERDUE</span>}
               {(t.createdBy || "").includes("Production Schedule") && (
                 <span style={{ background: "#8e44ad", color: "#fff", borderRadius: 999, padding: "2px 8px", fontSize: 10, fontWeight: 800 }}>🍂 Fall Program</span>
+              )}
+              {(t.createdBy || "").includes("Sowing Watch") && (
+                <span style={{ background: "#1a8a8a", color: "#fff", borderRadius: 999, padding: "2px 8px", fontSize: 10, fontWeight: 800 }}>🔍 Auto Watch</span>
               )}
               {t.claimedBy && !isDone && (
                 <span style={{ background: "#e89a3a", color: "#fff", borderRadius: 999, padding: "2px 8px", fontSize: 10, fontWeight: 800 }}>🔒 {t.claimedBy}</span>

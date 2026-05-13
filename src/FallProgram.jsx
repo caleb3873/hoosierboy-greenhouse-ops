@@ -1134,6 +1134,7 @@ function ProductionScheduleTab({ items, containers, soilMixes = [], year, upsert
         t.id && t.id.startsWith("f") &&
         t.year === year &&
         t.weekNumber === wk &&
+        (t.category || "production") === "production" &&
         (t.createdBy || "").includes("Production Schedule") &&
         t.status !== "completed" &&
         !newIdSet.has(t.id)
