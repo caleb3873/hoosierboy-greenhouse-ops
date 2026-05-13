@@ -49,6 +49,29 @@ export function TaskPhoto({ src, onRemove, size = 90 }) {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+// Production sub-types — derived from title prefix (emoji + verb) since the schema
+// has no explicit subType column. Manual tasks fall under "other".
+const PROD_TYPES = [
+  { id: "all",      label: "All",     emoji: "" },
+  { id: "sow",      label: "Sowing",  emoji: "🌱" },
+  { id: "stick",    label: "Prop",    emoji: "🌱" },
+  { id: "potfill",  label: "Pot Fill", emoji: "📦" },
+  { id: "planting", label: "Plant",   emoji: "🌿" },
+  { id: "tags",     label: "Tags",    emoji: "🏷" },
+];
+function getProdType(title) {
+  if (!title) return "other";
+  if (title.includes("🌱")) {
+    if (title.includes("Sow ")) return "sow";
+    if (title.includes("Stick ")) return "stick";
+    return "sow";
+  }
+  if (title.includes("📦")) return "potfill";
+  if (title.includes("🌿")) return "planting";
+  if (title.includes("🏷")) return "tags";
+  return "other";
+}
+
 function getWeekInfo(date = new Date()) {
   const year = date.getFullYear();
   const jan4 = new Date(year, 0, 4);
@@ -107,6 +130,12 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
   const [category, setCategory] = useState(canCreateGrowing ? "growing" : "production"); // production | growing | brehob
   const [statusFilter, setStatusFilter] = useState("pending"); // all | pending | completed
   const [locationFilter, setLocationFilter] = useState("all"); // all | bluff | sprague
+  const [prodTypeFilter, setProdTypeFilter] = useState(() => {
+    try { return localStorage.getItem("gh_mgr_prod_type") || "all"; } catch { return "all"; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem("gh_mgr_prod_type", prodTypeFilter); } catch {}
+  }, [prodTypeFilter]);
 
   // Default task location based on who's logged in
   const defaultLocation = useMemo(() => {
@@ -138,8 +167,11 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
     if (statusFilter === "pending") r = r.filter(t => t.status !== "completed");
     else if (statusFilter === "completed") r = r.filter(t => t.status === "completed");
     if (locationFilter !== "all") r = r.filter(t => (t.location || "").toLowerCase() === locationFilter);
+    if (category === "production" && prodTypeFilter !== "all") {
+      r = r.filter(t => getProdType(t.title) === prodTypeFilter);
+    }
     return [...r].sort((a, b) => (b.priority || 0) - (a.priority || 0));
-  }, [tasks, selectedWeek, statusFilter, category, locationFilter]);
+  }, [tasks, selectedWeek, statusFilter, category, locationFilter, prodTypeFilter]);
 
   const canCreateInCurrentCategory = category === "production" || canCreateGrowing;
 
@@ -445,6 +477,44 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
         ))}
       </div>
       )}
+
+      {/* Production sub-type filter — Sowing / Propagation / Pot Fill / Planting / Tags */}
+      {category === "production" && (() => {
+        const baseTasks = tasks.filter(t =>
+          t.status !== "requested" &&
+          t.year === selectedWeek.year &&
+          t.weekNumber === selectedWeek.week &&
+          (t.category || "production") === "production" &&
+          (statusFilter === "all" || (statusFilter === "pending" ? t.status !== "completed" : t.status === "completed")) &&
+          (locationFilter === "all" || (t.location || "").toLowerCase() === locationFilter)
+        );
+        const counts = baseTasks.reduce((acc, t) => {
+          const k = getProdType(t.title);
+          acc[k] = (acc[k] || 0) + 1;
+          acc.all = (acc.all || 0) + 1;
+          return acc;
+        }, {});
+        return (
+          <div style={{ padding: "0 20px 12px", background: "#fff", borderBottom: "1.5px solid #e0ead8", display: "flex", gap: 6, overflowX: "auto" }}>
+            {PROD_TYPES.map(f => {
+              const active = prodTypeFilter === f.id;
+              const c = counts[f.id] || 0;
+              return (
+                <button key={f.id} onClick={() => setProdTypeFilter(f.id)}
+                  style={{
+                    flexShrink: 0, padding: "8px 12px", borderRadius: 999, fontSize: 12, fontWeight: 700,
+                    background: active ? "#1e2d1a" : "#f2f5ef",
+                    color: active ? "#c8e6b8" : "#7a8c74",
+                    border: `1.5px solid ${active ? "#1e2d1a" : "#c8d8c0"}`,
+                    cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap",
+                  }}>
+                  {f.emoji && <span style={{ marginRight: 4 }}>{f.emoji}</span>}{f.label} ({c})
+                </button>
+              );
+            })}
+          </div>
+        );
+      })()}
 
       {/* Task list grouped by bucket */}
       {category !== "brehob" && (

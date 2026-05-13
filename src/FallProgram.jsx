@@ -772,10 +772,11 @@ function ProductionScheduleTab({ items, containers, soilMixes = [], year, upsert
               const adjCompQty = germRate < 1 ? Math.ceil(compQty / germRate) : compQty;
               const propKey = `${sowWk}||${mc.name}`;
               if (!propAccum[propKey]) {
-                propAccum[propKey] = { variety: mc.name, sowWk, pm, germRate, totalQty: 0, destinations: [] };
+                propAccum[propKey] = { variety: mc.name, sowWk, pm, germRate, totalNeeded: 0, totalQty: 0, destinations: [] };
               }
+              propAccum[propKey].totalNeeded += compQty;
               propAccum[propKey].totalQty += adjCompQty;
-              propAccum[propKey].destinations.push({ category: item.category || "", qty: compQty, containerName: `${containerName} (${variety})` });
+              propAccum[propKey].destinations.push({ category: item.category || "", qty: qty, perPot: mc.perPot, containerName: `${containerName} (${variety})` });
             });
           } else {
             // ppp = seeds (or cuttings) per pot. e.g. 8" Marigold = 3/pot, Supercal HB = 5/pot
@@ -784,8 +785,9 @@ function ProductionScheduleTab({ items, containers, soilMixes = [], year, upsert
             const adjQty = germRate < 1 ? Math.ceil(baseQty / germRate) : baseQty;
             const propKey = `${sowWk}||${varUpper}`;
             if (!propAccum[propKey]) {
-              propAccum[propKey] = { variety, sowWk, pm, germRate, totalQty: 0, destinations: [] };
+              propAccum[propKey] = { variety, sowWk, pm, germRate, totalNeeded: 0, totalQty: 0, destinations: [] };
             }
+            propAccum[propKey].totalNeeded += baseQty;
             propAccum[propKey].totalQty += adjQty;
             propAccum[propKey].destinations.push({ category: item.category || "", qty, perPot, containerName });
           }
@@ -850,7 +852,7 @@ function ProductionScheduleTab({ items, containers, soilMixes = [], year, upsert
 
     // ── Consolidate prop/seed tasks by variety ──
     Object.values(propAccum).forEach(p => {
-      const { variety, sowWk, pm, germRate, totalQty, destinations } = p;
+      const { variety, sowWk, pm, germRate, totalNeeded, totalQty, destinations } = p;
       ensureWeek(sowWk);
       const isSeed = pm === "SEED";
       // URCs are ordered in 100-plug increments (supplier minimum) — seed rounds to tray (50 cells)
@@ -874,8 +876,37 @@ function ProductionScheduleTab({ items, containers, soilMixes = [], year, upsert
         title = `Stick ${fmtN(roundedQty)} ${variety} URCs — ${trayCount} ${trayName} trays`;
         if (surplus > 0) title += ` (${fmtN(totalQty)} needed, ${fmtN(surplus)} extra — stick all to cover losses)`;
       }
+
+      // Description = breakdown shown when opening the task (what for, extras, final check)
+      const destLines = destinations.map(d => {
+        const breakdown = d.perPot && d.perPot > 1
+          ? `${fmtN(d.qty)} pots × ${d.perPot} = ${fmtN(d.qty * d.perPot)}`
+          : `${fmtN(d.qty)} pots`;
+        return `  • ${breakdown} → ${d.containerName}`;
+      }).join("\n");
+      const verb = isSeed ? "Sow" : "Stick";
+      const unit = isSeed ? "seeds" : "cuttings";
+      const trayLabel = `${trayCount} × ${trayName} tray${trayCount !== 1 ? "s" : ""}`;
+      let description = `NEEDED: ${fmtN(totalNeeded)} ${unit}`;
+      const germExtra = totalQty - totalNeeded;
+      const roundExtra = roundedQty - totalQty;
+      if (isSeed && germExtra > 0) {
+        description += `\n+ ${fmtN(germExtra)} for ${Math.round(germRate * 100)}% germ rate`;
+      }
+      if (roundExtra > 0) {
+        description += isSeed
+          ? `\n+ ${fmtN(roundExtra)} (rounded to fill tray)`
+          : `\n+ ${fmtN(roundExtra)} (rounded to 100-plug supplier minimum)`;
+      }
+      description += `\n──────────`;
+      description += `\n${verb.toUpperCase()} TOTAL: ${fmtN(roundedQty)} ${unit} in ${trayLabel}`;
+      if (!isSeed && (roundedQty > totalNeeded)) {
+        description += `\nStick ALL — surplus covers stick losses`;
+      }
+      description += `\n\nFOR:\n${destLines}`;
+
       weeks[sowWk].prop.push({
-        variety, qty: roundedQty, title, trayCount, propTrayCost: trayCost,
+        variety, qty: roundedQty, title, description, trayCount, propTrayCost: trayCost,
         trayType: trayName, destinations: destStr, isSeed,
         emoji: "\u{1F331}", item: destinations[0],
       });
@@ -891,9 +922,14 @@ function ProductionScheduleTab({ items, containers, soilMixes = [], year, upsert
       const potSize = fromCategory.label || fromName.label;
       const potSizeNum = fromCategory.num !== 999 ? fromCategory.num : fromName.num;
       const sizePrefix = potSize ? `${potSize} ` : "";
+      let description = `FILL: ${fmtN(p.totalQty)} pots — ${p.containerName}`;
+      description += `\nSOIL: ${defaultSoilName}`;
+      if (p.location) description += `\nLOCATION: ${p.location}`;
+      if (rowList.length > 0) description += `\nROWS (${rowList.length}): ${rowList.join(", ")}`;
       weeks[p.fillWeek].potfill.push({
         variety: p.containerName, qty: p.totalQty,
         title: `${sizePrefix}${p.containerName} — ${fmtN(p.totalQty)} pots`,
+        description,
         location: p.location,
         soilMix: defaultSoilName,
         rowCount: rowList.length,
@@ -922,8 +958,21 @@ function ProductionScheduleTab({ items, containers, soilMixes = [], year, upsert
         title = `${sizePrefix}${p.variety} — ${fmtN(p.totalQty)} pots (${pppSuffix})`;
       }
       if (p.color) title += ` · ${p.color}`;
+      const totalPlants = p.totalQty * (p.ppp || 1);
+      let description = `PLANT: ${fmtN(p.totalQty)} pots of ${p.variety}`;
+      if (p.color) description += ` (${p.color})`;
+      description += `\nPOT: ${p.category || p.containerName}`;
+      if ((p.ppp || 1) > 1) description += `\nPLANTS/POT: ${p.ppp} (= ${fmtN(totalPlants)} plants total)`;
+      if (p.sameDayArrival && !p.isPropagated) description += `\nSOURCE: Liners arrive day-of`;
+      else if (p.isPropagated) description += `\nSOURCE: From prop (sown/stuck earlier)`;
+      else description += `\nSOURCE: Liners (arrived earlier)`;
+      if (locList) description += `\nLOCATION: ${locList}`;
+      if (rowList.length > 0) {
+        const rowIds = rowList.map(r => r.rowId).filter(Boolean);
+        if (rowIds.length > 0) description += `\nROWS (${rowIds.length}): ${rowIds.join(", ")}`;
+      }
       weeks[p.plantWeekNum].planting.push({
-        variety: p.variety, qty: p.totalQty, title,
+        variety: p.variety, qty: p.totalQty, title, description,
         ppp: p.ppp || 1, color: p.color,
         location: locList,
         rowCount: rowList.length,
@@ -939,8 +988,13 @@ function ProductionScheduleTab({ items, containers, soilMixes = [], year, upsert
     Object.values(tagAccum).forEach(t => {
       ensureWeek(t.tagWeek);
       const { num: potSizeNum } = extractPotSize(t.category);
+      let description = `PRINT: ${fmtN(t.totalQty)} tags`;
+      description += `\nVARIETY: ${t.variety}`;
+      if (t.category) description += `\nPOT: ${t.category}`;
+      if (t.color) description += `\nCOLOR: ${t.color}`;
+      if (t.upc) description += `\nUPC: ${t.upc}`;
       weeks[t.tagWeek].tags.push({
-        variety: t.variety, qty: t.totalQty,
+        variety: t.variety, qty: t.totalQty, description,
         category: t.category,
         color: t.color,
         upc: t.upc,
@@ -1042,13 +1096,15 @@ function ProductionScheduleTab({ items, containers, soilMixes = [], year, upsert
         newIdSet.add(id);
         const existing = managerTasks.find(mt => mt.id === id);
         const newTitle = `${t.emoji} ${t.title}`;
+        const newDescription = t.description || "";
 
         if (existing) {
-          // Re-sync: refresh title but preserve manager-side state
+          // Re-sync: refresh title/description but preserve manager-side state
           // (completion, claim, notes, photos, manual bucket/location moves, reordering)
           await upsertTask({
             ...existing,
             title: newTitle,
+            description: newDescription,
             year,
             weekNumber: wk,
             category: "production",
@@ -1058,6 +1114,7 @@ function ProductionScheduleTab({ items, containers, soilMixes = [], year, upsert
           await upsertTask({
             id,
             title: newTitle,
+            description: newDescription,
             priority: 50,
             weekNumber: wk,
             year,
