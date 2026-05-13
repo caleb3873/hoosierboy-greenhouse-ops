@@ -151,7 +151,29 @@ export function formatTargetDate(iso) {
 // ══════════════════════════════════════════════════════════════════════════════
 export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateGrowing = true, defaultCategory }) {
   const { rows: tasks, upsert, remove, refresh } = useManagerTasks();
-  const { displayName } = useAuth();
+  const { displayName, isAdmin } = useAuth();
+
+  // Who can assign tasks: admins (Tyler etc.) + Paul (9999999). Assignees see who's on the task but can't reassign.
+  const canAssign = useMemo(() => {
+    const n = (displayName || "").toLowerCase();
+    return isAdmin || n.includes("paul") || n.includes("tyler");
+  }, [displayName, isAdmin]);
+
+  // Production crew the user can hand work off to.
+  const ASSIGNEES = useMemo(() => [
+    { key: "Evie", label: "Evie" },
+    { key: "Sam",  label: "Sam"  },
+    { key: "Ryan", label: "Ryan" },
+    { key: "Nick", label: "Nick" },
+  ], []);
+
+  const [assigningTaskId, setAssigningTaskId] = useState(null);
+
+  async function assignTaskTo(task, name) {
+    await upsert({ ...task, assignedTo: name });
+    setAssigningTaskId(null);
+    refresh();
+  }
 
   const today = useMemo(() => getWeekInfo(), []);
   const [selectedWeek, setSelectedWeek] = useState(today);
@@ -474,6 +496,9 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
               {t.claimedBy && !isDone && (
                 <span style={{ background: "#e89a3a", color: "#fff", borderRadius: 999, padding: "2px 8px", fontSize: 10, fontWeight: 800 }}>🔒 {t.claimedBy}</span>
               )}
+              {t.assignedTo && (
+                <span style={{ background: "#4a90d9", color: "#fff", borderRadius: 999, padding: "2px 8px", fontSize: 10, fontWeight: 800 }}>👤 {t.assignedTo}</span>
+              )}
             </div>
             {t.targetDate && <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2, fontWeight: 600 }}>📅 {formatTargetDate(t.targetDate)}</div>}
             {t.description && <div style={{ fontSize: 12, color: "#7a8c74", marginTop: 4 }}>{t.description}</div>}
@@ -485,9 +510,50 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
               </div>
             )}
           </div>
-          <button onClick={() => deleteTask(t)}
-            style={{ background: "none", border: "none", color: "#8a9a80", fontSize: 18, cursor: "pointer", padding: 4 }} title="Delete task">🗑</button>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-end" }}>
+            <button onClick={() => deleteTask(t)}
+              style={{ background: "none", border: "none", color: "#8a9a80", fontSize: 18, cursor: "pointer", padding: 4 }} title="Delete task">🗑</button>
+            {canAssign && !isDone && (
+              <button onClick={(e) => { e.stopPropagation(); setAssigningTaskId(prev => prev === t.id ? null : t.id); }}
+                style={{ background: "#fff", border: "1.5px solid #c8d8c0", borderRadius: 8, padding: "4px 8px", fontSize: 11, fontWeight: 700, color: "#4a90d9", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}
+                title="Assign this task to someone">
+                👤 Assign
+              </button>
+            )}
+          </div>
         </div>
+
+        {/* Inline assign picker — opens just below this task when "Assign" is tapped */}
+        {canAssign && assigningTaskId === t.id && (
+          <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1.5px dashed #c8d8c0", display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+            <span style={{ fontSize: 11, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", marginRight: 4 }}>Assign to:</span>
+            {ASSIGNEES.map(a => {
+              const isCurrent = (t.assignedTo || "") === a.key;
+              return (
+                <button key={a.key} onClick={() => assignTaskTo(t, a.key)}
+                  style={{
+                    background: isCurrent ? "#4a90d9" : "#fff",
+                    color: isCurrent ? "#fff" : "#4a90d9",
+                    border: `1.5px solid #4a90d9`,
+                    borderRadius: 999, padding: "6px 14px",
+                    fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit",
+                  }}>
+                  {isCurrent ? "✓ " : ""}{a.label}
+                </button>
+              );
+            })}
+            {t.assignedTo && (
+              <button onClick={() => assignTaskTo(t, null)}
+                style={{ background: "#fff", border: "1.5px solid #d94f3d", color: "#d94f3d", borderRadius: 999, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                Unassign
+              </button>
+            )}
+            <button onClick={() => setAssigningTaskId(null)}
+              style={{ background: "transparent", border: "none", color: "#7a8c74", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", marginLeft: "auto" }}>
+              Close
+            </button>
+          </div>
+        )}
       </div>
     );
   }
@@ -1335,6 +1401,9 @@ export function TaskViewer({ task, onBack, onAppend, readOnly = true }) {
             <span>Assigned by <span style={{ fontWeight: 700, color: "#1e2d1a" }}>{task.createdBy || "Manager"}</span></span>
             {(task.createdBy || "").includes("Production Schedule") && (
               <span style={{ background: "#8e44ad", color: "#fff", borderRadius: 999, padding: "2px 8px", fontSize: 10, fontWeight: 800 }}>🍂 Fall Program</span>
+            )}
+            {task.assignedTo && (
+              <span style={{ background: "#4a90d9", color: "#fff", borderRadius: 999, padding: "2px 8px", fontSize: 10, fontWeight: 800 }}>👤 Assigned to {task.assignedTo}</span>
             )}
           </div>
           {task.description && <>

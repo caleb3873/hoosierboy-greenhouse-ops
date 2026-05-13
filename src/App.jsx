@@ -72,6 +72,7 @@ const NAV_GROUPS = [
       { id: "watering",  label: "Watering" },
       { id: "scouting",  label: "Scouting" },
       { id: "growers",   label: "Growers" },
+      { id: "manager-tasks", label: "Manager Tasks" },
     ],
   },
   {
@@ -226,6 +227,7 @@ function PlannerShell() {
         {page === "watering"  && <WateringPlan />}
         {page === "scouting"  && <div style={{ padding: 40, textAlign: "center", color: "#7a8c74" }}>Scouting — coming soon</div>}
         {page === "growers"   && <GrowerManagement />}
+        {page === "manager-tasks" && <ManagerTasksView defaultCategory="production" />}
         {page === "preseason"  && <Preseason      onNavigate={setPage} onCreateCropRun={() => setPage("crops")} />}
         {page === "crops"      && <CropPlanning   />}
         {page === "orders"     && <YoungPlantOrders />}
