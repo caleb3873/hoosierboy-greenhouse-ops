@@ -100,6 +100,13 @@ function extractPropVariety(title) {
   return m ? m[1].trim() : null;
 }
 
+// Extract the tray count from "— 2 105-cell …" or "— 2 50-cell …"
+function extractTrayCount(title) {
+  if (!title) return 0;
+  const m = title.match(/—\s*(\d+)\s+\d+-cell/i);
+  return m ? parseInt(m[1], 10) : 0;
+}
+
 function getWeekInfo(date = new Date()) {
   const year = date.getFullYear();
   const jan4 = new Date(year, 0, 4);
@@ -416,15 +423,26 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       const sowMonday = weekMonday(g.year, g.week);
       const dateLabel = sowMonday.toLocaleDateString("en-US", { month: "short", day: "numeric" });
       const verb = g.type === "sow" ? "sowing" : "URC";
-      const title = `🔍 Watch ${verb} group — Wk ${g.week} (${dateLabel})`;
-      const varieties = [...new Set(g.tasks.map(t => extractPropVariety(t.title)).filter(Boolean))];
+      // Per-variety tray counts (variety order = first appearance in the task list)
+      const perVariety = [];
+      const seen = new Set();
+      let totalTrays = 0;
+      for (const t of g.tasks) {
+        const v = extractPropVariety(t.title);
+        const trays = extractTrayCount(t.title);
+        totalTrays += trays;
+        if (v && !seen.has(v)) { seen.add(v); perVariety.push({ variety: v, trays }); }
+      }
+      const trayLabel = `${totalTrays} tray${totalTrays !== 1 ? "s" : ""}`;
+      const title = `🔍 Watch ${verb} group — Wk ${g.week} (${dateLabel}) · ${trayLabel}`;
       const verbAction = g.type === "sow"
         ? "Monitor germination, water as needed, check for damping off."
         : "Monitor URC establishment, watch for wilt, mist as needed.";
       const description =
         `Auto-created when all ${verb} tasks for Wk ${g.week} (${dateLabel}) finished.\n` +
         `${verbAction}\n\n` +
-        `VARIETIES (${varieties.length}):\n${varieties.map(v => `  • ${v}`).join("\n")}`;
+        `TOTAL TRAYS: ${totalTrays}\n\n` +
+        `VARIETIES (${perVariety.length}):\n${perVariety.map(v => `  • ${v.variety}${v.trays ? ` — ${v.trays} tray${v.trays !== 1 ? "s" : ""}` : ""}`).join("\n")}`;
 
       upsert({
         id,
