@@ -804,10 +804,16 @@ function ProductionScheduleTab({ items, containers, soilMixes = [], year, upsert
         const loc = (item.location || "").replace(/\s*(EQ|WP|SP)\d+.*/i, "").trim() || "TBD";
         const fillKey = `${fillWeek}||${containerName}||${loc}`;
         if (!potfillAccum[fillKey]) {
-          potfillAccum[fillKey] = { fillWeek, containerName, location: loc, category: item.category, totalQty: 0, rows: new Set() };
+          potfillAccum[fillKey] = { fillWeek, containerName, location: loc, category: item.category, totalQty: 0, rows: new Set(), alerts: new Map() };
         }
         potfillAccum[fillKey].totalQty += qty;
         if (item.rowId) potfillAccum[fillKey].rows.add(item.rowId);
+        // Per-item pot-fill alert (e.g. "Add lime to soil" for zinnias)
+        if (item.potFillAlert) {
+          const list = potfillAccum[fillKey].alerts.get(item.potFillAlert) || [];
+          list.push(variety);
+          potfillAccum[fillKey].alerts.set(item.potFillAlert, list);
+        }
       }
 
       // ── Planting — accumulate by plantWeek + variety ──
@@ -928,13 +934,27 @@ function ProductionScheduleTab({ items, containers, soilMixes = [], year, upsert
       const potSize = fromCategory.label || fromName.label;
       const potSizeNum = fromCategory.num !== 999 ? fromCategory.num : fromName.num;
       const sizePrefix = potSize ? `${potSize} ` : "";
+      const alertEntries = p.alerts ? [...p.alerts.entries()] : [];
+      const hasAlert = alertEntries.length > 0;
+      let titleSuffix = "";
+      if (hasAlert) {
+        // Short alert label in the title (first alert wins for brevity).
+        titleSuffix = ` · ⚠ ${alertEntries[0][0]}`;
+      }
       let description = `FILL: ${fmtN(p.totalQty)} pots — ${p.containerName}`;
       description += `\nSOIL: ${defaultSoilName}`;
+      if (hasAlert) {
+        description += `\n\n⚠ ALERTS:`;
+        for (const [alert, varieties] of alertEntries) {
+          const uniqueVars = [...new Set(varieties)];
+          description += `\n  • ${alert} (for: ${uniqueVars.join(", ")})`;
+        }
+      }
       if (p.location) description += `\nLOCATION: ${p.location}`;
       if (rowList.length > 0) description += `\nROWS (${rowList.length}): ${rowList.join(", ")}`;
       weeks[p.fillWeek].potfill.push({
         variety: p.containerName, qty: p.totalQty,
-        title: `${sizePrefix}${p.containerName} — ${fmtN(p.totalQty)} pots`,
+        title: `${sizePrefix}${p.containerName} — ${fmtN(p.totalQty)} pots${titleSuffix}`,
         description,
         location: p.location,
         soilMix: defaultSoilName,
@@ -943,6 +963,7 @@ function ProductionScheduleTab({ items, containers, soilMixes = [], year, upsert
         containerName: p.containerName,
         category: p.category,
         potSize, potSizeNum,
+        alerts: alertEntries.map(([msg, vars]) => ({ msg, varieties: [...new Set(vars)] })),
         emoji: "\u{1F4E6}", item: null,
       });
     });
