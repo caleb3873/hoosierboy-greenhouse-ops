@@ -928,7 +928,8 @@ function ProductionScheduleTab({ items, containers, soilMixes = [], year, upsert
     const defaultSoilName = pickDefaultSoil(soilMixes)?.name || "BM5HP Compressed";
     Object.values(potfillAccum).forEach(p => {
       ensureWeek(p.fillWeek);
-      const rowList = [...p.rows].sort();
+      // Natural sort so WP5 < WP10, WP56 < WP59 stays in printed order.
+      const rowList = [...p.rows].sort((a, b) => (a || "").localeCompare(b || "", undefined, { numeric: true }));
       const fromCategory = extractPotSize(p.category);
       const fromName = extractPotSizeFromName(p.containerName);
       const potSize = fromCategory.label || fromName.label;
@@ -972,7 +973,7 @@ function ProductionScheduleTab({ items, containers, soilMixes = [], year, upsert
     Object.values(plantingAccum).forEach(p => {
       ensureWeek(p.plantWeekNum);
       const locList = p.locations.size > 0 ? [...p.locations].join(", ") : null;
-      const rowList = p.rows.sort((a, b) => (a.rowId || "").localeCompare(b.rowId || ""));
+      const rowList = p.rows.sort((a, b) => (a.rowId || "").localeCompare(b.rowId || "", undefined, { numeric: true }));
       const { label: potSize, num: potSizeNum } = extractPotSize(p.category);
       const sizePrefix = potSize ? `${potSize} ` : "";
       const pppSuffix = `${p.ppp || 1}/pot`;
