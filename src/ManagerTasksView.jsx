@@ -532,6 +532,10 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
   function renderTaskCard(t, idx) {
     const isDone = t.status === "completed";
     const isOverdue = !!t.carriedOver && !isDone;
+    // Pull " · ⚠ {text}" alerts out of the title so they render as a chip instead of inline text
+    const alertMatch = (t.title || "").match(/\s·\s⚠\s(.+?)$/);
+    const displayTitle = alertMatch ? t.title.replace(alertMatch[0], "") : t.title;
+    const alertText = alertMatch ? alertMatch[1] : null;
     return (
       <div key={t.id} style={{
         background: "#fff", borderRadius: 14,
@@ -555,7 +559,10 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
             }}>{isDone ? "✓" : ""}</button>
           <div style={{ flex: 1 }} onClick={() => setSelectedTask(t)}>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <div style={{ fontSize: 15, fontWeight: 700, color: isOverdue ? "#d94f3d" : "#1e2d1a", textDecoration: isDone ? "line-through" : "none" }}>{t.title}</div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: isOverdue ? "#d94f3d" : "#1e2d1a", textDecoration: isDone ? "line-through" : "none" }}>{displayTitle}</div>
+              {alertText && (
+                <span style={{ background: "#fff3c4", color: "#7a5a00", border: "1.5px solid #e89a3a", borderRadius: 999, padding: "2px 8px", fontSize: 11, fontWeight: 800 }}>⚠ {alertText}</span>
+              )}
               {isOverdue && <span style={{ background: "#d94f3d", color: "#fff", borderRadius: 999, padding: "2px 8px", fontSize: 10, fontWeight: 800 }}>OVERDUE</span>}
               {(t.createdBy || "").includes("Production Schedule") && (
                 <span style={{ background: "#8e44ad", color: "#fff", borderRadius: 999, padding: "2px 8px", fontSize: 10, fontWeight: 800 }}>🍂 Fall Program</span>
