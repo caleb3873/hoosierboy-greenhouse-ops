@@ -1023,9 +1023,10 @@ function ProductionScheduleTab({ items, containers, soilMixes = [], year, upsert
         (a.variety || "").localeCompare(b.variety || "") ||
         (a.location || "").localeCompare(b.location || "")
       );
-      // Tags: pot size → variety
+      // Tags: pot size → category → variety, so 9" Mums / 9" Asters / 9" Kale stay grouped
       w.tags.sort((a, b) =>
         (a.potSizeNum ?? 999) - (b.potSizeNum ?? 999) ||
+        (a.category || "").localeCompare(b.category || "") ||
         (a.variety || "").localeCompare(b.variety || "")
       );
     });
