@@ -785,10 +785,12 @@ function ProductionScheduleTab({ items, containers, soilMixes = [], year, upsert
             const adjQty = germRate < 1 ? Math.ceil(baseQty / germRate) : baseQty;
             const propKey = `${sowWk}||${varUpper}`;
             if (!propAccum[propKey]) {
-              propAccum[propKey] = { variety, sowWk, pm, germRate, totalNeeded: 0, totalQty: 0, destinations: [] };
+              propAccum[propKey] = { variety, sowWk, pm, germRate, totalNeeded: 0, totalQty: 0, destinations: [], trayCellsOverride: null };
             }
             propAccum[propKey].totalNeeded += baseQty;
             propAccum[propKey].totalQty += adjQty;
+            // Per-item tray override (e.g., URC stuck in 105-cell tray instead of default 50)
+            if (item.propTrayCells) propAccum[propKey].trayCellsOverride = parseInt(item.propTrayCells);
             propAccum[propKey].destinations.push({ category: item.category || "", qty, perPot, containerName });
           }
         }
@@ -852,17 +854,21 @@ function ProductionScheduleTab({ items, containers, soilMixes = [], year, upsert
 
     // ── Consolidate prop/seed tasks by variety ──
     Object.values(propAccum).forEach(p => {
-      const { variety, sowWk, pm, germRate, totalNeeded, totalQty, destinations } = p;
+      const { variety, sowWk, pm, germRate, totalNeeded, totalQty, destinations, trayCellsOverride } = p;
       ensureWeek(sowWk);
       const isSeed = pm === "SEED";
+      // Per-item tray override (e.g., URC stuck in a 105-cell tray) takes precedence over the
+      // default seed/URC tray. Recognized overrides: 105 → seed-style hex tray, 50 → URC tray.
+      const useOverride = trayCellsOverride === 105 || trayCellsOverride === 50;
+      const useSeedTray = useOverride ? trayCellsOverride === 105 : isSeed;
       // URCs are ordered in 100-plug increments (supplier minimum) — seed rounds to tray (50 cells)
       const roundIncrement = isSeed ? 50 : 100;
       const roundedQty = Math.ceil(totalQty / roundIncrement) * roundIncrement;
-      const tray = isSeed ? seedTray : urcTray;
-      const cells = isSeed ? seedCells : urcCells;
+      const tray = useSeedTray ? seedTray : urcTray;
+      const cells = useSeedTray ? seedCells : urcCells;
       const trayCount = Math.ceil(roundedQty / cells);
       const trayCost = tray ? trayCount * (parseFloat(tray.costPerUnit) || 0) : 0;
-      const trayName = isSeed ? "105-cell hex" : "50-cell square";
+      const trayName = useSeedTray ? "105-cell hex" : "50-cell square";
       const destStr = destinations.map(d => {
         const potsStr = d.perPot && d.perPot > 1 ? `${fmtN(d.qty)} pots × ${d.perPot}` : `${fmtN(d.qty)} pots`;
         return `${potsStr} → ${d.containerName}`;
