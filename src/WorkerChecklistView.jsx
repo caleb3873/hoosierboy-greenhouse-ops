@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect, useRef } from "react";
-import { useManagerTasks } from "./supabase";
+import { useManagerTasks, useBrehobItems } from "./supabase";
 import { useAuth } from "./Auth";
 import { CompletionPromptModal, TaskViewer, TaskPhoto, uploadTaskPhoto, formatTargetDate, bucketToDate } from "./ManagerTasksView";
 import { NotificationBanner } from "./PushNotifications";
@@ -28,6 +28,7 @@ function formatTime(iso) {
 
 export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenTaskCreator }) {
   const { rows: tasks, upsert, refresh } = useManagerTasks();
+  const { rows: brehobItems, update: updateBrehob } = useBrehobItems();
   const { displayName } = useAuth();
   const today = useMemo(() => getWeekInfo(), []);
   const [showDone, setShowDone] = useState(false);
@@ -36,6 +37,66 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
   const [releasingTask, setReleasingTask] = useState(null);
   const [suggesting, setSuggesting] = useState(false);
   const [showBrehob, setShowBrehob] = useState(false);
+  const [decisionsOpen, setDecisionsOpen] = useState(false);
+  const decisionsCheckedRef = useRef(false);
+
+  // Pending decision notifications: requests this user made that have been approved/declined
+  // but the user hasn't seen the result yet. decisionSeen defaults to true server-side,
+  // so only tasks/items that went through the approve/decline flow show up here.
+  const pendingDecisions = useMemo(() => {
+    const me = displayName || "";
+    const taskDecisions = tasks.filter(t =>
+      (t.createdBy || "") === me &&
+      t.decisionSeen === false
+    ).map(t => ({
+      kind: "task",
+      id: t.id,
+      title: t.title,
+      outcome: t.status === "rejected" ? "declined" : "approved",
+      reason: t.declineReason,
+      row: t,
+    }));
+    const brehobDecisions = (brehobItems || []).filter(b =>
+      (b.requestedBy || "") === me &&
+      b.decisionSeen === false &&
+      (b.status === "declined" || b.status === "on_list")
+    ).map(b => ({
+      kind: "brehob",
+      id: b.id,
+      title: b.name || b.title || "(brehob item)",
+      outcome: b.status === "declined" ? "declined" : "approved",
+      reason: b.declineReason,
+      row: b,
+    }));
+    return [...taskDecisions, ...brehobDecisions];
+  }, [tasks, brehobItems, displayName]);
+
+  // Auto-open the decisions modal once per session if anything is waiting.
+  useEffect(() => {
+    if (decisionsCheckedRef.current) return;
+    if (!tasks.length && !(brehobItems || []).length) return;
+    const sessionKey = `gh_worker_decisions_seen_${displayName || "anon"}`;
+    if (sessionStorage.getItem(sessionKey)) {
+      decisionsCheckedRef.current = true;
+      return;
+    }
+    if (pendingDecisions.length > 0) {
+      setDecisionsOpen(true);
+      sessionStorage.setItem(sessionKey, "1");
+    }
+    decisionsCheckedRef.current = true;
+  }, [tasks.length, brehobItems?.length, pendingDecisions.length, displayName]);
+
+  async function acknowledgeDecision(d) {
+    if (d.kind === "task") {
+      await upsert({ ...d.row, decisionSeen: true });
+    } else {
+      await updateBrehob(d.id, { decisionSeen: true });
+    }
+  }
+  async function acknowledgeAll() {
+    for (const d of pendingDecisions) await acknowledgeDecision(d);
+  }
   // Language: Eulogio defaults to Spanish, everyone else English. Stored per-device.
   const [lang, setLang] = useState(() => {
     const saved = localStorage.getItem("gh_worker_lang_" + (displayName || ""));
@@ -448,6 +509,117 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
           </div>
         </div>
       )}
+
+      {decisionsOpen && pendingDecisions.length > 0 && (
+        <DecisionsModal
+          decisions={pendingDecisions}
+          displayName={displayName}
+          onAcknowledge={acknowledgeDecision}
+          onClose={async () => { await acknowledgeAll(); setDecisionsOpen(false); }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── Decisions modal ──────────────────────────────────────────────────────────
+// Shown once per session when the worker logs in with newly-approved/declined requests.
+function DecisionsModal({ decisions, displayName, onAcknowledge, onClose }) {
+  const [acked, setAcked] = useState(new Set());
+  const [busy, setBusy] = useState(null);
+  const visible = decisions.filter(d => !acked.has(d.id));
+
+  async function handleAck(d) {
+    setBusy(d.id);
+    try { await onAcknowledge(d); }
+    finally { setBusy(null); }
+    setAcked(prev => { const s = new Set(prev); s.add(d.id); return s; });
+  }
+
+  const approved = visible.filter(d => d.outcome === "approved");
+  const declined = visible.filter(d => d.outcome === "declined");
+
+  return (
+    <div onClick={onClose}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 10000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, ...FONT }}>
+      <div onClick={e => e.stopPropagation()}
+        style={{ background: "#fff", borderRadius: 16, maxWidth: 540, width: "100%", maxHeight: "85vh", overflow: "auto", padding: 0 }}>
+        <div style={{ background: "#1e2d1a", color: "#c8e6b8", padding: "16px 20px", borderRadius: "16px 16px 0 0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 1.2, textTransform: "uppercase", opacity: 0.85 }}>
+              {displayName ? `Hi ${displayName.split(" ")[0]} — updates on your requests` : "Updates on your requests"}
+            </div>
+            <div style={{ fontSize: 20, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif" }}>
+              {decisions.length} update{decisions.length !== 1 ? "s" : ""}
+            </div>
+          </div>
+          <button onClick={onClose}
+            style={{ background: "transparent", border: "1.5px solid rgba(200,230,184,0.5)", color: "#c8e6b8", padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+            Got it
+          </button>
+        </div>
+
+        {visible.length === 0 ? (
+          <div style={{ padding: 40, textAlign: "center", color: "#7a8c74" }}>
+            <div style={{ fontSize: 36, marginBottom: 8 }}>✓</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: "#1e2d1a" }}>All caught up</div>
+          </div>
+        ) : (
+          <div style={{ padding: "12px 16px 16px" }}>
+            {approved.length > 0 && (
+              <>
+                <div style={{ fontSize: 11, fontWeight: 800, color: "#4a7a35", textTransform: "uppercase", letterSpacing: 1, margin: "6px 4px 6px" }}>
+                  ✓ Approved ({approved.length})
+                </div>
+                {approved.map(d => (
+                  <div key={d.id} style={{ background: "#f0f8eb", border: "1.5px solid #7fb069", borderRadius: 12, padding: "12px 14px", marginBottom: 8 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 14, fontWeight: 800, color: "#1e2d1a" }}>{d.title}</div>
+                        <div style={{ fontSize: 11, color: "#4a7a35", marginTop: 2 }}>
+                          {d.kind === "brehob" ? "🛒 Added to Brehob shopping list" : "Added to the manager's task list"}
+                        </div>
+                      </div>
+                      <button onClick={() => handleAck(d)} disabled={busy === d.id}
+                        style={{ background: "#7fb069", border: "none", color: "#1e2d1a", padding: "6px 12px", borderRadius: 8, fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                        {busy === d.id ? "..." : "OK"}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
+            {declined.length > 0 && (
+              <>
+                <div style={{ fontSize: 11, fontWeight: 800, color: "#d94f3d", textTransform: "uppercase", letterSpacing: 1, margin: "10px 4px 6px" }}>
+                  ✗ Declined ({declined.length})
+                </div>
+                {declined.map(d => (
+                  <div key={d.id} style={{ background: "#fff5f3", border: "1.5px solid #d94f3d", borderRadius: 12, padding: "12px 14px", marginBottom: 8 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 14, fontWeight: 800, color: "#1e2d1a" }}>{d.title}</div>
+                        {d.reason && (
+                          <div style={{ fontSize: 12, color: "#7a3d2f", marginTop: 4, padding: "6px 8px", background: "#fff", borderRadius: 6, fontStyle: "italic" }}>
+                            "{d.reason}"
+                          </div>
+                        )}
+                        {!d.reason && (
+                          <div style={{ fontSize: 11, color: "#7a3d2f", marginTop: 2, fontStyle: "italic" }}>No reason given.</div>
+                        )}
+                      </div>
+                      <button onClick={() => handleAck(d)} disabled={busy === d.id}
+                        style={{ background: "#fff", border: "1.5px solid #d94f3d", color: "#d94f3d", padding: "6px 12px", borderRadius: 8, fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                        {busy === d.id ? "..." : "OK"}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -206,6 +206,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
   const [showCodes, setShowCodes] = useState(false);
   const [showRequests, setShowRequests] = useState(false);
   const [approvingRequest, setApprovingRequest] = useState(null);
+  const [decliningRequest, setDecliningRequest] = useState(null);
   const [showOverdue, setShowOverdue] = useState(false);
   const autoOpenedRef = useRef(false);
   const overdueCheckedRef = useRef(false);
@@ -253,7 +254,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
 
   // Filter + sort by priority (higher = more important = on top)
   const visibleTasks = useMemo(() => {
-    let r = tasks.filter(t => t.status !== "requested" && t.year === selectedWeek.year && t.weekNumber === selectedWeek.week && (t.category || "production") === category);
+    let r = tasks.filter(t => t.status !== "requested" && t.status !== "rejected" && t.year === selectedWeek.year && t.weekNumber === selectedWeek.week && (t.category || "production") === category);
     if (statusFilter === "pending") r = r.filter(t => t.status !== "completed");
     else if (statusFilter === "completed") r = r.filter(t => t.status === "completed");
     if (locationFilter !== "all") r = r.filter(t => (t.location || "").toLowerCase() === locationFilter);
@@ -328,6 +329,8 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       weekNumber: week,
       year,
       priority: maxPriority + 10,
+      declineReason: null,
+      decisionSeen: false,
     });
     setApprovingRequest(null);
     refresh();
@@ -339,9 +342,14 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
     }).catch(() => {});
   }
 
-  async function rejectRequest(request) {
-    if (!window.confirm(`Reject "${request.title}"? It will be deleted.`)) return;
-    await remove(request.id);
+  async function declineRequest(request, reason) {
+    await upsert({
+      ...request,
+      status: "rejected",
+      declineReason: reason || "(no reason given)",
+      decisionSeen: false,
+    });
+    setDecliningRequest(null);
     refresh();
   }
 
@@ -618,8 +626,8 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       <div style={{ padding: "12px 20px 0" }}><NotificationBanner /></div>
 
       {/* Category tabs */}
-      <div style={{ padding: "12px 20px 0", background: "#fff", display: "flex", gap: 8 }}>
-        {[{id:"production",label:"Production"},{id:"growing",label:"Growing"},{id:"brehob",label:"🛒 Brehob"}].map(c => (
+      <div style={{ padding: "12px 20px 0", background: "#fff", display: "flex", gap: 8, overflowX: "auto" }}>
+        {[{id:"production",label:"Production"},{id:"growing",label:"Growing"},{id:"maintenance",label:"🔧 Maintenance"},{id:"brehob",label:"🛒 Brehob"}].map(c => (
           <button key={c.id} onClick={() => setCategory(c.id)}
             style={{
               flex: 1, padding: "12px 0", borderRadius: "12px 12px 0 0", fontSize: 13, fontWeight: 800,
@@ -778,7 +786,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
           requests={pendingRequests}
           onClose={() => setShowRequests(false)}
           onApprove={(r) => { setShowRequests(false); setApprovingRequest(r); }}
-          onReject={rejectRequest}
+          onReject={(r) => { setShowRequests(false); setDecliningRequest(r); }}
         />
       )}
       {approvingRequest && (
@@ -786,6 +794,13 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
           request={approvingRequest}
           onCancel={() => setApprovingRequest(null)}
           onApprove={(opts) => approveRequest(approvingRequest, opts)}
+        />
+      )}
+      {decliningRequest && (
+        <DeclineModal
+          request={decliningRequest}
+          onCancel={() => setDecliningRequest(null)}
+          onDecline={(reason) => declineRequest(decliningRequest, reason)}
         />
       )}
       {completingTask && (
@@ -1052,6 +1067,47 @@ function RequestsModal({ requests, onClose, onApprove, onReject }) {
               </div>
             ))
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Decline-with-reason modal — replaces the old delete-on-reject path so the requester
+// finds out WHY their suggestion didn't make the cut.
+function DeclineModal({ request, onCancel, onDecline }) {
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  async function handle() {
+    if (saving) return;
+    setSaving(true);
+    try { await onDecline(reason.trim()); }
+    finally { setSaving(false); }
+  }
+  return (
+    <div onClick={onCancel}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div onClick={e => e.stopPropagation()}
+        style={{ background: "#fff", borderRadius: 16, maxWidth: 480, width: "100%", padding: 0, fontFamily: "'DM Sans','Segoe UI',sans-serif" }}>
+        <div style={{ background: "#d94f3d", color: "#fff", padding: "14px 18px", borderRadius: "16px 16px 0 0" }}>
+          <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 1.2, textTransform: "uppercase", opacity: 0.85 }}>Decline Request</div>
+          <div style={{ fontSize: 17, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif" }}>{request.title}</div>
+        </div>
+        <div style={{ padding: 18 }}>
+          <div style={{ fontSize: 12, color: "#7a8c74", marginBottom: 6 }}>Tell {request.createdBy || "the requester"} why this was declined (optional but recommended).</div>
+          <textarea value={reason} onChange={e => setReason(e.target.value)} autoFocus
+            placeholder="e.g. already covered by another task, not needed this season, wrong location…"
+            style={{ width: "100%", minHeight: 100, padding: 12, borderRadius: 10, border: "1.5px solid #c8d8c0", fontSize: 14, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box", outline: "none" }} />
+          <div style={{ display: "flex", gap: 10, marginTop: 14, justifyContent: "flex-end" }}>
+            <button onClick={onCancel} disabled={saving}
+              style={{ background: "#fff", border: "1.5px solid #c8d8c0", color: "#7a8c74", padding: "10px 18px", borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+              Cancel
+            </button>
+            <button onClick={handle} disabled={saving}
+              style={{ background: saving ? "#b85a4a" : "#d94f3d", border: "none", color: "#fff", padding: "10px 20px", borderRadius: 10, fontSize: 13, fontWeight: 800, cursor: saving ? "default" : "pointer", fontFamily: "inherit" }}>
+              {saving ? "Saving..." : "Decline"}
+            </button>
+          </div>
         </div>
       </div>
     </div>

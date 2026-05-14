@@ -43,11 +43,11 @@ export function BrehobManagerView() {
   }, [pending.length]);
 
   async function approveItem(item) {
-    await update(item.id, { status: "on_list", approvedBy: displayName, approvedAt: new Date().toISOString() });
+    await update(item.id, { status: "on_list", approvedBy: displayName, approvedAt: new Date().toISOString(), decisionSeen: false });
   }
 
   async function declineItem(item, reason) {
-    await update(item.id, { status: "declined", declineReason: reason, approvedBy: displayName, approvedAt: new Date().toISOString() });
+    await update(item.id, { status: "declined", declineReason: reason, approvedBy: displayName, approvedAt: new Date().toISOString(), decisionSeen: false });
     setDecliningId(null);
   }
 
