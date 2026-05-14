@@ -215,8 +215,10 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
   const [approvingRequest, setApprovingRequest] = useState(null);
   const [decliningRequest, setDecliningRequest] = useState(null);
   const [showOverdue, setShowOverdue] = useState(false);
+  const [showAssigned, setShowAssigned] = useState(false);
   const autoOpenedRef = useRef(false);
   const overdueCheckedRef = useRef(false);
+  const assignedCheckedRef = useRef(false);
 
   const pendingRequests = useMemo(() => tasks.filter(t => t.status === "requested"), [tasks]);
 
@@ -230,6 +232,20 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       t.weekNumber === today.week
     ).sort((a, b) => (b.priority || 0) - (a.priority || 0)),
   [tasks, today]);
+
+  // Tasks assigned to me this week, not finished. Pops every login until they're done.
+  const assignedToMe = useMemo(() => {
+    if (!displayName) return [];
+    const firstName = displayName.split(" ")[0];
+    return tasks.filter(t =>
+      t.assignedTo === firstName &&
+      t.year === today.year &&
+      t.weekNumber === today.week &&
+      t.status !== "completed" &&
+      t.status !== "rejected" &&
+      t.status !== "requested"
+    ).sort((a, b) => (b.priority || 0) - (a.priority || 0));
+  }, [tasks, displayName, today]);
 
   // Auto-open requests modal on first load if there are any
   useEffect(() => {
@@ -258,6 +274,26 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
     }, 500);
     return () => clearTimeout(id);
   }, [tasks.length, overdueTasks.length, displayName, today.year, today.week]);
+
+  // Auto-open "tasks assigned to me" modal once per session. Stays in sessionStorage so it
+  // doesn't re-fire on every re-render — but reappears next login until the work is done.
+  useEffect(() => {
+    if (assignedCheckedRef.current) return;
+    if (!tasks.length) return;
+    const sessionKey = `gh_assigned_seen_${displayName || "anon"}_${today.year}w${today.week}`;
+    if (sessionStorage.getItem(sessionKey)) {
+      assignedCheckedRef.current = true;
+      return;
+    }
+    const id = setTimeout(() => {
+      if (assignedToMe.length > 0) {
+        setShowAssigned(true);
+        sessionStorage.setItem(sessionKey, "1");
+      }
+      assignedCheckedRef.current = true;
+    }, 600);
+    return () => clearTimeout(id);
+  }, [tasks.length, assignedToMe.length, displayName, today.year, today.week]);
 
   // Filter + sort by priority (higher = more important = on top)
   const visibleTasks = useMemo(() => {
@@ -844,6 +880,23 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
           }}
         />
       )}
+      {showAssigned && (
+        <AssignedToMeModal
+          tasks={assignedToMe}
+          displayName={displayName}
+          onClose={() => setShowAssigned(false)}
+          onMarkDone={async (t) => {
+            await upsert({
+              ...t,
+              status: "completed",
+              completedBy: displayName || "Manager",
+              completedAt: new Date().toISOString(),
+            });
+            refresh();
+          }}
+          onOpenTask={(t) => { setShowAssigned(false); setSelectedTask(t); }}
+        />
+      )}
     </div>
   );
 }
@@ -944,6 +997,81 @@ export function CompletionPromptModal({ task, onCancel, onSave }) {
 }
 
 // ── Overdue tasks modal (shown once per session on login when there are overdue items) ──
+// "You have N tasks assigned to you" modal. Re-opens every login until the work is done —
+// no per-task dismiss because the user wants visibility kept up. "Got it" just hides for this session.
+function AssignedToMeModal({ tasks, displayName, onClose, onMarkDone, onOpenTask }) {
+  const [busy, setBusy] = useState(null);
+  const [doneIds, setDoneIds] = useState(new Set());
+  const visible = tasks.filter(t => !doneIds.has(t.id));
+
+  async function handleDone(t) {
+    setBusy(t.id);
+    try { await onMarkDone(t); }
+    finally { setBusy(null); }
+    setDoneIds(prev => { const s = new Set(prev); s.add(t.id); return s; });
+  }
+
+  return (
+    <div onClick={onClose}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div onClick={e => e.stopPropagation()}
+        style={{ background: "#fff", borderRadius: 16, maxWidth: 560, width: "100%", maxHeight: "85vh", overflow: "auto", padding: 0, fontFamily: "'DM Sans','Segoe UI',sans-serif" }}>
+        <div style={{ background: "#4a90d9", color: "#fff", padding: "16px 20px", borderRadius: "16px 16px 0 0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 1.2, textTransform: "uppercase", opacity: 0.9 }}>
+              {displayName ? `${displayName.split(" ")[0]} — your week` : "Your week"}
+            </div>
+            <div style={{ fontSize: 20, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif" }}>
+              👤 {tasks.length} task{tasks.length !== 1 ? "s" : ""} assigned to you
+            </div>
+          </div>
+          <button onClick={onClose}
+            style={{ background: "transparent", border: "1.5px solid rgba(255,255,255,0.5)", color: "#fff", padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+            Got it
+          </button>
+        </div>
+
+        {visible.length === 0 ? (
+          <div style={{ padding: 40, textAlign: "center", color: "#7a8c74" }}>
+            <div style={{ fontSize: 36, marginBottom: 8 }}>✓</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: "#1e2d1a" }}>All done — nice work</div>
+          </div>
+        ) : (
+          <>
+            <div style={{ padding: "12px 20px 4px", fontSize: 13, color: "#7a8c74" }}>
+              These will pop up again next time you open the app until they're marked done.
+            </div>
+            <div style={{ padding: "8px 16px 16px" }}>
+              {visible.map(t => (
+                <div key={t.id} style={{
+                  background: "#fff", borderRadius: 12, border: "1.5px solid #c8dceb",
+                  padding: "12px 14px", marginBottom: 10,
+                }}>
+                  <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                    <div style={{ flex: 1, cursor: "pointer" }} onClick={() => onOpenTask?.(t)}>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: "#1e2d1a" }}>{t.title}</div>
+                      {t.description && (
+                        <div style={{ fontSize: 12, color: "#7a8c74", marginTop: 4, whiteSpace: "pre-wrap" }}>{t.description}</div>
+                      )}
+                      {t.targetDate && (
+                        <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 4, fontWeight: 600 }}>📅 {formatTargetDate(t.targetDate)}</div>
+                      )}
+                    </div>
+                    <button onClick={() => handleDone(t)} disabled={busy === t.id}
+                      style={{ background: busy === t.id ? "#b0c8a0" : "#7fb069", border: "none", color: "#1e2d1a", padding: "8px 14px", borderRadius: 8, fontSize: 12, fontWeight: 800, cursor: busy === t.id ? "default" : "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                      {busy === t.id ? "Saving..." : "✓ Done"}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function OverdueModal({ tasks, displayName, onClose, onMarkDone }) {
   const [dismissed, setDismissed] = useState(new Set());
   const [busy, setBusy] = useState(null); // task id while a mark-done is in-flight
