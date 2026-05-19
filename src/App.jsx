@@ -44,6 +44,7 @@ import DriverView           from "./shipping/DriverView";
 import ShippingOfficeView   from "./shipping/ShippingOfficeView";
 import ShippingManagerMobile from "./shipping/ShippingManagerMobile";
 import PickSheetViewer      from "./shipping/PickSheetViewer";
+import HeadGrowerHiring     from "./HeadGrowerHiring";
 
 // ── PLANNER SHELL ─────────────────────────────────────────────────────────────
 // Nav grouped by category
@@ -139,9 +140,9 @@ function PlannerShell() {
   const { signOut, displayName, floorMode, isOwner } = useAuth();
   const { extractionState } = useExtraction();
 
-  // Build nav groups dynamically — Owner sees an extra "Owner" group
+  // Build nav groups dynamically — Owner sees Hiring + Owner groups
   const navGroups = isOwner
-    ? [...NAV_GROUPS, { id: "owner", label: "Owner", icon: "👑", solo: true }]
+    ? [...NAV_GROUPS, { id: "hiring", label: "Hiring", icon: "👥", solo: true }, { id: "owner", label: "Owner", icon: "👑", solo: true }]
     : NAV_GROUPS;
 
   const activeGroup = pageGroup(page) || page;
@@ -228,6 +229,7 @@ function PlannerShell() {
         {page === "scouting"  && <div style={{ padding: 40, textAlign: "center", color: "#7a8c74" }}>Scouting — coming soon</div>}
         {page === "growers"   && <GrowerManagement />}
         {page === "manager-tasks" && <ManagerTasksView defaultCategory="production" />}
+        {page === "hiring" && isOwner && <HeadGrowerHiring />}
         {page === "preseason"  && <Preseason      onNavigate={setPage} onCreateCropRun={() => setPage("crops")} />}
         {page === "crops"      && <CropPlanning   />}
         {page === "orders"     && <YoungPlantOrders />}
