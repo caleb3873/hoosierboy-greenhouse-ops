@@ -10,16 +10,52 @@ const textareaStyle = { ...inputStyle, minHeight: 70, resize: "vertical" };
 const btnPrimary = { background: "#7fb069", color: "#fff", border: "none", borderRadius: 10, padding: "10px 20px", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" };
 const btnSec = { background: "#fff", color: "#7a8c74", border: "1.5px solid #c8d8c0", borderRadius: 10, padding: "10px 18px", fontWeight: 600, fontSize: 14, cursor: "pointer", fontFamily: "inherit" };
 
-const SECTIONS = [
+const ROLE_TABS = [
+  { id: "head", label: "Head Grower",      fullRole: "Head Grower" },
+  { id: "asst", label: "Assistant Grower", fullRole: "Assistant Grower" },
+];
+
+const SUB_TABS = [
   { id: "prep", label: "Meeting Prep" },
   { id: "notes", label: "Meeting Notes" },
   { id: "candidates", label: "Candidates" },
 ];
 
-// ── Form schemas (single source of truth for both UI + print) ──
-const PREP_SECTIONS = [
+// Shared sub-sections used inside both role-specific prep forms
+const COMP_SECTION = {
+  id: "compensation", title: "Compensation",
+  fields: [
+    { k: "comp_ideal", label: "Ideal salary range", type: "text" },
+    { k: "comp_max", label: "Max realistic range", type: "text" },
+    { k: "comp_pay_impact", label: "Would increasing pay meaningfully improve candidate quality?", type: "textarea" },
+    { k: "comp_bonuses", label: "Bonuses", type: "textarea" },
+    { k: "comp_pto", label: "PTO", type: "text" },
+    { k: "comp_housing", label: "Housing assistance", type: "textarea" },
+    { k: "comp_schedule", label: "Schedule flexibility", type: "textarea" },
+  ],
+};
+const RELOC_SECTION = {
+  id: "relocation", title: "Relocation",
+  fields: [
+    { k: "reloc_open", label: "Open to relocation candidates?", type: "select", options: ["Yes", "Preferred local", "No"] },
+    { k: "reloc_moving", label: "Moving expenses", type: "textarea" },
+    { k: "reloc_temp_housing", label: "Temporary housing", type: "textarea" },
+    { k: "reloc_stipend", label: "Relocation stipend", type: "text" },
+  ],
+};
+const TIMELINE_SECTION = {
+  id: "timeline", title: "Timeline",
+  fields: [
+    { k: "time_ideal_start", label: "Ideal start date", type: "date" },
+    { k: "time_latest_start", label: "Latest acceptable start date", type: "date" },
+    { k: "time_overlap", label: "Training / overlap time needed?", type: "textarea" },
+  ],
+};
+
+// ── Role-specific prep forms ──
+const HEAD_PREP_SECTIONS = [
   {
-    id: "head_grower", title: "Head Grower",
+    id: "role", title: "Role Details — Head Grower",
     fields: [
       { k: "hg_responsibilities", label: "Main responsibilities", type: "textarea" },
       { k: "hg_focus", label: "Are we hiring a…", type: "multi", options: ["Crop expert", "People manager", "Future operational leader", "Modernize systems"] },
@@ -28,8 +64,12 @@ const PREP_SECTIONS = [
       { k: "hg_ornamental_required", label: "Ornamental wholesale experience required?", type: "select", options: ["Required", "Preferred", "Not required"] },
     ],
   },
+  COMP_SECTION, RELOC_SECTION, TIMELINE_SECTION,
+];
+
+const ASST_PREP_SECTIONS = [
   {
-    id: "asst_grower", title: "Assistant Grower",
+    id: "role", title: "Role Details — Assistant Grower",
     fields: [
       { k: "ag_type", label: "Experienced or developmental?", type: "select", options: ["Experienced grower", "Developmental candidate", "Either"] },
       { k: "ag_focus", label: "Focus", type: "multi", options: ["Annuals", "Foliage", "Mixed"] },
@@ -38,37 +78,7 @@ const PREP_SECTIONS = [
       { k: "ag_future_leader", label: "Future leadership potential desired?", type: "select", options: ["Yes", "Maybe", "No"] },
     ],
   },
-  {
-    id: "compensation", title: "Compensation",
-    fields: [
-      { k: "comp_ideal_hg", label: "Ideal salary range — Head Grower", type: "text" },
-      { k: "comp_max_hg", label: "Max realistic — Head Grower", type: "text" },
-      { k: "comp_ideal_ag", label: "Ideal salary range — Assistant Grower", type: "text" },
-      { k: "comp_max_ag", label: "Max realistic — Assistant Grower", type: "text" },
-      { k: "comp_pay_impact", label: "Would increasing pay meaningfully improve candidate quality?", type: "textarea" },
-      { k: "comp_bonuses", label: "Bonuses", type: "textarea" },
-      { k: "comp_pto", label: "PTO", type: "text" },
-      { k: "comp_housing", label: "Housing assistance", type: "textarea" },
-      { k: "comp_schedule", label: "Schedule flexibility", type: "textarea" },
-    ],
-  },
-  {
-    id: "relocation", title: "Relocation",
-    fields: [
-      { k: "reloc_open", label: "Open to relocation candidates?", type: "select", options: ["Yes", "Preferred local", "No"] },
-      { k: "reloc_moving", label: "Moving expenses", type: "textarea" },
-      { k: "reloc_temp_housing", label: "Temporary housing", type: "textarea" },
-      { k: "reloc_stipend", label: "Relocation stipend", type: "text" },
-    ],
-  },
-  {
-    id: "timeline", title: "Timeline",
-    fields: [
-      { k: "time_ideal_start", label: "Ideal start date", type: "date" },
-      { k: "time_latest_start", label: "Latest acceptable start date", type: "date" },
-      { k: "time_overlap", label: "Training / overlap time needed?", type: "textarea" },
-    ],
-  },
+  COMP_SECTION, RELOC_SECTION, TIMELINE_SECTION,
 ];
 
 const NOTES_SECTIONS = [
@@ -192,6 +202,10 @@ function useHiringForm(formId) {
 // ── Main page ───────────────────────────────────────────────────
 export default function HeadGrowerHiring() {
   const { isOwner } = useAuth();
+  const [role, setRoleState] = useState(() => {
+    try { return localStorage.getItem("gh_hiring_role") || "head"; } catch { return "head"; }
+  });
+  const setRole = (r) => { setRoleState(r); try { localStorage.setItem("gh_hiring_role", r); } catch {} };
   const [section, setSectionState] = useState(() => {
     try { return localStorage.getItem("gh_hiring_section") || "prep"; } catch { return "prep"; }
   });
@@ -206,6 +220,10 @@ export default function HeadGrowerHiring() {
       </div>
     );
   }
+
+  const roleConfig = ROLE_TABS.find(r => r.id === role) || ROLE_TABS[0];
+  const prepSections = role === "head" ? HEAD_PREP_SECTIONS : ASST_PREP_SECTIONS;
+  const formIdPrefix = role === "head" ? "head_grower" : "asst_grower";
 
   return (
     <div style={FONT}>
@@ -224,7 +242,7 @@ export default function HeadGrowerHiring() {
       <div className="no-print" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, flexWrap: "wrap", gap: 12 }}>
         <div>
           <div style={{ fontFamily: "'DM Serif Display',Georgia,serif", fontSize: 28, fontWeight: 400, color: "#1a2a1a" }}>
-            Head Grower Hiring
+            Grower Hiring
           </div>
           <div style={{ fontSize: 13, color: "#7a8c74", marginTop: 4 }}>
             AgHires recruiting call prep, meeting notes, and candidate pipeline
@@ -232,8 +250,28 @@ export default function HeadGrowerHiring() {
         </div>
       </div>
 
+      {/* Top-level role tabs */}
+      <div className="no-print" style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
+        {ROLE_TABS.map(r => {
+          const active = role === r.id;
+          return (
+            <button key={r.id} onClick={() => setRole(r.id)}
+              style={{
+                padding: "12px 22px", fontSize: 15, fontWeight: 800,
+                borderRadius: 12, border: `2px solid ${active ? "#1e2d1a" : "#c8d8c0"}`,
+                background: active ? "#1e2d1a" : "#fff",
+                color: active ? "#c8e6b8" : "#7a8c74",
+                cursor: "pointer", fontFamily: "inherit",
+              }}>
+              {r.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Sub-tabs scoped to the selected role */}
       <div className="no-print" style={{ display: "flex", gap: 0, borderBottom: "2px solid #e0ead8", marginBottom: 20, overflowX: "auto" }}>
-        {SECTIONS.map(s => (
+        {SUB_TABS.map(s => (
           <button key={s.id} onClick={() => setSection(s.id)}
             style={{ padding: "12px 22px", fontSize: 14, fontWeight: section === s.id ? 800 : 600,
               color: section === s.id ? "#1e2d1a" : "#7a8c74", background: "none", border: "none",
@@ -245,9 +283,21 @@ export default function HeadGrowerHiring() {
       </div>
 
       <div className="hire-print-wrap">
-        {section === "prep" && <FormView formId="meeting_prep" title="Meeting Prep — Internal Alignment" sections={PREP_SECTIONS} />}
-        {section === "notes" && <FormView formId="meeting_notes" title="Meeting Notes — AgHires Call" sections={NOTES_SECTIONS} />}
-        {section === "candidates" && <CandidatesView />}
+        {section === "prep" && (
+          <FormView
+            formId={`meeting_prep_${formIdPrefix}`}
+            title={`Meeting Prep — ${roleConfig.fullRole}`}
+            sections={prepSections}
+          />
+        )}
+        {section === "notes" && (
+          <FormView
+            formId={`meeting_notes_${formIdPrefix}`}
+            title={`Meeting Notes — ${roleConfig.fullRole}`}
+            sections={NOTES_SECTIONS}
+          />
+        )}
+        {section === "candidates" && <CandidatesView lockedRole={roleConfig.fullRole} />}
       </div>
     </div>
   );
@@ -361,28 +411,23 @@ const STATUSES = [
 ];
 const SOURCES = ["AgHires", "Referral", "LinkedIn", "Direct outreach", "Other"];
 
-function CandidatesView() {
+function CandidatesView({ lockedRole }) {
   const { rows: candidates, upsert, remove, refresh } = useHiringCandidates();
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState(null);
   const [statusFilter, setStatusFilter] = useState("all");
-  const [roleFilter, setRoleFilter] = useState("all");
 
   const filtered = useMemo(() => {
-    let r = candidates;
+    let r = candidates.filter(c => c.role === lockedRole);
     if (statusFilter !== "all") r = r.filter(c => c.status === statusFilter);
-    if (roleFilter !== "all") r = r.filter(c => c.role === roleFilter);
     return r;
-  }, [candidates, statusFilter, roleFilter]);
+  }, [candidates, statusFilter, lockedRole]);
 
   return (
     <div>
       <div style={{ ...card, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          <span style={{ fontSize: 11, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", marginRight: 4 }}>Role:</span>
-          <FilterChip active={roleFilter === "all"} onClick={() => setRoleFilter("all")}>All</FilterChip>
-          {ROLES.map(r => <FilterChip key={r} active={roleFilter === r} onClick={() => setRoleFilter(r)}>{r}</FilterChip>)}
-          <span style={{ fontSize: 11, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", margin: "0 4px 0 12px" }}>Status:</span>
+          <span style={{ fontSize: 11, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", marginRight: 4 }}>Status:</span>
           <FilterChip active={statusFilter === "all"} onClick={() => setStatusFilter("all")}>All</FilterChip>
           {STATUSES.map(s => <FilterChip key={s.id} active={statusFilter === s.id} onClick={() => setStatusFilter(s.id)} color={s.color}>{s.label}</FilterChip>)}
         </div>
@@ -392,14 +437,14 @@ function CandidatesView() {
       {filtered.length === 0 ? (
         <div style={{ ...card, textAlign: "center", padding: "60px 40px", color: "#7a8c74" }}>
           <div style={{ fontSize: 40, marginBottom: 8 }}>👤</div>
-          <div style={{ fontSize: 15, fontWeight: 700, color: "#1a2a1a", marginBottom: 4 }}>No candidates yet</div>
+          <div style={{ fontSize: 15, fontWeight: 700, color: "#1a2a1a", marginBottom: 4 }}>No {lockedRole} candidates yet</div>
           <div style={{ fontSize: 12 }}>Add resumes and contact info as candidates come in.</div>
         </div>
       ) : (
         filtered.map(c => <CandidateCard key={c.id} candidate={c} onEdit={() => setEditing(c)} onDelete={async () => { if (window.confirm(`Delete ${c.name}?`)) { await remove(c.id); refresh(); } }} />)
       )}
 
-      {adding && <CandidateModal onCancel={() => setAdding(false)} onSave={async (data) => { await upsert({ id: crypto.randomUUID(), ...data }); setAdding(false); refresh(); }} />}
+      {adding && <CandidateModal lockedRole={lockedRole} onCancel={() => setAdding(false)} onSave={async (data) => { await upsert({ id: crypto.randomUUID(), ...data }); setAdding(false); refresh(); }} />}
       {editing && <CandidateModal candidate={editing} onCancel={() => setEditing(null)} onSave={async (data) => { await upsert({ ...editing, ...data, updatedAt: new Date().toISOString() }); setEditing(null); refresh(); }} />}
     </div>
   );
@@ -474,12 +519,12 @@ function useResumeUrl(path) {
   return url;
 }
 
-function CandidateModal({ candidate, onCancel, onSave }) {
+function CandidateModal({ candidate, onCancel, onSave, lockedRole }) {
   const db = getSupabase();
   const c = candidate || {};
   const [form, setForm] = useState({
     name: c.name || "",
-    role: c.role || ROLES[0],
+    role: c.role || lockedRole || ROLES[0],
     status: c.status || "new",
     source: c.source || "",
     phone: c.phone || "",
