@@ -107,6 +107,15 @@ function extractTrayCount(title) {
   return m ? parseInt(m[1], 10) : 0;
 }
 
+// Alphabetical sort key — for sow/stick tasks use the variety (so "Marigold" doesn't
+// land before "Zinnia" because of qty), otherwise use the title with the leading emoji stripped.
+function taskSortKey(t) {
+  const title = t.title || "";
+  const v = extractPropVariety(title);
+  if (v) return v.toUpperCase();
+  return title.replace(/^[\u{1F300}-\u{1FAFF}\s]+/u, "").toUpperCase();
+}
+
 function getWeekInfo(date = new Date()) {
   const year = date.getFullYear();
   const jan4 = new Date(year, 0, 4);
@@ -304,7 +313,11 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
     if (category === "production" && prodTypeFilter !== "all") {
       r = r.filter(t => getProdType(t.title) === prodTypeFilter);
     }
-    return [...r].sort((a, b) => (b.priority || 0) - (a.priority || 0));
+    // Priority desc (manual reorder wins) → variety alphabetical (so sowing Marigold lands before Zinnia regardless of qty)
+    return [...r].sort((a, b) =>
+      (b.priority || 0) - (a.priority || 0) ||
+      taskSortKey(a).localeCompare(taskSortKey(b), undefined, { numeric: true })
+    );
   }, [tasks, selectedWeek, statusFilter, category, locationFilter, prodTypeFilter]);
 
   const canCreateInCurrentCategory = category === "production" || canCreateGrowing;
