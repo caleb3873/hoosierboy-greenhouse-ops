@@ -2349,6 +2349,7 @@ function OrdersTab({ items }) {
   const [expandedOrder, setExpandedOrder] = useState(null);
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [supplierFilter, setSupplierFilter] = useState("all");
+  const [brokerFilter, setBrokerFilter] = useState("all");
   const [pdfUrls, setPdfUrls] = useState({});
   const sb = getSupabase();
 
@@ -2416,12 +2417,16 @@ function OrdersTab({ items }) {
   const allCategories = useMemo(() => [...new Set(items.filter(i => i.orderNumber).map(i => i.category))].sort(), [items]);
   const allSuppliers = useMemo(() => [...new Set(orders.map(o => o.supplier))].sort(), [orders]);
 
+  const allBrokers = useMemo(() => [...new Set(orders.map(o => o.broker).filter(Boolean))].sort(), [orders]);
+
   const filteredOrders = useMemo(() => {
     let result = orders;
+    if (brokerFilter === "none") result = result.filter(o => !o.broker);
+    else if (brokerFilter !== "all") result = result.filter(o => o.broker === brokerFilter);
     if (supplierFilter !== "all") result = result.filter(o => o.supplier === supplierFilter);
     if (categoryFilter !== "all") result = result.filter(o => o.categories.has(categoryFilter));
     return result;
-  }, [orders, categoryFilter, supplierFilter]);
+  }, [orders, categoryFilter, supplierFilter, brokerFilter]);
 
   // Totals — Ordered = production need (pots × ppp), Confirmed = what's on the broker order (ord_qty), Extras = Confirmed - Ordered
   const totals = useMemo(() => {
@@ -2499,6 +2504,14 @@ function OrdersTab({ items }) {
 
       {/* Filters */}
       <div style={{ ...card, padding: "12px 18px", display: "flex", gap: 16, flexWrap: "wrap", alignItems: "flex-start" }}>
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", marginBottom: 6 }}>Broker</div>
+          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+            <button onClick={() => setBrokerFilter("all")} style={chipStyle(brokerFilter === "all", "#1e2d1a")}>All</button>
+            {allBrokers.map(b => <button key={b} onClick={() => setBrokerFilter(b)} style={chipStyle(brokerFilter === b, "#1e2d1a")}>{b}</button>)}
+            <button onClick={() => setBrokerFilter("none")} style={chipStyle(brokerFilter === "none", "#7a8c74")}>(none)</button>
+          </div>
+        </div>
         <div>
           <div style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", marginBottom: 6 }}>Supplier</div>
           <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
