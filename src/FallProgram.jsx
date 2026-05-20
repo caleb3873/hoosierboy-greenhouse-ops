@@ -2423,29 +2423,39 @@ function OrdersTab({ items }) {
     return result;
   }, [orders, categoryFilter, supplierFilter]);
 
-  // Totals — "confirmed" and "extras" only count non-cancelled items
+  // Totals — Ordered = production need (pots × ppp), Confirmed = what's on the broker order (ord_qty), Extras = Confirmed - Ordered
   const totals = useMemo(() => {
-    let ordered = 0, confirmed = 0, extras = 0, cost = 0;
+    let ordered = 0, confirmed = 0, cost = 0;
     filteredOrders.forEach(o => o.lines.forEach(i => {
-      ordered += parseInt(i.ordQty) || 0;
       cost += parseFloat(i.cost) || 0;
       if (!isCancelled(i.status)) {
-        confirmed += (parseInt(i.qty) || 0) * (parseInt(i.ppp) || 1);
-        extras += parseInt(i.extras) || 0;
+        ordered += (parseInt(i.qty) || 0) * (parseInt(i.ppp) || 1);
+        confirmed += parseInt(i.ordQty) || 0;
       }
     }));
+    const extras = confirmed - ordered;
     return { ordered, confirmed, extras, cost };
   }, [filteredOrders]);
 
-  // Load PDF signed URLs for expanded orders
+  // Load PDF signed URLs for ALL orders that have a PDF — lets the badge be clickable from the collapsed list
   useEffect(() => {
-    if (!sb || !expandedOrder) return;
-    const order = orders.find(o => o.orderNumber === expandedOrder);
-    if (!order?.confirmationPdfPath || pdfUrls[expandedOrder]) return;
-    sb.storage.from("order-confirmations").createSignedUrl(order.confirmationPdfPath, 3600).then(({ data }) => {
-      if (data?.signedUrl) setPdfUrls(prev => ({ ...prev, [expandedOrder]: data.signedUrl }));
+    if (!sb) return;
+    const need = orders.filter(o => o.confirmationPdfPath && !pdfUrls[o.orderNumber]);
+    if (need.length === 0) return;
+    let cancelled = false;
+    Promise.all(need.map(o =>
+      sb.storage.from("order-confirmations").createSignedUrl(o.confirmationPdfPath, 3600)
+        .then(({ data }) => ({ orderNumber: o.orderNumber, url: data?.signedUrl }))
+    )).then(results => {
+      if (cancelled) return;
+      setPdfUrls(prev => {
+        const next = { ...prev };
+        for (const r of results) if (r.url) next[r.orderNumber] = r.url;
+        return next;
+      });
     });
-  }, [expandedOrder, orders, sb, pdfUrls]);
+    return () => { cancelled = true; };
+  }, [orders, sb]); // eslint-disable-line
 
   const chipStyle = (active, color) => ({
     padding: "5px 12px", borderRadius: 20, fontSize: 11, fontWeight: 700, cursor: "pointer", border: "none",
@@ -2470,17 +2480,16 @@ function OrdersTab({ items }) {
           <div style={{ fontSize: 22, fontWeight: 800, color: "#1e2d1a", marginTop: 4 }}>{filteredOrders.length}</div>
         </div>
         <div style={{ ...card, padding: "14px 18px", margin: 0 }}>
-          <div style={{ fontSize: 10, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase" }}>Ordered</div>
+          <div style={{ fontSize: 10, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase" }}>Ordered (plants needed)</div>
           <div style={{ fontSize: 22, fontWeight: 800, color: "#4a90d9", marginTop: 4 }}>{fmtN(totals.ordered)}</div>
         </div>
         <div style={{ ...card, padding: "14px 18px", margin: 0 }}>
-          <div style={{ fontSize: 10, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase" }}>Confirmed</div>
+          <div style={{ fontSize: 10, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase" }}>Confirmed (on order)</div>
           <div style={{ fontSize: 22, fontWeight: 800, color: "#4a7a35", marginTop: 4 }}>{fmtN(totals.confirmed)}</div>
-          {totals.ordered !== totals.confirmed && totals.ordered > 0 && <div style={{ fontSize: 10, color: "#c8791a", marginTop: 2 }}>{totals.ordered > totals.confirmed ? `${fmtN(totals.ordered - totals.confirmed)} short` : `${fmtN(totals.confirmed - totals.ordered)} over`}</div>}
         </div>
         <div style={{ ...card, padding: "14px 18px", margin: 0 }}>
-          <div style={{ fontSize: 10, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase" }}>Extras</div>
-          <div style={{ fontSize: 22, fontWeight: 800, color: "#c8791a", marginTop: 4 }}>{fmtN(totals.extras)}</div>
+          <div style={{ fontSize: 10, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase" }}>Extras (conf − ord)</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: totals.extras < 0 ? "#d94f3d" : "#c8791a", marginTop: 4 }}>{totals.extras > 0 ? "+" : ""}{fmtN(totals.extras)}</div>
         </div>
         <div style={{ ...card, padding: "14px 18px", margin: 0 }}>
           <div style={{ fontSize: 10, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase" }}>Total Cost</div>
@@ -2511,10 +2520,11 @@ function OrdersTab({ items }) {
         const isExpanded = expandedOrder === order.orderNumber;
         const lines = categoryFilter !== "all" ? order.lines.filter(l => l.category === categoryFilter) : order.lines;
         const rows = buildVarietyRows(lines);
-        const orderOrdered = lines.reduce((s, i) => s + (parseInt(i.ordQty) || 0), 0);
+        // Ordered = production need (pots × ppp), Confirmed = broker order qty (ord_qty)
         const confirmedLines = lines.filter(i => !isCancelled(i.status));
-        const orderConfirmed = confirmedLines.reduce((s, i) => s + (parseInt(i.qty) || 0) * (parseInt(i.ppp) || 1), 0);
-        const orderExtras = confirmedLines.reduce((s, i) => s + (parseInt(i.extras) || 0), 0);
+        const orderOrdered = confirmedLines.reduce((s, i) => s + (parseInt(i.qty) || 0) * (parseInt(i.ppp) || 1), 0);
+        const orderConfirmed = confirmedLines.reduce((s, i) => s + (parseInt(i.ordQty) || 0), 0);
+        const orderExtras = orderConfirmed - orderOrdered;
         const orderCost = lines.reduce((s, i) => s + (parseFloat(i.cost) || 0), 0);
         const cancelledCount = rows.filter(r => isCancelled(r.status)).length;
         const shipWeeks = [...order.shipWeeks].sort();
@@ -2527,10 +2537,18 @@ function OrdersTab({ items }) {
               style={{ padding: "14px 18px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10,
                 background: isExpanded ? "#f0f8eb" : "#fff", borderBottom: isExpanded ? "1.5px solid #c8e0b8" : "none" }}>
               <div>
-                <div style={{ fontSize: 14, fontWeight: 800, color: "#1e2d1a" }}>
-                  Order #{order.orderNumber}
-                  {order.confirmationPdfPath && <span style={{ marginLeft: 8, fontSize: 11, color: "#4a90d9" }}>📄 PDF</span>}
-                  {cancelledCount > 0 && <span style={{ marginLeft: 8, fontSize: 10, background: "#fde8e8", color: "#d94f3d", padding: "2px 8px", borderRadius: 10, fontWeight: 700 }}>{cancelledCount} cancelled</span>}
+                <div style={{ fontSize: 14, fontWeight: 800, color: "#1e2d1a", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span>Order #{order.orderNumber}</span>
+                  {order.confirmationPdfPath && pdfUrls[order.orderNumber] && (
+                    <a href={pdfUrls[order.orderNumber]} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}
+                      style={{ fontSize: 11, color: "#4a90d9", textDecoration: "none", background: "#e8f4fc", padding: "2px 8px", borderRadius: 10, fontWeight: 700 }}>
+                      📄 View PDF
+                    </a>
+                  )}
+                  {order.confirmationPdfPath && !pdfUrls[order.orderNumber] && (
+                    <span style={{ fontSize: 11, color: "#7a8c74" }}>📄 …</span>
+                  )}
+                  {cancelledCount > 0 && <span style={{ fontSize: 10, background: "#fde8e8", color: "#d94f3d", padding: "2px 8px", borderRadius: 10, fontWeight: 700 }}>{cancelledCount} cancelled</span>}
                 </div>
                 <div style={{ fontSize: 12, color: "#7a8c74", marginTop: 2 }}>
                   {order.supplier}{order.broker ? ` (via ${order.broker})` : ""} — {[...order.categories].sort().join(", ")}
@@ -2539,8 +2557,15 @@ function OrdersTab({ items }) {
               </div>
               <div style={{ display: "flex", gap: 16, alignItems: "center", fontSize: 12 }}>
                 <div style={{ textAlign: "right" }}>
-                  <div style={{ fontWeight: 800, color: "#4a90d9" }}>{fmtN(orderOrdered)} ordered</div>
-                  <div style={{ color: orderOrdered !== orderConfirmed && orderOrdered > 0 ? "#c8791a" : "#4a7a35", fontWeight: 700 }}>{fmtN(orderConfirmed)} confirmed{orderExtras > 0 ? ` · ${fmtN(orderExtras)} extras` : ""}</div>
+                  <div style={{ fontWeight: 800, color: "#4a90d9" }}>{fmtN(orderOrdered)} needed</div>
+                  <div style={{ color: orderOrdered !== orderConfirmed && orderOrdered > 0 ? "#c8791a" : "#4a7a35", fontWeight: 700 }}>
+                    {fmtN(orderConfirmed)} confirmed
+                    {orderExtras !== 0 && (
+                      <span style={{ color: orderExtras < 0 ? "#d94f3d" : "#c8791a", marginLeft: 6 }}>
+                        ({orderExtras > 0 ? "+" : ""}{fmtN(orderExtras)})
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <div style={{ fontSize: 14, fontWeight: 800, color: "#1e2d1a" }}>{fmt$(orderCost)}</div>
                 <div style={{ fontSize: 18, color: "#7a8c74" }}>{isExpanded ? "▲" : "▼"}</div>
@@ -2550,15 +2575,6 @@ function OrdersTab({ items }) {
             {/* Expanded detail */}
             {isExpanded && (
               <div style={{ padding: "0" }}>
-                {/* PDF link */}
-                {pdfUrls[order.orderNumber] && (
-                  <div style={{ padding: "10px 18px", background: "#f8fbf5", borderBottom: "1px solid #e0ead8" }}>
-                    <a href={pdfUrls[order.orderNumber]} target="_blank" rel="noopener noreferrer"
-                      style={{ fontSize: 12, color: "#4a90d9", fontWeight: 700, textDecoration: "none" }}>
-                      📄 View Order Confirmation PDF — #{order.orderNumber}
-                    </a>
-                  </div>
-                )}
 
                 <div style={{ overflowX: "auto" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 800 }}>
@@ -2581,8 +2597,10 @@ function OrdersTab({ items }) {
                       {rows.map((r, idx) => {
                         const badge = statusBadge(r.status);
                         const rowCancelled = badge && (r.status.toUpperCase() === "CANCELLED" || r.status.toUpperCase() === "NOT NEEDED");
-                        const confirmed = r.pots * r.ppp;
-                        const mismatch = r.ordQty > 0 && confirmed > 0 && r.ordQty !== confirmed;
+                        const ordered = r.pots * r.ppp;   // plants we need to plant
+                        const confirmed = r.ordQty;        // what's on the broker order
+                        const extras = confirmed - ordered;
+                        const mismatch = ordered > 0 && confirmed > 0 && extras !== 0;
                         return (
                           <tr key={idx} style={{ borderBottom: "1px solid #f0f5ee", background: rowCancelled ? "#fef8f8" : mismatch ? "#fffbf0" : idx % 2 === 0 ? "#fff" : "#fafcf8",
                             opacity: rowCancelled ? 0.5 : 1, textDecoration: rowCancelled ? "line-through" : "none" }}>
@@ -2594,9 +2612,9 @@ function OrdersTab({ items }) {
                                 color: r.propMethod === "SEED" ? "#c8791a" : r.propMethod === "URC" ? "#8e44ad" : "#4a7a35",
                                 padding: "2px 8px", borderRadius: 8, fontSize: 10, fontWeight: 700 }}>{r.propMethod}</span>}
                             </td>
-                            <td style={{ padding: 8, textAlign: "right", fontSize: 12, fontWeight: 800, color: "#4a90d9", fontVariantNumeric: "tabular-nums" }}>{fmtN(r.ordQty)}</td>
-                            <td style={{ padding: 8, textAlign: "right", fontSize: 12, fontWeight: 700, color: mismatch ? "#c8791a" : "#4a7a35", fontVariantNumeric: "tabular-nums" }}>{fmtN(confirmed)}{mismatch && <span style={{ fontSize: 9, color: "#c8791a", marginLeft: 4 }}>{confirmed < r.ordQty ? "▼" : "▲"}</span>}</td>
-                            <td style={{ padding: 8, textAlign: "right", fontSize: 12, fontWeight: 700, color: "#c8791a", fontVariantNumeric: "tabular-nums" }}>{fmtN(r.extras)}</td>
+                            <td style={{ padding: 8, textAlign: "right", fontSize: 12, fontWeight: 800, color: "#4a90d9", fontVariantNumeric: "tabular-nums" }}>{fmtN(ordered)}</td>
+                            <td style={{ padding: 8, textAlign: "right", fontSize: 12, fontWeight: 700, color: mismatch ? "#c8791a" : "#4a7a35", fontVariantNumeric: "tabular-nums" }}>{fmtN(confirmed)}{mismatch && <span style={{ fontSize: 9, color: "#c8791a", marginLeft: 4 }}>{extras < 0 ? "▼" : "▲"}</span>}</td>
+                            <td style={{ padding: 8, textAlign: "right", fontSize: 12, fontWeight: 700, color: extras < 0 ? "#d94f3d" : extras > 0 ? "#c8791a" : "#7a8c74", fontVariantNumeric: "tabular-nums" }}>{extras > 0 ? "+" : ""}{fmtN(extras)}</td>
                             <td style={{ padding: 8, textAlign: "right", fontSize: 11, color: "#7a8c74", fontVariantNumeric: "tabular-nums" }}>{r.ppp}</td>
                             <td style={{ padding: 8, textAlign: "right", fontSize: 11, color: "#7a8c74", fontVariantNumeric: "tabular-nums" }}>{fmtN(r.pots)}</td>
                             <td style={{ padding: 8, textAlign: "right", fontSize: 12, fontVariantNumeric: "tabular-nums" }}>{fmt$(r.cost)}</td>
@@ -2612,7 +2630,7 @@ function OrdersTab({ items }) {
                         <td colSpan={4} style={{ padding: 8, fontSize: 12, fontWeight: 800, color: "#1e2d1a" }}>Total — {rows.length} varieties ({rows.filter(r => !isCancelled(r.status)).length} confirmed)</td>
                         <td style={{ padding: 8, textAlign: "right", fontSize: 12, fontWeight: 800, color: "#4a90d9" }}>{fmtN(orderOrdered)}</td>
                         <td style={{ padding: 8, textAlign: "right", fontSize: 12, fontWeight: 800, color: "#4a7a35" }}>{fmtN(orderConfirmed)}</td>
-                        <td style={{ padding: 8, textAlign: "right", fontSize: 12, fontWeight: 800, color: "#c8791a" }}>{fmtN(orderExtras)}</td>
+                        <td style={{ padding: 8, textAlign: "right", fontSize: 12, fontWeight: 800, color: orderExtras < 0 ? "#d94f3d" : "#c8791a" }}>{orderExtras > 0 ? "+" : ""}{fmtN(orderExtras)}</td>
                         <td colSpan={2} />
                         <td style={{ padding: 8, textAlign: "right", fontSize: 12, fontWeight: 800, color: "#1e2d1a" }}>{fmt$(orderCost)}</td>
                         <td />
