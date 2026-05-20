@@ -188,34 +188,62 @@ export default function BrokerReports() {
   }, [diff]);
 
   // Apply: scale ord_qty across bench-level rows so the variety total matches the report
-  async function applyQtyChange(line) {
+  async function applyOne(line) {
     if (!line.dbItems || line.dbItems.length === 0) return;
-    setBusy(line.key);
     const newTotal = line.reportQty;
     const oldTotal = line.dbItems.reduce((s, i) => s + (parseFloat(i.ordQty) || 0), 0) || line.dbQty;
-    try {
-      // Proportional split. If oldTotal is 0 (degenerate), dump everything on first row.
-      let allocated = 0;
-      for (let idx = 0; idx < line.dbItems.length; idx++) {
-        const it = line.dbItems[idx];
-        const oldVal = parseFloat(it.ordQty) || 0;
-        let newVal;
-        if (oldTotal > 0) {
-          if (idx === line.dbItems.length - 1) newVal = newTotal - allocated; // remainder on last
-          else newVal = Math.round((oldVal / oldTotal) * newTotal);
-        } else {
-          newVal = idx === 0 ? newTotal : 0;
-        }
-        allocated += newVal;
-        await updateItem(it.id, { ordQty: newVal });
+    // Proportional split. If oldTotal is 0 (degenerate), dump everything on first row.
+    let allocated = 0;
+    for (let idx = 0; idx < line.dbItems.length; idx++) {
+      const it = line.dbItems[idx];
+      const oldVal = parseFloat(it.ordQty) || 0;
+      let newVal;
+      if (oldTotal > 0) {
+        if (idx === line.dbItems.length - 1) newVal = newTotal - allocated;
+        else newVal = Math.round((oldVal / oldTotal) * newTotal);
+      } else {
+        newVal = idx === 0 ? newTotal : 0;
       }
-      await saveAction(line, "apply");
+      allocated += newVal;
+      await updateItem(it.id, { ordQty: newVal });
+    }
+    await saveAction(line, "apply");
+  }
+
+  async function applyQtyChange(line) {
+    setBusy(line.key);
+    try {
+      await applyOne(line);
       setActions(prev => ({ ...prev, [line.key]: { action: "apply", at: new Date().toISOString() } }));
       refreshItems();
     } catch (err) {
       alert("Apply failed: " + err.message);
     }
     setBusy(null);
+  }
+
+  const [bulkProgress, setBulkProgress] = useState(null);
+  async function applyAll() {
+    if (!diff) return;
+    const targets = diff.filter(l => l.type === "qty_changed" && !actions[l.key] && !isPreviouslyHandled(l));
+    if (targets.length === 0) { alert("Nothing to apply."); return; }
+    if (!window.confirm(`Apply ${targets.length} quantity change${targets.length !== 1 ? "s" : ""} to the database?`)) return;
+    setBulkProgress({ total: targets.length, done: 0, errors: 0 });
+    const newActions = {};
+    for (let i = 0; i < targets.length; i++) {
+      const line = targets[i];
+      try {
+        await applyOne(line);
+        newActions[line.key] = { action: "apply", at: new Date().toISOString() };
+      } catch (err) {
+        console.error("Apply failed for", line.variety, err);
+        setBulkProgress(p => ({ ...p, errors: p.errors + 1 }));
+      }
+      setBulkProgress(p => ({ ...p, done: i + 1 }));
+    }
+    setActions(prev => ({ ...prev, ...newActions }));
+    refreshItems();
+    setTimeout(() => setBulkProgress(null), 1800);
   }
 
   async function ignoreLine(line) {
@@ -328,11 +356,32 @@ export default function BrokerReports() {
 
       {/* Diff summary */}
       {diff && counts && (
-        <div style={{ ...card, display: "flex", gap: 14, flexWrap: "wrap" }}>
+        <div style={{ ...card, display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center" }}>
           <Stat label="Qty changes" value={counts.qty_changed || 0} color="#c8791a" />
           <Stat label="New in report" value={counts.new || 0} color="#4a90d9" />
           <Stat label="Missing / cancelled" value={counts.only_in_db || 0} color="#d94f3d" />
           <Stat label="Unchanged" value={counts.unchanged || 0} color="#7fb069" />
+          <div style={{ marginLeft: "auto", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
+            {bulkProgress && (
+              <div style={{ fontSize: 11, color: "#7a8c74" }}>
+                {bulkProgress.done < bulkProgress.total
+                  ? `Applying ${bulkProgress.done}/${bulkProgress.total}…`
+                  : `Done — ${bulkProgress.done - bulkProgress.errors} applied${bulkProgress.errors ? `, ${bulkProgress.errors} errors` : ""}`}
+              </div>
+            )}
+            <button onClick={applyAll}
+              disabled={!!bulkProgress || !(counts.qty_changed > 0)}
+              style={{
+                padding: "10px 22px", borderRadius: 10, border: "none",
+                background: bulkProgress ? "#b0c8a0" : counts.qty_changed > 0 ? "#1e2d1a" : "#c8d8c0",
+                color: counts.qty_changed > 0 ? "#c8e6b8" : "#7a8c74",
+                fontSize: 14, fontWeight: 800,
+                cursor: bulkProgress || !(counts.qty_changed > 0) ? "default" : "pointer",
+                fontFamily: "inherit",
+              }}>
+              ✓ Apply All Changes ({counts.qty_changed || 0})
+            </button>
+          </div>
         </div>
       )}
 
