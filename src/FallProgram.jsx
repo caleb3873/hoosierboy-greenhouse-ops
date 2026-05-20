@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import { useFallProgramItems, useSoilMixes, useContainers, useProgramInputs, useInputProducts, useCategoryPricing, useManagerTasks, getSupabase } from "./supabase";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from "recharts";
+import BrokerReports from "./BrokerReports";
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
 const card = { background: "#fff", borderRadius: 14, border: "1.5px solid #e0ead8", padding: "18px 20px", marginBottom: 12 };
@@ -26,6 +27,7 @@ const SECTIONS = [
   { id: "schedule", label: "Schedule" },
   { id: "sowing", label: "Sowing & Prop" },
   { id: "orders", label: "Orders" },
+  { id: "reports", label: "📊 Broker Reports" },
   { id: "inputs", label: "Inputs" },
   { id: "cost", label: "Cost Estimate" },
   { id: "pricing", label: "Pricing" },
@@ -260,6 +262,7 @@ export default function FallProgram() {
           {section === "schedule" && <ProductionScheduleTab items={yearItems} containers={containers} soilMixes={soilMixes} year={year} upsertTask={upsertTask} removeTask={removeTask} managerTasks={managerTasks} />}
           {section === "sowing" && <SowingTab items={yearItems} upsert={upsert} />}
           {section === "orders" && <OrdersTab items={yearItems} />}
+          {section === "reports" && <BrokerReports />}
           {section === "inputs" && <InputsTab year={year} items={yearItems} programInputs={programInputs.filter(p => p.year === year)} inputsLibrary={inputsLibrary} insertProgramInput={insertProgramInput} updateProgramInput={updateProgramInput} removeProgramInput={removeProgramInput} />}
           {section === "cost" && <CostTab items={yearItems} containers={containers} soilMixes={soilMixes} programInputs={programInputs.filter(p => p.year === year)} />}
           {section === "pricing" && <PricingTab year={year} items={yearItems} containers={containers} soilMixes={soilMixes} programInputs={programInputs.filter(p => p.year === year)} />}
