@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import { useManagerTasks, useVacationRequests, getSupabase } from "./supabase";
 import { VacationRequestModal, OutThisWeekBanner, VacationRequestsInboxModal, isVacationApprover } from "./Vacation";
+import { AnnouncementBanner, AnnouncementComposerModal, AnnouncementPopup, useAnnouncementPopup, canPostAnnouncement } from "./Announcements";
 import { useAuth } from "./Auth";
 import { BrehobManagerView } from "./BrehobList";
 import { getCurrentWeek } from "./shared";
@@ -228,9 +229,12 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
   const [showAssigned, setShowAssigned] = useState(false);
   const [showVacationForm, setShowVacationForm] = useState(false);
   const [showVacationInbox, setShowVacationInbox] = useState(false);
+  const [showAnnouncer, setShowAnnouncer] = useState(false);
   const { rows: vacationReqs } = useVacationRequests();
   const canApproveVacation = isVacationApprover(displayName);
+  const canAnnounce = canPostAnnouncement(displayName);
   const pendingVacations = useMemo(() => (vacationReqs || []).filter(v => v.status === "pending"), [vacationReqs]);
+  const announcementPopup = useAnnouncementPopup();
   const autoOpenedRef = useRef(false);
   const overdueCheckedRef = useRef(false);
   const assignedCheckedRef = useRef(false);
@@ -675,6 +679,12 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
                 App →
               </button>
             )}
+            {canAnnounce && (
+              <button onClick={() => setShowAnnouncer(true)}
+                style={{ background: "#1e2d1a", border: "none", borderRadius: 8, color: "#c8e6b8", padding: "6px 12px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                📢 Announce
+              </button>
+            )}
             <button onClick={() => setShowVacationForm(true)}
               style={{ background: "#7fb069", border: "none", borderRadius: 8, color: "#fff", padding: "6px 12px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
               🌴 Vacation
@@ -711,6 +721,9 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
         </div>
         <button onClick={() => changeWeek(1)} style={{ background: "none", border: "none", color: "#c8e6b8", fontSize: 18, cursor: "pointer", padding: 6 }}>&rarr;</button>
       </div>
+
+      {/* Announcements */}
+      <AnnouncementBanner />
 
       {/* Push notification banner */}
       <div style={{ padding: "12px 20px 0" }}><NotificationBanner /></div>
@@ -945,6 +958,12 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       )}
       {showVacationInbox && (
         <VacationRequestsInboxModal onClose={() => setShowVacationInbox(false)} />
+      )}
+      {showAnnouncer && (
+        <AnnouncementComposerModal onClose={() => setShowAnnouncer(false)} />
+      )}
+      {announcementPopup.open && (
+        <AnnouncementPopup unseen={announcementPopup.unseen} onClose={announcementPopup.close} />
       )}
     </div>
   );

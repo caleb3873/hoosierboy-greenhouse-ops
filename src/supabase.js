@@ -334,6 +334,7 @@ export const useEmployees        = () => useTable("employees",         { orderBy
 export const useEmployeeAttendance = () => useTable("employee_attendance", { orderBy: "attendance_date", localKey: "gh_employee_attendance_v1" });
 export const useHiringCandidates = () => useTable("hiring_candidates", { orderBy: "created_at", ascending: false, localKey: "gh_hiring_candidates_v1" });
 export const useVacationRequests = () => useTable("vacation_requests", { orderBy: "start_date", ascending: true, localKey: "gh_vacation_requests_v1" });
+export const useAnnouncements = () => useTable("announcements", { orderBy: "created_at", ascending: false, localKey: "gh_announcements_v1" });
 
 // ── AUTH HELPERS ──────────────────────────────────────────────────────────────
 export async function sendPasswordReset(email) {

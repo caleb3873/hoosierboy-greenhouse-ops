@@ -5,6 +5,7 @@ import { CompletionPromptModal, TaskViewer, TaskPhoto, uploadTaskPhoto, formatTa
 import { NotificationBanner } from "./PushNotifications";
 import { BrehobWorkerView } from "./BrehobList";
 import { VacationRequestModal, OutThisWeekBanner } from "./Vacation";
+import { AnnouncementBanner, AnnouncementPopup, useAnnouncementPopup } from "./Announcements";
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
 const GREEN_DARK = "#1e2d1a";
@@ -40,6 +41,7 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
   const [showBrehob, setShowBrehob] = useState(false);
   const [showVacationForm, setShowVacationForm] = useState(false);
   const { rows: vacationReqs, upsert: upsertVacation } = useVacationRequests();
+  const announcementPopup = useAnnouncementPopup();
   const [decisionsOpen, setDecisionsOpen] = useState(false);
   const decisionsCheckedRef = useRef(false);
 
@@ -345,6 +347,7 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
         </div>
       </div>
 
+      <AnnouncementBanner />
       <OutThisWeekBanner />
 
       <div style={{ display: "flex", gap: 8, padding: 12 }}>
@@ -545,6 +548,9 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
           onCancel={() => setShowVacationForm(false)}
           onSaved={() => setShowVacationForm(false)}
         />
+      )}
+      {announcementPopup.open && (
+        <AnnouncementPopup unseen={announcementPopup.unseen} onClose={announcementPopup.close} />
       )}
     </div>
   );

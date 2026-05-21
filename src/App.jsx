@@ -46,6 +46,7 @@ import ShippingManagerMobile from "./shipping/ShippingManagerMobile";
 import PickSheetViewer      from "./shipping/PickSheetViewer";
 import HeadGrowerHiring     from "./HeadGrowerHiring";
 import VacationCalendar     from "./VacationCalendar";
+import { AnnouncementBanner, AnnouncementPopup, useAnnouncementPopup } from "./Announcements";
 
 // ── PLANNER SHELL ─────────────────────────────────────────────────────────────
 // Nav grouped by category
@@ -141,6 +142,7 @@ function PlannerShell() {
   };
   const { signOut, displayName, floorMode, isOwner } = useAuth();
   const { extractionState } = useExtraction();
+  const announcementPopup = useAnnouncementPopup();
 
   // Build nav groups dynamically — Owner sees Hiring + Owner groups
   const navGroups = isOwner
@@ -189,6 +191,9 @@ function PlannerShell() {
           </div>
         )}
       </div>
+
+      {/* Announcements banner — visible across PlannerShell */}
+      <AnnouncementBanner />
 
       {/* Extraction progress banner — visible from any page */}
       {extractionState?.extracting && (
@@ -261,6 +266,9 @@ function PlannerShell() {
         {page === "ship-trucks"    && <ShippingTrucks />}
         {page === "owner" && isOwner && <OwnerDashboard />}
       </div>
+      {announcementPopup.open && (
+        <AnnouncementPopup unseen={announcementPopup.unseen} onClose={announcementPopup.close} />
+      )}
     </div>
   );
 }
