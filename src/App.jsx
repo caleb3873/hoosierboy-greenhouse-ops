@@ -45,6 +45,7 @@ import ShippingOfficeView   from "./shipping/ShippingOfficeView";
 import ShippingManagerMobile from "./shipping/ShippingManagerMobile";
 import PickSheetViewer      from "./shipping/PickSheetViewer";
 import HeadGrowerHiring     from "./HeadGrowerHiring";
+import VacationCalendar     from "./VacationCalendar";
 
 // ── PLANNER SHELL ─────────────────────────────────────────────────────────────
 // Nav grouped by category
@@ -74,6 +75,7 @@ const NAV_GROUPS = [
       { id: "scouting",  label: "Scouting" },
       { id: "growers",   label: "Growers" },
       { id: "manager-tasks", label: "Manager Tasks" },
+      { id: "vacation", label: "🌴 Vacation Calendar" },
     ],
   },
   {
@@ -229,6 +231,7 @@ function PlannerShell() {
         {page === "scouting"  && <div style={{ padding: 40, textAlign: "center", color: "#7a8c74" }}>Scouting — coming soon</div>}
         {page === "growers"   && <GrowerManagement />}
         {page === "manager-tasks" && <ManagerTasksView defaultCategory="production" />}
+        {page === "vacation" && <VacationCalendar />}
         {page === "hiring" && isOwner && <HeadGrowerHiring />}
         {page === "preseason"  && <Preseason      onNavigate={setPage} onCreateCropRun={() => setPage("crops")} />}
         {page === "crops"      && <CropPlanning   />}

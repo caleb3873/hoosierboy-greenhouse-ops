@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useRef } from "react";
-import { useManagerTasks, getSupabase } from "./supabase";
+import { useManagerTasks, useVacationRequests, getSupabase } from "./supabase";
+import { VacationRequestModal, OutThisWeekBanner, VacationRequestsInboxModal, isVacationApprover } from "./Vacation";
 import { useAuth } from "./Auth";
 import { BrehobManagerView } from "./BrehobList";
 import { getCurrentWeek } from "./shared";
@@ -225,6 +226,11 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
   const [decliningRequest, setDecliningRequest] = useState(null);
   const [showOverdue, setShowOverdue] = useState(false);
   const [showAssigned, setShowAssigned] = useState(false);
+  const [showVacationForm, setShowVacationForm] = useState(false);
+  const [showVacationInbox, setShowVacationInbox] = useState(false);
+  const { rows: vacationReqs } = useVacationRequests();
+  const canApproveVacation = isVacationApprover(displayName);
+  const pendingVacations = useMemo(() => (vacationReqs || []).filter(v => v.status === "pending"), [vacationReqs]);
   const autoOpenedRef = useRef(false);
   const overdueCheckedRef = useRef(false);
   const assignedCheckedRef = useRef(false);
@@ -669,6 +675,16 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
                 App →
               </button>
             )}
+            <button onClick={() => setShowVacationForm(true)}
+              style={{ background: "#7fb069", border: "none", borderRadius: 8, color: "#fff", padding: "6px 12px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+              🌴 Vacation
+            </button>
+            {canApproveVacation && (
+              <button onClick={() => setShowVacationInbox(true)}
+                style={{ background: pendingVacations.length > 0 ? "#e89a3a" : "#c8e6b8", border: "none", borderRadius: 8, color: "#1e2d1a", padding: "6px 12px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                🌴 Inbox{pendingVacations.length > 0 ? ` (${pendingVacations.length})` : ""}
+              </button>
+            )}
             <button onClick={() => setShowRequests(true)}
               style={{ background: pendingRequests.length > 0 ? "#e89a3a" : "#c8e6b8", border: "none", borderRadius: 8, color: "#1e2d1a", padding: "6px 12px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
               📥 Requests{pendingRequests.length > 0 ? ` (${pendingRequests.length})` : ""}
@@ -698,6 +714,10 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
 
       {/* Push notification banner */}
       <div style={{ padding: "12px 20px 0" }}><NotificationBanner /></div>
+
+      {/* Who's out this week */}
+      <OutThisWeekBanner />
+
 
       {/* Category tabs */}
       <div style={{ padding: "12px 20px 0", background: "#fff", display: "flex", gap: 8, overflowX: "auto" }}>
@@ -916,6 +936,15 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
           }}
           onOpenTask={(t) => { setShowAssigned(false); setSelectedTask(t); }}
         />
+      )}
+      {showVacationForm && (
+        <VacationRequestModal
+          onCancel={() => setShowVacationForm(false)}
+          onSaved={() => setShowVacationForm(false)}
+        />
+      )}
+      {showVacationInbox && (
+        <VacationRequestsInboxModal onClose={() => setShowVacationInbox(false)} />
       )}
     </div>
   );

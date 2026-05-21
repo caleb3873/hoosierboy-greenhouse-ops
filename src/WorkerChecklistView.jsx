@@ -1,9 +1,10 @@
 import { useMemo, useState, useEffect, useRef } from "react";
-import { useManagerTasks, useBrehobItems } from "./supabase";
+import { useManagerTasks, useBrehobItems, useVacationRequests } from "./supabase";
 import { useAuth } from "./Auth";
 import { CompletionPromptModal, TaskViewer, TaskPhoto, uploadTaskPhoto, formatTargetDate, bucketToDate } from "./ManagerTasksView";
 import { NotificationBanner } from "./PushNotifications";
 import { BrehobWorkerView } from "./BrehobList";
+import { VacationRequestModal, OutThisWeekBanner } from "./Vacation";
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
 const GREEN_DARK = "#1e2d1a";
@@ -37,6 +38,8 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
   const [releasingTask, setReleasingTask] = useState(null);
   const [suggesting, setSuggesting] = useState(false);
   const [showBrehob, setShowBrehob] = useState(false);
+  const [showVacationForm, setShowVacationForm] = useState(false);
+  const { rows: vacationReqs, upsert: upsertVacation } = useVacationRequests();
   const [decisionsOpen, setDecisionsOpen] = useState(false);
   const decisionsCheckedRef = useRef(false);
 
@@ -68,13 +71,25 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
       reason: b.declineReason,
       row: b,
     }));
-    return [...taskDecisions, ...brehobDecisions];
-  }, [tasks, brehobItems, displayName]);
+    const vacationDecisions = (vacationReqs || []).filter(v =>
+      (v.requesterName || "") === me &&
+      v.decisionSeen === false &&
+      (v.status === "approved" || v.status === "declined")
+    ).map(v => ({
+      kind: "vacation",
+      id: v.id,
+      title: `🌴 Time off ${v.startDate}${v.endDate !== v.startDate ? ` → ${v.endDate}` : ""}`,
+      outcome: v.status,
+      reason: v.declineReason,
+      row: v,
+    }));
+    return [...taskDecisions, ...brehobDecisions, ...vacationDecisions];
+  }, [tasks, brehobItems, vacationReqs, displayName]);
 
   // Auto-open the decisions modal once per session if anything is waiting.
   useEffect(() => {
     if (decisionsCheckedRef.current) return;
-    if (!tasks.length && !(brehobItems || []).length) return;
+    if (!tasks.length && !(brehobItems || []).length && !(vacationReqs || []).length) return;
     const sessionKey = `gh_worker_decisions_seen_${displayName || "anon"}`;
     if (sessionStorage.getItem(sessionKey)) {
       decisionsCheckedRef.current = true;
@@ -85,11 +100,13 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
       sessionStorage.setItem(sessionKey, "1");
     }
     decisionsCheckedRef.current = true;
-  }, [tasks.length, brehobItems?.length, pendingDecisions.length, displayName]);
+  }, [tasks.length, brehobItems?.length, vacationReqs?.length, pendingDecisions.length, displayName]);
 
   async function acknowledgeDecision(d) {
     if (d.kind === "task") {
       await upsert({ ...d.row, decisionSeen: true });
+    } else if (d.kind === "vacation") {
+      await upsertVacation({ ...d.row, decisionSeen: true });
     } else {
       await updateBrehob(d.id, { decisionSeen: true });
     }
@@ -314,6 +331,9 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
           <button onClick={() => setShowBrehob(true)} style={{ background: "#c8e6b8", border: "none", color: GREEN_DARK, padding: "6px 12px", borderRadius: 6, cursor: "pointer", fontWeight: 800, ...FONT }}>
             🛒 Brehob
           </button>
+          <button onClick={() => setShowVacationForm(true)} style={{ background: "#c8e6b8", border: "none", color: GREEN_DARK, padding: "6px 12px", borderRadius: 6, cursor: "pointer", fontWeight: 800, ...FONT }}>
+            🌴 Vacation
+          </button>
           {onBackToApp && (
             <button onClick={onBackToApp} style={{ background: GREEN, border: "none", color: GREEN_DARK, padding: "6px 12px", borderRadius: 6, cursor: "pointer", fontWeight: 800, ...FONT }}>
               App →
@@ -324,6 +344,8 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
           </button>
         </div>
       </div>
+
+      <OutThisWeekBanner />
 
       <div style={{ display: "flex", gap: 8, padding: 12 }}>
         {[
@@ -518,6 +540,12 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
           onClose={async () => { await acknowledgeAll(); setDecisionsOpen(false); }}
         />
       )}
+      {showVacationForm && (
+        <VacationRequestModal
+          onCancel={() => setShowVacationForm(false)}
+          onSaved={() => setShowVacationForm(false)}
+        />
+      )}
     </div>
   );
 }
@@ -577,7 +605,9 @@ function DecisionsModal({ decisions, displayName, onAcknowledge, onClose }) {
                       <div style={{ flex: 1 }}>
                         <div style={{ fontSize: 14, fontWeight: 800, color: "#1e2d1a" }}>{d.title}</div>
                         <div style={{ fontSize: 11, color: "#4a7a35", marginTop: 2 }}>
-                          {d.kind === "brehob" ? "🛒 Added to Brehob shopping list" : "Added to the manager's task list"}
+                          {d.kind === "brehob" ? "🛒 Added to Brehob shopping list"
+                            : d.kind === "vacation" ? "🌴 Time off approved by Paul"
+                            : "Added to the manager's task list"}
                         </div>
                       </div>
                       <button onClick={() => handleAck(d)} disabled={busy === d.id}
