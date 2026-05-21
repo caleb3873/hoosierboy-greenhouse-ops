@@ -5,7 +5,8 @@ import { useAuth } from "./Auth";
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
 
 export function isVacationApprover(displayName) {
-  return (displayName || "").toLowerCase().includes("paul");
+  const n = (displayName || "").toLowerCase();
+  return n.includes("paul") || n.includes("patricia") || n.includes("garrison") || n.includes("trish");
 }
 
 function fmtRange(start, end) {

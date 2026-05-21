@@ -606,7 +606,7 @@ function DecisionsModal({ decisions, displayName, onAcknowledge, onClose }) {
                         <div style={{ fontSize: 14, fontWeight: 800, color: "#1e2d1a" }}>{d.title}</div>
                         <div style={{ fontSize: 11, color: "#4a7a35", marginTop: 2 }}>
                           {d.kind === "brehob" ? "🛒 Added to Brehob shopping list"
-                            : d.kind === "vacation" ? "🌴 Time off approved by Paul"
+                            : d.kind === "vacation" ? `🌴 Time off approved${d.row?.approver ? ` by ${d.row.approver}` : ""}`
                             : "Added to the manager's task list"}
                         </div>
                       </div>
