@@ -146,14 +146,16 @@ function responseLink(reqId) {
   return `${origin}/?driverResponse=${reqId}`;
 }
 
-function smsRequestBody(req) {
-  // Pre-filled SMS body the manager sends to the driver
-  const date = req.deliveryDate || "";
-  const who = req.requestedBy || "Schlegel Greenhouse";
+function smsRequestBody(req, driverName) {
+  // Pre-filled SMS body the manager sends to the driver. Manager taps Text →
+  // their Messages app opens with this body + driver's number ready to send.
+  const firstName = (driverName || "").trim().split(/\s+/)[0] || "there";
+  const dateLabel = req.deliveryDate
+    ? new Date(req.deliveryDate + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })
+    : "";
   const link = responseLink(req.id);
-  let body = `Hi — ${who} here. Can you drive a delivery on ${date}?`;
-  if (req.details) body += `\n${req.details}`;
-  body += `\nTap to accept/decline: ${link}`;
+  let body = `Hey ${firstName}, are you available to drive ${dateLabel}? Please click this link and approve or decline:\n${link}`;
+  if (req.details) body += `\n\nDetails: ${req.details}`;
   return body;
 }
 
@@ -208,7 +210,7 @@ export function DriverRequestStatusList({ scope = "mine" }) {
                   style={{ flex: 1, textAlign: "center", textDecoration: "none", background: "#1e4d2b", border: "1px solid #7fb069", color: "#7fb069", padding: "6px 10px", borderRadius: 6, fontSize: 11, fontWeight: 800 }}>
                   📞 Call {r.requestedDriver?.split(" ")[0]}
                 </a>
-                <a href={`${smsHref(phone)}${smsHref(phone)?.includes("?") ? "&" : "?"}body=${encodeURIComponent(smsRequestBody(r))}`}
+                <a href={`${smsHref(phone)}${smsHref(phone)?.includes("?") ? "&" : "?"}body=${encodeURIComponent(smsRequestBody(r, r.requestedDriver))}`}
                   style={{ flex: 2, textAlign: "center", textDecoration: "none", background: "#1e2d4d", border: "1px solid #6a8fd9", color: "#6a8fd9", padding: "6px 10px", borderRadius: 6, fontSize: 11, fontWeight: 800 }}>
                   💬 Text with Accept/Decline link
                 </a>
