@@ -188,21 +188,18 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
   // dropdown is restricted to managers + asst managers + Paul/Tyler.)
   const canAssign = useMemo(() => !!displayName, [displayName]);
 
-  // Eligible assignees: anyone who can be the on-the-hook person for a task.
-  // Per spec: only managers + asst managers + Paul + Tyler get assignments;
-  // workers and drivers are excluded since they don't see tasks. Pulled live
-  // from floor_codes (title startswith "MANAGER" or "ASST"), plus Paul/Tyler.
+  // Eligible assignees: the manager tier (manager + assistant_manager +
+  // operations_manager). Workers and drivers excluded per spec. Pulled live
+  // from floor_codes — keyed off the `role` column, which is the source of
+  // truth now that all manager-tier rows are tagged consistently.
   const { rows: floorCodesForAssign } = useFloorCodes2();
   const ASSIGNEES = useMemo(() => {
+    const eligibleRoles = new Set(["manager", "assistant_manager", "operations_manager"]);
     const seen = new Set();
     const out = [];
     for (const fc of (floorCodesForAssign || [])) {
       if (!fc.active || !fc.workerName) continue;
-      const t = (fc.title || "").toUpperCase();
-      const isMgr = t.includes("MANAGER") || t.includes("ASST") || t === "OPERATIONS MANAGER";
-      // Always include Paul and Tyler regardless of title
-      const isPaulOrTyler = /\b(paul|tyler)\b/i.test(fc.workerName);
-      if (!isMgr && !isPaulOrTyler) continue;
+      if (!eligibleRoles.has((fc.role || "").toLowerCase())) continue;
       const firstName = fc.workerName.split(/\s+/)[0];
       if (seen.has(firstName)) continue;
       seen.add(firstName);
