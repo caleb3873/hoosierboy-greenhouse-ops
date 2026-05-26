@@ -25,6 +25,7 @@ function smsHrefWithBody(p, body) {
   return `${base}${sep}body=${encodeURIComponent(body)}`;
 }
 function ymd(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
+function addDays(d, n) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
 
 export function DriverRequestModal({ onClose, onSubmitted, prefillDate }) {
   const { displayName } = useAuth();
@@ -73,6 +74,32 @@ export function DriverRequestModal({ onClose, onSubmitted, prefillDate }) {
   }, [drivers, allRequests, date, timeWindow, reqId]);
 
   const selectedConflict = target !== "any" ? conflictByDriver.get(target) : null;
+
+  // Driver schedule visibility: build "active bookings in the next 21 days"
+  // per driver so the picker can show what each driver is already on the hook
+  // for before the manager taps them.
+  const upcomingByDriver = useMemo(() => {
+    const today = ymd(new Date());
+    const cutoff = ymd(addDays(new Date(), 21));
+    const m = new Map();
+    for (const r of (allRequests || [])) {
+      if (!r.requestedDriver) continue;
+      if (r.status !== "pending" && r.status !== "accepted") continue;
+      if (r.deliveryDate < today || r.deliveryDate > cutoff) continue;
+      if (!m.has(r.requestedDriver)) m.set(r.requestedDriver, []);
+      m.get(r.requestedDriver).push(r);
+    }
+    // Sort each driver's bookings chronologically with all_day → am → pm tiebreak
+    const order = { am: 0, all_day: 1, pm: 2 };
+    for (const list of m.values()) {
+      list.sort((a, b) => {
+        const dc = (a.deliveryDate || "").localeCompare(b.deliveryDate || "");
+        if (dc !== 0) return dc;
+        return (order[a.timeWindow] ?? 9) - (order[b.timeWindow] ?? 9);
+      });
+    }
+    return m;
+  }, [allRequests]);
 
   // Used for the "any driver" path (no SMS to fire — just save and close).
   async function submit() {
@@ -239,28 +266,64 @@ export function DriverRequestModal({ onClose, onSubmitted, prefillDate }) {
           const isAvailThatDay = availByDriver.get(name)?.has(date);
           const phone = d.phone;
           const conflict = conflictByDriver.get(name);
+          const upcoming = upcomingByDriver.get(name) || [];
           const borderColor = conflict ? "#d94f3d" : isSelected ? "#7fb069" : "#3a5a30";
           return (
             <div key={d.id || name} onClick={() => setTarget(name)}
-              style={{ background: isSelected ? "#1e2d1a" : "transparent", border: `2px solid ${borderColor}`, borderRadius: 10, padding: "12px", marginBottom: 8, cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", opacity: conflict ? 0.85 : 1 }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 15, fontWeight: 800, color: "#fff" }}>{name}</div>
-                {conflict ? (
-                  <div style={{ fontSize: 11, marginTop: 4, color: "#d94f3d", fontWeight: 800 }}>
-                    ⚠ Already {conflict.status === "accepted" ? "BOOKED" : "REQUESTED"} for this slot
-                    <div style={{ fontSize: 10, color: "#e89a3a", marginTop: 2, fontWeight: 700 }}>
-                      {formatTiming(conflict.timeWindow, conflict.startTime)} · by {conflict.requestedBy}
+              style={{ background: isSelected ? "#1e2d1a" : "transparent", border: `2px solid ${borderColor}`, borderRadius: 10, padding: "12px", marginBottom: 8, cursor: "pointer", opacity: conflict ? 0.85 : 1 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: "#fff" }}>{name}</div>
+                  {conflict ? (
+                    <div style={{ fontSize: 11, marginTop: 4, color: "#d94f3d", fontWeight: 800 }}>
+                      ⚠ Already {conflict.status === "accepted" ? "BOOKED" : "REQUESTED"} for this slot
+                      <div style={{ fontSize: 10, color: "#e89a3a", marginTop: 2, fontWeight: 700 }}>
+                        {formatTiming(conflict.timeWindow, conflict.startTime)} · by {conflict.requestedBy}
+                      </div>
                     </div>
-                  </div>
-                ) : (
-                  <div style={{ fontSize: 11, marginTop: 2, color: isAvailThatDay ? "#7fb069" : "#7a9a6a", fontWeight: 700 }}>
-                    {isAvailThatDay ? "✓ Marked available" : "Not marked available — may still accept"}
-                    {phone && <span style={{ color: "#7a9a6a", marginLeft: 8 }}>{formatPhone(phone)}</span>}
-                  </div>
-                )}
+                  ) : (
+                    <div style={{ fontSize: 11, marginTop: 2, color: isAvailThatDay ? "#7fb069" : "#7a9a6a", fontWeight: 700 }}>
+                      {isAvailThatDay ? "✓ Marked available" : "Not marked available — may still accept"}
+                      {phone && <span style={{ color: "#7a9a6a", marginLeft: 8 }}>{formatPhone(phone)}</span>}
+                    </div>
+                  )}
+                </div>
+                {isSelected && !conflict && <span style={{ color: "#7fb069", fontSize: 22, marginLeft: 8 }}>✓</span>}
+                {conflict && <span style={{ color: "#d94f3d", fontSize: 18, marginLeft: 8 }}>⚠</span>}
               </div>
-              {isSelected && !conflict && <span style={{ color: "#7fb069", fontSize: 22, marginLeft: 8 }}>✓</span>}
-              {conflict && <span style={{ color: "#d94f3d", fontSize: 18, marginLeft: 8 }}>⚠</span>}
+              {/* Upcoming schedule strip — what this driver is already on the hook for */}
+              {upcoming.length > 0 && (
+                <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px dashed rgba(127, 176, 105, 0.2)" }}>
+                  <div style={{ fontSize: 9, fontWeight: 800, color: "#7a9a6a", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>
+                    📅 Already on the calendar (next 3 weeks)
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                    {upcoming.map(b => {
+                      const bd = new Date(b.deliveryDate + "T12:00:00");
+                      const dayLabel = bd.toLocaleDateString("en-US", { weekday: "short", day: "numeric" });
+                      const wLabel = b.timeWindow === "all_day" ? "ALL DAY" : (b.timeWindow || "").toUpperCase();
+                      const isThisSlot = b.deliveryDate === date && windowsOverlap(b.timeWindow, timeWindow);
+                      const isSameDayOtherWindow = b.deliveryDate === date && !isThisSlot;
+                      const accepted = b.status === "accepted";
+                      // Color logic:
+                      //   red    = this is the slot we're trying to book — conflict
+                      //   amber  = same day, different window (informational — still allowed)
+                      //   green  = accepted (locked-in booking)
+                      //   gray   = pending elsewhere
+                      const bg = isThisSlot ? "#3a1a1a" : isSameDayOtherWindow ? "#2a2410" : accepted ? "#1e3a1e" : "#1e2d1a";
+                      const border = isThisSlot ? "#d94f3d" : isSameDayOtherWindow ? "#e89a3a" : accepted ? "#7fb069" : "#4a6a3a";
+                      const color = isThisSlot ? "#ff8a7a" : isSameDayOtherWindow ? "#ffcc77" : accepted ? "#c8e6b8" : "#a8c8a0";
+                      return (
+                        <span key={b.id}
+                          title={`${b.status === "accepted" ? "Accepted" : "Pending"} · requested by ${b.requestedBy}`}
+                          style={{ background: bg, border: `1px solid ${border}`, color, padding: "3px 7px", borderRadius: 6, fontSize: 10, fontWeight: 800, whiteSpace: "nowrap" }}>
+                          {dayLabel} {wLabel}{accepted ? " ✓" : ""}
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           );
         })}
@@ -490,6 +553,135 @@ export function DriverRequestStatusList({ scope = "mine" }) {
   );
 }
 
+// ─── Driver Schedule View ─────────────────────────────────────────────────
+// Hub-level page: 21-day grid of all drivers, showing who's booked when so
+// the manager can see availability across the team at a glance.
+export function DriverScheduleView({ onBack }) {
+  const { rows: floorCodes } = useFloorCodes2();
+  const { rows: allRequests } = useDriverRequests();
+  const { rows: availability } = useDriverAvailability();
+
+  const drivers = useMemo(() =>
+    (floorCodes || [])
+      .filter(fc => fc.active && (fc.title || "").toUpperCase() === "SEASONAL DRIVER")
+      .sort((a, b) => (a.workerName || "").localeCompare(b.workerName || "")),
+    [floorCodes]
+  );
+
+  const days = useMemo(() => Array.from({ length: 21 }, (_, i) => addDays(new Date(), i)), []);
+
+  // For each (driver, iso, window) cell, what's there?
+  // Returns either a request object, "available" (driver marked free), or null.
+  function getCell(driverName, iso) {
+    const reqs = (allRequests || []).filter(r =>
+      r.requestedDriver === driverName &&
+      r.deliveryDate === iso &&
+      (r.status === "pending" || r.status === "accepted")
+    );
+    const av = (availability || []).some(a => a.driverName === driverName && a.availableDate === iso);
+    return { reqs, available: av };
+  }
+
+  function chipFor(reqs, window) {
+    // window: "am" | "pm". Show the most-relevant booking for this slot.
+    const r = reqs.find(x => x.timeWindow === window) || reqs.find(x => x.timeWindow === "all_day");
+    if (!r) return null;
+    const accepted = r.status === "accepted";
+    const isAllDay = r.timeWindow === "all_day";
+    return { accepted, isAllDay, requestedBy: r.requestedBy, comment: r.driverComment };
+  }
+
+  return (
+    <div style={{ ...FONT, minHeight: "100vh", background: "#f2f5ef", paddingBottom: 60 }}>
+      <div style={{ background: "#1e2d1a", color: "#c8e6b8", padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <button onClick={onBack}
+          style={{ background: "transparent", border: "1px solid #4a6a3a", borderRadius: 8, color: "#c8e6b8", padding: "6px 10px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+          ← Hub
+        </button>
+        <div style={{ fontSize: 16, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif" }}>📅 Driver Schedule</div>
+        <div style={{ width: 60 }} />
+      </div>
+
+      <div style={{ padding: 12 }}>
+        <div style={{ fontSize: 11, color: "#7a8c74", marginBottom: 8 }}>
+          Next 3 weeks · <span style={{ color: "#1e3a1e", fontWeight: 800 }}>green = accepted</span> · <span style={{ color: "#a86a10", fontWeight: 800 }}>amber = pending</span> · <span style={{ color: "#7fb069", fontWeight: 800 }}>✓ = driver marked available</span>
+        </div>
+
+        {drivers.length === 0 ? (
+          <div style={{ background: "#fff", padding: 20, borderRadius: 12, textAlign: "center", color: "#7a8c74" }}>No drivers configured.</div>
+        ) : drivers.map(d => {
+          const name = d.workerName;
+          const bookedDays = days.filter(day => {
+            const iso = ymd(day);
+            return getCell(name, iso).reqs.length > 0;
+          }).length;
+          return (
+            <div key={d.id || name} style={{ background: "#fff", borderRadius: 12, border: "1.5px solid #e0ead8", padding: 12, marginBottom: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
+                <div style={{ fontSize: 15, fontWeight: 800, color: "#1e2d1a" }}>{name}</div>
+                <div style={{ fontSize: 11, color: "#7a8c74" }}>{bookedDays} day{bookedDays !== 1 ? "s" : ""} booked</div>
+              </div>
+              <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", margin: "0 -4px" }}>
+                <div style={{ display: "flex", gap: 4, padding: "0 4px", minWidth: "min-content" }}>
+                  {days.map(day => {
+                    const iso = ymd(day);
+                    const cell = getCell(name, iso);
+                    const am = chipFor(cell.reqs, "am");
+                    const pm = chipFor(cell.reqs, "pm");
+                    const weekend = day.getDay() === 0 || day.getDay() === 6;
+                    return (
+                      <div key={iso}
+                        style={{ minWidth: 56, padding: "4px", borderRadius: 8, background: weekend ? "#f2f5ef" : "#fafbf7", border: "1px solid #e0ead8", textAlign: "center" }}>
+                        <div style={{ fontSize: 9, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>
+                          {day.toLocaleDateString("en-US", { weekday: "short" })}
+                        </div>
+                        <div style={{ fontSize: 13, fontWeight: 800, color: weekend ? "#a8b0a0" : "#1e2d1a", lineHeight: 1.1 }}>{day.getDate()}</div>
+                        <div style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 2 }}>
+                          <SlotChip label="AM" booking={am} />
+                          <SlotChip label="PM" booking={pm} />
+                        </div>
+                        {cell.available && (
+                          <div title="Driver marked available" style={{ fontSize: 10, marginTop: 3, color: "#7fb069", fontWeight: 800 }}>✓</div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function SlotChip({ label, booking }) {
+  if (!booking) {
+    return (
+      <div style={{ fontSize: 9, padding: "2px 0", borderRadius: 4, color: "#c8d8c0", fontWeight: 600 }}>{label}</div>
+    );
+  }
+  if (booking.isAllDay) {
+    // Render once at the AM slot, blank at PM
+    if (label === "PM") return <div style={{ fontSize: 9, padding: "2px 0", color: "transparent" }}>·</div>;
+    const bg = booking.accepted ? "#1e3a1e" : "#a86a10";
+    return (
+      <div style={{ fontSize: 9, padding: "8px 0", borderRadius: 4, background: bg, color: "#fff", fontWeight: 800, lineHeight: 1 }}
+        title={`${booking.accepted ? "Accepted" : "Pending"} all-day · ${booking.requestedBy}`}>
+        ALL
+      </div>
+    );
+  }
+  const bg = booking.accepted ? "#1e3a1e" : "#a86a10";
+  return (
+    <div style={{ fontSize: 9, padding: "2px 0", borderRadius: 4, background: bg, color: "#fff", fontWeight: 800 }}
+      title={`${booking.accepted ? "Accepted" : "Pending"} · ${booking.requestedBy}`}>
+      {label}
+    </div>
+  );
+}
+
 // Pops up on the manager's next app-open whenever drivers responded to their
 // requests. Marks decision_seen=true once dismissed so it doesn't pop again.
 export function useDriverResponsePopup() {
@@ -559,3 +751,4 @@ export function DriverResponsePopup({ unseen, onClose }) {
     </div>
   );
 }
+

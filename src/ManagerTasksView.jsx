@@ -5,7 +5,7 @@ import { AnnouncementBanner, AnnouncementComposerModal, AnnouncementPopup, useAn
 import { HrComposeModal, HrInbox, isHrInboxOwner } from "./HrMessages";
 import { useAuth } from "./Auth";
 import { BrehobManagerView } from "./BrehobList";
-import { DriverRequestModal, DriverRequestStatusList, useDriverResponsePopup, DriverResponsePopup } from "./DriverRequest";
+import { DriverRequestModal, DriverRequestStatusList, useDriverResponsePopup, DriverResponsePopup, DriverScheduleView } from "./DriverRequest";
 import { getCurrentWeek } from "./shared";
 import { NotificationBanner } from "./PushNotifications";
 
@@ -815,18 +815,18 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
                 </>
               )}
 
-              {/* Request a Driver — spans 2 */}
-              <div className="hub-card" onClick={() => setShowDriverRequest(true)} style={{ gridColumn: "span 2", borderTopColor: "#4a90d9", borderTopWidth: 4 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                    <span style={{ fontSize: 22 }}>🚛</span>
-                    <div>
-                      <div style={{ fontSize: 14, fontWeight: 800, color: "#1e2d1a" }}>Request a Driver</div>
-                      <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2 }}>Pick a date + driver · Call/Text from here</div>
-                    </div>
-                  </div>
-                  <span style={{ color: "#7a8c74", fontSize: 18 }}>›</span>
-                </div>
+              {/* Request a Driver */}
+              <div className="hub-card" onClick={() => setShowDriverRequest(true)} style={{ borderTopColor: "#4a90d9", borderTopWidth: 4 }}>
+                <div className="hub-card-emoji">🚛</div>
+                <div className="hub-card-title">Request a Driver</div>
+                <div className="hub-card-sub">Pick date + driver · Call/Text</div>
+              </div>
+
+              {/* Driver Schedule */}
+              <div className="hub-card" onClick={() => setCurrentView("driver-schedule")} style={{ borderTopColor: "#4a90d9", borderTopWidth: 4 }}>
+                <div className="hub-card-emoji">📅</div>
+                <div className="hub-card-title">Driver Schedule</div>
+                <div className="hub-card-sub">See who's booked when</div>
               </div>
 
               {/* Brehob — bottom secondary, spans 2 */}
@@ -1106,6 +1106,11 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       {/* ── HR INBOX (Trish only) ──────────────────────────────────────── */}
       {currentView === "hr-inbox" && isTrish && (
         <HrInbox onBack={() => setCurrentView("messages")} />
+      )}
+
+      {/* ── DRIVER SCHEDULE — 21-day grid across all drivers ───────────── */}
+      {currentView === "driver-schedule" && (
+        <DriverScheduleView onBack={() => setCurrentView("hub")} />
       )}
 
       {/* ── TODAY / THIS WEEK (any manager) ────────────────────────────── */}
