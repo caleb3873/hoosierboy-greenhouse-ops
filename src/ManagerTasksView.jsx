@@ -183,19 +183,34 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
     return "My dept";
   }
 
-  // Who can assign tasks: admins (Tyler etc.) + Paul (9999999). Assignees see who's on the task but can't reassign.
-  const canAssign = useMemo(() => {
-    const n = (displayName || "").toLowerCase();
-    return isAdmin || n.includes("paul") || n.includes("tyler");
-  }, [displayName, isAdmin]);
+  // Any manager-tier user landing in this view can assign or reassign tasks.
+  // (The view itself is gated to managers + asst managers + Reese; the assignee
+  // dropdown is restricted to managers + asst managers + Paul/Tyler.)
+  const canAssign = useMemo(() => !!displayName, [displayName]);
 
-  // Production crew the user can hand work off to.
-  const ASSIGNEES = useMemo(() => [
-    { key: "Evie", label: "Evie" },
-    { key: "Sam",  label: "Sam"  },
-    { key: "Ryan", label: "Ryan" },
-    { key: "Nick", label: "Nick" },
-  ], []);
+  // Eligible assignees: anyone who can be the on-the-hook person for a task.
+  // Per spec: only managers + asst managers + Paul + Tyler get assignments;
+  // workers and drivers are excluded since they don't see tasks. Pulled live
+  // from floor_codes (title startswith "MANAGER" or "ASST"), plus Paul/Tyler.
+  const { rows: floorCodesForAssign } = useFloorCodes2();
+  const ASSIGNEES = useMemo(() => {
+    const seen = new Set();
+    const out = [];
+    for (const fc of (floorCodesForAssign || [])) {
+      if (!fc.active || !fc.workerName) continue;
+      const t = (fc.title || "").toUpperCase();
+      const isMgr = t.includes("MANAGER") || t.includes("ASST") || t === "OPERATIONS MANAGER";
+      // Always include Paul and Tyler regardless of title
+      const isPaulOrTyler = /\b(paul|tyler)\b/i.test(fc.workerName);
+      if (!isMgr && !isPaulOrTyler) continue;
+      const firstName = fc.workerName.split(/\s+/)[0];
+      if (seen.has(firstName)) continue;
+      seen.add(firstName);
+      out.push({ key: firstName, label: firstName, dept: fc.staffGroup || fc.department || null });
+    }
+    out.sort((a, b) => a.key.localeCompare(b.key));
+    return out;
+  }, [floorCodesForAssign]);
 
   const [assigningTaskId, setAssigningTaskId] = useState(null);
 
@@ -394,6 +409,11 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
   async function createTask(title, bucket = "today", location) {
     if (!title.trim()) return;
     const maxPriority = Math.max(0, ...tasks.filter(t => t.year === today.year && t.weekNumber === today.week && (t.category || "production") === category).map(t => t.priority || 0));
+    // Auto-assign to the creator's first name so it shows up in their "My Tasks"
+    // tab. They can reassign via the inline picker. Anonymous "Manager" stays
+    // unassigned so we don't create a dummy assignee.
+    const firstName = (displayName || "").split(/\s+/)[0];
+    const assignedTo = firstName && firstName !== "Manager" ? firstName : null;
     await upsert({
       id: crypto.randomUUID(),
       title: title.trim(),
@@ -406,6 +426,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       targetDate: bucketToDate(bucket),
       carriedOver: false,
       createdBy: displayName || "Manager",
+      assignedTo,
       location: location || defaultLocation,
       team: defaultTeam,
       photos: [],
