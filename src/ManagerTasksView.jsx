@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from "react";
-import { useManagerTasks, useVacationRequests, useAnnouncements, useHrMessages, useBrehobItems, useFloorCodes2, getSupabase } from "./supabase";
+import { useManagerTasks, useVacationRequests, useAnnouncements, useHrMessages, useBrehobItems, useFloorCodes2, useDriverRequests, getSupabase } from "./supabase";
 import { VacationRequestModal, OutThisWeekBanner, VacationRequestsInboxModal, isVacationApprover } from "./Vacation";
 import { AnnouncementBanner, AnnouncementComposerModal, AnnouncementPopup, useAnnouncementPopup, canPostAnnouncement } from "./Announcements";
 import { HrComposeModal, HrInbox, isHrInboxOwner } from "./HrMessages";
@@ -246,6 +246,11 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
   const isTrish = isHrInboxOwner(displayName);
   const isAnyManager = !!displayName; // every floor-code user gets the Today/Week shortcut
   const pendingVacations = useMemo(() => (vacationReqs || []).filter(v => v.status === "pending"), [vacationReqs]);
+  const { rows: driverReqRows } = useDriverRequests();
+  const pendingDriverRequests = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    return (driverReqRows || []).filter(r => r.status === "pending" && r.deliveryDate >= today);
+  }, [driverReqRows]);
   const activeAnnouncements = useMemo(() => (announcements || []).filter(a => a.active && (!a.expiresAt || new Date(a.expiresAt) > new Date())), [announcements]);
   const unreadHrMessages = useMemo(() => (hrMessages || []).filter(m => !m.archived && !m.readAt), [hrMessages]);
   const announcementPopup = useAnnouncementPopup();
@@ -725,8 +730,12 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
                   <div style={{ fontSize: 11, color: "#7a9a6a", marginTop: 2 }}>Week {today.week}, {today.year}</div>
                 </div>
                 <div style={{ display: "flex", gap: 6 }}>
-                  <button onClick={() => setShowCodes(true)} title="Codes"
-                    style={{ background: "#c8e6b8", border: "none", borderRadius: 8, color: "#1e2d1a", padding: "8px 12px", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>🔑</button>
+                  <HeaderIconButton emoji="🚛" title="Driver requests" badge={pendingDriverRequests.length}
+                    onClick={() => setCurrentView("driver-requests")} />
+                  <HeaderIconButton emoji="🌴" title="Vacation" badge={canApproveVacation ? pendingVacations.length : 0}
+                    onClick={() => setCurrentView("vacation")} />
+                  <HeaderIconButton emoji="📥" title="Inbox" badge={isTrish ? unreadHrMessages.length : 0}
+                    onClick={() => setCurrentView(isTrish ? "hr-inbox" : "messages")} />
                   <button onClick={onSwitchMode} title="Log out"
                     style={{ background: "none", border: "1px solid #4a6a3a", borderRadius: 8, color: "#c8e6b8", padding: "8px 12px", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>↩</button>
                 </div>
@@ -838,18 +847,11 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
                 <div className="hub-card-sub">Codes · call · text anyone</div>
               </div>
 
-              {/* Brehob — bottom secondary, spans 2 */}
-              <div className="hub-card" onClick={() => goToTasks("brehob")} style={{ gridColumn: "span 2", background: "#f8fbf5", borderColor: "#c8d8c0" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                    <span style={{ fontSize: 22 }}>🛒</span>
-                    <div>
-                      <div style={{ fontSize: 14, fontWeight: 800, color: "#1e2d1a" }}>Brehob shopping list</div>
-                      <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2 }}>{(brehobItems || []).filter(b => b.status === "on_list").length} items on list</div>
-                    </div>
-                  </div>
-                  <span style={{ color: "#7a8c74", fontSize: 18 }}>›</span>
-                </div>
+              {/* Brehob — standardized to match the other hub cards */}
+              <div className="hub-card" onClick={() => goToTasks("brehob")} style={{ borderTopColor: "#a86a10", borderTopWidth: 4 }}>
+                <div className="hub-card-emoji">🛒</div>
+                <div className="hub-card-title">Brehob List</div>
+                <div className="hub-card-sub">{(brehobItems || []).filter(b => b.status === "on_list").length} items on list</div>
               </div>
             </div>
           </>
@@ -1389,6 +1391,25 @@ function TodayWeekView({ mode, tasks, today, onBack, onOpenTask }) {
         )}
       </div>
     </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ── HEADER ICON BUTTON ──────────────────────────────────────────────────────
+// Icon-only round button used in the hub header. Renders a red badge when
+// `badge > 0` so unattended driver requests / vacations / HR messages are
+// visible from anywhere on the hub.
+function HeaderIconButton({ emoji, title, badge = 0, onClick }) {
+  return (
+    <button onClick={onClick} title={title}
+      style={{ position: "relative", background: "#c8e6b8", border: "none", borderRadius: 10, color: "#1e2d1a", padding: "8px 12px", fontSize: 18, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", lineHeight: 1 }}>
+      {emoji}
+      {badge > 0 && (
+        <span style={{ position: "absolute", top: -4, right: -4, background: "#d94f3d", color: "#fff", borderRadius: 999, fontSize: 10, fontWeight: 800, minWidth: 18, height: 18, padding: "0 5px", display: "inline-flex", alignItems: "center", justifyContent: "center", border: "2px solid #1e2d1a", boxSizing: "content-box" }}>
+          {badge > 99 ? "99+" : badge}
+        </span>
+      )}
+    </button>
   );
 }
 
