@@ -187,12 +187,24 @@ console.log("\nSTEP 8 — Verify driver public-link read works with no session")
   else if (data?.id === reqId) pass("fresh anon (mirrors driver opening link cold) can read the request");
 }
 
-// ─── Cleanup ───
-console.log("\nCLEANUP");
+// ─── Step 9: manager deletes the request (DriverRequestStatusList trash button) ───
+console.log("\nSTEP 9 — Manager deletes the request from status list");
 {
   const { error } = await sb.from("driver_requests").delete().eq("id", reqId);
-  if (error) fail("cleanup driver_request", error);
-  else pass("test request deleted");
+  if (error) fail("anon delete", error);
+  else {
+    pass("anon delete returned no error");
+    const { data } = await sb.from("driver_requests").select("id").eq("id", reqId);
+    if (!data || data.length === 0) pass("row no longer exists after delete");
+    else fail(`row still present (${data.length}) — RLS may be blocking`);
+  }
+}
+
+// ─── Cleanup (already deleted via step 9, but make sure) ───
+console.log("\nCLEANUP");
+{
+  await sb.from("driver_requests").delete().eq("id", reqId);
+  pass("cleanup idempotent");
 }
 
 console.log("\n══════════ DONE ══════════");

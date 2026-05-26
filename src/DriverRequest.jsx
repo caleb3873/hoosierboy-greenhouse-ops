@@ -487,9 +487,19 @@ const START_TIME_OPTIONS = (() => {
 // Manager inbox: shows status of requests this manager submitted with Call/Text-with-link buttons
 export function DriverRequestStatusList({ scope = "mine" }) {
   const { displayName } = useAuth();
-  const { rows: requests } = useDriverRequests();
+  const { rows: requests, remove } = useDriverRequests();
   const { rows: floorCodes } = useFloorCodes2();
   const todayIso = ymd(new Date());
+
+  async function handleDelete(r) {
+    const who = r.requestedDriver || "any driver";
+    const accepted = r.status === "accepted";
+    const warning = accepted
+      ? `⚠ ${r.acceptedBy} already ACCEPTED this request.\n\nDeleting won't notify them — text them directly to cancel.\n\nDelete the ${r.deliveryDate} request anyway?`
+      : `Delete the ${r.deliveryDate} request for ${who}?`;
+    if (!window.confirm(warning)) return;
+    await remove(r.id);
+  }
 
   const driverPhones = useMemo(() => {
     const m = new Map();
@@ -515,13 +525,17 @@ export function DriverRequestStatusList({ scope = "mine" }) {
         const isPending = r.status === "pending";
         return (
           <div key={r.id} style={{ padding: "10px 0", borderBottom: "1px solid rgba(127, 176, 105, 0.1)" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", color: "#fff", fontSize: 13, alignItems: "center" }}>
-              <span><b>{r.deliveryDate}</b> — {r.requestedDriver || "Any driver"}</span>
-              <span style={{ fontSize: 11, fontWeight: 800, padding: "2px 8px", borderRadius: 999,
+            <div style={{ display: "flex", justifyContent: "space-between", color: "#fff", fontSize: 13, alignItems: "center", gap: 8 }}>
+              <span style={{ minWidth: 0, flex: 1 }}><b>{r.deliveryDate}</b> — {r.requestedDriver || "Any driver"}</span>
+              <span style={{ fontSize: 11, fontWeight: 800, padding: "2px 8px", borderRadius: 999, flexShrink: 0,
                 background: r.status === "accepted" ? "#7fb069" : r.status === "declined" ? "#d94f3d" : "#e89a3a",
                 color: r.status === "accepted" ? "#1e2d1a" : "#fff" }}>
                 {r.status === "accepted" ? `✓ ${r.acceptedBy}` : r.status === "declined" ? `✗ ${r.acceptedBy}` : "Pending"}
               </span>
+              <button onClick={() => handleDelete(r)} title="Delete this request"
+                style={{ background: "transparent", border: "none", color: "#7a9a6a", fontSize: 16, cursor: "pointer", padding: "2px 4px", lineHeight: 1, flexShrink: 0 }}>
+                🗑
+              </button>
             </div>
             {(r.timeWindow || r.startTime) && (
               <div style={{ fontSize: 11, color: "#c8e6b8", marginTop: 3, fontWeight: 700 }}>
