@@ -4,6 +4,7 @@
 // manager sees it the next time they open their app.
 import React, { useEffect, useState } from "react";
 import { getSupabase } from "./supabase";
+import { formatTiming } from "./DriverRequest";
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
 
@@ -79,6 +80,7 @@ export default function DriverResponseView({ requestId, onDone }) {
   const requestedBy = req?.requested_by || req?.requestedBy;
   const details = req?.details;
   const requestedDriver = req?.requested_driver || req?.requestedDriver;
+  const timingLabel = formatTiming(req?.time_window || req?.timeWindow, req?.start_time || req?.startTime);
 
   if (submitted) {
     return (
@@ -110,6 +112,9 @@ export default function DriverResponseView({ requestId, onDone }) {
       <div style={{ marginBottom: 18 }}>
         <div style={{ fontSize: 11, color: "#7a9a6a", fontWeight: 800, textTransform: "uppercase", letterSpacing: 1 }}>Delivery Request</div>
         <div style={{ fontSize: 22, fontWeight: 800, color: "#fff", fontFamily: "'DM Serif Display',Georgia,serif", marginTop: 4 }}>{dateLabel}</div>
+        {timingLabel && (
+          <div style={{ fontSize: 16, color: "#7fb069", fontWeight: 800, marginTop: 6 }}>🕐 {timingLabel}</div>
+        )}
         <div style={{ fontSize: 13, color: "#c8e6b8", marginTop: 6 }}>
           From <b>{requestedBy}</b>
           {requestedDriver && <> · 🎯 specifically for you</>}

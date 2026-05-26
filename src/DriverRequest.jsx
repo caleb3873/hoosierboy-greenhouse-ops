@@ -24,9 +24,13 @@ export function DriverRequestModal({ onClose, onSubmitted, prefillDate }) {
   const { rows: availability } = useDriverAvailability();
   const { upsert: upsertReq } = useDriverRequests();
   const [date, setDate] = useState(prefillDate || ymd(new Date()));
+  const [timeWindow, setTimeWindow] = useState("am"); // "am" | "pm" | "all_day"
+  const [startTime, setStartTime] = useState("07:00");
   const [target, setTarget] = useState("any"); // "any" | driver name
   const [details, setDetails] = useState("");
   const [saving, setSaving] = useState(false);
+
+  const dateChips = useMemo(() => quickPickDays(14), []);
 
   const drivers = useMemo(() =>
     (floorCodes || [])
@@ -52,6 +56,8 @@ export function DriverRequestModal({ onClose, onSubmitted, prefillDate }) {
       await upsertReq({
         id: crypto.randomUUID(),
         deliveryDate: date,
+        timeWindow,
+        startTime,
         requestedBy: displayName || "Manager",
         requestedDriver: target === "any" ? null : target,
         details: details.trim() || null,
@@ -71,9 +77,85 @@ export function DriverRequestModal({ onClose, onSubmitted, prefillDate }) {
           <button onClick={onClose} style={{ background: "none", border: "none", color: "#c8e6b8", fontSize: 22, cursor: "pointer", padding: "0 6px" }}>✕</button>
         </div>
 
+        {/* Delivery date — quick chips (next 2 weeks) + native picker fallback */}
         <label style={{ fontSize: 11, color: "#7a9a6a", fontWeight: 800, textTransform: "uppercase", letterSpacing: 1 }}>Delivery Date</label>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginTop: 6, marginBottom: 6 }}>
+          {dateChips.slice(0, 7).map(c => (
+            <button key={c.iso} onClick={() => setDate(c.iso)}
+              style={{
+                padding: "8px 2px", borderRadius: 8,
+                background: date === c.iso ? "#7fb069" : "#1e2d1a",
+                border: `1.5px solid ${date === c.iso ? "#7fb069" : c.isWeekend ? "#3a4a30" : "#4a6a3a"}`,
+                color: date === c.iso ? "#1e2d1a" : "#c8e6b8",
+                fontSize: 10, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", textAlign: "center", lineHeight: 1.15,
+              }}>
+              <div style={{ fontSize: 9, opacity: 0.8 }}>{c.label}</div>
+              <div style={{ fontSize: 14, marginTop: 2 }}>{c.dayNum}</div>
+            </button>
+          ))}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 8 }}>
+          {dateChips.slice(7, 14).map(c => (
+            <button key={c.iso} onClick={() => setDate(c.iso)}
+              style={{
+                padding: "8px 2px", borderRadius: 8,
+                background: date === c.iso ? "#7fb069" : "#1e2d1a",
+                border: `1.5px solid ${date === c.iso ? "#7fb069" : c.isWeekend ? "#3a4a30" : "#4a6a3a"}`,
+                color: date === c.iso ? "#1e2d1a" : "#c8e6b8",
+                fontSize: 10, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", textAlign: "center", lineHeight: 1.15,
+              }}>
+              <div style={{ fontSize: 9, opacity: 0.8 }}>{c.label}</div>
+              <div style={{ fontSize: 14, marginTop: 2 }}>{c.dayNum}</div>
+            </button>
+          ))}
+        </div>
         <input type="date" value={date} onChange={e => setDate(e.target.value)} min={ymd(new Date())}
-          style={{ width: "100%", padding: "10px 12px", marginTop: 4, marginBottom: 12, background: "#1e2d1a", border: "1px solid #4a6a3a", borderRadius: 8, color: "#fff", fontSize: 15, fontFamily: "inherit" }} />
+          style={{ width: "100%", padding: "10px 12px", marginBottom: 14, background: "#1e2d1a", border: "1px solid #4a6a3a", borderRadius: 8, color: "#fff", fontSize: 15, fontFamily: "inherit", boxSizing: "border-box" }} />
+
+        {/* Time window — AM / PM / All Day */}
+        <label style={{ fontSize: 11, color: "#7a9a6a", fontWeight: 800, textTransform: "uppercase", letterSpacing: 1 }}>Time Window</label>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginTop: 6, marginBottom: 14 }}>
+          {[
+            { value: "am", label: "AM", sub: "Before noon" },
+            { value: "pm", label: "PM", sub: "Afternoon" },
+            { value: "all_day", label: "All Day", sub: "Flexible" },
+          ].map(opt => {
+            const selected = timeWindow === opt.value;
+            return (
+              <button key={opt.value} onClick={() => {
+                setTimeWindow(opt.value);
+                // Auto-jump start time into a reasonable spot for the window
+                if (opt.value === "pm" && Number(startTime.split(":")[0]) < 12) setStartTime("12:00");
+                if (opt.value === "am" && Number(startTime.split(":")[0]) >= 12) setStartTime("07:00");
+                if (opt.value === "all_day") setStartTime("06:00");
+              }}
+                style={{
+                  padding: "14px 4px", borderRadius: 10,
+                  background: selected ? "#7fb069" : "#1e2d1a",
+                  border: `2px solid ${selected ? "#7fb069" : "#4a6a3a"}`,
+                  color: selected ? "#1e2d1a" : "#c8e6b8",
+                  fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", lineHeight: 1.2,
+                }}>
+                <div>{opt.label}</div>
+                <div style={{ fontSize: 10, fontWeight: 600, opacity: 0.8, marginTop: 2 }}>{opt.sub}</div>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Start time — native select on mobile pops a wheel picker, easy thumb scroll */}
+        <label style={{ fontSize: 11, color: "#7a9a6a", fontWeight: 800, textTransform: "uppercase", letterSpacing: 1 }}>Start Time <span style={{ color: "#4a6a3a", fontWeight: 600 }}>(6:00 AM earliest)</span></label>
+        <select value={startTime} onChange={e => setStartTime(e.target.value)}
+          style={{ width: "100%", padding: "12px 14px", marginTop: 6, marginBottom: 16, background: "#1e2d1a", border: "1px solid #4a6a3a", borderRadius: 8, color: "#fff", fontSize: 17, fontFamily: "inherit", boxSizing: "border-box", appearance: "none", WebkitAppearance: "none" }}>
+          {START_TIME_OPTIONS
+            .filter(o => {
+              const h = Number(o.value.split(":")[0]);
+              if (timeWindow === "am") return h < 12;
+              if (timeWindow === "pm") return h >= 12;
+              return true; // all_day: full range
+            })
+            .map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
 
         <div style={{ fontSize: 11, color: "#7a9a6a", fontWeight: 800, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Who?</div>
 
@@ -154,10 +236,54 @@ function smsRequestBody(req, driverName) {
     ? new Date(req.deliveryDate + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })
     : "";
   const link = responseLink(req.id);
-  let body = `Hey ${firstName}, are you available to drive ${dateLabel}? Please click this link and approve or decline:\n${link}`;
+  const timing = formatTiming(req.timeWindow || req.time_window, req.startTime || req.start_time);
+  const when = timing ? `${dateLabel} (${timing})` : dateLabel;
+  let body = `Hey ${firstName}, are you available to drive ${when}? Please click this link and approve or decline:\n${link}`;
   if (req.details) body += `\n\nDetails: ${req.details}`;
   return body;
 }
+
+// Human-readable timing chip — "AM, starts 7:00 AM" / "All day, starts 6:00 AM" / "PM"
+export function formatTiming(window, startTime) {
+  if (!window) return "";
+  const windowLabel = window === "all_day" ? "All day" : window.toUpperCase();
+  const t = formatTime12(startTime);
+  if (!t) return windowLabel;
+  return `${windowLabel}, starts ${t}`;
+}
+function formatTime12(hhmm) {
+  if (!hhmm) return null;
+  const [h, m] = hhmm.split(":").map(Number);
+  if (Number.isNaN(h)) return null;
+  const period = h >= 12 ? "PM" : "AM";
+  const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+  return `${h12}:${String(m || 0).padStart(2, "0")} ${period}`;
+}
+
+// Quick-pick date chips (today, tomorrow, +2…+6) for thumb-tap-fast date entry
+function quickPickDays(count = 7) {
+  const out = [];
+  for (let i = 0; i < count; i++) {
+    const d = new Date(); d.setDate(d.getDate() + i);
+    const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const label = i === 0 ? "Today" : i === 1 ? "Tomorrow" : d.toLocaleDateString("en-US", { weekday: "short" });
+    const dayNum = d.getDate();
+    out.push({ iso, label, dayNum, isWeekend: d.getDay() === 0 || d.getDay() === 6 });
+  }
+  return out;
+}
+
+// Start-time options — 6:00 AM through 5:30 PM in 30-min steps. Earliest 6:00 AM per ops.
+const START_TIME_OPTIONS = (() => {
+  const out = [];
+  for (let h = 6; h < 18; h++) {
+    for (const m of [0, 30]) {
+      const hhmm = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+      out.push({ value: hhmm, label: formatTime12(hhmm) });
+    }
+  }
+  return out;
+})();
 
 // Manager inbox: shows status of requests this manager submitted with Call/Text-with-link buttons
 export function DriverRequestStatusList({ scope = "mine" }) {
@@ -198,6 +324,11 @@ export function DriverRequestStatusList({ scope = "mine" }) {
                 {r.status === "accepted" ? `✓ ${r.acceptedBy}` : r.status === "declined" ? `✗ ${r.acceptedBy}` : "Pending"}
               </span>
             </div>
+            {(r.timeWindow || r.startTime) && (
+              <div style={{ fontSize: 11, color: "#c8e6b8", marginTop: 3, fontWeight: 700 }}>
+                🕐 {formatTiming(r.timeWindow, r.startTime)}
+              </div>
+            )}
             {r.details && <div style={{ fontSize: 11, color: "#7a9a6a", marginTop: 3 }}>{r.details}</div>}
             {r.driverComment && (
               <div style={{ fontSize: 12, color: "#c8e6b8", marginTop: 6, padding: "6px 10px", background: "rgba(127, 176, 105, 0.08)", borderLeft: "3px solid #7fb069", borderRadius: 4, whiteSpace: "pre-wrap" }}>
@@ -270,6 +401,11 @@ export function DriverResponsePopup({ unseen, onClose }) {
                 </span>
               </div>
               <div style={{ fontSize: 13, color: "#7a8c74", marginTop: 4 }}>{d}</div>
+              {(r.timeWindow || r.startTime) && (
+                <div style={{ fontSize: 12, color: "#1e2d1a", marginTop: 3, fontWeight: 700 }}>
+                  🕐 {formatTiming(r.timeWindow, r.startTime)}
+                </div>
+              )}
               {r.driverComment && (
                 <div style={{ marginTop: 8, padding: "8px 10px", background: "#fff", border: "1px solid #e0ead8", borderRadius: 6 }}>
                   <div style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: 1 }}>Note from driver</div>

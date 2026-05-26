@@ -4,6 +4,7 @@
 import React, { useState, useMemo } from "react";
 import { useAuth } from "./Auth";
 import { useDriverAvailability, useDriverRequests, useAnnouncements, useFloorCodes2 } from "./supabase";
+import { formatTiming } from "./DriverRequest";
 import { VacationRequestModal } from "./Vacation";
 import { HrComposeModal } from "./HrMessages";
 import { AnnouncementBanner, AnnouncementPopup, useAnnouncementPopup } from "./Announcements";
@@ -128,6 +129,11 @@ export default function DriverHub({ onSwitchMode }) {
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 14, fontWeight: 800, color: "#fff" }}>{r.deliveryDate}</div>
+                      {(r.timeWindow || r.startTime) && (
+                        <div style={{ fontSize: 12, color: "#7fb069", fontWeight: 800, marginTop: 2 }}>
+                          🕐 {formatTiming(r.timeWindow, r.startTime)}
+                        </div>
+                      )}
                       <div style={{ fontSize: 11, color: "#7a9a6a", marginTop: 2 }}>
                         Requested by {r.requestedBy}
                         {!r.requestedDriver && " · open to any driver"}

@@ -42,6 +42,8 @@ const reqId = randomUUID();
 const reqPayload = toSnake({
   id: reqId,
   deliveryDate: "2026-06-15",
+  timeWindow: "am",
+  startTime: "07:00",
   requestedBy: "TEST_Tyler",
   requestedDriver: "TEST_Dave",
   details: "8am pickup, 3 stops",
@@ -61,6 +63,10 @@ const reqPayload = toSnake({
     else fail("details mismatch");
     if (data.status === "pending") pass("status defaulted/saved to pending");
     else fail("status not pending");
+    if (data.time_window === "am") pass("time_window=am persisted");
+    else fail(`time_window=${data.time_window}`);
+    if (data.start_time === "07:00") pass("start_time=07:00 persisted");
+    else fail(`start_time=${data.start_time}`);
   }
 }
 
