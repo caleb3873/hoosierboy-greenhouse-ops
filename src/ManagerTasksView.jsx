@@ -170,9 +170,18 @@ export function formatTargetDate(iso) {
 // ══════════════════════════════════════════════════════════════════════════════
 // ── MANAGER VIEW ────────────────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════════════
-export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateGrowing = true, defaultCategory }) {
+export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateGrowing = true, defaultCategory, isAsstManager = false }) {
   const { rows: tasks, upsert, remove, refresh } = useManagerTasks();
   const { displayName, isAdmin } = useAuth();
+
+  // Human-readable label for a category code, used on the asst-manager hub
+  // "Tasks" card subtitle ("My Tasks · Production · Done").
+  function deptLabel(cat) {
+    if (cat === "production") return "Production";
+    if (cat === "growing") return "Growing";
+    if (cat === "maintenance") return "Maintenance";
+    return "My dept";
+  }
 
   // Who can assign tasks: admins (Tyler etc.) + Paul (9999999). Assignees see who's on the task but can't reassign.
   const canAssign = useMemo(() => {
@@ -200,6 +209,8 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
   const [selectedWeek, setSelectedWeek] = useState(today);
   const [category, setCategory] = useState(defaultCategory || (canCreateGrowing ? "growing" : "production")); // production | growing | brehob
   const [statusFilter, setStatusFilter] = useState("pending"); // all | pending | completed
+  // Asst-manager tabs: simplified to My Tasks / [Dept] Tasks / Done
+  const [asstTab, setAsstTab] = useState("dept");
   const [locationFilter, setLocationFilter] = useState("all"); // all | bluff | sprague
   const [prodTypeFilter, setProdTypeFilter] = useState(() => {
     try { return localStorage.getItem("gh_mgr_prod_type") || "all"; } catch { return "all"; }
@@ -336,9 +347,37 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
 
   // Filter + sort by priority (higher = more important = on top)
   const visibleTasks = useMemo(() => {
-    let r = tasks.filter(t => t.status !== "requested" && t.status !== "rejected" && t.year === selectedWeek.year && t.weekNumber === selectedWeek.week && (t.category || "production") === category);
-    if (statusFilter === "pending") r = r.filter(t => t.status !== "completed");
-    else if (statusFilter === "completed") r = r.filter(t => t.status === "completed");
+    const firstName = (displayName || "").split(" ")[0];
+    let r;
+    if (isAsstManager) {
+      // Asst managers see a department-scoped view with three tabs:
+      //   mine = anything assigned to me in this week (any category)
+      //   dept = my department tasks (not completed) this week
+      //   done = my department tasks completed this week
+      if (asstTab === "mine") {
+        r = tasks.filter(t =>
+          t.assignedTo === firstName &&
+          t.status !== "requested" && t.status !== "rejected" && t.status !== "completed" &&
+          t.year === selectedWeek.year && t.weekNumber === selectedWeek.week
+        );
+      } else if (asstTab === "done") {
+        r = tasks.filter(t =>
+          (t.category || "production") === (defaultCategory || "production") &&
+          t.status === "completed" &&
+          t.year === selectedWeek.year && t.weekNumber === selectedWeek.week
+        );
+      } else {
+        r = tasks.filter(t =>
+          (t.category || "production") === (defaultCategory || "production") &&
+          t.status !== "requested" && t.status !== "rejected" && t.status !== "completed" &&
+          t.year === selectedWeek.year && t.weekNumber === selectedWeek.week
+        );
+      }
+    } else {
+      r = tasks.filter(t => t.status !== "requested" && t.status !== "rejected" && t.year === selectedWeek.year && t.weekNumber === selectedWeek.week && (t.category || "production") === category);
+      if (statusFilter === "pending") r = r.filter(t => t.status !== "completed");
+      else if (statusFilter === "completed") r = r.filter(t => t.status === "completed");
+    }
     if (locationFilter !== "all") r = r.filter(t => (t.location || "").toLowerCase() === locationFilter);
     if (category === "production" && prodTypeFilter !== "all") {
       r = r.filter(t => getProdType(t.title) === prodTypeFilter);
@@ -348,7 +387,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       (b.priority || 0) - (a.priority || 0) ||
       taskSortKey(a).localeCompare(taskSortKey(b), undefined, { numeric: true })
     );
-  }, [tasks, selectedWeek, statusFilter, category, locationFilter, prodTypeFilter]);
+  }, [tasks, selectedWeek, statusFilter, category, locationFilter, prodTypeFilter, isAsstManager, asstTab, defaultCategory, displayName]);
 
   const canCreateInCurrentCategory = category === "production" || canCreateGrowing;
 
@@ -744,116 +783,157 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
             <AnnouncementBanner />
             <OutThisWeekBanner />
 
-            <div style={{ padding: "14px 14px 80px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              {/* Production */}
-              <div className="hub-card" onClick={() => goToTasks("production")} style={{ borderTopColor: "#7fb069", borderTopWidth: 4 }}>
-                <div className="hub-card-emoji">🌱</div>
-                <div className="hub-card-title">Production</div>
-                <div className="hub-card-sub">{tasksToday("production")} today</div>
-                {overdueIn("production") > 0 && <span className="hub-card-badge">{overdueIn("production")} overdue</span>}
-                {requestsIn("production") > 0 && overdueIn("production") === 0 && <span className="hub-card-badge warn">{requestsIn("production")} request{requestsIn("production") !== 1 ? "s" : ""}</span>}
-              </div>
-
-              {/* Growing */}
-              <div className="hub-card" onClick={() => goToTasks("growing")} style={{ borderTopColor: "#4a90d9", borderTopWidth: 4 }}>
-                <div className="hub-card-emoji">🌿</div>
-                <div className="hub-card-title">Growing</div>
-                <div className="hub-card-sub">{tasksToday("growing")} today</div>
-                {overdueIn("growing") > 0 && <span className="hub-card-badge">{overdueIn("growing")} overdue</span>}
-                {requestsIn("growing") > 0 && overdueIn("growing") === 0 && <span className="hub-card-badge warn">{requestsIn("growing")} request{requestsIn("growing") !== 1 ? "s" : ""}</span>}
-              </div>
-
-              {/* Maintenance */}
-              <div className="hub-card" onClick={() => goToTasks("maintenance")} style={{ borderTopColor: "#e89a3a", borderTopWidth: 4 }}>
-                <div className="hub-card-emoji">🔧</div>
-                <div className="hub-card-title">Maintenance</div>
-                <div className="hub-card-sub">{tasksToday("maintenance")} today</div>
-                {overdueIn("maintenance") > 0 && <span className="hub-card-badge">{overdueIn("maintenance")} overdue</span>}
-              </div>
-
-              {/* Vacation */}
-              <div className="hub-card" onClick={() => setCurrentView("vacation")} style={{ borderTopColor: "#7fb069", borderTopWidth: 4 }}>
-                <div className="hub-card-emoji">🌴</div>
-                <div className="hub-card-title">Vacation</div>
-                <div className="hub-card-sub">{canApproveVacation ? "Approve · request · view" : "Request time off"}</div>
-                {canApproveVacation && pendingVacations.length > 0 && <span className="hub-card-badge warn">{pendingVacations.length} pending</span>}
-              </div>
-
-              {/* Company Announcement */}
-              <div className="hub-card"
-                onClick={() => canAnnounce ? setShowAnnouncer(true) : setCurrentView("messages")}
-                style={{ borderTopColor: "#7fb069", borderTopWidth: 4 }}>
-                <div className="hub-card-emoji">📢</div>
-                <div className="hub-card-title">Company Announcement</div>
-                <div className="hub-card-sub">
-                  {canAnnounce
-                    ? (activeAnnouncements.length > 0 ? `Post or view (${activeAnnouncements.length} active)` : "Post to all staff")
-                    : (activeAnnouncements.length > 0 ? `${activeAnnouncements.length} active` : "No announcements")}
-                </div>
-                {activeAnnouncements.length > 0 && <span className="hub-card-badge ok">{activeAnnouncements.length}</span>}
-              </div>
-
-              {/* Message Trish */}
-              <div className="hub-card"
-                onClick={() => isTrish ? setCurrentView("hr-inbox") : setShowHrCompose(true)}
-                style={{ borderTopColor: "#8e44ad", borderTopWidth: 4 }}>
-                <div className="hub-card-emoji">✉</div>
-                <div className="hub-card-title">{isTrish ? "HR Inbox" : "Message Trish"}</div>
-                <div className="hub-card-sub">
-                  {isTrish ? (unreadHrMessages.length > 0 ? `${unreadHrMessages.length} unread` : "HR messages") : "HR · time off · questions"}
-                </div>
-                {isTrish && unreadHrMessages.length > 0 && <span className="hub-card-badge">{unreadHrMessages.length} unread</span>}
-              </div>
-
-              {isAnyManager && (
-                <>
-                  <div className="hub-card" onClick={() => setCurrentView("today")} style={{ background: "#162212", color: "#c8e6b8" }}>
-                    <div className="hub-card-emoji" style={{ color: "#7fb069" }}>📅</div>
-                    <div className="hub-card-title" style={{ color: "#c8e6b8" }}>Today</div>
-                    <div className="hub-card-sub" style={{ color: "#7a9a6a" }}>All depts</div>
+            {isAsstManager ? (
+              /* ── ASSISTANT MANAGER HUB — simplified, 4 main cards ── */
+              <div style={{ padding: "14px 14px 80px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div className="hub-card" onClick={() => { setCategory(defaultCategory || "production"); setCurrentView("tasks"); }}
+                  style={{ gridColumn: "span 2", borderTopColor: "#7fb069", borderTopWidth: 4, padding: 18 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
+                      <span style={{ fontSize: 32 }}>🌱</span>
+                      <div>
+                        <div style={{ fontSize: 18, fontWeight: 800, color: "#1e2d1a" }}>Tasks</div>
+                        <div style={{ fontSize: 12, color: "#7a8c74", marginTop: 2 }}>
+                          {assignedToMe.length > 0 ? `${assignedToMe.length} assigned to you` : `My Tasks · ${deptLabel(defaultCategory)} · Done`}
+                        </div>
+                      </div>
+                    </div>
+                    {assignedToMe.length > 0 && <span className="hub-card-badge">{assignedToMe.length}</span>}
                   </div>
-                  <div className="hub-card" onClick={() => setCurrentView("week")} style={{ background: "#162212", color: "#c8e6b8" }}>
-                    <div className="hub-card-emoji" style={{ color: "#7fb069" }}>📆</div>
-                    <div className="hub-card-title" style={{ color: "#c8e6b8" }}>This Week</div>
-                    <div className="hub-card-sub" style={{ color: "#7a9a6a" }}>All depts</div>
+                </div>
+
+                <div className="hub-card" onClick={() => setShowDriverRequest(true)} style={{ gridColumn: "span 2", borderTopColor: "#4a90d9", borderTopWidth: 4, padding: 18 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
+                      <span style={{ fontSize: 28 }}>🚛</span>
+                      <div>
+                        <div style={{ fontSize: 17, fontWeight: 800, color: "#1e2d1a" }}>Driver Request</div>
+                        <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2 }}>Pick date + driver</div>
+                      </div>
+                    </div>
+                    {pendingDriverRequests.length > 0 && <span className="hub-card-badge warn">{pendingDriverRequests.length} pending</span>}
                   </div>
-                </>
-              )}
+                </div>
 
-              {/* Driver Requests table — spans full width, sits between This Week
-                  and Request a Driver so it groups with the driver controls. */}
-              <div style={{ gridColumn: "span 2" }}>
-                <DriverRequestStatusList scope="all" onTapHeader={() => setCurrentView("driver-requests")} />
-              </div>
+                <div className="hub-card" onClick={() => setCurrentView("vacation")} style={{ borderTopColor: "#7fb069", borderTopWidth: 4, padding: 18 }}>
+                  <div className="hub-card-emoji" style={{ fontSize: 28 }}>🌴</div>
+                  <div className="hub-card-title" style={{ fontSize: 15 }}>Vacation</div>
+                  <div className="hub-card-sub">Request time off</div>
+                </div>
 
-              {/* Request a Driver */}
-              <div className="hub-card" onClick={() => setShowDriverRequest(true)} style={{ borderTopColor: "#4a90d9", borderTopWidth: 4 }}>
-                <div className="hub-card-emoji">🚛</div>
-                <div className="hub-card-title">Request a Driver</div>
-                <div className="hub-card-sub">Pick date + driver · Call/Text</div>
+                <div className="hub-card" onClick={() => setShowHrCompose(true)} style={{ borderTopColor: "#8e44ad", borderTopWidth: 4, padding: 18 }}>
+                  <div className="hub-card-emoji" style={{ fontSize: 28 }}>✉</div>
+                  <div className="hub-card-title" style={{ fontSize: 15 }}>Message Trish</div>
+                  <div className="hub-card-sub">HR · questions</div>
+                </div>
               </div>
+            ) : (
+              /* ── FULL MANAGER HUB — unchanged ── */
+              <div style={{ padding: "14px 14px 80px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                {/* Production */}
+                <div className="hub-card" onClick={() => goToTasks("production")} style={{ borderTopColor: "#7fb069", borderTopWidth: 4 }}>
+                  <div className="hub-card-emoji">🌱</div>
+                  <div className="hub-card-title">Production</div>
+                  <div className="hub-card-sub">{tasksToday("production")} today</div>
+                  {overdueIn("production") > 0 && <span className="hub-card-badge">{overdueIn("production")} overdue</span>}
+                  {requestsIn("production") > 0 && overdueIn("production") === 0 && <span className="hub-card-badge warn">{requestsIn("production")} request{requestsIn("production") !== 1 ? "s" : ""}</span>}
+                </div>
 
-              {/* Driver Schedule */}
-              <div className="hub-card" onClick={() => setCurrentView("driver-schedule")} style={{ borderTopColor: "#4a90d9", borderTopWidth: 4 }}>
-                <div className="hub-card-emoji">📅</div>
-                <div className="hub-card-title">Driver Schedule</div>
-                <div className="hub-card-sub">See who's booked when</div>
-              </div>
+                {/* Growing */}
+                <div className="hub-card" onClick={() => goToTasks("growing")} style={{ borderTopColor: "#4a90d9", borderTopWidth: 4 }}>
+                  <div className="hub-card-emoji">🌿</div>
+                  <div className="hub-card-title">Growing</div>
+                  <div className="hub-card-sub">{tasksToday("growing")} today</div>
+                  {overdueIn("growing") > 0 && <span className="hub-card-badge">{overdueIn("growing")} overdue</span>}
+                  {requestsIn("growing") > 0 && overdueIn("growing") === 0 && <span className="hub-card-badge warn">{requestsIn("growing")} request{requestsIn("growing") !== 1 ? "s" : ""}</span>}
+                </div>
 
-              {/* Staff Roster */}
-              <div className="hub-card" onClick={() => setShowCodes(true)} style={{ borderTopColor: "#8e44ad", borderTopWidth: 4 }}>
-                <div className="hub-card-emoji">👥</div>
-                <div className="hub-card-title">Staff Roster</div>
-                <div className="hub-card-sub">Codes · call · text anyone</div>
-              </div>
+                {/* Maintenance */}
+                <div className="hub-card" onClick={() => goToTasks("maintenance")} style={{ borderTopColor: "#e89a3a", borderTopWidth: 4 }}>
+                  <div className="hub-card-emoji">🔧</div>
+                  <div className="hub-card-title">Maintenance</div>
+                  <div className="hub-card-sub">{tasksToday("maintenance")} today</div>
+                  {overdueIn("maintenance") > 0 && <span className="hub-card-badge">{overdueIn("maintenance")} overdue</span>}
+                </div>
 
-              {/* Brehob — standardized to match the other hub cards */}
-              <div className="hub-card" onClick={() => goToTasks("brehob")} style={{ borderTopColor: "#a86a10", borderTopWidth: 4 }}>
-                <div className="hub-card-emoji">🛒</div>
-                <div className="hub-card-title">Brehob List</div>
-                <div className="hub-card-sub">{(brehobItems || []).filter(b => b.status === "on_list").length} items on list</div>
+                {/* Vacation */}
+                <div className="hub-card" onClick={() => setCurrentView("vacation")} style={{ borderTopColor: "#7fb069", borderTopWidth: 4 }}>
+                  <div className="hub-card-emoji">🌴</div>
+                  <div className="hub-card-title">Vacation</div>
+                  <div className="hub-card-sub">{canApproveVacation ? "Approve · request · view" : "Request time off"}</div>
+                  {canApproveVacation && pendingVacations.length > 0 && <span className="hub-card-badge warn">{pendingVacations.length} pending</span>}
+                </div>
+
+                {/* Company Announcement */}
+                <div className="hub-card"
+                  onClick={() => canAnnounce ? setShowAnnouncer(true) : setCurrentView("messages")}
+                  style={{ borderTopColor: "#7fb069", borderTopWidth: 4 }}>
+                  <div className="hub-card-emoji">📢</div>
+                  <div className="hub-card-title">Company Announcement</div>
+                  <div className="hub-card-sub">
+                    {canAnnounce
+                      ? (activeAnnouncements.length > 0 ? `Post or view (${activeAnnouncements.length} active)` : "Post to all staff")
+                      : (activeAnnouncements.length > 0 ? `${activeAnnouncements.length} active` : "No announcements")}
+                  </div>
+                  {activeAnnouncements.length > 0 && <span className="hub-card-badge ok">{activeAnnouncements.length}</span>}
+                </div>
+
+                {/* Message Trish */}
+                <div className="hub-card"
+                  onClick={() => isTrish ? setCurrentView("hr-inbox") : setShowHrCompose(true)}
+                  style={{ borderTopColor: "#8e44ad", borderTopWidth: 4 }}>
+                  <div className="hub-card-emoji">✉</div>
+                  <div className="hub-card-title">{isTrish ? "HR Inbox" : "Message Trish"}</div>
+                  <div className="hub-card-sub">
+                    {isTrish ? (unreadHrMessages.length > 0 ? `${unreadHrMessages.length} unread` : "HR messages") : "HR · time off · questions"}
+                  </div>
+                  {isTrish && unreadHrMessages.length > 0 && <span className="hub-card-badge">{unreadHrMessages.length} unread</span>}
+                </div>
+
+                {isAnyManager && (
+                  <>
+                    <div className="hub-card" onClick={() => setCurrentView("today")} style={{ background: "#162212", color: "#c8e6b8" }}>
+                      <div className="hub-card-emoji" style={{ color: "#7fb069" }}>📅</div>
+                      <div className="hub-card-title" style={{ color: "#c8e6b8" }}>Today</div>
+                      <div className="hub-card-sub" style={{ color: "#7a9a6a" }}>All depts</div>
+                    </div>
+                    <div className="hub-card" onClick={() => setCurrentView("week")} style={{ background: "#162212", color: "#c8e6b8" }}>
+                      <div className="hub-card-emoji" style={{ color: "#7fb069" }}>📆</div>
+                      <div className="hub-card-title" style={{ color: "#c8e6b8" }}>This Week</div>
+                      <div className="hub-card-sub" style={{ color: "#7a9a6a" }}>All depts</div>
+                    </div>
+                  </>
+                )}
+
+                <div style={{ gridColumn: "span 2" }}>
+                  <DriverRequestStatusList scope="all" onTapHeader={() => setCurrentView("driver-requests")} />
+                </div>
+
+                <div className="hub-card" onClick={() => setShowDriverRequest(true)} style={{ borderTopColor: "#4a90d9", borderTopWidth: 4 }}>
+                  <div className="hub-card-emoji">🚛</div>
+                  <div className="hub-card-title">Request a Driver</div>
+                  <div className="hub-card-sub">Pick date + driver · Call/Text</div>
+                </div>
+
+                <div className="hub-card" onClick={() => setCurrentView("driver-schedule")} style={{ borderTopColor: "#4a90d9", borderTopWidth: 4 }}>
+                  <div className="hub-card-emoji">📅</div>
+                  <div className="hub-card-title">Driver Schedule</div>
+                  <div className="hub-card-sub">See who's booked when</div>
+                </div>
+
+                <div className="hub-card" onClick={() => setShowCodes(true)} style={{ borderTopColor: "#8e44ad", borderTopWidth: 4 }}>
+                  <div className="hub-card-emoji">👥</div>
+                  <div className="hub-card-title">Staff Roster</div>
+                  <div className="hub-card-sub">Codes · call · text anyone</div>
+                </div>
+
+                <div className="hub-card" onClick={() => goToTasks("brehob")} style={{ borderTopColor: "#a86a10", borderTopWidth: 4 }}>
+                  <div className="hub-card-emoji">🛒</div>
+                  <div className="hub-card-title">Brehob List</div>
+                  <div className="hub-card-sub">{(brehobItems || []).filter(b => b.status === "on_list").length} items on list</div>
+                </div>
               </div>
-            </div>
+            )}
           </>
         );
       })()}
@@ -932,21 +1012,42 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       <OutThisWeekBanner />
 
 
-      {/* Category tabs */}
-      <div className="mtv-category-tabs" style={{ padding: "12px 20px 0", background: "#fff", display: "flex", gap: 8, overflowX: "auto" }}>
-        {[{id:"production",label:"Production"},{id:"growing",label:"Growing"},{id:"maintenance",label:"🔧 Maintenance"},{id:"brehob",label:"🛒 Brehob"}].map(c => (
-          <button key={c.id} onClick={() => setCategory(c.id)}
-            style={{
-              flex: 1, padding: "12px 0", borderRadius: "12px 12px 0 0", fontSize: 13, fontWeight: 800,
-              background: category === c.id ? "#7fb069" : "#f2f5ef",
-              color: category === c.id ? "#1e2d1a" : "#7a8c74",
-              border: "1.5px solid #c8d8c0", borderBottom: category === c.id ? "1.5px solid #7fb069" : "1.5px solid #c8d8c0",
-              cursor: "pointer", fontFamily: "inherit",
-            }}>
-            {c.label}
-          </button>
-        ))}
-      </div>
+      {/* Asst-manager 3-tab strip: My Tasks / [Department] / Done */}
+      {isAsstManager ? (
+        <div className="mtv-category-tabs" style={{ padding: "12px 20px 0", background: "#fff", display: "flex", gap: 8 }}>
+          {[
+            { id: "mine", label: `🎯 My Tasks${assignedToMe.length > 0 ? ` (${assignedToMe.length})` : ""}` },
+            { id: "dept", label: deptLabel(defaultCategory) },
+            { id: "done", label: "✓ Done" },
+          ].map(t => (
+            <button key={t.id} onClick={() => setAsstTab(t.id)}
+              style={{
+                flex: 1, padding: "12px 0", borderRadius: "12px 12px 0 0", fontSize: 13, fontWeight: 800,
+                background: asstTab === t.id ? "#7fb069" : "#f2f5ef",
+                color: asstTab === t.id ? "#1e2d1a" : "#7a8c74",
+                border: "1.5px solid #c8d8c0", borderBottom: asstTab === t.id ? "1.5px solid #7fb069" : "1.5px solid #c8d8c0",
+                cursor: "pointer", fontFamily: "inherit",
+              }}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="mtv-category-tabs" style={{ padding: "12px 20px 0", background: "#fff", display: "flex", gap: 8, overflowX: "auto" }}>
+          {[{id:"production",label:"Production"},{id:"growing",label:"Growing"},{id:"maintenance",label:"🔧 Maintenance"},{id:"brehob",label:"🛒 Brehob"}].map(c => (
+            <button key={c.id} onClick={() => setCategory(c.id)}
+              style={{
+                flex: 1, padding: "12px 0", borderRadius: "12px 12px 0 0", fontSize: 13, fontWeight: 800,
+                background: category === c.id ? "#7fb069" : "#f2f5ef",
+                color: category === c.id ? "#1e2d1a" : "#7a8c74",
+                border: "1.5px solid #c8d8c0", borderBottom: category === c.id ? "1.5px solid #7fb069" : "1.5px solid #c8d8c0",
+                cursor: "pointer", fontFamily: "inherit",
+              }}>
+              {c.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Brehob shopping list — renders in place of tasks when selected */}
       {category === "brehob" && (
@@ -955,8 +1056,8 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
         </div>
       )}
 
-      {/* Status filter — hidden on Brehob tab */}
-      {category !== "brehob" && (
+      {/* Status filter — hidden on Brehob tab and for asst managers (their tab strip already controls status) */}
+      {category !== "brehob" && !isAsstManager && (
       <div className="mtv-filter-row" style={{ padding: "12px 20px", background: "#fff", borderBottom: "1.5px solid #e0ead8", display: "flex", gap: 8 }}>
         {[{id:"pending",label:"To Do"},{id:"completed",label:"Done"},{id:"all",label:"All"}].map(f => (
           <button key={f.id} onClick={() => setStatusFilter(f.id)}

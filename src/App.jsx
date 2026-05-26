@@ -281,12 +281,14 @@ function PlannerShell() {
 function FloorAppRouter({ role, isManager, growerProfile, signOut }) {
   const name = growerProfile?.name || "";
   const isReese = name === "Reese Morris";
+  const isAsstManager = role === "assistant_manager";
   // Default category comes from the staff member's GROUP in floor_codes (Production / Growing / etc.)
   // Falls back to legacy name-based list for anyone without a group set.
   const group = (growerProfile?.group || "").toUpperCase();
   let defaultCategory;
   if (group === "PRODUCTION") defaultCategory = "production";
   else if (group === "GROWING") defaultCategory = "growing";
+  else if (group === "MAINTENANCE") defaultCategory = "maintenance";
   else if (["Evie", "Sam", "Ryan", "Nick", "Tyler"].some(n => name.includes(n))) defaultCategory = "production";
   // Manager + Reese start in task creator. Other workers start in worker checklist.
   const initial = isManager || isReese ? "creator" : "worker";
@@ -298,6 +300,7 @@ function FloorAppRouter({ role, isManager, growerProfile, signOut }) {
       onBackToApp={() => setView("app")}
       canCreateGrowing={isManager || isReese}
       defaultCategory={defaultCategory}
+      isAsstManager={isAsstManager}
     />;
   }
   if (view === "worker") {
@@ -364,12 +367,7 @@ function AppInner() {
   // Seasonal Drivers → delivery requests + availability picker
   if (role === "seasonal_driver") return <DriverHub onSwitchMode={signOut} />;
 
-  // Assistant Managers route through the floor app like Managers (can request tasks for their dept)
-  if (role === "assistant_manager") {
-    return <FloorAppRouter role={role} isManager={false} growerProfile={growerProfile} signOut={signOut} />;
-  }
-
-  // Manager + Reese get the task creator. Workers get the growing checklist first.
+  // Manager + Asst Manager + Reese get the unified manager hub. Workers get the growing checklist first.
   if (isManager || (isOperator && growerProfile?.name)) {
     return <FloorAppRouter role={role} isManager={isManager} growerProfile={growerProfile} signOut={signOut} />;
   }

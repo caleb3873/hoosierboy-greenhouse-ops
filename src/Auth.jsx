@@ -224,7 +224,7 @@ export function AuthProvider({ children }) {
   const isOperationsManager = role === "operations_manager";
   const isAdmin       = role === "admin" || isOperationsManager;
   const isOperator    = role === "operator" || role === "maintenance" || role === "manager" || isOperationsManager;
-  const isManager     = role === "manager" || isOperationsManager;
+  const isManager     = role === "manager" || role === "assistant_manager" || isOperationsManager;
   const isGrower      = role === "grower";
   const isShippingManager = role === "shipping_manager" || isOperationsManager;
   const isShippingTeam    = role === "shipping";
