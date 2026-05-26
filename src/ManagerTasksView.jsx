@@ -5,7 +5,7 @@ import { AnnouncementBanner, AnnouncementComposerModal, AnnouncementPopup, useAn
 import { HrComposeModal, HrInbox, isHrInboxOwner } from "./HrMessages";
 import { useAuth } from "./Auth";
 import { BrehobManagerView } from "./BrehobList";
-import { DriverRequestModal, DriverRequestStatusList, useDriverResponsePopup, DriverResponsePopup, DriverScheduleView } from "./DriverRequest";
+import { DriverRequestModal, DriverRequestStatusList, useDriverResponsePopup, DriverResponsePopup, DriverScheduleView, DriverRequestsSubPage } from "./DriverRequest";
 import { getCurrentWeek } from "./shared";
 import { NotificationBanner } from "./PushNotifications";
 
@@ -735,10 +735,6 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
             <AnnouncementBanner />
             <OutThisWeekBanner />
 
-            <div style={{ padding: "14px 14px 0" }}>
-              <DriverRequestStatusList scope="mine" />
-            </div>
-
             <div style={{ padding: "14px 14px 80px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               {/* Production */}
               <div className="hub-card" onClick={() => goToTasks("production")} style={{ borderTopColor: "#7fb069", borderTopWidth: 4 }}>
@@ -814,6 +810,12 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
                   </div>
                 </>
               )}
+
+              {/* Driver Requests table — spans full width, sits between This Week
+                  and Request a Driver so it groups with the driver controls. */}
+              <div style={{ gridColumn: "span 2" }}>
+                <DriverRequestStatusList scope="all" onTapHeader={() => setCurrentView("driver-requests")} />
+              </div>
 
               {/* Request a Driver */}
               <div className="hub-card" onClick={() => setShowDriverRequest(true)} style={{ borderTopColor: "#4a90d9", borderTopWidth: 4 }}>
@@ -1118,6 +1120,11 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       {/* ── DRIVER SCHEDULE — 21-day grid across all drivers ───────────── */}
       {currentView === "driver-schedule" && (
         <DriverScheduleView onBack={() => setCurrentView("hub")} />
+      )}
+
+      {/* ── DRIVER REQUESTS — full-page list with delete + driver comments ── */}
+      {currentView === "driver-requests" && (
+        <DriverRequestsSubPage onBack={() => setCurrentView("hub")} />
       )}
 
       {/* ── TODAY / THIS WEEK (any manager) ────────────────────────────── */}

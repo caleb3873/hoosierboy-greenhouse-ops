@@ -484,8 +484,10 @@ const START_TIME_OPTIONS = (() => {
   return out;
 })();
 
-// Manager inbox: shows status of requests this manager submitted with Call/Text-with-link buttons
-export function DriverRequestStatusList({ scope = "mine" }) {
+// Manager inbox: compact summary strip with a tappable header that opens the
+// full Driver Requests page where the manager can read driver comments and
+// delete requests.
+export function DriverRequestStatusList({ scope = "mine", onTapHeader }) {
   const { displayName } = useAuth();
   const { rows: requests, remove } = useDriverRequests();
   const { rows: floorCodes } = useFloorCodes2();
@@ -517,9 +519,20 @@ export function DriverRequestStatusList({ scope = "mine" }) {
   }, [requests, displayName, scope, todayIso]);
 
   if (list.length === 0) return null;
+  const HeaderTag = onTapHeader ? "button" : "div";
   return (
     <div style={{ background: "#162212", border: "1px solid rgba(127, 176, 105, 0.3)", borderRadius: 12, padding: 12, marginBottom: 12 }}>
-      <div style={{ fontSize: 11, fontWeight: 800, color: "#7a9a6a", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Driver Requests</div>
+      <HeaderTag onClick={onTapHeader || undefined}
+        style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", background: "transparent", border: "none", padding: 0, marginBottom: 8, cursor: onTapHeader ? "pointer" : "default", fontFamily: "inherit", textAlign: "left" }}>
+        <span style={{ fontSize: 11, fontWeight: 800, color: "#7a9a6a", textTransform: "uppercase", letterSpacing: 1 }}>
+          Driver Requests · {list.length}
+        </span>
+        {onTapHeader && (
+          <span style={{ fontSize: 12, fontWeight: 800, color: "#7fb069", display: "flex", alignItems: "center", gap: 4 }}>
+            Open ›
+          </span>
+        )}
+      </HeaderTag>
       {list.map(r => {
         const phone = r.requestedDriver ? driverPhones.get(r.requestedDriver) : null;
         const isPending = r.status === "pending";
@@ -563,6 +576,132 @@ export function DriverRequestStatusList({ scope = "mine" }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// ─── Driver Requests full-page view ──────────────────────────────────────
+// Dedicated sub-page (not a modal) so the manager can see ALL active driver
+// requests across the team: pending ones with Call/Text shortcuts, accepted
+// ones with the driver's comment ("can't work past 3"), declined ones for
+// record. Each row has a prominent Delete button.
+export function DriverRequestsSubPage({ onBack }) {
+  const { rows: requests, remove } = useDriverRequests();
+  const { rows: floorCodes } = useFloorCodes2();
+  const todayIso = ymd(new Date());
+
+  const driverPhones = useMemo(() => {
+    const m = new Map();
+    for (const fc of (floorCodes || [])) {
+      if (fc.workerName && fc.phone) m.set(fc.workerName, fc.phone);
+    }
+    return m;
+  }, [floorCodes]);
+
+  // Status priority: pending → accepted → declined; then by date asc
+  const list = useMemo(() => {
+    const order = { pending: 0, accepted: 1, declined: 2 };
+    return (requests || [])
+      .filter(r => r.deliveryDate >= todayIso)
+      .sort((a, b) => {
+        const so = (order[a.status] ?? 9) - (order[b.status] ?? 9);
+        if (so !== 0) return so;
+        return (a.deliveryDate || "").localeCompare(b.deliveryDate || "");
+      });
+  }, [requests, todayIso]);
+
+  async function handleDelete(r) {
+    const who = r.requestedDriver || "any driver";
+    const accepted = r.status === "accepted";
+    const warning = accepted
+      ? `⚠ ${r.acceptedBy} already ACCEPTED this request.\n\nDeleting won't notify them — text them directly to cancel.\n\nDelete the ${r.deliveryDate} request anyway?`
+      : `Delete the ${r.deliveryDate} request for ${who}?`;
+    if (!window.confirm(warning)) return;
+    await remove(r.id);
+  }
+
+  return (
+    <div style={{ ...FONT, minHeight: "100vh", background: "#f2f5ef", paddingBottom: 60 }}>
+      <div style={{ background: "#1e2d1a", color: "#c8e6b8", padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <button onClick={onBack}
+          style={{ background: "transparent", border: "1px solid #4a6a3a", borderRadius: 8, color: "#c8e6b8", padding: "6px 10px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+          ← Hub
+        </button>
+        <div style={{ fontSize: 16, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif" }}>🚛 Driver Requests</div>
+        <div style={{ width: 60 }} />
+      </div>
+
+      <div style={{ padding: 12 }}>
+        {list.length === 0 ? (
+          <div style={{ background: "#fff", borderRadius: 12, padding: 30, textAlign: "center", color: "#7a8c74" }}>
+            No active driver requests.
+          </div>
+        ) : list.map(r => {
+          const phone = r.requestedDriver ? driverPhones.get(r.requestedDriver) : null;
+          const isPending = r.status === "pending";
+          const isAccepted = r.status === "accepted";
+          const isDeclined = r.status === "declined";
+          const dateLabel = r.deliveryDate ? new Date(r.deliveryDate + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" }) : "";
+          return (
+            <div key={r.id} style={{ background: "#fff", borderRadius: 12, border: `2px solid ${isAccepted ? "#7fb069" : isDeclined ? "#d94f3d" : "#e89a3a"}`, padding: 14, marginBottom: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 16, fontWeight: 800, color: "#1e2d1a" }}>{dateLabel}</div>
+                  <div style={{ fontSize: 12, color: "#7a8c74", marginTop: 2 }}>
+                    {r.requestedDriver || "Any driver"} · requested by {r.requestedBy}
+                  </div>
+                </div>
+                <span style={{ fontSize: 11, fontWeight: 800, padding: "4px 10px", borderRadius: 999, flexShrink: 0, whiteSpace: "nowrap",
+                  background: isAccepted ? "#7fb069" : isDeclined ? "#d94f3d" : "#e89a3a",
+                  color: isAccepted ? "#1e2d1a" : "#fff" }}>
+                  {isAccepted ? `✓ Accepted by ${r.acceptedBy?.split(" ")[0]}` : isDeclined ? `✗ Declined by ${r.acceptedBy?.split(" ")[0]}` : "Pending"}
+                </span>
+              </div>
+
+              {(r.timeWindow || r.startTime) && (
+                <div style={{ fontSize: 13, color: "#1e2d1a", fontWeight: 700, marginTop: 6 }}>
+                  🕐 {formatTiming(r.timeWindow, r.startTime)}
+                </div>
+              )}
+
+              {r.details && (
+                <div style={{ fontSize: 13, color: "#1e2d1a", marginTop: 8, padding: "8px 10px", background: "#f2f5ef", borderRadius: 6, whiteSpace: "pre-wrap" }}>
+                  {r.details}
+                </div>
+              )}
+
+              {r.driverComment && (
+                <div style={{ marginTop: 8, padding: "10px 12px", background: isAccepted ? "#f5fbf0" : "#fff5f3", borderLeft: `3px solid ${isAccepted ? "#7fb069" : "#d94f3d"}`, borderRadius: 4 }}>
+                  <div style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: 1 }}>
+                    💬 Note from {r.acceptedBy?.split(" ")[0] || "driver"}
+                  </div>
+                  <div style={{ fontSize: 14, color: "#1e2d1a", marginTop: 4, whiteSpace: "pre-wrap" }}>{r.driverComment}</div>
+                </div>
+              )}
+
+              {/* Action row: Call + Text-with-link if pending; Delete always */}
+              <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                {phone && isPending && (
+                  <>
+                    <a href={telHref(phone)}
+                      style={{ flex: 1, textAlign: "center", textDecoration: "none", background: "#1e4d2b", color: "#fff", padding: "10px 8px", borderRadius: 8, fontSize: 12, fontWeight: 800 }}>
+                      📞 Call
+                    </a>
+                    <a href={smsHrefWithBody(phone, smsRequestBody(r, r.requestedDriver))}
+                      style={{ flex: 2, textAlign: "center", textDecoration: "none", background: "#1e2d4d", color: "#fff", padding: "10px 8px", borderRadius: 8, fontSize: 12, fontWeight: 800 }}>
+                      💬 Resend Text
+                    </a>
+                  </>
+                )}
+                <button onClick={() => handleDelete(r)}
+                  style={{ flex: phone && isPending ? 1 : "auto", minWidth: 100, background: "#d94f3d", border: "none", color: "#fff", padding: "10px 14px", borderRadius: 8, fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                  🗑 Delete
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
