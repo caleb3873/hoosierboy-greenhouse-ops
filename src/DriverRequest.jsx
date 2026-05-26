@@ -30,7 +30,7 @@ export function DriverRequestModal({ onClose, onSubmitted, prefillDate }) {
   const { displayName } = useAuth();
   const { rows: floorCodes } = useFloorCodes2();
   const { rows: availability } = useDriverAvailability();
-  const { upsert: upsertReq } = useDriverRequests();
+  const { rows: allRequests, upsert: upsertReq } = useDriverRequests();
   const [date, setDate] = useState(prefillDate || ymd(new Date()));
   const [timeWindow, setTimeWindow] = useState("am"); // "am" | "pm" | "all_day"
   const [startTime, setStartTime] = useState("07:00");
@@ -59,6 +59,20 @@ export function DriverRequestModal({ onClose, onSubmitted, prefillDate }) {
     }
     return m;
   }, [availability]);
+
+  // For each driver, is there already an active request for the chosen date+window?
+  const conflictByDriver = useMemo(() => {
+    const m = new Map();
+    for (const d of drivers) {
+      const c = findDriverConflict(allRequests, {
+        driverName: d.workerName, date, timeWindow, excludeId: reqId,
+      });
+      if (c) m.set(d.workerName, c);
+    }
+    return m;
+  }, [drivers, allRequests, date, timeWindow, reqId]);
+
+  const selectedConflict = target !== "any" ? conflictByDriver.get(target) : null;
 
   // Used for the "any driver" path (no SMS to fire — just save and close).
   async function submit() {
@@ -224,17 +238,29 @@ export function DriverRequestModal({ onClose, onSubmitted, prefillDate }) {
           const isSelected = target === name;
           const isAvailThatDay = availByDriver.get(name)?.has(date);
           const phone = d.phone;
+          const conflict = conflictByDriver.get(name);
+          const borderColor = conflict ? "#d94f3d" : isSelected ? "#7fb069" : "#3a5a30";
           return (
             <div key={d.id || name} onClick={() => setTarget(name)}
-              style={{ background: isSelected ? "#1e2d1a" : "transparent", border: `2px solid ${isSelected ? "#7fb069" : "#3a5a30"}`, borderRadius: 10, padding: "12px", marginBottom: 8, cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              style={{ background: isSelected ? "#1e2d1a" : "transparent", border: `2px solid ${borderColor}`, borderRadius: 10, padding: "12px", marginBottom: 8, cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", opacity: conflict ? 0.85 : 1 }}>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 15, fontWeight: 800, color: "#fff" }}>{name}</div>
-                <div style={{ fontSize: 11, marginTop: 2, color: isAvailThatDay ? "#7fb069" : "#7a9a6a", fontWeight: 700 }}>
-                  {isAvailThatDay ? "✓ Marked available" : "Not marked available — may still accept"}
-                  {phone && <span style={{ color: "#7a9a6a", marginLeft: 8 }}>{formatPhone(phone)}</span>}
-                </div>
+                {conflict ? (
+                  <div style={{ fontSize: 11, marginTop: 4, color: "#d94f3d", fontWeight: 800 }}>
+                    ⚠ Already {conflict.status === "accepted" ? "BOOKED" : "REQUESTED"} for this slot
+                    <div style={{ fontSize: 10, color: "#e89a3a", marginTop: 2, fontWeight: 700 }}>
+                      {formatTiming(conflict.timeWindow, conflict.startTime)} · by {conflict.requestedBy}
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 11, marginTop: 2, color: isAvailThatDay ? "#7fb069" : "#7a9a6a", fontWeight: 700 }}>
+                    {isAvailThatDay ? "✓ Marked available" : "Not marked available — may still accept"}
+                    {phone && <span style={{ color: "#7a9a6a", marginLeft: 8 }}>{formatPhone(phone)}</span>}
+                  </div>
+                )}
               </div>
-              {isSelected && <span style={{ color: "#7fb069", fontSize: 22, marginLeft: 8 }}>✓</span>}
+              {isSelected && !conflict && <span style={{ color: "#7fb069", fontSize: 22, marginLeft: 8 }}>✓</span>}
+              {conflict && <span style={{ color: "#d94f3d", fontSize: 18, marginLeft: 8 }}>⚠</span>}
             </div>
           );
         })}
@@ -243,12 +269,35 @@ export function DriverRequestModal({ onClose, onSubmitted, prefillDate }) {
         <textarea value={details} onChange={e => setDetails(e.target.value)} rows={3} placeholder="Pickup time, stops, special notes…"
           style={{ width: "100%", padding: "10px 12px", marginTop: 4, marginBottom: 12, background: "#1e2d1a", border: "1px solid #4a6a3a", borderRadius: 8, color: "#fff", fontSize: 14, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box" }} />
 
+        {/* Conflict guard — block the Send action if this driver already has an
+            active request that overlaps the chosen date+window. */}
+        {selectedConflict ? (
+          <div style={{ marginTop: 12, padding: "12px 14px", background: "#3a1a1a", border: "2px solid #d94f3d", borderRadius: 10 }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: "#ff8a7a" }}>
+              ⚠ {target.split(" ")[0]} is already {selectedConflict.status === "accepted" ? "booked" : "requested"} for this slot
+            </div>
+            <div style={{ fontSize: 12, color: "#c8e6b8", marginTop: 6 }}>
+              {formatTiming(selectedConflict.timeWindow, selectedConflict.startTime) || "All day"} · requested by <b>{selectedConflict.requestedBy}</b>
+              {selectedConflict.details && <div style={{ fontSize: 11, color: "#a8c8a0", marginTop: 4 }}>"{selectedConflict.details}"</div>}
+            </div>
+            <div style={{ fontSize: 11, color: "#7a9a6a", marginTop: 8 }}>
+              Pick a different driver, change the date, or change the time window.
+            </div>
+          </div>
+        ) : null}
+
         {/* Bottom action: differs by target.
+            - Conflict on selected driver: blocked — only Cancel.
             - Specific driver + phone: big "Save & Text" anchor that fires sms: AND
               the upsert (background). Optional Call shortcut next to it.
             - Specific driver, no phone (rare): plain Send button.
             - Any driver: plain Send button (no SMS to fire). */}
-        {target !== "any" && targetPhone ? (
+        {selectedConflict ? (
+          <button onClick={onClose}
+            style={{ width: "100%", marginTop: 12, background: "transparent", border: "1px solid #4a6a3a", borderRadius: 10, padding: "14px", color: "#c8e6b8", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+            Cancel
+          </button>
+        ) : target !== "any" && targetPhone ? (
           <>
             <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
               <a href={telHref(targetPhone)}
@@ -335,6 +384,29 @@ function quickPickDays(count = 7) {
     out.push({ iso, label, dayNum, isWeekend: d.getDay() === 0 || d.getDay() === 6 });
   }
   return out;
+}
+
+// Decide if two AM/PM/all_day windows step on each other. all_day covers both
+// halves of the day, so it conflicts with anything; missing windows are
+// treated as conflicting too (we can't prove non-overlap).
+function windowsOverlap(a, b) {
+  if (!a || !b) return true;
+  if (a === b) return true;
+  if (a === "all_day" || b === "all_day") return true;
+  return false;
+}
+
+// Find an active (pending or accepted) request that collides with a new one
+// for the same driver on the same date with overlapping timing.
+export function findDriverConflict(requests, { driverName, date, timeWindow, excludeId }) {
+  if (!driverName || driverName === "any" || !date) return null;
+  return (requests || []).find(r =>
+    r.id !== excludeId &&
+    (r.status === "pending" || r.status === "accepted") &&
+    r.requestedDriver === driverName &&
+    r.deliveryDate === date &&
+    windowsOverlap(r.timeWindow, timeWindow)
+  ) || null;
 }
 
 // Start-time options — 6:00 AM through 5:30 PM in 30-min steps. Earliest 6:00 AM per ops.
