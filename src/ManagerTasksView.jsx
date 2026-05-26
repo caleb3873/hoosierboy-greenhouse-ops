@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from "react";
-import { useManagerTasks, useVacationRequests, useAnnouncements, useHrMessages, useBrehobItems, getSupabase } from "./supabase";
+import { useManagerTasks, useVacationRequests, useAnnouncements, useHrMessages, useBrehobItems, useFloorCodes2, getSupabase } from "./supabase";
 import { VacationRequestModal, OutThisWeekBanner, VacationRequestsInboxModal, isVacationApprover } from "./Vacation";
 import { AnnouncementBanner, AnnouncementComposerModal, AnnouncementPopup, useAnnouncementPopup, canPostAnnouncement } from "./Announcements";
 import { HrComposeModal, HrInbox, isHrInboxOwner } from "./HrMessages";
@@ -829,6 +829,13 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
                 <div className="hub-card-sub">See who's booked when</div>
               </div>
 
+              {/* Staff Roster */}
+              <div className="hub-card" onClick={() => setShowCodes(true)} style={{ borderTopColor: "#8e44ad", borderTopWidth: 4 }}>
+                <div className="hub-card-emoji">👥</div>
+                <div className="hub-card-title">Staff Roster</div>
+                <div className="hub-card-sub">Codes · call · text anyone</div>
+              </div>
+
               {/* Brehob — bottom secondary, spans 2 */}
               <div className="hub-card" onClick={() => goToTasks("brehob")} style={{ gridColumn: "span 2", background: "#f8fbf5", borderColor: "#c8d8c0" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -1381,16 +1388,7 @@ function TodayWeekView({ mode, tasks, today, onBack, onOpenTask }) {
 // ══════════════════════════════════════════════════════════════════════════════
 // ── CODES MODAL ─────────────────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════════════
-const FLOOR_CODE_LIST = [
-  { name: "Floor Manager",    code: "9999999", role: "Manager" },
-  { name: "Michael Papineau", code: "1111111", role: "Grower" },
-  { name: "Zack Stenz",       code: "2222222", role: "Grower" },
-  { name: "Colin O'Dell",     code: "3333333", role: "Grower" },
-  { name: "Reese Morris",     code: "4444444", role: "Grower + Tasks" },
-  { name: "Eulogio Martinez", code: "6666666", role: "Grower" },
-  { name: "Amanda Kirsop",    code: "8888888", role: "Grower" },
-  { name: "Kurt Schlegel",    code: "1111222", role: "Grower" },
-];
+// Hardcoded staff list removed — CodesModal now pulls live from floor_codes.
 
 // ══════════════════════════════════════════════════════════════════════════════
 // ── COMPLETION PROMPT MODAL ─────────────────────────────────────────────────
@@ -1805,29 +1803,91 @@ function ApprovalModal({ request, onCancel, onApprove }) {
   );
 }
 
+// Roster modal — pulled live from floor_codes so Trish (and any manager) can
+// look up login codes AND one-tap call/text any staff member.
 function CodesModal({ onClose }) {
+  const { rows: codes } = useFloorCodes2();
+  const [query, setQuery] = useState("");
+
+  // Active staff, alphabetized. Searchable across name, title, department, phone digits.
+  const rows = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const qDigits = q.replace(/\D/g, "");
+    return (codes || [])
+      .filter(c => c.active !== false)
+      .filter(c => {
+        if (!q) return true;
+        const hay = [c.workerName, c.title, c.department, c.staffGroup, c.code].filter(Boolean).join(" ").toLowerCase();
+        if (hay.includes(q)) return true;
+        if (qDigits && (c.phone || "").replace(/\D/g, "").includes(qDigits)) return true;
+        return false;
+      })
+      .sort((a, b) => (a.workerName || "").localeCompare(b.workerName || ""));
+  }, [codes, query]);
+
+  function formatPhone(p) {
+    if (!p) return "";
+    const d = String(p).replace(/\D/g, "");
+    if (d.length === 10) return `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`;
+    return p;
+  }
+  function tel(p) { const d = String(p || "").replace(/\D/g, ""); return d ? `tel:+1${d.slice(-10)}` : null; }
+  function sms(p) { const d = String(p || "").replace(/\D/g, ""); return d ? `sms:+1${d.slice(-10)}` : null; }
+
   return (
     <div onClick={onClose}
-      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, ...FONT }}>
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 9999, display: "flex", alignItems: "flex-end", justifyContent: "center", padding: 0, ...FONT }}>
       <div onClick={e => e.stopPropagation()} style={{
-        background: "#fff", borderRadius: 16, padding: 22, width: "100%", maxWidth: 420,
+        background: "#fff", borderRadius: "20px 20px 0 0", padding: "18px 18px 24px", width: "100%", maxWidth: 520, maxHeight: "92vh", display: "flex", flexDirection: "column",
       }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-          <div style={{ fontSize: 18, fontWeight: 800, color: "#1e2d1a", fontFamily: "'DM Serif Display',Georgia,serif" }}>Employee Codes</div>
-          <button onClick={onClose} style={{ background: "none", border: "none", color: "#7a8c74", fontSize: 26, cursor: "pointer" }}>&times;</button>
-        </div>
-        {FLOOR_CODE_LIST.map(c => (
-          <div key={c.code} style={{
-            display: "flex", alignItems: "center", justifyContent: "space-between",
-            background: "#f2f5ef", borderRadius: 10, padding: "12px 14px", marginBottom: 8,
-          }}>
-            <div>
-              <div style={{ fontSize: 14, fontWeight: 800, color: "#1e2d1a" }}>{c.name}</div>
-              <div style={{ fontSize: 11, color: "#7a8c74" }}>{c.role}</div>
-            </div>
-            <div style={{ fontSize: 20, fontWeight: 900, color: "#1e2d1a", fontFamily: "monospace", letterSpacing: 2 }}>{c.code}</div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: "#1e2d1a", fontFamily: "'DM Serif Display',Georgia,serif" }}>Staff Roster</div>
+            <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2 }}>{rows.length} of {(codes || []).filter(c => c.active !== false).length} staff</div>
           </div>
-        ))}
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "#7a8c74", fontSize: 26, cursor: "pointer", padding: "0 4px" }}>&times;</button>
+        </div>
+
+        <input
+          value={query} onChange={e => setQuery(e.target.value)}
+          placeholder="Search name, title, department, or phone…"
+          autoFocus={false}
+          style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1.5px solid #c8d8c0", fontSize: 14, fontFamily: "inherit", marginBottom: 12, boxSizing: "border-box", color: "#1e2d1a" }}
+        />
+
+        <div style={{ flex: 1, overflowY: "auto", margin: "0 -4px", padding: "0 4px" }}>
+          {rows.length === 0 ? (
+            <div style={{ textAlign: "center", padding: 30, color: "#7a8c74", fontSize: 14 }}>No matches.</div>
+          ) : rows.map(c => (
+            <div key={c.id || c.code} style={{
+              background: "#f2f5ef", borderRadius: 12, padding: 12, marginBottom: 8,
+            }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: c.phone ? 8 : 0 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: "#1e2d1a" }}>{c.workerName}</div>
+                  <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2 }}>
+                    {c.title}
+                    {c.department && c.department !== c.title && <> · {c.department}</>}
+                    {c.staffGroup && <> · {c.staffGroup}</>}
+                  </div>
+                </div>
+                <div style={{ fontSize: 17, fontWeight: 900, color: "#1e2d1a", fontFamily: "monospace", letterSpacing: 2, flexShrink: 0 }}>{c.code}</div>
+              </div>
+              {c.phone && (
+                <div style={{ display: "flex", gap: 6 }}>
+                  <a href={tel(c.phone)}
+                    style={{ flex: 1, textAlign: "center", textDecoration: "none", background: "#1e4d2b", color: "#fff", padding: "10px 8px", borderRadius: 8, fontSize: 12, fontWeight: 800 }}>
+                    📞 Call {formatPhone(c.phone)}
+                  </a>
+                  <a href={sms(c.phone)}
+                    style={{ flex: 1, textAlign: "center", textDecoration: "none", background: "#1e2d4d", color: "#fff", padding: "10px 8px", borderRadius: 8, fontSize: 12, fontWeight: 800 }}>
+                    💬 Text
+                  </a>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
