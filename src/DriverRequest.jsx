@@ -16,6 +16,14 @@ function formatPhone(p) {
 }
 function telHref(p) { const d = String(p || "").replace(/\D/g, ""); return d ? `tel:+1${d.slice(-10)}` : null; }
 function smsHref(p) { const d = String(p || "").replace(/\D/g, ""); return d ? `sms:+1${d.slice(-10)}` : null; }
+// iOS requires `&body=` while Android uses `?body=`. Detect once at module load.
+const IS_IOS = typeof navigator !== "undefined" && /iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent) && /Apple/.test(navigator.vendor || "");
+function smsHrefWithBody(p, body) {
+  const base = smsHref(p);
+  if (!base || !body) return base;
+  const sep = IS_IOS ? "&" : "?";
+  return `${base}${sep}body=${encodeURIComponent(body)}`;
+}
 function ymd(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
 
 export function DriverRequestModal({ onClose, onSubmitted, prefillDate }) {
@@ -31,6 +39,9 @@ export function DriverRequestModal({ onClose, onSubmitted, prefillDate }) {
   const [saving, setSaving] = useState(false);
 
   const dateChips = useMemo(() => quickPickDays(14), []);
+  // Pre-generate the request id so the SMS body can include the same id we
+  // upsert with — otherwise the SMS link would point to a non-existent row.
+  const reqId = useMemo(() => crypto.randomUUID(), []);
 
   const drivers = useMemo(() =>
     (floorCodes || [])
@@ -49,12 +60,13 @@ export function DriverRequestModal({ onClose, onSubmitted, prefillDate }) {
     return m;
   }, [availability]);
 
+  // Used for the "any driver" path (no SMS to fire — just save and close).
   async function submit() {
     if (!date) return;
     setSaving(true);
     try {
       await upsertReq({
-        id: crypto.randomUUID(),
+        id: reqId,
         deliveryDate: date,
         timeWindow,
         startTime,
@@ -66,6 +78,41 @@ export function DriverRequestModal({ onClose, onSubmitted, prefillDate }) {
       });
       onSubmitted?.();
     } finally { setSaving(false); }
+  }
+
+  // Computed values for the "Save & Text" action — we build the SMS body up
+  // front so the <a href="sms:..."> can fire synchronously on tap, and we
+  // kick off the upsert in the background.
+  const targetDriver = drivers.find(d => d.workerName === target);
+  const targetPhone = targetDriver?.phone;
+  const draftForSms = {
+    id: reqId,
+    deliveryDate: date,
+    timeWindow,
+    startTime,
+    requestedBy: displayName || "Manager",
+    requestedDriver: target,
+    details: details.trim() || null,
+  };
+  const smsUrlForTarget = targetPhone ? smsHrefWithBody(targetPhone, smsRequestBody(draftForSms, target)) : null;
+
+  async function saveBeforeText() {
+    // Synchronous save kicked off before the <a> navigates. Don't await — let
+    // the browser open Messages immediately; the upsert finishes in the bg.
+    if (!date) return;
+    setSaving(true);
+    upsertReq({
+      id: reqId,
+      deliveryDate: date,
+      timeWindow,
+      startTime,
+      requestedBy: displayName || "Manager",
+      requestedDriver: target,
+      details: details.trim() || null,
+      status: "pending",
+      createdAt: new Date().toISOString(),
+    }).catch(err => console.error("driver request upsert failed:", err))
+      .finally(() => { setSaving(false); onSubmitted?.(); });
   }
 
   return (
@@ -169,36 +216,25 @@ export function DriverRequestModal({ onClose, onSubmitted, prefillDate }) {
           {target === "any" && <span style={{ color: "#7fb069", fontSize: 20 }}>✓</span>}
         </div>
 
-        {/* Specific drivers */}
+        {/* Specific drivers — tap to select. Phone is shown for reference; the
+            Send-via-Text action lives at the bottom so they pick one driver,
+            then one tap fires both save + SMS. */}
         {drivers.map(d => {
           const name = d.workerName;
           const isSelected = target === name;
           const isAvailThatDay = availByDriver.get(name)?.has(date);
           const phone = d.phone;
           return (
-            <div key={d.id || name}
-              style={{ background: isSelected ? "#1e2d1a" : "transparent", border: `2px solid ${isSelected ? "#7fb069" : "#3a5a30"}`, borderRadius: 10, padding: "10px 12px", marginBottom: 8 }}>
-              <div onClick={() => setTarget(name)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer", marginBottom: phone ? 8 : 0 }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 14, fontWeight: 800, color: "#fff" }}>{name}</div>
-                  <div style={{ fontSize: 11, marginTop: 2, color: isAvailThatDay ? "#7fb069" : "#d94f3d", fontWeight: 700 }}>
-                    {isAvailThatDay ? "✓ Available that day" : "Not marked available — they may still accept"}
-                  </div>
+            <div key={d.id || name} onClick={() => setTarget(name)}
+              style={{ background: isSelected ? "#1e2d1a" : "transparent", border: `2px solid ${isSelected ? "#7fb069" : "#3a5a30"}`, borderRadius: 10, padding: "12px", marginBottom: 8, cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 15, fontWeight: 800, color: "#fff" }}>{name}</div>
+                <div style={{ fontSize: 11, marginTop: 2, color: isAvailThatDay ? "#7fb069" : "#7a9a6a", fontWeight: 700 }}>
+                  {isAvailThatDay ? "✓ Marked available" : "Not marked available — may still accept"}
+                  {phone && <span style={{ color: "#7a9a6a", marginLeft: 8 }}>{formatPhone(phone)}</span>}
                 </div>
-                {isSelected && <span style={{ color: "#7fb069", fontSize: 20, marginLeft: 8 }}>✓</span>}
               </div>
-              {phone && (
-                <div style={{ display: "flex", gap: 6, paddingTop: 8, borderTop: "1px dashed rgba(127, 176, 105, 0.2)" }}>
-                  <a href={telHref(phone)} onClick={e => e.stopPropagation()}
-                    style={{ flex: 1, textAlign: "center", textDecoration: "none", background: "#1e4d2b", border: "1px solid #7fb069", color: "#7fb069", padding: "8px 10px", borderRadius: 8, fontSize: 12, fontWeight: 800 }}>
-                    📞 Call {formatPhone(phone)}
-                  </a>
-                  <a href={smsHref(phone)} onClick={e => e.stopPropagation()}
-                    style={{ flex: 1, textAlign: "center", textDecoration: "none", background: "#1e2d4d", border: "1px solid #6a8fd9", color: "#6a8fd9", padding: "8px 10px", borderRadius: 8, fontSize: 12, fontWeight: 800 }}>
-                    💬 Text
-                  </a>
-                </div>
-              )}
+              {isSelected && <span style={{ color: "#7fb069", fontSize: 22, marginLeft: 8 }}>✓</span>}
             </div>
           );
         })}
@@ -207,16 +243,44 @@ export function DriverRequestModal({ onClose, onSubmitted, prefillDate }) {
         <textarea value={details} onChange={e => setDetails(e.target.value)} rows={3} placeholder="Pickup time, stops, special notes…"
           style={{ width: "100%", padding: "10px 12px", marginTop: 4, marginBottom: 12, background: "#1e2d1a", border: "1px solid #4a6a3a", borderRadius: 8, color: "#fff", fontSize: 14, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box" }} />
 
-        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-          <button onClick={onClose}
-            style={{ flex: 1, background: "transparent", border: "1px solid #4a6a3a", borderRadius: 10, padding: "12px", color: "#c8e6b8", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
-            Cancel
-          </button>
-          <button onClick={submit} disabled={saving || !date}
-            style={{ flex: 2, background: saving ? "#4a6a3a" : "#7fb069", border: "none", borderRadius: 10, padding: "12px", color: "#1e2d1a", fontSize: 14, fontWeight: 800, cursor: saving ? "default" : "pointer", fontFamily: "inherit" }}>
-            {saving ? "Sending…" : `Send request${target === "any" ? "" : ` to ${target.split(" ")[0]}`}`}
-          </button>
-        </div>
+        {/* Bottom action: differs by target.
+            - Specific driver + phone: big "Save & Text" anchor that fires sms: AND
+              the upsert (background). Optional Call shortcut next to it.
+            - Specific driver, no phone (rare): plain Send button.
+            - Any driver: plain Send button (no SMS to fire). */}
+        {target !== "any" && targetPhone ? (
+          <>
+            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+              <a href={telHref(targetPhone)}
+                style={{ flex: 1, textAlign: "center", textDecoration: "none", background: "#1e4d2b", border: "1.5px solid #7fb069", color: "#7fb069", padding: "14px 10px", borderRadius: 10, fontSize: 13, fontWeight: 800, fontFamily: "inherit" }}>
+                📞 Call
+              </a>
+              <a href={smsUrlForTarget} onClick={saveBeforeText}
+                style={{ flex: 3, textAlign: "center", textDecoration: "none", background: saving ? "#4a6a3a" : "#7fb069", border: "none", borderRadius: 10, padding: "14px 10px", color: "#1e2d1a", fontSize: 15, fontWeight: 800, fontFamily: "inherit", pointerEvents: saving ? "none" : "auto" }}>
+                {saving ? "Saving…" : `💬 Send via Text to ${target.split(" ")[0]}`}
+              </a>
+            </div>
+            <button onClick={onClose}
+              style={{ width: "100%", marginTop: 8, background: "transparent", border: "1px solid #4a6a3a", borderRadius: 10, padding: "10px", color: "#c8e6b8", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+              Cancel
+            </button>
+            <div style={{ fontSize: 10, color: "#7a9a6a", textAlign: "center", marginTop: 10, lineHeight: 1.4 }}>
+              Tapping Send via Text opens your Messages app with the request<br />
+              already typed out. Driver hits send → opens an accept/decline link.
+            </div>
+          </>
+        ) : (
+          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+            <button onClick={onClose}
+              style={{ flex: 1, background: "transparent", border: "1px solid #4a6a3a", borderRadius: 10, padding: "14px", color: "#c8e6b8", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+              Cancel
+            </button>
+            <button onClick={submit} disabled={saving || !date}
+              style={{ flex: 2, background: saving ? "#4a6a3a" : "#7fb069", border: "none", borderRadius: 10, padding: "14px", color: "#1e2d1a", fontSize: 14, fontWeight: 800, cursor: saving ? "default" : "pointer", fontFamily: "inherit" }}>
+              {saving ? "Sending…" : `Send request${target === "any" ? " to any driver" : ""}`}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -341,7 +405,7 @@ export function DriverRequestStatusList({ scope = "mine" }) {
                   style={{ flex: 1, textAlign: "center", textDecoration: "none", background: "#1e4d2b", border: "1px solid #7fb069", color: "#7fb069", padding: "6px 10px", borderRadius: 6, fontSize: 11, fontWeight: 800 }}>
                   📞 Call {r.requestedDriver?.split(" ")[0]}
                 </a>
-                <a href={`${smsHref(phone)}${smsHref(phone)?.includes("?") ? "&" : "?"}body=${encodeURIComponent(smsRequestBody(r, r.requestedDriver))}`}
+                <a href={smsHrefWithBody(phone, smsRequestBody(r, r.requestedDriver))}
                   style={{ flex: 2, textAlign: "center", textDecoration: "none", background: "#1e2d4d", border: "1px solid #6a8fd9", color: "#6a8fd9", padding: "6px 10px", borderRadius: 6, fontSize: 11, fontWeight: 800 }}>
                   💬 Text with Accept/Decline link
                 </a>
