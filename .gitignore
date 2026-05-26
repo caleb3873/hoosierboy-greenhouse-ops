@@ -10,3 +10,6 @@ build/
 .claude/
 supabase/.temp/
 agent-harness/
+
+# Test artifacts containing staff PII (phone numbers, etc.)
+scripts/phones.json

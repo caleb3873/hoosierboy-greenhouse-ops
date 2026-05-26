@@ -1,6 +1,6 @@
 // api/translate.js
-// Translate short task strings to Spanish (or another language) via Claude.
-// Accepts { texts: string[], target: "es"|"en" } and returns { translations: string[] }.
+// Translate short task strings to Spanish, Burmese, or another language via Claude.
+// Accepts { texts: string[], target: "es"|"en"|"my" } and returns { translations: string[] }.
 
 const ANTHROPIC_KEY = process.env.REACT_APP_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
 const MODEL = "claude-haiku-4-5-20251001";
@@ -18,7 +18,7 @@ module.exports = async (req, res) => {
   if (!target) return res.status(400).json({ error: "target required" });
 
   // Language mapping
-  const langName = { es: "Spanish", en: "English" }[target] || target;
+  const langName = { es: "Spanish", en: "English", my: "Burmese (Myanmar)" }[target] || target;
 
   // Build a simple numbered prompt — Claude returns a JSON array
   const joined = texts.map((t, i) => `${i + 1}. ${t}`).join("\n");

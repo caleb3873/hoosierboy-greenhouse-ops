@@ -142,7 +142,18 @@ export function AuthProvider({ children }) {
       if (fc) {
         const workerName = fc.worker_name || fc.workerName;
         const fcTeam = fc.team || null;
-        const profile = workerName ? { id: null, name: workerName, role: fc.role, code, team: fcTeam } : null;
+        const profile = workerName ? {
+          id: null,
+          name: workerName,
+          role: fc.role,
+          code,
+          team: fcTeam,
+          title: fc.title || null,
+          department: fc.department || null,
+          group: fc.staff_group || fc.staffGroup || null,
+          language: fc.language || "en",
+          phone: fc.phone || null,
+        } : null;
         const session = { mode: fc.role, growerProfile: profile, team: fcTeam, expires: Date.now() + 12 * 60 * 60 * 1000 };
         localStorage.setItem(FLOOR_SESSION_KEY, JSON.stringify(session));
         setFloorMode(fc.role);
@@ -682,7 +693,9 @@ function ChangePasswordModal({ onClose }) {
 }
 
 export function LoginScreen() {
-  const [tab, setTab] = useState("email"); // email | floor
+  // Default landing is the floor code number pad. Manager/planner login is a small
+  // text link below — most users are floor staff, so this puts the most-used path front.
+  const [tab, setTab] = useState("floor"); // floor | email
 
   return (
     <div style={{ minHeight: "100vh", background: "#f2f5ef", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans','Segoe UI',sans-serif", padding: 20 }}>
@@ -692,25 +705,35 @@ export function LoginScreen() {
         {/* Logo */}
         <div style={{ background: "#1e2d1a", borderRadius: 20, padding: "28px 32px", marginBottom: 16, textAlign: "center" }}>
           <img src={LOGO_WHITE} alt="Hoosier Boy" style={{ height: 52, objectFit: "contain", marginBottom: 12 }} />
-          <div style={{ fontSize: 13, color: "#6a8a5a", letterSpacing: .5 }}>Production Management</div>
+          <div style={{ fontSize: 13, color: "#6a8a5a", letterSpacing: .5 }}>
+            {tab === "email" ? "Planner Login" : "Floor Access"}
+          </div>
         </div>
 
-        {/* Tab selector */}
-        <div style={{ display: "flex", background: "#fff", borderRadius: 12, border: "1.5px solid #e0ead8", padding: 4, marginBottom: 16 }}>
-          <button onClick={() => setTab("email")}
-            style={{ flex: 1, padding: "10px 0", borderRadius: 9, border: "none", background: tab === "email" ? "#1e2d1a" : "transparent", color: tab === "email" ? "#fff" : "#7a8c74", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit", transition: "all .15s" }}>
-            👤 Manager Login
-          </button>
-          <button onClick={() => setTab("floor")}
-            style={{ flex: 1, padding: "10px 0", borderRadius: 9, border: "none", background: tab === "floor" ? "#1e2d1a" : "transparent", color: tab === "floor" ? "#fff" : "#7a8c74", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit", transition: "all .15s" }}>
-            🏭 Floor Access
-          </button>
-        </div>
+        {/* Back-to-floor link (only when on email/planner view) */}
+        {tab === "email" && (
+          <div style={{ marginBottom: 12 }}>
+            <button onClick={() => setTab("floor")}
+              style={{ background: "none", border: "none", color: "#4a90d9", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", padding: "6px 0" }}>
+              ← Back to floor login
+            </button>
+          </div>
+        )}
 
         {/* Login form */}
         <div style={{ background: "#fff", borderRadius: 16, border: "1.5px solid #e0ead8", padding: "28px 28px" }}>
           {tab === "email" ? <EmailLogin /> : <FloorCodeLogin />}
         </div>
+
+        {/* Planner-login switch link (only when on floor view) */}
+        {tab === "floor" && (
+          <div style={{ textAlign: "center", marginTop: 14 }}>
+            <button onClick={() => setTab("email")}
+              style={{ background: "none", border: "none", color: "#7a8c74", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", textDecoration: "underline", padding: "6px 12px" }}>
+              👤 Log into planner view →
+            </button>
+          </div>
+        )}
 
         <div style={{ textAlign: "center", marginTop: 16, fontSize: 11, color: "#aabba0" }}>
           Hoosier Boy Greenhouse · Indianapolis, IN

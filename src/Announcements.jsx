@@ -6,7 +6,8 @@ const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
 
 export function canPostAnnouncement(displayName) {
   const n = (displayName || "").toLowerCase();
-  return n.includes("paul") || n.includes("patricia") || n.includes("garrison") || n.includes("trish");
+  return n.includes("paul") || n.includes("patricia") || n.includes("garrison") || n.includes("trish")
+      || n.includes("tyler") || n.includes("mario");
 }
 
 function isVisible(a) {
@@ -33,7 +34,7 @@ export function AnnouncementBanner() {
   const { rows } = useAnnouncements();
   const { displayName } = useAuth();
   const canEdit = canPostAnnouncement(displayName);
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
   const active = useMemo(() => (rows || []).filter(isVisible), [rows]);
 
   if (active.length === 0) return null;
@@ -43,7 +44,7 @@ export function AnnouncementBanner() {
   const accent = urgent ? "#fff" : "#7fb069";
 
   return (
-    <div style={{ background: bg, color: fg, padding: "10px 18px", ...FONT, borderBottom: `2px solid ${accent}` }}>
+    <div style={{ background: bg, color: fg, padding: "8px 16px", ...FONT, borderBottom: `2px solid ${accent}` }}>
       <div onClick={() => setCollapsed(!collapsed)}
         style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer", gap: 12, flexWrap: "wrap" }}>
         <div style={{ display: "flex", gap: 10, alignItems: "center", flex: 1, minWidth: 0 }}>

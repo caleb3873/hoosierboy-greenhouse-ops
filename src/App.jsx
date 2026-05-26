@@ -41,6 +41,9 @@ import ShippingTeams        from "./shipping/ShippingTeams";
 import ShippingCalendar     from "./shipping/ShippingCalendar";
 import ShippingCarts        from "./shipping/ShippingCarts";
 import DriverView           from "./shipping/DriverView";
+import LaborView            from "./LaborView";
+import DriverHub            from "./DriverHub";
+import DriverResponseView   from "./DriverResponseView";
 import ShippingOfficeView   from "./shipping/ShippingOfficeView";
 import ShippingManagerMobile from "./shipping/ShippingManagerMobile";
 import PickSheetViewer      from "./shipping/PickSheetViewer";
@@ -278,9 +281,13 @@ function PlannerShell() {
 function FloorAppRouter({ role, isManager, growerProfile, signOut }) {
   const name = growerProfile?.name || "";
   const isReese = name === "Reese Morris";
-  // Production-first managers (shipping/ops crew turned production lead) — see Production tab on entry.
-  // Paul/Amanda still see Growing first because that's where they create grower tasks.
-  const productionFirst = ["Evie", "Sam", "Ryan", "Nick", "Tyler"].some(n => name.includes(n));
+  // Default category comes from the staff member's GROUP in floor_codes (Production / Growing / etc.)
+  // Falls back to legacy name-based list for anyone without a group set.
+  const group = (growerProfile?.group || "").toUpperCase();
+  let defaultCategory;
+  if (group === "PRODUCTION") defaultCategory = "production";
+  else if (group === "GROWING") defaultCategory = "growing";
+  else if (["Evie", "Sam", "Ryan", "Nick", "Tyler"].some(n => name.includes(n))) defaultCategory = "production";
   // Manager + Reese start in task creator. Other workers start in worker checklist.
   const initial = isManager || isReese ? "creator" : "worker";
   const [view, setView] = useState(initial);
@@ -290,7 +297,7 @@ function FloorAppRouter({ role, isManager, growerProfile, signOut }) {
       onSwitchMode={signOut}
       onBackToApp={() => setView("app")}
       canCreateGrowing={isManager || isReese}
-      defaultCategory={productionFirst ? "production" : undefined}
+      defaultCategory={defaultCategory}
     />;
   }
   if (view === "worker") {
@@ -323,6 +330,16 @@ function FloorAppRouter({ role, isManager, growerProfile, signOut }) {
 function AppInner() {
   const { isAuthenticated, isAdmin, isOperator, isManager, role, growerProfile, loading, signOut, recoveryMode, team } = useAuth();
 
+  // Driver SMS deeplink: ?driverResponse=<uuid> opens the public accept/decline page
+  // BEFORE any auth check, since drivers click this from a text message.
+  const driverResponseId = (() => {
+    try { return new URLSearchParams(window.location.search).get("driverResponse"); }
+    catch { return null; }
+  })();
+  if (driverResponseId) {
+    return <DriverResponseView requestId={driverResponseId} onDone={() => { window.location.href = "/"; }} />;
+  }
+
   if (loading) return (
     <div style={{ minHeight: "100vh", background: "#1e2d1a", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans',sans-serif" }}>
       <div style={{ textAlign: "center" }}>
@@ -340,6 +357,17 @@ function AppInner() {
 
   // Grower → grower mobile view
   if (role === "grower") return <GrowerView onSwitchMode={signOut} />;
+
+  // Seasonal Labor / Year Round Labor → simplified landing (announcement, hours, message, vacation)
+  if (role === "worker") return <LaborView onSwitchMode={signOut} />;
+
+  // Seasonal Drivers → delivery requests + availability picker
+  if (role === "seasonal_driver") return <DriverHub onSwitchMode={signOut} />;
+
+  // Assistant Managers route through the floor app like Managers (can request tasks for their dept)
+  if (role === "assistant_manager") {
+    return <FloorAppRouter role={role} isManager={false} growerProfile={growerProfile} signOut={signOut} />;
+  }
 
   // Manager + Reese get the task creator. Workers get the growing checklist first.
   if (isManager || (isOperator && growerProfile?.name)) {

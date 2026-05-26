@@ -12,6 +12,13 @@
     <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
     <meta name="robots" content="noindex, nofollow, noarchive, nosnippet" />
     <meta name="googlebot" content="noindex, nofollow" />
+    <!-- Burmese (Myanmar) glyph fallback so translated UI renders correctly on devices without it -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Myanmar:wght@400;700&display=swap" rel="stylesheet" />
+    <style>
+      :lang(my), [lang="my"] { font-family: 'Noto Sans Myanmar', 'DM Sans', sans-serif; }
+    </style>
     <title>Hoosier Boy Greenhouse Ops</title>
   </head>
   <body>

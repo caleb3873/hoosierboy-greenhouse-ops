@@ -31,7 +31,7 @@ function formatTime(iso) {
 export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenTaskCreator }) {
   const { rows: tasks, upsert, refresh } = useManagerTasks();
   const { rows: brehobItems, update: updateBrehob } = useBrehobItems();
-  const { displayName } = useAuth();
+  const { displayName, growerProfile } = useAuth();
   const today = useMemo(() => getWeekInfo(), []);
   const [showDone, setShowDone] = useState(false);
   const [completingTask, setCompletingTask] = useState(null);
@@ -116,10 +116,11 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
   async function acknowledgeAll() {
     for (const d of pendingDecisions) await acknowledgeDecision(d);
   }
-  // Language: Eulogio defaults to Spanish, everyone else English. Stored per-device.
+  // Language: starts from the floor_codes.language preference (en | es | my), can be overridden per-device.
   const [lang, setLang] = useState(() => {
     const saved = localStorage.getItem("gh_worker_lang_" + (displayName || ""));
     if (saved) return saved;
+    if (growerProfile?.language) return growerProfile.language;
     return (displayName || "").toLowerCase().includes("eulogio") ? "es" : "en";
   });
   useEffect(() => {
@@ -128,15 +129,15 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
   const [translations, setTranslations] = useState({}); // {taskId: {title, description, notes}}
   const translationInFlight = useRef(new Set());
 
-  // Translate any visible task that hasn't been cached yet
+  // Translate any visible task that hasn't been cached yet (es or my)
   useEffect(() => {
-    if (lang !== "es") return;
-    const needed = tasks.filter(t => (t.category || "production") === "growing" && t.status !== "requested" && !translations[t.id] && !translationInFlight.current.has(t.id));
+    if (lang === "en") return;
+    const needed = tasks.filter(t => (t.category || "production") === "growing" && t.status !== "requested" && !translations[lang]?.[t.id] && !translationInFlight.current.has(lang + "|" + t.id));
     if (needed.length === 0) return;
-    needed.forEach(t => translationInFlight.current.add(t.id));
-    const batch = needed.slice(0, 15); // cap per request
+    needed.forEach(t => translationInFlight.current.add(lang + "|" + t.id));
+    const batch = needed.slice(0, 15);
     const texts = [];
-    const index = []; // {taskId, field}
+    const index = [];
     for (const t of batch) {
       if (t.title) { texts.push(t.title); index.push({ taskId: t.id, field: "title" }); }
       if (t.description) { texts.push(t.description); index.push({ taskId: t.id, field: "description" }); }
@@ -145,28 +146,29 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
     fetch("/api/translate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ texts, target: "es" }),
+      body: JSON.stringify({ texts, target: lang }),
     })
       .then(r => r.ok ? r.json() : null)
       .then(data => {
         if (!data?.translations) return;
         setTranslations(prev => {
           const next = { ...prev };
+          if (!next[lang]) next[lang] = {};
           data.translations.forEach((tr, i) => {
             const { taskId, field } = index[i];
-            if (!next[taskId]) next[taskId] = {};
-            next[taskId][field] = tr;
+            if (!next[lang][taskId]) next[lang][taskId] = {};
+            next[lang][taskId][field] = tr;
           });
           return next;
         });
       })
       .finally(() => {
-        batch.forEach(t => translationInFlight.current.delete(t.id));
+        batch.forEach(t => translationInFlight.current.delete(lang + "|" + t.id));
       });
   }, [lang, tasks, translations]);
 
   function tr(task, field) {
-    if (lang === "es" && translations[task.id]?.[field]) return translations[task.id][field];
+    if (lang !== "en" && translations[lang]?.[task.id]?.[field]) return translations[lang][task.id][field];
     return task[field];
   }
 
@@ -186,7 +188,20 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
       suggestTask: "Sugerir tarea", signOut: "Salir",
       today: "Hoy", tomorrow: "Mañana", dayAfter: "Pasado mañana", weekly: "Esta semana",
     },
-  }[lang];
+    my: {
+      hi: "မင်္ဂလာပါ", thisWeek: "ဤအပတ်လုပ်ငန်းများ", toDo: "လုပ်ရန်", done: "ပြီးပြီ",
+      nothingDone: "ဘာမှမပြီးသေးပါ။", noGrowing: "လုပ်ငန်းမရှိသေးပါ။",
+      claim: "လုပ်ငန်းယူပါ", markDone: "ပြီးပြီဟုသတ်မှတ်ပါ", release: "ပြန်ပေးပါ", mine: "ကျွန်တော်",
+      suggestTask: "လုပ်ငန်းအကြံပြုပါ", signOut: "ထွက်ပါ",
+      today: "ယနေ့", tomorrow: "မနက်ဖြန်", dayAfter: "သန်ဘက်ခါ", weekly: "ဤအပတ်",
+    },
+  }[lang] || {
+    hi: "Hi", thisWeek: "This Week's Tasks", toDo: "To Do", done: "Done",
+    nothingDone: "Nothing completed yet.", noGrowing: "No growing tasks assigned yet.",
+    claim: "Claim Task", markDone: "Mark Done", release: "Release", mine: "MINE",
+    suggestTask: "Suggest Task", signOut: "Sign out",
+    today: "Today", tomorrow: "Tomorrow", dayAfter: "Day After", weekly: "This Week",
+  };
 
   async function appendToTask({ note, photo, rating }) {
     if (!viewingTask) return;
@@ -313,7 +328,7 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
           {/* Language toggle */}
           <div style={{ display: "flex", background: "#2a3a24", borderRadius: 8, padding: 3 }}>
-            {["en","es"].map(l => (
+            {["en","es","my"].map(l => (
               <button key={l} onClick={() => setLang(l)}
                 style={{
                   padding: "5px 10px", borderRadius: 6, border: "none",
@@ -321,7 +336,7 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
                   color: lang === l ? GREEN_DARK : CREAM,
                   fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit",
                 }}>
-                {l.toUpperCase()}
+                {l === "my" ? "MY" : l.toUpperCase()}
               </button>
             ))}
           </div>

@@ -1,9 +1,11 @@
 import { useState, useMemo, useEffect, useRef } from "react";
-import { useManagerTasks, useVacationRequests, getSupabase } from "./supabase";
+import { useManagerTasks, useVacationRequests, useAnnouncements, useHrMessages, useBrehobItems, getSupabase } from "./supabase";
 import { VacationRequestModal, OutThisWeekBanner, VacationRequestsInboxModal, isVacationApprover } from "./Vacation";
 import { AnnouncementBanner, AnnouncementComposerModal, AnnouncementPopup, useAnnouncementPopup, canPostAnnouncement } from "./Announcements";
+import { HrComposeModal, HrInbox, isHrInboxOwner } from "./HrMessages";
 import { useAuth } from "./Auth";
 import { BrehobManagerView } from "./BrehobList";
+import { DriverRequestModal, DriverRequestStatusList, useDriverResponsePopup, DriverResponsePopup } from "./DriverRequest";
 import { getCurrentWeek } from "./shared";
 import { NotificationBanner } from "./PushNotifications";
 
@@ -84,14 +86,15 @@ function weekMonday(year, week) {
   return monday;
 }
 
-// Stable UUID-shaped ID for an auto watch task — "w" prefix avoids collision
-// with Fall Program push tasks (which use "f") and shields these from re-sync cleanup.
+// Stable UUID-shaped ID for an auto watch task. Prefix "c" (for caretaker / watch) is a
+// valid hex digit so Postgres accepts it as a UUID; it also still distinguishes from
+// Fall Program push tasks ("f") so re-sync cleanup leaves these alone.
 function watchTaskId(year, week, type) {
   const str = `watch|${year}|${week}|${type}`;
   let h = 0;
   for (let i = 0; i < str.length; i++) h = ((h << 5) - h + str.charCodeAt(i)) | 0;
   const hex = Math.abs(h).toString(16).padStart(8, "0");
-  return `w${hex.slice(0,7)}-${hex.slice(0,4)}-4${hex.slice(1,4)}-a${hex.slice(2,5)}-${hex.padEnd(12, "0").slice(0,12)}`;
+  return `c${hex.slice(0,7)}-${hex.slice(0,4)}-4${hex.slice(1,4)}-a${hex.slice(2,5)}-${hex.padEnd(12, "0").slice(0,12)}`;
 }
 
 // Extract the variety name from a prop task title like "🌱 Sow 200 MARIGOLD INCA GOLD — 2 105-cell hex trays (90% germ)"
@@ -226,15 +229,27 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
   const [approvingRequest, setApprovingRequest] = useState(null);
   const [decliningRequest, setDecliningRequest] = useState(null);
   const [showOverdue, setShowOverdue] = useState(false);
+  // Hub-first navigation. "hub" is the mobile home grid; the rest are focused sub-pages.
+  const [currentView, setCurrentView] = useState("hub"); // hub | tasks | vacation | messages | today | week | hr-inbox
+  const [showHrCompose, setShowHrCompose] = useState(false);
   const [showAssigned, setShowAssigned] = useState(false);
   const [showVacationForm, setShowVacationForm] = useState(false);
   const [showVacationInbox, setShowVacationInbox] = useState(false);
   const [showAnnouncer, setShowAnnouncer] = useState(false);
+  const [showDriverRequest, setShowDriverRequest] = useState(false);
   const { rows: vacationReqs } = useVacationRequests();
+  const { rows: announcements } = useAnnouncements();
+  const { rows: hrMessages } = useHrMessages();
+  const { rows: brehobItems } = useBrehobItems();
   const canApproveVacation = isVacationApprover(displayName);
   const canAnnounce = canPostAnnouncement(displayName);
+  const isTrish = isHrInboxOwner(displayName);
+  const isAnyManager = !!displayName; // every floor-code user gets the Today/Week shortcut
   const pendingVacations = useMemo(() => (vacationReqs || []).filter(v => v.status === "pending"), [vacationReqs]);
+  const activeAnnouncements = useMemo(() => (announcements || []).filter(a => a.active && (!a.expiresAt || new Date(a.expiresAt) > new Date())), [announcements]);
+  const unreadHrMessages = useMemo(() => (hrMessages || []).filter(m => !m.archived && !m.readAt), [hrMessages]);
   const announcementPopup = useAnnouncementPopup();
+  const driverResponsePopup = useDriverResponsePopup();
   const autoOpenedRef = useRef(false);
   const overdueCheckedRef = useRef(false);
   const assignedCheckedRef = useRef(false);
@@ -448,7 +463,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
         const patch = { ...t };
         if (stale) { patch.year = today.year; patch.weekNumber = today.week; patch.carriedOver = true; }
         if (needsTargetDate || staleDate) patch.targetDate = bucketToDate(t.bucket || "today");
-        upsert(patch);
+        upsert(patch).catch(err => console.warn("Carryover upsert failed:", err));
       }
     });
   }, [tasks.length]); // eslint-disable-line
@@ -517,7 +532,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
         priority: 60,
         createdBy: "Sowing Watch (auto)",
         photos: [],
-      });
+      }).catch(err => console.warn("Watch task upsert failed:", err));
     }
   }, [tasks]); // eslint-disable-line
 
@@ -664,55 +679,229 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
   return (
     <div style={{ ...FONT, minHeight: "100vh", background: "#f2f5ef", paddingBottom: 100 }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
+      <style>{`
+        @media (max-width: 640px) {
+          .mtv-header-title { font-size: 18px !important; }
+          .mtv-header-buttons { gap: 4px !important; }
+          .mtv-header-buttons button { padding: 6px 9px !important; font-size: 11px !important; }
+          .mtv-header-buttons .label-text { display: none !important; }
+          .mtv-category-tabs button { padding: 10px 6px !important; font-size: 12px !important; }
+          .mtv-filter-row { padding-left: 14px !important; padding-right: 14px !important; }
+          .mtv-filter-row button { padding: 8px 4px !important; font-size: 11px !important; }
+          .mtv-week-selector { padding: 8px 14px !important; }
+        }
+        .hub-card { background: #fff; border-radius: 16px; border: 1.5px solid #e0ead8; padding: 16px; cursor: pointer; transition: transform 0.08s, box-shadow 0.08s; }
+        .hub-card:active { transform: scale(0.98); }
+        .hub-card .hub-card-emoji { font-size: 28px; line-height: 1; }
+        .hub-card .hub-card-title { font-size: 16px; font-weight: 800; color: #1e2d1a; margin-top: 6px; }
+        .hub-card .hub-card-sub { font-size: 12px; color: #7a8c74; margin-top: 4px; }
+        .hub-card .hub-card-badge { display: inline-block; background: #d94f3d; color: #fff; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 800; margin-top: 6px; }
+        .hub-card .hub-card-badge.warn { background: #e89a3a; }
+        .hub-card .hub-card-badge.ok { background: #7fb069; }
+      `}</style>
 
+      {/* ── HUB HOME ─────────────────────────────────────────────────────── */}
+      {currentView === "hub" && (() => {
+        const todayIso = new Date().toISOString().slice(0,10);
+        const tasksToday = (cat) => tasks.filter(t =>
+          (t.category || "production") === cat &&
+          t.status !== "completed" && t.status !== "requested" && t.status !== "rejected" &&
+          (t.targetDate === todayIso || (t.bucket === "today"))
+        ).length;
+        const overdueIn = (cat) => tasks.filter(t =>
+          (t.category || "production") === cat && t.carriedOver && t.status !== "completed"
+        ).length;
+        const requestsIn = (cat) => tasks.filter(t =>
+          (t.category || "production") === cat && t.status === "requested"
+        ).length;
+        const goToTasks = (cat) => { setCategory(cat); setCurrentView("tasks"); };
+        return (
+          <>
+            <div style={{ background: "#1e2d1a", padding: "14px 16px", color: "#c8e6b8" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 10, fontWeight: 800, color: "#7a9a6a", letterSpacing: 1.2, textTransform: "uppercase" }}>Floor View</div>
+                  <div style={{ fontSize: 20, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif" }}>Hi {(displayName || "").split(" ")[0] || "there"}</div>
+                  <div style={{ fontSize: 11, color: "#7a9a6a", marginTop: 2 }}>Week {today.week}, {today.year}</div>
+                </div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button onClick={() => setShowCodes(true)} title="Codes"
+                    style={{ background: "#c8e6b8", border: "none", borderRadius: 8, color: "#1e2d1a", padding: "8px 12px", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>🔑</button>
+                  <button onClick={onSwitchMode} title="Log out"
+                    style={{ background: "none", border: "1px solid #4a6a3a", borderRadius: 8, color: "#c8e6b8", padding: "8px 12px", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>↩</button>
+                </div>
+              </div>
+            </div>
+            <AnnouncementBanner />
+            <OutThisWeekBanner />
+
+            <div style={{ padding: "14px 14px 0" }}>
+              <DriverRequestStatusList scope="mine" />
+            </div>
+
+            <div style={{ padding: "14px 14px 80px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              {/* Production */}
+              <div className="hub-card" onClick={() => goToTasks("production")} style={{ borderTopColor: "#7fb069", borderTopWidth: 4 }}>
+                <div className="hub-card-emoji">🌱</div>
+                <div className="hub-card-title">Production</div>
+                <div className="hub-card-sub">{tasksToday("production")} today</div>
+                {overdueIn("production") > 0 && <span className="hub-card-badge">{overdueIn("production")} overdue</span>}
+                {requestsIn("production") > 0 && overdueIn("production") === 0 && <span className="hub-card-badge warn">{requestsIn("production")} request{requestsIn("production") !== 1 ? "s" : ""}</span>}
+              </div>
+
+              {/* Growing */}
+              <div className="hub-card" onClick={() => goToTasks("growing")} style={{ borderTopColor: "#4a90d9", borderTopWidth: 4 }}>
+                <div className="hub-card-emoji">🌿</div>
+                <div className="hub-card-title">Growing</div>
+                <div className="hub-card-sub">{tasksToday("growing")} today</div>
+                {overdueIn("growing") > 0 && <span className="hub-card-badge">{overdueIn("growing")} overdue</span>}
+                {requestsIn("growing") > 0 && overdueIn("growing") === 0 && <span className="hub-card-badge warn">{requestsIn("growing")} request{requestsIn("growing") !== 1 ? "s" : ""}</span>}
+              </div>
+
+              {/* Maintenance */}
+              <div className="hub-card" onClick={() => goToTasks("maintenance")} style={{ borderTopColor: "#e89a3a", borderTopWidth: 4 }}>
+                <div className="hub-card-emoji">🔧</div>
+                <div className="hub-card-title">Maintenance</div>
+                <div className="hub-card-sub">{tasksToday("maintenance")} today</div>
+                {overdueIn("maintenance") > 0 && <span className="hub-card-badge">{overdueIn("maintenance")} overdue</span>}
+              </div>
+
+              {/* Vacation */}
+              <div className="hub-card" onClick={() => setCurrentView("vacation")} style={{ borderTopColor: "#7fb069", borderTopWidth: 4 }}>
+                <div className="hub-card-emoji">🌴</div>
+                <div className="hub-card-title">Vacation</div>
+                <div className="hub-card-sub">{canApproveVacation ? "Approve · request · view" : "Request time off"}</div>
+                {canApproveVacation && pendingVacations.length > 0 && <span className="hub-card-badge warn">{pendingVacations.length} pending</span>}
+              </div>
+
+              {/* Company Announcement */}
+              <div className="hub-card"
+                onClick={() => canAnnounce ? setShowAnnouncer(true) : setCurrentView("messages")}
+                style={{ borderTopColor: "#7fb069", borderTopWidth: 4 }}>
+                <div className="hub-card-emoji">📢</div>
+                <div className="hub-card-title">Company Announcement</div>
+                <div className="hub-card-sub">
+                  {canAnnounce
+                    ? (activeAnnouncements.length > 0 ? `Post or view (${activeAnnouncements.length} active)` : "Post to all staff")
+                    : (activeAnnouncements.length > 0 ? `${activeAnnouncements.length} active` : "No announcements")}
+                </div>
+                {activeAnnouncements.length > 0 && <span className="hub-card-badge ok">{activeAnnouncements.length}</span>}
+              </div>
+
+              {/* Message Trish */}
+              <div className="hub-card"
+                onClick={() => isTrish ? setCurrentView("hr-inbox") : setShowHrCompose(true)}
+                style={{ borderTopColor: "#8e44ad", borderTopWidth: 4 }}>
+                <div className="hub-card-emoji">✉</div>
+                <div className="hub-card-title">{isTrish ? "HR Inbox" : "Message Trish"}</div>
+                <div className="hub-card-sub">
+                  {isTrish ? (unreadHrMessages.length > 0 ? `${unreadHrMessages.length} unread` : "HR messages") : "HR · time off · questions"}
+                </div>
+                {isTrish && unreadHrMessages.length > 0 && <span className="hub-card-badge">{unreadHrMessages.length} unread</span>}
+              </div>
+
+              {isAnyManager && (
+                <>
+                  <div className="hub-card" onClick={() => setCurrentView("today")} style={{ background: "#162212", color: "#c8e6b8" }}>
+                    <div className="hub-card-emoji" style={{ color: "#7fb069" }}>📅</div>
+                    <div className="hub-card-title" style={{ color: "#c8e6b8" }}>Today</div>
+                    <div className="hub-card-sub" style={{ color: "#7a9a6a" }}>All depts</div>
+                  </div>
+                  <div className="hub-card" onClick={() => setCurrentView("week")} style={{ background: "#162212", color: "#c8e6b8" }}>
+                    <div className="hub-card-emoji" style={{ color: "#7fb069" }}>📆</div>
+                    <div className="hub-card-title" style={{ color: "#c8e6b8" }}>This Week</div>
+                    <div className="hub-card-sub" style={{ color: "#7a9a6a" }}>All depts</div>
+                  </div>
+                </>
+              )}
+
+              {/* Request a Driver — spans 2 */}
+              <div className="hub-card" onClick={() => setShowDriverRequest(true)} style={{ gridColumn: "span 2", borderTopColor: "#4a90d9", borderTopWidth: 4 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                    <span style={{ fontSize: 22 }}>🚛</span>
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 800, color: "#1e2d1a" }}>Request a Driver</div>
+                      <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2 }}>Pick a date + driver · Call/Text from here</div>
+                    </div>
+                  </div>
+                  <span style={{ color: "#7a8c74", fontSize: 18 }}>›</span>
+                </div>
+              </div>
+
+              {/* Brehob — bottom secondary, spans 2 */}
+              <div className="hub-card" onClick={() => goToTasks("brehob")} style={{ gridColumn: "span 2", background: "#f8fbf5", borderColor: "#c8d8c0" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                    <span style={{ fontSize: 22 }}>🛒</span>
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 800, color: "#1e2d1a" }}>Brehob shopping list</div>
+                      <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2 }}>{(brehobItems || []).filter(b => b.status === "on_list").length} items on list</div>
+                    </div>
+                  </div>
+                  <span style={{ color: "#7a8c74", fontSize: 18 }}>›</span>
+                </div>
+              </div>
+            </div>
+          </>
+        );
+      })()}
+
+      {/* ── TASKS (existing UI) ──────────────────────────────────────────── */}
+      {currentView === "tasks" && (
+      <>
       {/* Header */}
-      <div style={{ background: "#1e2d1a", padding: "16px 20px", color: "#c8e6b8" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div>
+      <div style={{ background: "#1e2d1a", padding: "12px 16px", color: "#c8e6b8" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+          <button onClick={() => setCurrentView("hub")}
+            style={{ background: "transparent", border: "1px solid #4a6a3a", borderRadius: 8, color: "#c8e6b8", padding: "6px 10px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}>
+            ← Hub
+          </button>
+          <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 10, fontWeight: 800, color: "#7a9a6a", letterSpacing: 1.2, textTransform: "uppercase" }}>Floor View</div>
-            <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif" }}>Manager Tasks</div>
+            <div className="mtv-header-title" style={{ fontSize: 22, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>Manager Tasks</div>
           </div>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <div className="mtv-header-buttons" style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
             {onBackToApp && (
               <button onClick={onBackToApp}
                 style={{ background: "#7fb069", border: "none", borderRadius: 8, color: "#1e2d1a", padding: "6px 12px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
-                App →
+                <span className="label-text">App </span>→
               </button>
             )}
             {canAnnounce && (
               <button onClick={() => setShowAnnouncer(true)}
-                style={{ background: "#1e2d1a", border: "none", borderRadius: 8, color: "#c8e6b8", padding: "6px 12px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
-                📢 Announce
+                style={{ background: "#1e2d1a", border: "1px solid #4a6a3a", borderRadius: 8, color: "#c8e6b8", padding: "6px 12px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                📢<span className="label-text"> Announce</span>
               </button>
             )}
             <button onClick={() => setShowVacationForm(true)}
               style={{ background: "#7fb069", border: "none", borderRadius: 8, color: "#fff", padding: "6px 12px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
-              🌴 Vacation
+              🌴<span className="label-text"> Vacation</span>
             </button>
             {canApproveVacation && (
               <button onClick={() => setShowVacationInbox(true)}
                 style={{ background: pendingVacations.length > 0 ? "#e89a3a" : "#c8e6b8", border: "none", borderRadius: 8, color: "#1e2d1a", padding: "6px 12px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
-                🌴 Inbox{pendingVacations.length > 0 ? ` (${pendingVacations.length})` : ""}
+                🌴<span className="label-text"> Inbox</span>{pendingVacations.length > 0 ? ` (${pendingVacations.length})` : ""}
               </button>
             )}
             <button onClick={() => setShowRequests(true)}
               style={{ background: pendingRequests.length > 0 ? "#e89a3a" : "#c8e6b8", border: "none", borderRadius: 8, color: "#1e2d1a", padding: "6px 12px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
-              📥 Requests{pendingRequests.length > 0 ? ` (${pendingRequests.length})` : ""}
+              📥<span className="label-text"> Requests</span>{pendingRequests.length > 0 ? ` (${pendingRequests.length})` : ""}
             </button>
             <button onClick={() => setShowCodes(true)}
               style={{ background: "#c8e6b8", border: "none", borderRadius: 8, color: "#1e2d1a", padding: "6px 12px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
-              Codes
+              🔑<span className="label-text"> Codes</span>
             </button>
             <button onClick={onSwitchMode}
               style={{ background: "none", border: "1px solid #4a6a3a", borderRadius: 8, color: "#c8e6b8", padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
-              Log out
+              ↩<span className="label-text"> Log out</span>
             </button>
           </div>
         </div>
       </div>
 
       {/* Week selector */}
-      <div style={{ background: "#162212", padding: "10px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid #3a5a35" }}>
+      <div className="mtv-week-selector" style={{ background: "#162212", padding: "10px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid #3a5a35" }}>
         <button onClick={() => changeWeek(-1)} style={{ background: "none", border: "none", color: "#c8e6b8", fontSize: 18, cursor: "pointer", padding: 6 }}>&larr;</button>
         <div style={{ textAlign: "center" }}>
           <div style={{ fontSize: 14, fontWeight: 800, color: "#c8e6b8" }}>Week {selectedWeek.week}, {selectedWeek.year}</div>
@@ -733,7 +922,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
 
 
       {/* Category tabs */}
-      <div style={{ padding: "12px 20px 0", background: "#fff", display: "flex", gap: 8, overflowX: "auto" }}>
+      <div className="mtv-category-tabs" style={{ padding: "12px 20px 0", background: "#fff", display: "flex", gap: 8, overflowX: "auto" }}>
         {[{id:"production",label:"Production"},{id:"growing",label:"Growing"},{id:"maintenance",label:"🔧 Maintenance"},{id:"brehob",label:"🛒 Brehob"}].map(c => (
           <button key={c.id} onClick={() => setCategory(c.id)}
             style={{
@@ -757,7 +946,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
 
       {/* Status filter — hidden on Brehob tab */}
       {category !== "brehob" && (
-      <div style={{ padding: "12px 20px", background: "#fff", borderBottom: "1.5px solid #e0ead8", display: "flex", gap: 8 }}>
+      <div className="mtv-filter-row" style={{ padding: "12px 20px", background: "#fff", borderBottom: "1.5px solid #e0ead8", display: "flex", gap: 8 }}>
         {[{id:"pending",label:"To Do"},{id:"completed",label:"Done"},{id:"all",label:"All"}].map(f => (
           <button key={f.id} onClick={() => setStatusFilter(f.id)}
             style={{
@@ -775,7 +964,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
 
       {/* Location filter — Sprague vs Bluff */}
       {category !== "brehob" && (
-      <div style={{ padding: "0 20px 12px", background: "#fff", borderBottom: "1.5px solid #e0ead8", display: "flex", gap: 8 }}>
+      <div className="mtv-filter-row" style={{ padding: "0 20px 12px", background: "#fff", borderBottom: "1.5px solid #e0ead8", display: "flex", gap: 8 }}>
         {[{id:"all",label:"All"},{id:"bluff",label:"🌱 Bluff"},{id:"sprague",label:"🌿 Sprague"}].map(f => (
           <button key={f.id} onClick={() => setLocationFilter(f.id)}
             style={{
@@ -885,6 +1074,50 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
           🎤
         </button>
       )}
+      </>
+      )}
+
+      {/* ── VACATION sub-page ───────────────────────────────────────────── */}
+      {currentView === "vacation" && (
+        <VacationSubPage
+          onBack={() => setCurrentView("hub")}
+          onRequest={() => setShowVacationForm(true)}
+          onOpenInbox={() => setShowVacationInbox(true)}
+          canApprove={canApproveVacation}
+          pendingCount={pendingVacations.length}
+          vacationReqs={vacationReqs}
+        />
+      )}
+
+      {/* ── MESSAGES sub-page ──────────────────────────────────────────── */}
+      {currentView === "messages" && (
+        <MessagesSubPage
+          onBack={() => setCurrentView("hub")}
+          canPost={canAnnounce}
+          onPost={() => setShowAnnouncer(true)}
+          isTrish={isTrish}
+          onHrCompose={() => setShowHrCompose(true)}
+          onOpenHrInbox={() => setCurrentView("hr-inbox")}
+          unreadHrCount={unreadHrMessages.length}
+          activeAnnouncements={activeAnnouncements}
+        />
+      )}
+
+      {/* ── HR INBOX (Trish only) ──────────────────────────────────────── */}
+      {currentView === "hr-inbox" && isTrish && (
+        <HrInbox onBack={() => setCurrentView("messages")} />
+      )}
+
+      {/* ── TODAY / THIS WEEK (any manager) ────────────────────────────── */}
+      {(currentView === "today" || currentView === "week") && (
+        <TodayWeekView
+          mode={currentView}
+          tasks={tasks}
+          today={today}
+          onBack={() => setCurrentView("hub")}
+          onOpenTask={(t) => { setCategory(t.category || "production"); setCurrentView("tasks"); setSelectedTask(t); }}
+        />
+      )}
 
       {showRecorder && <VoiceRecorderModal onSave={createTask} onCancel={() => setShowRecorder(false)} defaultLocation={defaultLocation} />}
       {showCodes && <CodesModal onClose={() => setShowCodes(false)} />}
@@ -965,6 +1198,177 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       {announcementPopup.open && (
         <AnnouncementPopup unseen={announcementPopup.unseen} onClose={announcementPopup.close} />
       )}
+      {showHrCompose && (
+        <HrComposeModal onClose={() => setShowHrCompose(false)} onSent={() => setShowHrCompose(false)} />
+      )}
+      {showDriverRequest && (
+        <DriverRequestModal onClose={() => setShowDriverRequest(false)} onSubmitted={() => setShowDriverRequest(false)} />
+      )}
+      {driverResponsePopup.open && (
+        <DriverResponsePopup unseen={driverResponsePopup.unseen} onClose={driverResponsePopup.dismiss} />
+      )}
+    </div>
+  );
+}
+
+// ── Vacation sub-page (focused view from hub) ────────────────────────────────
+function VacationSubPage({ onBack, onRequest, onOpenInbox, canApprove, pendingCount, vacationReqs }) {
+  const week = (() => { const d = new Date(); const dow = (d.getDay()+6)%7; const m = new Date(d); m.setDate(d.getDate()-dow); m.setHours(0,0,0,0); const s = new Date(m); s.setDate(m.getDate()+6); return { mIso: m.toISOString().slice(0,10), sIso: s.toISOString().slice(0,10) }; })();
+  const outThisWeek = (vacationReqs || []).filter(v =>
+    v.status === "approved" && v.startDate <= week.sIso && v.endDate >= week.mIso
+  );
+  return (
+    <div style={{ ...FONT, background: "#f2f5ef", minHeight: "100vh", paddingBottom: 60 }}>
+      <div style={{ background: "#1e2d1a", color: "#c8e6b8", padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <button onClick={onBack}
+          style={{ background: "transparent", border: "1px solid #4a6a3a", borderRadius: 8, color: "#c8e6b8", padding: "6px 10px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+          ← Hub
+        </button>
+        <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif" }}>🌴 Vacation</div>
+        <div style={{ width: 60 }} />
+      </div>
+      <div style={{ padding: 16 }}>
+        <button onClick={onRequest}
+          style={{ width: "100%", padding: "16px", borderRadius: 12, background: "#7fb069", border: "none", color: "#fff", fontSize: 16, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", marginBottom: 12 }}>
+          🌴 Request time off
+        </button>
+        {canApprove && (
+          <button onClick={onOpenInbox}
+            style={{ width: "100%", padding: "14px", borderRadius: 12, background: pendingCount > 0 ? "#e89a3a" : "#1e2d1a", border: "none", color: "#fff", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", marginBottom: 16 }}>
+            📥 Inbox — {pendingCount} pending request{pendingCount !== 1 ? "s" : ""}
+          </button>
+        )}
+        <div style={{ background: "#fff", borderRadius: 14, border: "1.5px solid #e0ead8", padding: 16 }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", marginBottom: 8 }}>Out this week</div>
+          {outThisWeek.length === 0 ? (
+            <div style={{ fontSize: 13, color: "#7a8c74" }}>Nobody's off this week.</div>
+          ) : (
+            outThisWeek.map(v => (
+              <div key={v.id} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #f0f5ee" }}>
+                <div style={{ fontWeight: 700, color: "#1e2d1a", fontSize: 14 }}>{v.requesterName}{v.isSick ? " 🤒" : ""}</div>
+                <div style={{ fontSize: 12, color: "#7a8c74" }}>{v.startDate}{v.endDate !== v.startDate ? ` → ${v.endDate}` : ""}</div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Messages sub-page (announcements + HR) ───────────────────────────────────
+function MessagesSubPage({ onBack, canPost, onPost, isTrish, onHrCompose, onOpenHrInbox, unreadHrCount, activeAnnouncements }) {
+  return (
+    <div style={{ ...FONT, background: "#f2f5ef", minHeight: "100vh", paddingBottom: 60 }}>
+      <div style={{ background: "#1e2d1a", color: "#c8e6b8", padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <button onClick={onBack}
+          style={{ background: "transparent", border: "1px solid #4a6a3a", borderRadius: 8, color: "#c8e6b8", padding: "6px 10px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+          ← Hub
+        </button>
+        <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif" }}>📢 Messages</div>
+        <div style={{ width: 60 }} />
+      </div>
+      <div style={{ padding: 16 }}>
+        {canPost && (
+          <button onClick={onPost}
+            style={{ width: "100%", padding: "16px", borderRadius: 12, background: "#1e2d1a", border: "none", color: "#c8e6b8", fontSize: 16, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", marginBottom: 10 }}>
+            📢 Post announcement
+          </button>
+        )}
+        {!isTrish && (
+          <button onClick={onHrCompose}
+            style={{ width: "100%", padding: "16px", borderRadius: 12, background: "#8e44ad", border: "none", color: "#fff", fontSize: 16, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", marginBottom: 10 }}>
+            ✉ Message Trish (HR)
+          </button>
+        )}
+        {isTrish && (
+          <button onClick={onOpenHrInbox}
+            style={{ width: "100%", padding: "16px", borderRadius: 12, background: unreadHrCount > 0 ? "#8e44ad" : "#3a3a3a", border: "none", color: "#fff", fontSize: 16, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", marginBottom: 16 }}>
+            📥 HR Inbox{unreadHrCount > 0 ? ` (${unreadHrCount} unread)` : ""}
+          </button>
+        )}
+
+        <div style={{ background: "#fff", borderRadius: 14, border: "1.5px solid #e0ead8", padding: 16 }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", marginBottom: 8 }}>Active announcements</div>
+          {activeAnnouncements.length === 0 ? (
+            <div style={{ fontSize: 13, color: "#7a8c74" }}>No active announcements.</div>
+          ) : (
+            activeAnnouncements.map(a => (
+              <div key={a.id} style={{ borderLeft: `4px solid ${a.priority === "urgent" ? "#d94f3d" : "#7fb069"}`, padding: "8px 12px", background: a.priority === "urgent" ? "#fff5f3" : "#f8fbf5", borderRadius: 4, marginBottom: 8 }}>
+                <div style={{ fontSize: 14, color: "#1e2d1a", whiteSpace: "pre-wrap" }}>{a.priority === "urgent" ? "🚨 " : ""}{a.message}</div>
+                <div style={{ fontSize: 10, color: "#7a8c74", marginTop: 4 }}>— {a.postedBy}</div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Today / This Week aggregated view (any manager) ──────────────────────────
+function TodayWeekView({ mode, tasks, today, onBack, onOpenTask }) {
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const inScope = (t) => {
+    if (t.status === "completed" || t.status === "requested" || t.status === "rejected") return false;
+    if (mode === "today") return t.targetDate === todayIso || t.bucket === "today";
+    return t.year === today.year && t.weekNumber === today.week;
+  };
+  const filtered = (tasks || []).filter(inScope);
+  const byCategory = filtered.reduce((m, t) => {
+    const k = t.category || "production";
+    (m[k] = m[k] || []).push(t);
+    return m;
+  }, {});
+  const order = ["production", "growing", "maintenance"];
+  const meta = {
+    production: { label: "🌱 Production", color: "#7fb069" },
+    growing: { label: "🌿 Growing", color: "#4a90d9" },
+    maintenance: { label: "🔧 Maintenance", color: "#e89a3a" },
+  };
+  return (
+    <div style={{ ...FONT, background: "#f2f5ef", minHeight: "100vh", paddingBottom: 60 }}>
+      <div style={{ background: "#1e2d1a", color: "#c8e6b8", padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <button onClick={onBack}
+          style={{ background: "transparent", border: "1px solid #4a6a3a", borderRadius: 8, color: "#c8e6b8", padding: "6px 10px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+          ← Hub
+        </button>
+        <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif" }}>
+          {mode === "today" ? "📅 Today" : "📆 This Week"}
+        </div>
+        <div style={{ width: 60 }} />
+      </div>
+      <div style={{ padding: 14 }}>
+        {order.map(cat => {
+          const items = byCategory[cat] || [];
+          if (items.length === 0) return null;
+          const m = meta[cat];
+          return (
+            <div key={cat} style={{ background: "#fff", border: "1.5px solid #e0ead8", borderRadius: 14, padding: "12px 14px", marginBottom: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                <div style={{ width: 10, height: 10, borderRadius: 3, background: m.color }} />
+                <div style={{ fontSize: 14, fontWeight: 800, color: "#1e2d1a" }}>{m.label}</div>
+                <div style={{ fontSize: 11, color: "#7a8c74" }}>· {items.length} task{items.length !== 1 ? "s" : ""}</div>
+              </div>
+              {items.map(t => (
+                <div key={t.id} onClick={() => onOpenTask(t)}
+                  style={{ padding: "8px 4px", borderBottom: "1px solid #f0f5ee", cursor: "pointer" }}>
+                  <div style={{ fontSize: 13, color: "#1e2d1a" }}>{t.title}</div>
+                  {t.assignedTo && <div style={{ fontSize: 10, color: "#4a90d9", marginTop: 2 }}>👤 {t.assignedTo}</div>}
+                </div>
+              ))}
+            </div>
+          );
+        })}
+        {filtered.length === 0 && (
+          <div style={{ background: "#fff", borderRadius: 14, border: "1.5px solid #e0ead8", padding: 40, textAlign: "center", color: "#7a8c74" }}>
+            <div style={{ fontSize: 32, marginBottom: 8 }}>✓</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "#1a2a1a" }}>
+              {mode === "today" ? "Nothing on the books for today." : "No tasks scheduled this week."}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

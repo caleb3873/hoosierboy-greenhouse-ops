@@ -6,7 +6,9 @@ const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
 
 export function isVacationApprover(displayName) {
   const n = (displayName || "").toLowerCase();
-  return n.includes("paul") || n.includes("patricia") || n.includes("garrison") || n.includes("trish");
+  // Paul (admin), Trish (HR), Tyler (operations manager), Mario (annuals manager)
+  return n.includes("paul") || n.includes("patricia") || n.includes("garrison") || n.includes("trish")
+      || n.includes("tyler") || n.includes("mario");
 }
 
 function fmtRange(start, end) {
