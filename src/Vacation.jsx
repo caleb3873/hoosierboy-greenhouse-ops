@@ -230,6 +230,18 @@ export function VacationRequestsInboxModal({ onClose, onChange }) {
     [rows]
   );
 
+  // For each pending request, find anyone else off during the same window.
+  // Includes approved AND other pending requests (so the manager sees the
+  // full picture before clicking Approve). Excludes the request itself.
+  function overlapsFor(req) {
+    return (rows || []).filter(r =>
+      r.id !== req.id &&
+      (r.status === "approved" || r.status === "pending") &&
+      r.requesterName !== req.requesterName &&
+      overlapsWindow(r, req.startDate, req.endDate)
+    ).sort((a, b) => (a.startDate || "").localeCompare(b.startDate || ""));
+  }
+
   async function approve(req) {
     setBusy(req.id);
     try {
@@ -298,6 +310,34 @@ export function VacationRequestsInboxModal({ onClose, onChange }) {
                     {req.reason && <div style={{ fontSize: 13, color: "#7a8c74", marginTop: 6, fontStyle: "italic" }}>"{req.reason}"</div>}
                   </div>
                 </div>
+
+                {/* Conflict panel — informational. Shows anyone else off during
+                    the same window so the approver can spot collisions before
+                    deciding. Approve button stays enabled. */}
+                {(() => {
+                  const overlaps = overlapsFor(req);
+                  if (overlaps.length === 0) return null;
+                  return (
+                    <div style={{ marginTop: 10, padding: "10px 12px", background: "#fff8ea", border: "1px solid #e89a3a", borderRadius: 8 }}>
+                      <div style={{ fontSize: 11, fontWeight: 800, color: "#a86a10", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>
+                        ⚠ {overlaps.length} other{overlaps.length !== 1 ? "s" : ""} off this same window
+                      </div>
+                      {overlaps.map(o => (
+                        <div key={o.id} style={{ fontSize: 12, color: "#1e2d1a", padding: "3px 0", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                          <span><b>{o.requesterName}</b> · {fmtRange(o.startDate, o.endDate)}</span>
+                          <span style={{ fontSize: 10, fontWeight: 800, padding: "2px 8px", borderRadius: 999,
+                            background: o.status === "approved" ? "#7fb069" : "#e89a3a",
+                            color: "#fff" }}>
+                            {o.status === "approved" ? "APPROVED" : "PENDING"}
+                          </span>
+                        </div>
+                      ))}
+                      <div style={{ fontSize: 10, color: "#7a8c74", marginTop: 6, fontStyle: "italic" }}>
+                        This is just a heads-up — you can still approve.
+                      </div>
+                    </div>
+                  );
+                })()}
                 {decliningId === req.id ? (
                   <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1.5px dashed #e0ead8" }}>
                     <input value={declineReason} onChange={e => setDeclineReason(e.target.value)} placeholder="Why are you declining? (required)"
