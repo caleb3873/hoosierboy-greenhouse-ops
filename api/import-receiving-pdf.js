@@ -29,14 +29,16 @@ const EXTRACT_PROMPT = `You are reading a wholesale plant order acknowledgment P
 
 Extract:
 - orderNumber: the broker's order number (look for "Order No", "ORDER NO", "Order #")
-- shipWeek: the calendar week number the plants ship. If the PDF shows a date like "05/25/26" or "Ship Date 05/25/26", convert to ISO 8601 week number (e.g. May 25, 2026 → 22). Return as integer.
+- shipWeek: the ISO calendar week number the plants ship. Look for "Shipping Week Of" / "Requested Ship Wk" / explicit "Wk Year" fields. If only a ship date is given, compute the ISO week number from that date. Return as integer.
 - shipDate: the literal ship date as YYYY-MM-DD if present
 - supplier: the grower/supplier name (e.g. "RAKER-ROBERTA'S MUMS & ASTER", "DGI", "DS Cole")
 - broker: the broker name (Ball, EHR, Express Seed, etc.) — usually visible in letterhead
-- lines: an array of {variety, ordered, confirmed} for each line item
-    - variety: the cultivar name as written, UPPERCASE, with any genus prefix stripped if it would duplicate (e.g. "CHRYSANTHEMUM 'JACQUELINE COPPER'" → "JACQUELINE COPPER", "PETUNIA Easy Wave Burgundy Velour" → "EASY WAVE BURGUNDY VELOUR")
-    - ordered: integer plants in the "Order" column
-    - confirmed: integer plants in the "Confirm" column (often equals ordered)
+- lines: an array of {variety, ordered, confirmed} for each plant line item
+    - variety: the FULL variety name AS WRITTEN on the PDF, including any genus prefix (e.g. "CHRYSANTHEMUM JACQUELINE COPPER", "MARIGOLD FIREBALL", "CELOSIA KIMONO ORANGE", "FLOWER KALE NAGOYA WHITE"). Do NOT strip the genus prefix.
+    - If the PDF uses Ball internal abbreviations like "MarAF" or "MarFR", expand them: MarAF → MARIGOLD, MarFR → MARIGOLD, FO → FORGET ME NOT.
+    - UPPERCASE the whole string.
+    - ordered: integer plants. Pay attention to UoM. A row "2 EA … 1K" means 2 × 1,000 = 2,000 plants. A row "960 / 160 PLUG" means 960 plugs (already in plug count). Use the Order column, not the line-item quantity if those differ.
+    - confirmed: integer plants in the Confirm column (often equals ordered).
 
 Skip lines that are not actual plant orders (descriptions, totals, discount footers).
 
@@ -112,7 +114,9 @@ async function extractFromPdf(b64) {
 function norm(v) {
   let s = String(v || "").toUpperCase().trim();
   s = s.replace(/[#®™]/g, "").replace(/[''']/g, "");
-  // Genus prefixes
+  // Ball internal genus codes — expand before any genus-prefix rule fires
+  s = s.replace(/^MARAF\s+/, "MARIGOLD ").replace(/^MARFR\s+/, "MARIGOLD ");
+  // Genus prefixes — strip the ones the DB doesn't store
   s = s.replace(/^MUMGDN\s+/, "").replace(/^MUM\s+(?:YODER\s+)?/, "");
   s = s.replace(/^ASTER\s+ROYALTY\s+/, "ASTER ").replace(/^ASTER\s+/, "ASTER ");
   s = s.replace(/^CHRYSANTHEMUM\s+/, "");
@@ -129,6 +133,11 @@ function norm(v) {
   s = s.replace(/\bYEL\b/g, "YELLOW").replace(/\bPK\b/g, "PINK").replace(/\bORNG\b/g, "ORANGE");
   s = s.replace(/\bWHT\b/g, "WHITE").replace(/\bBLU\b/g, "BLUE").replace(/\bPRP\b/g, "PURPLE");
   s = s.replace(/\bBLCH\b/g, "BLOTCH").replace(/\bGLDN\b/g, "GOLDEN");
+  s = s.replace(/\bDP\b/g, "").replace(/\bCT\b/g, "").replace(/\bDT\b/g, "");
+  // Ball renamed Inca → Inca II at some point; treat as same series for matching
+  s = s.replace(/\bINCA\s+II\b/g, "INCA");
+  // Word-order variants for known Zinnia mixes
+  s = s.replace(/\bELEGANT\s+MIX\s+HOT\b/g, "ELEGANT HOT MIX");
   // Collapse "LYSIMACHIA GOLDILOCKS CREEPING JENNY" (DB) and "LYSIMACHIA GOLDILOCKS" (PDF) to the same key
   s = s.replace(/^LYSIMACHIA\s+GOLDILOCKS(\s+CREEPING\s+JENNY)?$/, "LYSIMACHIA GOLDILOCKS");
   s = s.replace(/[()]/g, "").replace(/\s+/g, " ").trim();
