@@ -106,9 +106,33 @@ async function extractFromPdf(b64) {
   return JSON.parse(text.slice(jsonStart, jsonEnd + 1));
 }
 
-// Normalize a variety string to match DB rows: uppercase, trim, drop extra spaces
+// Normalize variety to match DB rows. Mirrors the rules in src/BrokerReports.jsx
+// so PDF shorthand (Ball/EHR) maps onto the canonical DB names. Update here
+// AND in BrokerReports.jsx if you add new mappings.
 function norm(v) {
-  return String(v || "").toUpperCase().replace(/\s+/g, " ").trim();
+  let s = String(v || "").toUpperCase().trim();
+  s = s.replace(/[#®™]/g, "").replace(/[''']/g, "");
+  // Genus prefixes
+  s = s.replace(/^MUMGDN\s+/, "").replace(/^MUM\s+(?:YODER\s+)?/, "");
+  s = s.replace(/^ASTER\s+ROYALTY\s+/, "ASTER ").replace(/^ASTER\s+/, "ASTER ");
+  s = s.replace(/^CHRYSANTHEMUM\s+/, "");
+  s = s.replace(/^LYSIMACHIA\s+(?:NUM\.?\s+)?/, "LYSIMACHIA ");
+  s = s.replace(/^PETCHOA\s+/, "").replace(/^CALIBRACHOA\s+/, "");
+  s = s.replace(/^FO\s+/, "").replace(/^AGERATUM\s+/, "AGERATUM ").replace(/^VIOLA\s+/, "VIOLA ");
+  s = s.replace(/\bSUPCALPRM\b/g, "SUPERCAL PREMIUM").replace(/\bSUPCAL\b/g, "SUPERCAL");
+  // Ball merged-word color abbreviations
+  s = s.replace(/\bYELSUNIPD\b/g, "YELLOW SUN IPD");
+  s = s.replace(/\bSUNRAYPK\b/g, "SUNRAY PINK").replace(/\bPINKMIST\b/g, "PINK MIST");
+  s = s.replace(/\bORNGSUNSET\b/g, "ORANGE SUNSET").replace(/\bROSESTAR\b/g, "ROSE STAR");
+  s = s.replace(/\bPEARLWHITE\b/g, "PEARL WHITE");
+  s = s.replace(/\bFRNCH\b/g, "FRENCH").replace(/\bVANLA\b/g, "VANILLA");
+  s = s.replace(/\bYEL\b/g, "YELLOW").replace(/\bPK\b/g, "PINK").replace(/\bORNG\b/g, "ORANGE");
+  s = s.replace(/\bWHT\b/g, "WHITE").replace(/\bBLU\b/g, "BLUE").replace(/\bPRP\b/g, "PURPLE");
+  s = s.replace(/\bBLCH\b/g, "BLOTCH").replace(/\bGLDN\b/g, "GOLDEN");
+  // Collapse "LYSIMACHIA GOLDILOCKS CREEPING JENNY" (DB) and "LYSIMACHIA GOLDILOCKS" (PDF) to the same key
+  s = s.replace(/^LYSIMACHIA\s+GOLDILOCKS(\s+CREEPING\s+JENNY)?$/, "LYSIMACHIA GOLDILOCKS");
+  s = s.replace(/[()]/g, "").replace(/\s+/g, " ").trim();
+  return s;
 }
 
 // Distribute total across N rows, putting the remainder on the last row
