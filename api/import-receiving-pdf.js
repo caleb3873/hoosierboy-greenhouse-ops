@@ -172,8 +172,11 @@ module.exports = async (req, res) => {
         rows.forEach((r, idx) => updates.push({ id: r.id, ord_qty: splits[idx] }));
         changes.push({ variety: v, action: dbBefore === total ? "unchanged" : "updated", dbBefore, pdfTotal: total });
       } else {
-        // New variety not in DB — insert a minimal placeholder row using
-        // hints from existing same-order rows
+        // New variety from the PDF that isn't in the DB plan — insert it as
+        // UNCLAIMED so it still shows up in receiving (supplier is shipping
+        // these whether or not we've planned for them), with need=0 since
+        // there's no bench layout yet. Manager can later attach it to a
+        // category / bench / ppp and clear the UNCLAIMED status.
         const sibling = dbRows[0] || {};
         inserts.push({
           order_number: orderNumber,
@@ -183,12 +186,12 @@ module.exports = async (req, res) => {
           ship_week: sibling.ship_week || (extracted.shipWeek ? `WEEK ${extracted.shipWeek}` : null),
           plant_week: sibling.plant_week || null,
           ord_qty: total,
-          qty: total,        // assume need = arriving until manager edits
+          qty: 0,            // no production plan yet
           ppp: 1,
-          status: null,
+          status: "UNCLAIMED",
           confirmation_pdf_path: path,
         });
-        changes.push({ variety: v, action: "inserted", dbBefore: 0, pdfTotal: total });
+        changes.push({ variety: v, action: "inserted (unclaimed)", dbBefore: 0, pdfTotal: total });
       }
     }
     for (const [v, rows] of dbByVariety) {

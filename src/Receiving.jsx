@@ -333,7 +333,7 @@ export function aggregateFallReceivingForWeek(items, weekNumber) {
     if (!varietyMap.has(variety)) {
       varietyMap.set(variety, {
         broker, orderNumber, variety,
-        arriving: 0, needed: 0, short: false,
+        arriving: 0, needed: 0, short: false, unclaimed: false,
         category: it.category || null,
         confirmationPdfPath: it.confirmationPdfPath || null,
       });
@@ -342,6 +342,7 @@ export function aggregateFallReceivingForWeek(items, weekNumber) {
     entry.arriving += arriving;
     entry.needed += needed;
     if (it.status === "SHORT") entry.short = true;
+    if (it.status === "UNCLAIMED") entry.unclaimed = true;
     totalArriving += arriving;
   }
   const groups = [...tree.entries()]
@@ -652,8 +653,9 @@ function PackingSlipThumb({ path }) {
 // ── Single variety row (Receive / Claim buttons) ────────────────────────
 function LineRow({ item, row, onReceive, onUndo, onClaim }) {
   const diff = item.arriving - item.needed;
-  const orderedShort = diff < 0 || item.short;
-  const orderedExtra = diff > 0;
+  // UNCLAIMED rows have need=0 — don't flag them as "extra" since there's no plan to compare to.
+  const orderedShort = !item.unclaimed && (diff < 0 || item.short);
+  const orderedExtra = !item.unclaimed && diff > 0;
   const status = row?.status;
   const isReceived = status === "received";
   const isClaim = status === "claim" || row?.claimSentAt;
@@ -679,13 +681,23 @@ function LineRow({ item, row, onReceive, onUndo, onClaim }) {
         </button>
         <div style={{ flex: 1, fontSize: 13, fontWeight: 700, color: "#1e2d1a", minWidth: 0 }}>
           {item.variety}
+          {item.unclaimed && (
+            <span style={{ display: "inline-block", marginLeft: 6, fontSize: 9, fontWeight: 800, background: "#e89a3a", color: "#fff", padding: "1px 6px", borderRadius: 999, verticalAlign: "middle" }}>
+              UNCLAIMED
+            </span>
+          )}
         </div>
         {/* Two truths, both bold and same size: ARRIVING (per PDF, supplier
             minimums baked in) and NEED (production plan). Different colors so
-            they stand apart at a glance. */}
+            they stand apart at a glance. UNCLAIMED rows skip need since
+            there's no plan yet. */}
         <div style={{ textAlign: "right", whiteSpace: "nowrap", lineHeight: 1.15 }}>
           <div style={{ fontSize: 13, fontWeight: 800, color: "#4a7a35" }}>{item.arriving.toLocaleString()}</div>
-          <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74" }}>need {item.needed.toLocaleString()}</div>
+          {item.unclaimed ? (
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#a86a10" }}>no plan</div>
+          ) : (
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74" }}>need {item.needed.toLocaleString()}</div>
+          )}
         </div>
         <button onClick={onClaim}
           style={{ background: "#fff", border: "1.5px solid #d94f3d", color: "#d94f3d", borderRadius: 8, padding: "8px 12px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", lineHeight: 1, flexShrink: 0, whiteSpace: "nowrap" }}>
