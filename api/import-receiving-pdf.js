@@ -114,6 +114,8 @@ async function extractFromPdf(b64) {
 function norm(v) {
   let s = String(v || "").toUpperCase().trim();
   s = s.replace(/[#®™]/g, "").replace(/[''']/g, "");
+  // Supplier propagation prefix used by DGI/HortAmericas on the PDF
+  s = s.replace(/^C\.?\s*P\.?\s+/g, "");
   // Ball internal genus codes — expand before any genus-prefix rule fires
   s = s.replace(/^MARAF\s+/, "MARIGOLD ").replace(/^MARFR\s+/, "MARIGOLD ");
   // Genus prefixes — strip the ones the DB doesn't store
@@ -123,6 +125,14 @@ function norm(v) {
   s = s.replace(/^LYSIMACHIA\s+(?:NUM\.?\s+)?/, "LYSIMACHIA ");
   s = s.replace(/^PETCHOA\s+/, "").replace(/^CALIBRACHOA\s+/, "");
   s = s.replace(/^FO\s+/, "").replace(/^AGERATUM\s+/, "AGERATUM ").replace(/^VIOLA\s+/, "VIOLA ");
+  // DGI-style genus-first prefixes — DB stores series-first. Strip the
+  // leading genus + any species qualifier so RUDBECKIA HIRTA SUNBECKIA → SUNBECKIA
+  s = s.replace(/^RUDBECKIA\s+HIRTA\s+/, "");
+  s = s.replace(/^HELIANTHUS\s+SUNFLOWER\s+/, "HELIANTHUS ");
+  s = s.replace(/^ECHINACEA\s+SUNMAGIC(?:\s+VINTAGE)?\s+/, "SUNMAGIC ECHINACEA ");
+  s = s.replace(/^ECHINACEA\s+SOMBRERO\s+/, "SOMBRERO ");
+  s = s.replace(/^ECHINACEA\s+/, ""); // any remaining ECHINACEA prefix
+  // Sometimes DB has SOMBRERO + colors as "SOMBRERO ADOBE ORANGE" (no ECHINACEA word)
   s = s.replace(/\bSUPCALPRM\b/g, "SUPERCAL PREMIUM").replace(/\bSUPCAL\b/g, "SUPERCAL");
   // Ball merged-word color abbreviations
   s = s.replace(/\bYELSUNIPD\b/g, "YELLOW SUN IPD");
@@ -134,11 +144,12 @@ function norm(v) {
   s = s.replace(/\bWHT\b/g, "WHITE").replace(/\bBLU\b/g, "BLUE").replace(/\bPRP\b/g, "PURPLE");
   s = s.replace(/\bBLCH\b/g, "BLOTCH").replace(/\bGLDN\b/g, "GOLDEN");
   s = s.replace(/\bDP\b/g, "").replace(/\bCT\b/g, "").replace(/\bDT\b/g, "");
-  // Ball renamed Inca → Inca II at some point; treat as same series for matching
+  s = s.replace(/&/g, "AND"); // COREOPSIS UPTICK YELLOW & RED → AND RED
+  // Ball renamed Inca → Inca II at some point; treat as same series
   s = s.replace(/\bINCA\s+II\b/g, "INCA");
   // Word-order variants for known Zinnia mixes
   s = s.replace(/\bELEGANT\s+MIX\s+HOT\b/g, "ELEGANT HOT MIX");
-  // Collapse "LYSIMACHIA GOLDILOCKS CREEPING JENNY" (DB) and "LYSIMACHIA GOLDILOCKS" (PDF) to the same key
+  // Collapse "LYSIMACHIA GOLDILOCKS CREEPING JENNY" / "LYSIMACHIA GOLDILOCKS"
   s = s.replace(/^LYSIMACHIA\s+GOLDILOCKS(\s+CREEPING\s+JENNY)?$/, "LYSIMACHIA GOLDILOCKS");
   s = s.replace(/[()]/g, "").replace(/\s+/g, " ").trim();
   return s;
@@ -193,17 +204,36 @@ module.exports = async (req, res) => {
 
     // 4. Compute changes
     const changes = [];
-    const updates = [];   // { id, ord_qty }
+    const updates = [];      // { id, ord_qty, clearStatus? }  — clearStatus un-cancels stale rows
     const cancellations = []; // ids to mark CANCELLED
-    const inserts = [];   // new rows for varieties not yet in DB
+    const inserts = [];      // new rows for varieties not yet in DB
+    const deletes = [];      // delete stale UNCLAIMED rows that duplicate a real (now-rematched) row
 
     for (const [v, total] of pdfByVariety) {
       const rows = dbByVariety.get(v);
       if (rows && rows.length) {
-        const dbBefore = rows.reduce((s, r) => s + (parseInt(r.ord_qty) || 0), 0);
-        const splits = splitEven(total, rows.length);
-        rows.forEach((r, idx) => updates.push({ id: r.id, ord_qty: splits[idx] }));
-        changes.push({ variety: v, action: dbBefore === total ? "unchanged" : "updated", dbBefore, pdfTotal: total });
+        // Prefer the "real" rows (status null / quality tag) over stale UNCLAIMED
+        // duplicates this run might have inserted on a prior pass.
+        const real = rows.filter(r => r.status !== "UNCLAIMED");
+        const dupes = rows.filter(r => r.status === "UNCLAIMED");
+        const target = real.length ? real : rows;
+        const dbBefore = target.reduce((s, r) => s + (parseInt(r.ord_qty) || 0), 0);
+        const splits = splitEven(total, target.length);
+        target.forEach((r, idx) => updates.push({
+          id: r.id,
+          ord_qty: splits[idx],
+          // If this row was cancelled (likely from a prior bad run that
+          // couldn't match the name) but now matches, un-cancel it.
+          clearStatus: r.status === "CANCELLED",
+        }));
+        // Drop stale UNCLAIMED duplicates so we don't double-count
+        for (const d of dupes) deletes.push(d.id);
+        const action = real.length === 0
+          ? "matched (was unclaimed)"
+          : real.some(r => r.status === "CANCELLED")
+            ? "matched (un-cancelled)"
+            : dbBefore === total ? "unchanged" : "updated";
+        changes.push({ variety: v, action, dbBefore, pdfTotal: total });
       } else {
         // New variety from the PDF that isn't in the DB plan — insert it as
         // UNCLAIMED so it still shows up in receiving (supplier is shipping
@@ -234,8 +264,12 @@ module.exports = async (req, res) => {
     }
     for (const [v, rows] of dbByVariety) {
       if (!pdfByVariety.has(v)) {
-        rows.forEach(r => cancellations.push(r.id));
-        const dbBefore = rows.reduce((s, r) => s + (parseInt(r.ord_qty) || 0), 0);
+        // Only cancel rows that aren't already CANCELLED — otherwise we
+        // churn timestamps and the action label is misleading.
+        const toCancel = rows.filter(r => r.status !== "CANCELLED");
+        if (toCancel.length === 0) continue;
+        toCancel.forEach(r => cancellations.push(r.id));
+        const dbBefore = toCancel.reduce((s, r) => s + (parseInt(r.ord_qty) || 0), 0);
         changes.push({ variety: v, action: "cancelled", dbBefore, pdfTotal: 0 });
       }
     }
@@ -246,10 +280,15 @@ module.exports = async (req, res) => {
 
     // 5. Apply changes
     for (const u of updates) {
-      await sb("PATCH", `/rest/v1/fall_program_items?id=eq.${u.id}`, { ord_qty: u.ord_qty });
+      const patch = { ord_qty: u.ord_qty };
+      if (u.clearStatus) patch.status = null;
+      await sb("PATCH", `/rest/v1/fall_program_items?id=eq.${u.id}`, patch);
     }
     for (const id of cancellations) {
       await sb("PATCH", `/rest/v1/fall_program_items?id=eq.${id}`, { status: "CANCELLED" });
+    }
+    for (const id of deletes) {
+      await sb("DELETE", `/rest/v1/fall_program_items?id=eq.${id}`);
     }
     if (inserts.length) {
       await sb("POST", `/rest/v1/fall_program_items`, inserts);
@@ -266,6 +305,7 @@ module.exports = async (req, res) => {
         updated: updates.length,
         cancelled: cancellations.length,
         inserted: inserts.length,
+        deletedDupes: deletes.length,
       },
       changes,
     });
