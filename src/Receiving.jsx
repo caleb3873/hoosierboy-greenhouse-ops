@@ -313,32 +313,42 @@ export function effectiveArrivalWeek(item) {
 // effectiveArrivalWeek() so "SOW 4 WKS BEFORE" URC items also land in the
 // right week.
 export function aggregateFallReceivingForWeek(items, weekNumber) {
-  // broker → Map(orderNumber → Map(variety → entry))
+  // broker → Map(orderNumber → { varietyMap, cancelled[] })
   const tree = new Map();
   let totalArriving = 0;
   let lineCount = 0;
   for (const it of (items || [])) {
     if (effectiveArrivalWeek(it) !== weekNumber) continue;
-    if (it.status === "CANCELLED") continue;
     const broker = it.broker || "Unassigned";
     const orderNumber = it.orderNumber ? String(it.orderNumber) : "(no order #)";
     const variety = it.variety || it.cropName || "Unknown";
-    const ppp = +it.ppp || 1;
-    const arriving = +it.ordQty || 0;
-    const needed   = (+it.qty || 0) * ppp;
     if (!tree.has(broker)) tree.set(broker, new Map());
     const orderMap = tree.get(broker);
-    if (!orderMap.has(orderNumber)) orderMap.set(orderNumber, new Map());
-    const varietyMap = orderMap.get(orderNumber);
-    if (!varietyMap.has(variety)) {
-      varietyMap.set(variety, {
+    if (!orderMap.has(orderNumber)) orderMap.set(orderNumber, { varietyMap: new Map(), cancelled: new Map() });
+    const orderState = orderMap.get(orderNumber);
+
+    // Cancelled rows go into a separate bucket — hidden by default behind a
+    // "Cancelled (N)" dropdown so receiving stays clean but the paper trail
+    // is one tap away.
+    if (it.status === "CANCELLED") {
+      if (!orderState.cancelled.has(variety)) {
+        orderState.cancelled.set(variety, { variety, broker, orderNumber, category: it.category || null });
+      }
+      continue;
+    }
+
+    const ppp = +it.ppp || 1;
+    const arriving = +it.ordQty || 0;
+    const needed = (+it.qty || 0) * ppp;
+    if (!orderState.varietyMap.has(variety)) {
+      orderState.varietyMap.set(variety, {
         broker, orderNumber, variety,
         arriving: 0, needed: 0, short: false, unclaimed: false,
         category: it.category || null,
         confirmationPdfPath: it.confirmationPdfPath || null,
       });
     }
-    const entry = varietyMap.get(variety);
+    const entry = orderState.varietyMap.get(variety);
     entry.arriving += arriving;
     entry.needed += needed;
     if (it.status === "SHORT") entry.short = true;
@@ -350,14 +360,16 @@ export function aggregateFallReceivingForWeek(items, weekNumber) {
     .map(([broker, orderMap]) => {
       const orders = [...orderMap.entries()]
         .sort((a, b) => a[0].localeCompare(b[0]))
-        .map(([orderNumber, varietyMap]) => {
-          const itemsArr = [...varietyMap.values()].sort((a, b) => a.variety.localeCompare(b.variety));
+        .map(([orderNumber, state]) => {
+          const itemsArr = [...state.varietyMap.values()].sort((a, b) => a.variety.localeCompare(b.variety));
+          const cancelledArr = [...state.cancelled.values()].sort((a, b) => a.variety.localeCompare(b.variety));
           lineCount += itemsArr.length;
           return {
             orderNumber,
             items: itemsArr,
+            cancelled: cancelledArr,
             subtotal: itemsArr.reduce((s, x) => s + x.arriving, 0),
-            confirmationPdfPath: itemsArr[0]?.confirmationPdfPath || null,
+            confirmationPdfPath: itemsArr[0]?.confirmationPdfPath || cancelledArr[0]?.confirmationPdfPath || null,
           };
         });
       return {
@@ -533,6 +545,8 @@ function OrderCard({ broker, order, weekTag, isOpen, onToggle, lineByKey, orderR
   const claimedCount = lineStates.filter(l => l?.status === "claim" || l?.claimSentAt).length;
   const total = order.items.length;
   const complete = receivedCount + claimedCount >= total;
+  const cancelled = order.cancelled || [];
+  const [showCancelled, setShowCancelled] = useState(false);
 
   return (
     <div style={{ borderTop: "1px solid #e0ead8" }}>
@@ -575,6 +589,24 @@ function OrderCard({ broker, order, weekTag, isOpen, onToggle, lineByKey, orderR
               />
             );
           })}
+
+          {cancelled.length > 0 && (
+            <div style={{ borderTop: "1px solid #f0f4ec", background: "#fafafa" }}>
+              <button onClick={() => setShowCancelled(s => !s)}
+                style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", background: "transparent", border: "none", padding: "10px 14px", cursor: "pointer", fontFamily: "inherit" }}>
+                <span style={{ fontSize: 11, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: 1 }}>
+                  {showCancelled ? "▼" : "▸"} Cancelled · {cancelled.length}
+                </span>
+                <span style={{ fontSize: 10, color: "#a8b0a0" }}>supplier couldn't supply</span>
+              </button>
+              {showCancelled && cancelled.map(c => (
+                <div key={c.variety} style={{ padding: "6px 14px 6px 30px", fontSize: 12, color: "#9a8c80", borderTop: "1px dashed #e0ead8", display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 9, fontWeight: 800, background: "#d94f3d", color: "#fff", padding: "1px 6px", borderRadius: 999 }}>×</span>
+                  <span style={{ textDecoration: "line-through" }}>{c.variety}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
