@@ -6,6 +6,10 @@ import { HrComposeModal, HrInbox, isHrInboxOwner } from "./HrMessages";
 import { useAuth } from "./Auth";
 import { BrehobManagerView } from "./BrehobList";
 import { DriverRequestModal, DriverRequestStatusList, useDriverResponsePopup, DriverResponsePopup, DriverScheduleView, DriverRequestsSubPage } from "./DriverRequest";
+import { FacilityPicker, FacilityHistoryView, facilityLabel } from "./Facilities";
+import HouseDetail from "./HouseDetail";
+import { ReceivingWeekSummary, aggregateFallReceivingForWeek } from "./Receiving";
+import { useFallProgramItems } from "./supabase";
 import { getCurrentWeek } from "./shared";
 import { NotificationBanner } from "./PushNotifications";
 
@@ -211,8 +215,31 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
 
   const [assigningTaskId, setAssigningTaskId] = useState(null);
 
+  // Tyler-only priority reorder on the Maintenance All Tasks tab. Swaps
+  // priorities with the neighbor in the rendered list (which is already sorted
+  // priority-desc). Doesn't reach into other categories or weeks.
+  async function reorderTask(task, direction) {
+    const peers = visibleTasks.filter(t => t.status !== "completed");
+    const idx = peers.findIndex(t => t.id === task.id);
+    if (idx === -1) return;
+    const targetIdx = direction === "up" ? idx - 1 : idx + 1;
+    if (targetIdx < 0 || targetIdx >= peers.length) return;
+    const neighbor = peers[targetIdx];
+    const a = task.priority || 0;
+    const b = neighbor.priority || 0;
+    // Use temp value to avoid unique constraint collisions if any
+    await upsert({ ...task, priority: b });
+    await upsert({ ...neighbor, priority: a });
+    refresh();
+  }
+
   async function assignTaskTo(task, name) {
-    await upsert({ ...task, assignedTo: name });
+    // Stamp assignedAt whenever the assignee changes (or is set fresh) so the
+    // Done-tab history can show "Assigned May 14 · Done May 18".
+    const next = name && name !== task.assignedTo
+      ? { ...task, assignedTo: name, assignedAt: new Date().toISOString() }
+      : { ...task, assignedTo: name };
+    await upsert(next);
     setAssigningTaskId(null);
     refresh();
   }
@@ -223,6 +250,15 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
   const [statusFilter, setStatusFilter] = useState("pending"); // all | pending | completed
   // Asst-manager tabs: simplified to My Tasks / [Dept] Tasks / Done
   const [asstTab, setAsstTab] = useState("dept");
+
+  // Tyler is the maintenance task planner. He defaults to the Houses (facility
+  // picker) view; everyone else lands on the prioritized All Tasks list and
+  // can't reorder.
+  const isTyler = useMemo(() => /\btyler\b/i.test(displayName || ""), [displayName]);
+  // 'all' | 'houses' | 'done' — maintenance sub-tab. Selected facility (if any)
+  // drives the focused list. Reset facility when leaving Houses tab.
+  const [maintTab, setMaintTab] = useState(isTyler ? "houses" : "all");
+  const [selectedFacility, setSelectedFacility] = useState(null);
   const [locationFilter, setLocationFilter] = useState("all"); // all | bluff | sprague
   const [prodTypeFilter, setProdTypeFilter] = useState(() => {
     try { return localStorage.getItem("gh_mgr_prod_type") || "all"; } catch { return "all"; }
@@ -274,6 +310,15 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
     const today = new Date().toISOString().slice(0, 10);
     return (driverReqRows || []).filter(r => r.status === "pending" && r.deliveryDate >= today);
   }, [driverReqRows]);
+
+  // Receiving this week — pull from fall_program_items (where ship_week =
+  // "WEEK NN"). The same aggregator the receiving sub-page uses.
+  const { rows: fallProgramItemsForReceiving } = useFallProgramItems();
+  const receivingThisWeek = useMemo(() => {
+    const wk = getCurrentWeek();
+    const { totalArriving, lineCount } = aggregateFallReceivingForWeek(fallProgramItemsForReceiving || [], wk);
+    return { lineCount, plantTotal: totalArriving };
+  }, [fallProgramItemsForReceiving]);
   const activeAnnouncements = useMemo(() => (announcements || []).filter(a => a.active && (!a.expiresAt || new Date(a.expiresAt) > new Date())), [announcements]);
   const unreadHrMessages = useMemo(() => (hrMessages || []).filter(m => !m.archived && !m.readAt), [hrMessages]);
   const announcementPopup = useAnnouncementPopup();
@@ -385,6 +430,14 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
           t.year === selectedWeek.year && t.weekNumber === selectedWeek.week
         );
       }
+    } else if (category === "maintenance") {
+      // Maintenance is week-agnostic — Tyler plans repairs as backlog, not by
+      // sow-week. Show all open maintenance + filter to the selected facility
+      // when drilling in from the Houses tab.
+      r = tasks.filter(t => t.status !== "requested" && t.status !== "rejected" && (t.category || "production") === "maintenance");
+      if (selectedFacility) r = r.filter(t => t.facility === selectedFacility);
+      if (statusFilter === "pending") r = r.filter(t => t.status !== "completed");
+      else if (statusFilter === "completed") r = r.filter(t => t.status === "completed");
     } else {
       r = tasks.filter(t => t.status !== "requested" && t.status !== "rejected" && t.year === selectedWeek.year && t.weekNumber === selectedWeek.week && (t.category || "production") === category);
       if (statusFilter === "pending") r = r.filter(t => t.status !== "completed");
@@ -399,18 +452,19 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       (b.priority || 0) - (a.priority || 0) ||
       taskSortKey(a).localeCompare(taskSortKey(b), undefined, { numeric: true })
     );
-  }, [tasks, selectedWeek, statusFilter, category, locationFilter, prodTypeFilter, isAsstManager, asstTab, defaultCategory, displayName]);
+  }, [tasks, selectedWeek, statusFilter, category, locationFilter, prodTypeFilter, isAsstManager, asstTab, defaultCategory, displayName, selectedFacility]);
 
   const canCreateInCurrentCategory = category === "production" || canCreateGrowing;
 
   async function createTask(title, bucket = "today", location) {
     if (!title.trim()) return;
     const maxPriority = Math.max(0, ...tasks.filter(t => t.year === today.year && t.weekNumber === today.week && (t.category || "production") === category).map(t => t.priority || 0));
-    // Auto-assign to the creator's first name so it shows up in their "My Tasks"
-    // tab. They can reassign via the inline picker. Anonymous "Manager" stays
-    // unassigned so we don't create a dummy assignee.
+    // Maintenance tasks default to Gerry (full-time maintenance role). Other
+    // categories auto-assign to the creator — they can reassign via the inline
+    // picker. "Manager" stays unassigned (no real creator name yet).
     const firstName = (displayName || "").split(/\s+/)[0];
-    const assignedTo = firstName && firstName !== "Manager" ? firstName : null;
+    let assignedTo = firstName && firstName !== "Manager" ? firstName : null;
+    if (category === "maintenance") assignedTo = "Gerry";
     await upsert({
       id: crypto.randomUUID(),
       title: title.trim(),
@@ -419,11 +473,14 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       year: today.year,
       status: "pending",
       category,
+      // Auto-tag facility when creating from a focused facility view in Maintenance
+      facility: category === "maintenance" && selectedFacility ? selectedFacility : null,
       bucket,
       targetDate: bucketToDate(bucket),
       carriedOver: false,
       createdBy: displayName || "Manager",
       assignedTo,
+      assignedAt: assignedTo ? new Date().toISOString() : null,
       location: location || defaultLocation,
       team: defaultTeam,
       photos: [],
@@ -693,6 +750,18 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
           <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-end" }}>
             <button onClick={() => deleteTask(t)}
               style={{ background: "none", border: "none", color: "#8a9a80", fontSize: 18, cursor: "pointer", padding: 4 }} title="Delete task">🗑</button>
+            {/* Tyler-only priority reorder on Maintenance All Tasks. Hidden in
+                facility-filtered views, Houses tab without facility, or Done. */}
+            {isTyler && category === "maintenance" && maintTab === "all" && !isDone && (
+              <div style={{ display: "flex", gap: 3 }}>
+                <button onClick={(e) => { e.stopPropagation(); reorderTask(t, "up"); }}
+                  style={{ background: "#fff", border: "1.5px solid #c8d8c0", borderRadius: 6, padding: "2px 8px", fontSize: 13, fontWeight: 800, color: "#1e2d1a", cursor: "pointer", fontFamily: "inherit", lineHeight: 1 }}
+                  title="Move up">▲</button>
+                <button onClick={(e) => { e.stopPropagation(); reorderTask(t, "down"); }}
+                  style={{ background: "#fff", border: "1.5px solid #c8d8c0", borderRadius: 6, padding: "2px 8px", fontSize: 13, fontWeight: 800, color: "#1e2d1a", cursor: "pointer", fontFamily: "inherit", lineHeight: 1 }}
+                  title="Move down">▼</button>
+              </div>
+            )}
             {canAssign && !isDone && (
               <button onClick={(e) => { e.stopPropagation(); setAssigningTaskId(prev => prev === t.id ? null : t.id); }}
                 style={{ background: "#fff", border: "1.5px solid #c8d8c0", borderRadius: 8, padding: "4px 8px", fontSize: 11, fontWeight: 700, color: "#4a90d9", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}
@@ -950,6 +1019,24 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
                   <div className="hub-card-title">Brehob List</div>
                   <div className="hub-card-sub">{(brehobItems || []).filter(b => b.status === "on_list").length} items on list</div>
                 </div>
+
+                {/* Receiving — what's coming from suppliers this week */}
+                <div className="hub-card" onClick={() => setCurrentView("receiving")} style={{ gridColumn: "span 2", borderTopColor: "#a86a10", borderTopWidth: 4 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                      <span style={{ fontSize: 26 }}>📦</span>
+                      <div>
+                        <div style={{ fontSize: 16, fontWeight: 800, color: "#1e2d1a" }}>Receiving</div>
+                        <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2 }}>
+                          {receivingThisWeek.lineCount === 0
+                            ? "Nothing scheduled this week"
+                            : `${receivingThisWeek.plantTotal.toLocaleString()} plants coming in this week`}
+                        </div>
+                      </div>
+                    </div>
+                    {receivingThisWeek.lineCount > 0 && <span className="hub-card-badge ok">{receivingThisWeek.lineCount}</span>}
+                  </div>
+                </div>
               </div>
             )}
           </>
@@ -968,7 +1055,12 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
           </button>
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 10, fontWeight: 800, color: "#7a9a6a", letterSpacing: 1.2, textTransform: "uppercase" }}>Floor View</div>
-            <div className="mtv-header-title" style={{ fontSize: 22, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>Manager Tasks</div>
+            <div className="mtv-header-title" style={{ fontSize: 22, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              {category === "production"  && "🌱 Production"}
+              {category === "growing"     && "🌿 Growing"}
+              {category === "maintenance" && "🔧 Maintenance"}
+              {category === "brehob"      && "🛒 Brehob"}
+            </div>
           </div>
           <div className="mtv-header-buttons" style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
             {onBackToApp && (
@@ -1030,8 +1122,10 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       <OutThisWeekBanner />
 
 
-      {/* Asst-manager 3-tab strip: My Tasks / [Department] / Done */}
-      {isAsstManager ? (
+      {/* Asst-manager 3-tab strip: My Tasks / [Department] / Done.
+          Managers no longer see a cross-category strip here — they pick the
+          category from the hub. Header title shows what they picked. */}
+      {isAsstManager && (
         <div className="mtv-category-tabs" style={{ padding: "12px 20px 0", background: "#fff", display: "flex", gap: 8 }}>
           {[
             { id: "mine", label: `🎯 My Tasks${assignedToMe.length > 0 ? ` (${assignedToMe.length})` : ""}` },
@@ -1050,23 +1144,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
             </button>
           ))}
         </div>
-      ) : (
-        <div className="mtv-category-tabs" style={{ padding: "12px 20px 0", background: "#fff", display: "flex", gap: 8, overflowX: "auto" }}>
-          {[{id:"production",label:"Production"},{id:"growing",label:"Growing"},{id:"maintenance",label:"🔧 Maintenance"},{id:"brehob",label:"🛒 Brehob"}].map(c => (
-            <button key={c.id} onClick={() => setCategory(c.id)}
-              style={{
-                flex: 1, padding: "12px 0", borderRadius: "12px 12px 0 0", fontSize: 13, fontWeight: 800,
-                background: category === c.id ? "#7fb069" : "#f2f5ef",
-                color: category === c.id ? "#1e2d1a" : "#7a8c74",
-                border: "1.5px solid #c8d8c0", borderBottom: category === c.id ? "1.5px solid #7fb069" : "1.5px solid #c8d8c0",
-                cursor: "pointer", fontFamily: "inherit",
-              }}>
-              {c.label}
-            </button>
-          ))}
-        </div>
       )}
-
       {/* Brehob shopping list — renders in place of tasks when selected */}
       {category === "brehob" && (
         <div style={{ padding: "20px" }}>
@@ -1074,8 +1152,71 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
         </div>
       )}
 
-      {/* Status filter — hidden on Brehob tab and for asst managers (their tab strip already controls status) */}
-      {category !== "brehob" && !isAsstManager && (
+      {/* Maintenance sub-tabs: All Tasks · Houses · Done
+          Tyler defaults to Houses (task planner); everyone else lands on
+          All Tasks (prioritized list). Selected facility (if any) drills in. */}
+      {category === "maintenance" && (
+        <div style={{ background: "#fff", borderBottom: "1.5px solid #e0ead8" }}>
+          <div style={{ padding: "10px 16px 0", display: "flex", gap: 6 }}>
+            {[
+              { id: "all",    label: "📋 All Tasks" },
+              { id: "houses", label: "🏡 Houses" },
+              { id: "done",   label: "✓ Done" },
+            ].map(t => (
+              <button key={t.id}
+                onClick={() => { setMaintTab(t.id); if (t.id !== "houses") setSelectedFacility(null); }}
+                style={{
+                  flex: 1, padding: "10px 0", borderRadius: "10px 10px 0 0", fontSize: 12, fontWeight: 800,
+                  background: maintTab === t.id ? "#1e2d1a" : "#f2f5ef",
+                  color:      maintTab === t.id ? "#c8e6b8" : "#7a8c74",
+                  border: `1.5px solid ${maintTab === t.id ? "#1e2d1a" : "#c8d8c0"}`,
+                  borderBottom: "none",
+                  cursor: "pointer", fontFamily: "inherit",
+                }}>
+                {t.label}
+              </button>
+            ))}
+          </div>
+          {/* Breadcrumb when a facility is selected from the Houses tab */}
+          {maintTab === "houses" && selectedFacility && (
+            <div style={{ padding: "10px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: "1.5px solid #e0ead8" }}>
+              <button onClick={() => setSelectedFacility(null)}
+                style={{ background: "transparent", border: "none", color: "#7fb069", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", padding: 0 }}>
+                ← All facilities
+              </button>
+              <span style={{ fontSize: 14, fontWeight: 800, color: "#1e2d1a" }}>
+                🔧 {facilityLabel(selectedFacility)}
+              </span>
+              <span style={{ width: 90 }} />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Houses tab: render the picker (or filtered task list once a facility is picked) */}
+      {category === "maintenance" && maintTab === "houses" && !selectedFacility && (
+        <FacilityPicker tasks={tasks} onSelect={(id) => setSelectedFacility(id)} />
+      )}
+
+      {/* Done tab: running history grouped by facility, filterable by year */}
+      {category === "maintenance" && maintTab === "done" && (
+        <FacilityHistoryView tasks={tasks} />
+      )}
+
+      {/* House Detail: equipment register + quick actions + new task form.
+          Renders above the focused task list when a facility is picked. */}
+      {category === "maintenance" && maintTab === "houses" && selectedFacility && (
+        <HouseDetail
+          facilityId={selectedFacility}
+          assignees={ASSIGNEES}
+          isTyler={isTyler}
+          currentUserName={displayName}
+          onBack={() => setSelectedFacility(null)}
+        />
+      )}
+
+      {/* Status filter — hidden on Brehob, asst managers, and non-list maintenance tabs */}
+      {category !== "brehob" && !isAsstManager && !(category === "maintenance" && maintTab !== "all" && !(maintTab === "houses" && selectedFacility)) && (
       <div className="mtv-filter-row" style={{ padding: "12px 20px", background: "#fff", borderBottom: "1.5px solid #e0ead8", display: "flex", gap: 8 }}>
         {[{id:"pending",label:"To Do"},{id:"completed",label:"Done"},{id:"all",label:"All"}].map(f => (
           <button key={f.id} onClick={() => setStatusFilter(f.id)}
@@ -1092,8 +1233,8 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       </div>
       )}
 
-      {/* Location filter — Sprague vs Bluff */}
-      {category !== "brehob" && (
+      {/* Location filter — Sprague vs Bluff. Hidden on maintenance (facility tagging replaces it). */}
+      {category !== "brehob" && category !== "maintenance" && (
       <div className="mtv-filter-row" style={{ padding: "0 20px 12px", background: "#fff", borderBottom: "1.5px solid #e0ead8", display: "flex", gap: 8 }}>
         {[{id:"all",label:"All"},{id:"bluff",label:"🌱 Bluff"},{id:"sprague",label:"🌿 Sprague"}].map(f => (
           <button key={f.id} onClick={() => setLocationFilter(f.id)}
@@ -1148,8 +1289,11 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
         );
       })()}
 
-      {/* Task list grouped by bucket */}
-      {category !== "brehob" && (
+      {/* Task list grouped by bucket. Suppressed when:
+          - On Brehob tab (shopping list takes over)
+          - On Maintenance Houses tab with no facility picked (picker shows)
+          - On Maintenance Done tab (history view takes over) */}
+      {category !== "brehob" && !(category === "maintenance" && maintTab === "houses" && !selectedFacility) && !(category === "maintenance" && maintTab === "done") && (
       <div style={{ padding: 16 }}>
         {visibleTasks.length === 0 ? (
           <div style={{ textAlign: "center", padding: "60px 20px", color: "#7a8c74" }}>
@@ -1192,8 +1336,11 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       </div>
       )}
 
-      {/* Mic button - only on current week + only if allowed in this category + not brehob */}
-      {isCurrentWeek && canCreateInCurrentCategory && category !== "brehob" && (
+      {/* Mic button - only on current week + only if allowed in this category + not brehob.
+          Hidden in HouseDetail since it has its own creator with a mic. */}
+      {isCurrentWeek && canCreateInCurrentCategory && category !== "brehob"
+        && !(category === "maintenance" && (maintTab !== "all" || selectedFacility))
+        && (
         <button onClick={() => setShowRecorder(true)}
           style={{
             position: "fixed", bottom: 20, left: "50%", transform: "translateX(-50%)",
@@ -1246,6 +1393,11 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       {/* ── DRIVER REQUESTS — full-page list with delete + driver comments ── */}
       {currentView === "driver-requests" && (
         <DriverRequestsSubPage onBack={() => setCurrentView("hub")} />
+      )}
+
+      {/* ── RECEIVING — what's coming from suppliers this week ── */}
+      {currentView === "receiving" && (
+        <ReceivingWeekSummary onBack={() => setCurrentView("hub")} />
       )}
 
       {/* ── TODAY / THIS WEEK (any manager) ────────────────────────────── */}

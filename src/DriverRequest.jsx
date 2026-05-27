@@ -46,7 +46,9 @@ export function DriverRequestModal({ onClose, onSubmitted, prefillDate }) {
 
   const drivers = useMemo(() =>
     (floorCodes || [])
-      .filter(fc => fc.active && (fc.title || "").toUpperCase() === "SEASONAL DRIVER")
+      // Anyone whose title contains DRIVER — covers SEASONAL DRIVER and
+      // dual-role titles like "MAINTENANCE / DRIVER" (Gerry).
+      .filter(fc => fc.active && /\bDRIVER\b/i.test(fc.title || ""))
       .sort((a, b) => (a.workerName || "").localeCompare(b.workerName || "")),
     [floorCodes]
   );
@@ -716,7 +718,9 @@ export function DriverScheduleView({ onBack }) {
 
   const drivers = useMemo(() =>
     (floorCodes || [])
-      .filter(fc => fc.active && (fc.title || "").toUpperCase() === "SEASONAL DRIVER")
+      // Anyone whose title contains DRIVER — covers SEASONAL DRIVER and
+      // dual-role titles like "MAINTENANCE / DRIVER" (Gerry).
+      .filter(fc => fc.active && /\bDRIVER\b/i.test(fc.title || ""))
       .sort((a, b) => (a.workerName || "").localeCompare(b.workerName || "")),
     [floorCodes]
   );

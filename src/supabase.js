@@ -339,6 +339,9 @@ export const useHrMessages = () => useTable("hr_messages", { orderBy: "sent_at",
 export const useDriverAvailability = () => useTable("driver_availability", { orderBy: "available_date", ascending: true, localKey: "gh_driver_availability_v1" });
 export const useDriverRequests = () => useTable("driver_requests", { orderBy: "delivery_date", ascending: true, localKey: "gh_driver_requests_v1" });
 export const useFloorCodes2 = () => useTable("floor_codes", { orderBy: "worker_name", ascending: true, localKey: "gh_floor_codes_v2" });
+export const useFacilityEquipment = () => useTable("facility_equipment", { orderBy: "created_at", ascending: true, localKey: "gh_facility_equipment_v1" });
+export const useReceivingLines  = () => useTable("receiving_lines",  { orderBy: "created_at", ascending: true, localKey: "gh_receiving_lines_v1" });
+export const useReceivingOrders = () => useTable("receiving_orders", { orderBy: "created_at", ascending: true, localKey: "gh_receiving_orders_v1" });
 
 // ── AUTH HELPERS ──────────────────────────────────────────────────────────────
 export async function sendPasswordReset(email) {
