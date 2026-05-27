@@ -211,6 +211,10 @@ module.exports = async (req, res) => {
         // there's no bench layout yet. Manager can later attach it to a
         // category / bench / ppp and clear the UNCLAIMED status.
         const sibling = dbRows[0] || {};
+        // year is NOT NULL on fall_program_items — pull from PDF shipDate,
+        // or from a sibling row, or fall back to current year.
+        const yearFromPdf = extracted.shipDate ? new Date(extracted.shipDate).getUTCFullYear() : null;
+        const year = sibling.year || yearFromPdf || new Date().getFullYear();
         inserts.push({
           order_number: orderNumber,
           variety: v,
@@ -218,6 +222,7 @@ module.exports = async (req, res) => {
           category: sibling.category || null,
           ship_week: sibling.ship_week || (extracted.shipWeek ? `WEEK ${extracted.shipWeek}` : null),
           plant_week: sibling.plant_week || null,
+          year,
           ord_qty: total,
           qty: 0,            // no production plan yet
           ppp: 1,
