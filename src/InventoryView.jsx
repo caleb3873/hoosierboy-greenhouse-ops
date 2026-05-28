@@ -137,6 +137,8 @@ export default function InventoryView({ onBack }) {
   // per selected row, all sharing the source lot's location.
   const [rowPickerLot, setRowPickerLot] = useState(null);
   const [rowPickerSelection, setRowPickerSelection] = useState(new Set());
+  // Freeform row entry — for rows that aren't in the Fall Program plan
+  const [customRowInput, setCustomRowInput] = useState("");
   // Item picker is two-step:
   //   1. pickerSize = null → show the size chip grid
   //   2. pickerSize = "9\"" (etc) → show varieties in that size, searchable
@@ -314,15 +316,16 @@ export default function InventoryView({ onBack }) {
   }
 
   // ── Actions ────────────────────────────────────────────────────────────────
-  // addLot called from "+ Add row" buttons. If no explicit seed, pre-fills
-  // location + incremented row from the last edited lot. Records the new row
-  // in sessionAdded so Undo can remove it.
+  // addLot called from "+ Add row" buttons. Carries the location forward
+  // (same house), but leaves the row id blank so the user always picks it
+  // explicitly — keeps "+ Add row" feeling like a fresh row instead of a
+  // duplicate. Duplicate is for actual copies. Records new rows in
+  // sessionAdded so Undo can remove them.
   async function addLot(seed = {}) {
     const fallbackLocation = filterLocation || lastLot?.location || "";
-    const fallbackRowId    = lastLot?.location === fallbackLocation ? nextRowId(lastLot?.rowId) : "";
     const created = await insert({
       location: seed.location ?? fallbackLocation,
-      rowId:    seed.rowId    ?? fallbackRowId,
+      rowId:    seed.rowId    ?? "",
       potSize:  seed.potSize  || "",
       plantType: seed.plantType || "",
       variety:  seed.variety || "",
@@ -360,6 +363,15 @@ export default function InventoryView({ onBack }) {
   function closeRowPicker() {
     setRowPickerLot(null);
     setRowPickerSelection(new Set());
+    setCustomRowInput("");
+  }
+  // Set a freeform row ID on the current lot and close — used when the
+  // physical row isn't in the Fall Program plan (e.g. EQ0405).
+  async function applyCustomRow() {
+    const trimmed = customRowInput.trim();
+    if (!trimmed || !rowPickerLot) return;
+    await patch(rowPickerLot, { rowId: trimmed });
+    closeRowPicker();
   }
   function toggleRowSelection(rowId) {
     setRowPickerSelection(prev => {
@@ -1064,9 +1076,37 @@ export default function InventoryView({ onBack }) {
                   Add {rowPickerSelection.size || ""}
                 </button>
               </div>
+              {/* Custom row entry — for rows that aren't in the Fall Program
+                  plan. Typing here and tapping Use sets this lot's row id
+                  directly and closes. */}
+              <div style={{ padding: "10px 14px", borderBottom: "1.5px solid #e0ead8", background: "#fafbf7" }}>
+                <div style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", letterSpacing: 0.6, textTransform: "uppercase", marginBottom: 4 }}>
+                  Row not in the list? Type it:
+                </div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <input
+                    value={customRowInput}
+                    onChange={e => setCustomRowInput(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Enter") applyCustomRow(); }}
+                    placeholder="e.g. EQ0405"
+                    style={{ flex: 1, padding: "10px 12px", borderRadius: 8, border: "1.5px solid #c8d8c0", fontSize: 14, fontFamily: "inherit", boxSizing: "border-box" }}
+                  />
+                  <button onClick={applyCustomRow} disabled={!customRowInput.trim()}
+                    style={{
+                      background: customRowInput.trim() ? "#4a7a35" : "#c8d8c0",
+                      color: "#fff", border: "none", borderRadius: 8,
+                      padding: "10px 18px", fontSize: 13, fontWeight: 800,
+                      cursor: customRowInput.trim() ? "pointer" : "default", fontFamily: "inherit",
+                    }}>
+                    Use
+                  </button>
+                </div>
+              </div>
+
               <div style={{ padding: "10px 14px", borderBottom: "1.5px solid #e0ead8", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <button onClick={() => setRowPickerSelection(allSelected ? new Set() : new Set(rowsAtLoc))}
-                  style={{ background: "#f2f5ef", border: "1.5px solid #c8d8c0", borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 800, color: "#1e2d1a", cursor: "pointer", fontFamily: "inherit" }}>
+                  disabled={rowsAtLoc.length === 0}
+                  style={{ background: "#f2f5ef", border: "1.5px solid #c8d8c0", borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 800, color: "#1e2d1a", cursor: rowsAtLoc.length === 0 ? "default" : "pointer", fontFamily: "inherit", opacity: rowsAtLoc.length === 0 ? 0.5 : 1 }}>
                   {allSelected ? "Clear" : `Select all (${rowsAtLoc.length})`}
                 </button>
                 <div style={{ fontSize: 11, color: "#7a8c74", fontWeight: 700 }}>
