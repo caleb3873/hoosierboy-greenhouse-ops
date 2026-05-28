@@ -875,7 +875,9 @@ export default function InventoryView({ onBack }) {
                 <div style={{ flex: 1 }} />
                 <StatusPill lot={lot} />
                 <button onClick={() => duplicate(lot)} title="Duplicate (next row)"
-                  style={cardActionBtn("#7fb069", "#1e2d1a")}>⎘</button>
+                  style={{ ...cardActionBtn("#fff", "#4a7a35", "#4a7a35"), display: "inline-flex", alignItems: "center", gap: 2, fontSize: 13 }}>
+                  📋<span style={{ fontSize: 10, fontWeight: 900, marginLeft: 1 }}>+1</span>
+                </button>
                 <button onClick={() => startCamera(lot)} title="Take a photo for this row"
                   style={cardActionBtn("#fff", "#4a90d9", "#4a90d9")}>
                   📷
