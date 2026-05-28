@@ -749,10 +749,18 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       else if (titleUpper.includes("PURPLE")) asterPinchStyle = { bg: "#7d3c98", color: "#fff" };
       else                                    asterPinchStyle = { bg: "#a86a10", color: "#fff" };
     }
-    // Big colored location bar at the top of the card. Pulls from task.location
-    // — fall_program_items uses "Bluff Quonset 02" etc. Color-coded by site so
-    // Bluff vs Sprague vs SE Pad reads at a glance.
-    const locText = (t.location || "").trim();
+    // Big colored location bar at the top of the card. Production tasks have
+    // `location: "bluff"` flat-stamped but the per-row locations live inside
+    // the description as a "ROWS (N): Bluff Quonset 02, Bluff Quonset 10, ..."
+    // line. Prefer those when present so the bar reads like the actual quonset.
+    let locText = "";
+    const rowMatch = (t.description || "").match(/ROWS\s*\(\d+\):\s*([^\n]+)/);
+    if (rowMatch) {
+      // De-dup and trim — sometimes the row list repeats
+      locText = [...new Set(rowMatch[1].split(",").map(s => s.trim()).filter(Boolean))].join(", ");
+    }
+    if (!locText) locText = (t.location || "").trim();
+
     const locUpper = locText.toUpperCase();
     let locBarBg = null;
     if (locText) {
@@ -770,8 +778,8 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
         marginBottom: 10, opacity: isDone ? 0.65 : 1, overflow: "hidden",
       }}>
         {locBarBg && (
-          <div style={{ background: locBarBg, color: "#fff", padding: "8px 14px", fontSize: 14, fontWeight: 800, letterSpacing: 0.6, textTransform: "uppercase", display: "flex", alignItems: "center", gap: 6 }}>
-            <span>📍</span>
+          <div style={{ background: locBarBg, color: "#fff", padding: "8px 14px", fontSize: 14, fontWeight: 800, letterSpacing: 0.4, textTransform: "uppercase", display: "flex", alignItems: "flex-start", gap: 6, lineHeight: 1.3 }}>
+            <span style={{ flexShrink: 0 }}>📍</span>
             <span>{locText}</span>
           </div>
         )}
@@ -816,7 +824,12 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
               )}
             </div>
             {t.targetDate && <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2, fontWeight: 600 }}>📅 {formatTargetDate(t.targetDate)}</div>}
-            {t.description && <div style={{ fontSize: 12, color: "#7a8c74", marginTop: 4 }}>{t.description}</div>}
+            {t.description && (
+              <div style={{ fontSize: 12, color: "#7a8c74", marginTop: 4, whiteSpace: "pre-wrap" }}>
+                {/* If the location bar already shows the row list, suppress the ROWS line in the description so it doesn't double up */}
+                {rowMatch ? (t.description || "").replace(/ROWS\s*\(\d+\):[^\n]*\n?/, "").trim() : t.description}
+              </div>
+            )}
             {(t.photos || []).length > 0 && <div style={{ fontSize: 11, color: "#4a90d9", marginTop: 4 }}>📷 {t.photos.length} photo{t.photos.length !== 1 ? "s" : ""}</div>}
             {t.notes && <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 4, fontStyle: "italic" }}>📝 {t.notes}</div>}
             {isDone && (
