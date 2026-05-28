@@ -58,18 +58,13 @@ function typeFromCategory(cat, variety) {
 
 const POT_SIZES = ["", "4.5\"", "6\"", "8\"", "9\"", "10\"", "12\"", "14\"", "HB", "Tray", "Liner", "Combo"];
 
-// Compact column widths designed for phones — total ~580px, sticky Location.
-// Size is dropped from the grid: the Item picker is two-step (pick size, then
-// variety) so the lot already carries its size. The Item cell shows it inline
-// like '9" — PARADISO WHITE' so you can still scan it.
-const COLS = [
-  { key: "location",   label: "Loc",   width: 130, sticky: true },
-  { key: "rowId",      label: "Row",   width: 90  },
-  { key: "variety",    label: "Item",  width: 220 },
-  { key: "quantity",   label: "Qty",   width: 70  },
-  { key: "notes",      label: "Notes", width: 130 },
-  { key: "actions",    label: "",      width: 76  },
-];
+// Mobile-first layout: every record renders in two visual rows so the four
+// critical fields (Loc · Row · Item · Qty) all fit across a phone viewport
+// without horizontal scroll. Notes + Actions sit on a second line spanning
+// the full width. Header mirrors the top-row grid template.
+//
+// Top-row grid: fractional widths (sum 100%) — Item gets the most space.
+const TOP_COLS = "1.1fr 0.8fr 1.9fr 0.8fr";
 
 export default function InventoryView({ onBack }) {
   const { displayName } = useAuth();
@@ -371,9 +366,7 @@ export default function InventoryView({ onBack }) {
     });
   }
 
-  const totalWidth = COLS.reduce((s, c) => s + c.width, 0);
-  const stickyLeft = 0;
-  const locWidth = COLS[0].width;
+  // (Layout now responsive — no fixed widths needed)
 
   return (
     <div style={{ ...FONT, minHeight: "100vh", background: "#f2f5ef", paddingBottom: 70 }}>
@@ -406,52 +399,43 @@ export default function InventoryView({ onBack }) {
         </span>
       </div>
 
-      {/* Spreadsheet grid. Horizontal scroll on phones; first column sticky. */}
-      <div style={{ overflowX: "auto", background: "#fff", borderBottom: "1.5px solid #e0ead8" }}>
-        <div style={{ minWidth: totalWidth, position: "relative" }}>
-          {/* Sticky header row */}
-          <div style={{
-            display: "grid",
-            gridTemplateColumns: COLS.map(c => `${c.width}px`).join(" "),
-            background: "#162212", color: "#c8e6b8",
-            position: "sticky", top: 0, zIndex: 6,
-          }}>
-            {COLS.map((c, i) => (
-              <div key={c.key} style={{
-                padding: "8px 6px", fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.6,
-                borderRight: "1px solid #2a3e22",
-                ...(c.sticky ? { position: "sticky", left: stickyLeft, background: "#162212", zIndex: 7 } : {}),
-              }}>
-                {c.label}
-              </div>
-            ))}
-          </div>
-
-          {/* Body */}
-          {visibleLots.length === 0 && (
-            <div style={{ padding: "28px 14px", textAlign: "center", color: "#7a8c74" }}>
-              <div style={{ fontSize: 28, marginBottom: 6 }}>📊</div>
-              <div style={{ fontSize: 13, fontWeight: 700 }}>No rows yet.</div>
-              <div style={{ fontSize: 11, marginTop: 4 }}>Search above or tap “+ Add”.</div>
+      {/* Two-line record list. No horizontal scroll — everything fits the phone width. */}
+      <div style={{ background: "#fff", borderBottom: "1.5px solid #e0ead8" }}>
+        {/* Sticky header — mirrors the top row of each record */}
+        <div style={{
+          display: "grid", gridTemplateColumns: TOP_COLS,
+          background: "#162212", color: "#c8e6b8",
+          position: "sticky", top: 0, zIndex: 6,
+        }}>
+          {["Loc", "Row", "Item", "Qty"].map(label => (
+            <div key={label} style={{
+              padding: "8px 8px", fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.6,
+              borderRight: "1px solid #2a3e22",
+            }}>
+              {label}
             </div>
-          )}
+          ))}
+        </div>
 
-          {visibleLots.map((lot, idx) => {
-            const altBg = idx % 2 === 0 ? "#fff" : "#fafbf7";
-            return (
-              <div key={lot.id} style={{
-                display: "grid",
-                gridTemplateColumns: COLS.map(c => `${c.width}px`).join(" "),
-                background: altBg, borderTop: "1px solid #e0ead8",
-                alignItems: "stretch",
-              }}>
-                {/* Sticky Location — tap opens site → location picker */}
-                <Cell sticky stickyBg={altBg} width={locWidth}>
+        {visibleLots.length === 0 && (
+          <div style={{ padding: "28px 14px", textAlign: "center", color: "#7a8c74" }}>
+            <div style={{ fontSize: 28, marginBottom: 6 }}>📊</div>
+            <div style={{ fontSize: 13, fontWeight: 700 }}>No rows yet.</div>
+            <div style={{ fontSize: 11, marginTop: 4 }}>Tap "+ Add" to start.</div>
+          </div>
+        )}
+
+        {visibleLots.map((lot, idx) => {
+          const altBg = idx % 2 === 0 ? "#fff" : "#fafbf7";
+          return (
+            <div key={lot.id} style={{ background: altBg, borderTop: "1px solid #e0ead8" }}>
+              {/* Top row — Loc · Row · Item · Qty */}
+              <div style={{ display: "grid", gridTemplateColumns: TOP_COLS, alignItems: "stretch" }}>
+                <Cell>
                   <button onClick={() => openLocationPicker(lot)} style={pickerCellBtn(lot.location)}>
                     {lot.location || <span style={{ color: "#bbc8b6" }}>—</span>}
                   </button>
                 </Cell>
-                {/* Row — tap opens the row picker (multi-select / select all) */}
                 <Cell>
                   <button
                     onClick={() => lot.location ? openRowPicker(lot) : openLocationPicker(lot)}
@@ -460,8 +444,6 @@ export default function InventoryView({ onBack }) {
                     {lot.rowId || <span style={{ color: "#bbc8b6" }}>—</span>}
                   </button>
                 </Cell>
-                {/* Item — tap to open the two-step Fall Program picker
-                    (pick size, then pick variety in that size). */}
                 <Cell>
                   <button onClick={() => openPicker(lot)} style={pickerCellBtn(lot.variety)}>
                     {lot.variety
@@ -469,46 +451,46 @@ export default function InventoryView({ onBack }) {
                       : <span style={{ color: "#bbc8b6" }}>—</span>}
                   </button>
                 </Cell>
-                {/* Qty */}
                 <Cell>
                   <input type="number" inputMode="numeric" value={lot.quantity ?? 0}
                     onChange={e => patch(lot, { quantity: parseInt(e.target.value, 10) || 0 })}
-                    style={{ ...cellInputBase, fontWeight: 800, textAlign: "right", fontSize: 14 }} />
+                    style={{ ...cellInputBase, fontWeight: 800, textAlign: "right", fontSize: 15 }} />
                 </Cell>
-                {/* Notes */}
-                <Cell>
+              </div>
+              {/* Bottom row — Notes (flex) + Actions (right) */}
+              <div style={{ display: "flex", alignItems: "stretch", borderTop: "1px dashed #e8ede4", background: altBg }}>
+                <div style={{ flex: 1, padding: "2px 4px", borderRight: "1px dashed #e8ede4", display: "flex" }}>
                   <AutoTextarea value={lot.notes || ""}
                     onChange={v => patch(lot, { notes: v })}
-                    placeholder="—" />
-                </Cell>
-                {/* Actions */}
-                <div style={{ padding: 4, display: "flex", alignItems: "center", gap: 3, borderRight: "1px solid #e8ede4", flexWrap: "wrap" }}>
-                  <button onClick={() => duplicate(lot)} title="Duplicate (next row)" style={miniBtn("#7fb069", "#1e2d1a")}>⎘</button>
-                  <button onClick={() => { setPhotoLot(lot); setPhotoScope("row"); }} title="Photos for this row"
-                    style={miniBtn("#fff", "#4a90d9", "#4a90d9")}>
+                    placeholder="📝 notes — small, wilted, etc." />
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 6px", flexShrink: 0 }}>
+                  <button onClick={() => duplicate(lot)} title="Duplicate (next row)" style={actionBtn("#7fb069", "#1e2d1a")}>⎘</button>
+                  <button onClick={() => { setPhotoLot(lot); setPhotoScope("row"); }} title="Photos"
+                    style={actionBtn("#fff", "#4a90d9", "#4a90d9")}>
                     📷{(lot.photos || []).length > 0 ? <sup style={{ fontSize: 9, marginLeft: 1 }}>{(lot.photos || []).length}</sup> : ""}
                   </button>
                   <button onClick={() => { if (window.confirm(`Delete "${lot.variety || "this row"}"?`)) remove(lot.id); }}
-                    title="Delete" style={miniBtn("transparent", "#d94f3d", "#d94f3d")}>🗑</button>
+                    title="Delete" style={actionBtn("transparent", "#d94f3d", "#d94f3d")}>🗑</button>
                 </div>
               </div>
-            );
-          })}
+            </div>
+          );
+        })}
 
-          {/* Pinned "+ Add row" footer */}
-          <button onClick={() => addLot({ location: filterLocation })}
-            style={{
-              width: "100%", padding: "10px", textAlign: "left",
-              background: "#f2f5ef", border: "none", borderTop: "1.5px dashed #c8d8c0",
-              fontSize: 13, fontWeight: 800, color: "#4a7a35", cursor: "pointer", fontFamily: "inherit",
-            }}>
-            + Add row
-          </button>
-        </div>
+        {/* Pinned "+ Add row" footer */}
+        <button onClick={() => addLot({ location: filterLocation })}
+          style={{
+            width: "100%", padding: "12px", textAlign: "left",
+            background: "#f2f5ef", border: "none", borderTop: "1.5px dashed #c8d8c0",
+            fontSize: 13, fontWeight: 800, color: "#4a7a35", cursor: "pointer", fontFamily: "inherit",
+          }}>
+          + Add row
+        </button>
       </div>
 
       <div style={{ padding: "8px 14px", fontSize: 10, color: "#7a8c74", lineHeight: 1.4 }}>
-        Tip: tap Loc → pick site → pick location. Tap Row → check the rows you want (or Select all) → tap Add. Each picked row becomes its own grid row; just tap Item and type the qty.
+        Tip: tap Loc → site → location. Tap Row → check rows (or Select all) → Add. Each picked row becomes its own grid row — just tap Item and type the qty. Notes + actions sit below each row.
       </div>
 
       {/* Photo viewer modal */}
@@ -773,12 +755,17 @@ const cellInputBase = {
 };
 const cellSelect = { ...cellInputBase, appearance: "none" };
 
-const Cell = ({ children, sticky, stickyBg, width }) => (
-  <div style={{
-    padding: 0, borderRight: "1px solid #e8ede4", display: "flex", alignItems: "stretch",
-    ...(sticky ? { position: "sticky", left: 0, background: stickyBg, zIndex: 4, width } : {}),
-  }}>{children}</div>
+const Cell = ({ children }) => (
+  <div style={{ padding: 0, borderRight: "1px solid #e8ede4", display: "flex", alignItems: "stretch", minWidth: 0 }}>
+    {children}
+  </div>
 );
+
+const actionBtn = (bg, color, border = null) => ({
+  background: bg, color, border: border ? `1.5px solid ${border}` : "none",
+  borderRadius: 6, padding: "6px 7px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit",
+  flexShrink: 0,
+});
 
 const btnPrimary = {
   background: "#7fb069", color: "#1e2d1a", border: "none", borderRadius: 8,
@@ -797,10 +784,10 @@ const miniBtn = (bg, color, border = null) => ({
 // Shared style for cells that act as picker triggers (Location, Row, Item)
 const pickerCellBtn = (hasValue) => ({
   width: "100%", textAlign: "left", background: "transparent",
-  border: "none", padding: "6px 6px", cursor: "pointer", fontFamily: "inherit",
+  border: "none", padding: "8px 8px", cursor: "pointer", fontFamily: "inherit",
   color: hasValue ? "#1e2d1a" : "#bbc8b6",
-  fontSize: 12, lineHeight: 1.3, wordBreak: "break-word",
-  minHeight: 28, display: "flex", alignItems: "center",
+  fontSize: 12, lineHeight: 1.25, wordBreak: "break-word", overflowWrap: "anywhere",
+  minHeight: 36, display: "flex", alignItems: "flex-start",
 });
 
 // ── Photo viewer / uploader modal ────────────────────────────────────────────
