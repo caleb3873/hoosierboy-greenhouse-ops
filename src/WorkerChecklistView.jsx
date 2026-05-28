@@ -6,6 +6,7 @@ import { NotificationBanner } from "./PushNotifications";
 import { BrehobWorkerView } from "./BrehobList";
 import { VacationRequestModal, OutThisWeekBanner } from "./Vacation";
 import { AnnouncementBanner, AnnouncementPopup, useAnnouncementPopup } from "./Announcements";
+import InventoryView from "./InventoryView";
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
 const GREEN_DARK = "#1e2d1a";
@@ -29,6 +30,19 @@ function formatTime(iso) {
 }
 
 export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenTaskCreator }) {
+  const [showInventory, setShowInventory] = useState(false);
+  if (showInventory) {
+    return <InventoryView onBack={() => setShowInventory(false)} />;
+  }
+  return <WorkerChecklistViewInner
+    onSwitchMode={onSwitchMode}
+    onBackToApp={onBackToApp}
+    onOpenTaskCreator={onOpenTaskCreator}
+    onOpenInventory={() => setShowInventory(true)}
+  />;
+}
+
+function WorkerChecklistViewInner({ onSwitchMode, onBackToApp, onOpenTaskCreator, onOpenInventory }) {
   const { rows: tasks, upsert, refresh } = useManagerTasks();
   const { rows: brehobItems, update: updateBrehob } = useBrehobItems();
   const { displayName, growerProfile } = useAuth();
@@ -367,6 +381,28 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
 
       <AnnouncementBanner />
       <OutThisWeekBanner />
+
+      {/* Inventory shortcut — opens InventoryView, defaults to Locked mode so
+          growers can browse / take photos / leave notes without changing counts. */}
+      {onOpenInventory && (
+        <div style={{ padding: "8px 12px 0" }}>
+          <button onClick={onOpenInventory}
+            style={{
+              width: "100%", background: "#162212", color: CREAM, border: `1px solid ${GREEN}66`,
+              borderRadius: 10, padding: "12px 14px", cursor: "pointer", ...FONT,
+              display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+            }}>
+            <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 22 }}>📊</span>
+              <span>
+                <div style={{ fontSize: 14, fontWeight: 800 }}>Inventory</div>
+                <div style={{ fontSize: 11, opacity: 0.75, marginTop: 2 }}>Locked by default · photos, notes, photos</div>
+              </span>
+            </span>
+            <span style={{ fontSize: 18 }}>→</span>
+          </button>
+        </div>
+      )}
 
       <div style={{ display: "flex", gap: 8, padding: 12 }}>
         {[

@@ -301,6 +301,7 @@ export const useFallProgramItems = () => useTable("fall_program_items", { orderB
 // Manager tasks (voice-created tasks)
 export const useManagerTasks = () => useTable("manager_tasks", { orderBy: "priority", localKey: "gh_manager_tasks_v1" });
 export const useInventoryLots = () => useTable("inventory_lots", { orderBy: "updated_at", ascending: false, localKey: "gh_inventory_lots_v1" });
+export const useInventoryLocationNotes = () => useTable("inventory_location_notes", { orderBy: "updated_at", ascending: false, localKey: "gh_inventory_location_notes_v1" });
 
 // Owner dashboard hooks
 export const useOwnerProjects = () => useTable("owner_projects", { orderBy: "created_at", localKey: "gh_owner_projects_v1" });

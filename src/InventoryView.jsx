@@ -2,11 +2,12 @@
 // phones: tap a Fall Program item from the search to auto-create a row
 // pre-filled with location/row/size/type/variety — count is the only thing
 // the user types.
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import { useAuth } from "./Auth";
 import {
   useInventoryLots,
+  useInventoryLocationNotes,
   useFallProgramItems,
   getSupabase,
 } from "./supabase";
@@ -98,10 +99,48 @@ const POT_SIZES = ["", "4.5\"", "6\"", "8\"", "9\"", "10\"", "12\"", "14\"", "HB
 // confirm / type / empty buttons stay tap-friendly on a phone.
 const TOP_COLS = "1fr 0.7fr 1.6fr 1.1fr";
 
+// 2-hour auto-lock window. Toggling Edit on starts the countdown — it falls
+// back to Locked automatically so growers can't accidentally leave it open
+// after they finish a count.
+const EDIT_TTL_MS = 2 * 60 * 60 * 1000;
+const EDIT_UNTIL_KEY = "gh_inventory_edit_until";
+
 export default function InventoryView({ onBack }) {
   const { displayName } = useAuth();
   const { rows: lots, insert, update, remove } = useInventoryLots();
+  const { rows: locationNotes, upsert: upsertLocationNote } = useInventoryLocationNotes();
   const { rows: planItems } = useFallProgramItems();
+
+  // ── Edit / Lock mode ───────────────────────────────────────────────────────
+  const [editUntil, setEditUntil] = useState(() => {
+    try { return parseInt(localStorage.getItem(EDIT_UNTIL_KEY) || "0", 10) || 0; }
+    catch { return 0; }
+  });
+  // Re-render every 30s so the "Xm remaining" pill counts down and the mode
+  // flips to Locked the moment the TTL expires.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick(t => t + 1), 30000);
+    return () => clearInterval(id);
+  }, []);
+  const editMode = editUntil > Date.now();
+  const editMsLeft = Math.max(0, editUntil - Date.now());
+  function toggleEditMode() {
+    if (editMode) {
+      setEditUntil(0);
+      try { localStorage.removeItem(EDIT_UNTIL_KEY); } catch {}
+    } else {
+      const until = Date.now() + EDIT_TTL_MS;
+      setEditUntil(until);
+      try { localStorage.setItem(EDIT_UNTIL_KEY, String(until)); } catch {}
+    }
+  }
+  function fmtTimeLeft(ms) {
+    if (ms <= 0) return "";
+    const mins = Math.ceil(ms / 60000);
+    if (mins >= 60) return `${Math.floor(mins / 60)}h ${mins % 60}m`;
+    return `${mins}m`;
+  }
 
   // Screen mode: "index" = location drilldown cards (like maintenance houses);
   // "sheet" = the spreadsheet for a single location (or the flat view).
@@ -241,6 +280,18 @@ export default function InventoryView({ onBack }) {
     }
     return out;
   }, [planItems, pickerLot, pickerSize, pickerQuery]);
+
+  // Aggregate photo counts per location — drives the 📷 badge on the index
+  // cards so growers can see at a glance where photos already exist.
+  const photosByLocation = useMemo(() => {
+    const m = new Map();
+    (lots || []).forEach(l => {
+      if (!l.location) return;
+      const c = (l.photos || []).length;
+      if (c > 0) m.set(l.location, (m.get(l.location) || 0) + c);
+    });
+    return m;
+  }, [lots]);
 
   // ── Per-location roll-up — drives the drilldown index cards ───────────────
   const locationSummary = useMemo(() => {
@@ -520,6 +571,43 @@ export default function InventoryView({ onBack }) {
     return toCreate.length;
   }
 
+  // ── Notes (running log per lot) ────────────────────────────────────────────
+  // Appends a new timestamped entry — never overwrites the prior log. Also
+  // mirrors the latest entry into the legacy 'notes' column so the XLSX
+  // export + any existing readers still work.
+  async function appendNote(lot, text) {
+    const trimmed = (text || "").trim();
+    if (!trimmed) return;
+    const entry = { text: trimmed, addedAt: new Date().toISOString(), addedBy: displayName || "Manager" };
+    const nextLog = [...(lot.noteLog || []), entry];
+    await patch(lot, { noteLog: nextLog, notes: trimmed });
+  }
+
+  // ── House-wide notes ───────────────────────────────────────────────────────
+  // Keyed by location string. Each call appends a new entry to the JSONB
+  // log array for that location.
+  async function appendLocationNote(location, text) {
+    const trimmed = (text || "").trim();
+    if (!trimmed || !location) return;
+    const existing = (locationNotes || []).find(n => n.location === location);
+    const entry = { text: trimmed, addedAt: new Date().toISOString(), addedBy: displayName || "Manager" };
+    if (existing) {
+      await upsertLocationNote({
+        ...existing,
+        noteLog: [...(existing.noteLog || []), entry],
+      });
+    } else {
+      await upsertLocationNote({
+        id: crypto.randomUUID(),
+        location,
+        noteLog: [entry],
+      });
+    }
+  }
+  function locationNoteLogFor(location) {
+    return (locationNotes || []).find(n => n.location === location)?.noteLog || [];
+  }
+
   // ── Photos ─────────────────────────────────────────────────────────────────
   async function uploadPhotoForLot(lot, file) {
     const sb = getSupabase();
@@ -707,6 +795,12 @@ export default function InventoryView({ onBack }) {
             </button>
           </div>
         </div>
+
+        {/* Edit / Lock toggle — appears under the header. Auto-falls back to
+            Locked after 2 hours. Photos, gallery, and notes remain available
+            in Locked mode; qty / item / loc / row / add / delete are gated. */}
+        <EditLockToggle editMode={editMode} editMsLeft={editMsLeft} onToggle={toggleEditMode} fmtTimeLeft={fmtTimeLeft} />
+
         {showExplainer && <InventoryExplainer onClose={dismissExplainer} />}
 
         <div style={{ padding: "12px 14px 4px", fontSize: 12, color: "#7a8c74", lineHeight: 1.4 }}>
@@ -720,9 +814,6 @@ export default function InventoryView({ onBack }) {
             </div>
           )}
           {locationSummary.map(s => {
-            // Cascading status decision — guard the "Nd ago" branches behind
-            // an explicit lastCount existence check so we can never render
-            // "nullD ago" when a location has lots but no counts yet.
             const daysAgo = s.lastCount ? Math.floor((Date.now() - new Date(s.lastCount).getTime()) / 86400000) : null;
             let chip, chipBg, chipColor;
             if (s.lots === 0)               { chip = "Not walked";              chipBg = "#e8eee5"; chipColor = "#7a8c74"; }
@@ -732,6 +823,8 @@ export default function InventoryView({ onBack }) {
             else if (daysAgo === 1)         { chip = "Yesterday";               chipBg = "#fff3c4"; chipColor = "#7a5a00"; }
             else if (daysAgo <= 7)          { chip = `${daysAgo}d ago`;         chipBg = "#fff3c4"; chipColor = "#7a5a00"; }
             else                            { chip = `${daysAgo}d · stale`;     chipBg = "#fdecea"; chipColor = "#7a2418"; }
+            const photoCount = photosByLocation.get(s.location) || 0;
+            const hasHouseNote = (locationNotes || []).some(n => n.location === s.location && (n.noteLog || []).length > 0);
             return (
               <button key={s.location} onClick={() => openLocation(s.location)}
                 style={{
@@ -753,6 +846,20 @@ export default function InventoryView({ onBack }) {
                 {s.lastCount && (
                   <div style={{ fontSize: 10, color: "#7a8c74", marginTop: 2 }}>
                     Last: {new Date(s.lastCount).toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+                  </div>
+                )}
+                {(photoCount > 0 || hasHouseNote) && (
+                  <div style={{ display: "flex", gap: 6, marginTop: 2, flexWrap: "wrap" }}>
+                    {photoCount > 0 && (
+                      <span style={{ fontSize: 10, color: "#1e4a7a", background: "#eef5fb", border: "1px solid #c8d8eb", borderRadius: 999, padding: "1px 7px", fontWeight: 800 }}>
+                        📷 {photoCount}
+                      </span>
+                    )}
+                    {hasHouseNote && (
+                      <span style={{ fontSize: 10, color: "#7a5a00", background: "#fff7d6", border: "1px solid #f0e6b8", borderRadius: 999, padding: "1px 7px", fontWeight: 800 }}>
+                        🏠 note
+                      </span>
+                    )}
                   </div>
                 )}
               </button>
@@ -781,26 +888,41 @@ export default function InventoryView({ onBack }) {
         </button>
       </div>
 
-      {/* Mode toggle — Census vs Sweep */}
-      <div style={{ background: "#fff", borderBottom: "1.5px solid #e0ead8", padding: "8px 12px", display: "flex", gap: 6 }}>
-        {[
-          { id: "census", label: "Census", desc: "type qty" },
-          { id: "sweep",  label: "Sweep",  desc: "tap empty" },
-        ].map(m => (
-          <button key={m.id} onClick={() => setWalkMode(m.id)}
-            style={{
-              flex: 1, padding: "8px 10px", borderRadius: 8,
-              background: walkMode === m.id ? "#1e2d1a" : "#f2f5ef",
-              color: walkMode === m.id ? "#c8e6b8" : "#7a8c74",
-              border: `1.5px solid ${walkMode === m.id ? "#1e2d1a" : "#c8d8c0"}`,
-              fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit",
-              display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
-            }}>
-            <span>{m.label}</span>
-            <span style={{ fontSize: 9, fontWeight: 700, opacity: 0.8 }}>{m.desc}</span>
-          </button>
-        ))}
-      </div>
+      {/* Edit / Lock toggle — same as on the index, mirrored here */}
+      <EditLockToggle editMode={editMode} editMsLeft={editMsLeft} onToggle={toggleEditMode} fmtTimeLeft={fmtTimeLeft} />
+
+      {/* Census / Sweep — only shown in Edit mode since both change counts */}
+      {editMode && (
+        <div style={{ background: "#fff", borderBottom: "1.5px solid #e0ead8", padding: "8px 12px", display: "flex", gap: 6 }}>
+          {[
+            { id: "census", label: "Census", desc: "type qty" },
+            { id: "sweep",  label: "Sweep",  desc: "tap empty" },
+          ].map(m => (
+            <button key={m.id} onClick={() => setWalkMode(m.id)}
+              style={{
+                flex: 1, padding: "8px 10px", borderRadius: 8,
+                background: walkMode === m.id ? "#1e2d1a" : "#f2f5ef",
+                color: walkMode === m.id ? "#c8e6b8" : "#7a8c74",
+                border: `1.5px solid ${walkMode === m.id ? "#1e2d1a" : "#c8d8c0"}`,
+                fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit",
+                display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
+              }}>
+              <span>{m.label}</span>
+              <span style={{ fontSize: 9, fontWeight: 700, opacity: 0.8 }}>{m.desc}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* House-wide notes panel — always available (locked or edit) so growers
+          can leave observations without unlocking the qty controls. */}
+      {filterLocation && (
+        <HouseNotePanel
+          location={filterLocation}
+          log={locationNoteLogFor(filterLocation)}
+          onAdd={(text) => appendLocationNote(filterLocation, text)}
+        />
+      )}
 
       {/* Filter + summary toolbar */}
       <div style={{ padding: "8px 12px", background: "#fff", borderBottom: "1.5px solid #e0ead8", display: "flex", alignItems: "center", gap: 8 }}>
@@ -815,11 +937,13 @@ export default function InventoryView({ onBack }) {
         {filterLocation && (
           <button onClick={() => setFilterLocation("")} style={btnSecondary}>✕</button>
         )}
-        {filterLocation && allLocations.some(l => l.toLowerCase() === filterLocation.toLowerCase()) && (
+        {editMode && filterLocation && allLocations.some(l => l.toLowerCase() === filterLocation.toLowerCase()) && (
           <button onClick={() => walkFromPlan(filterLocation)} title="Pull in any newly-planned rows since you last walked"
             style={btnSecondary}>↻ Sync plan</button>
         )}
-        <button onClick={() => addLot({ location: filterLocation })} style={btnPrimary}>+ Add row</button>
+        {editMode && (
+          <button onClick={() => addLot({ location: filterLocation })} style={btnPrimary}>+ Add row</button>
+        )}
         <span style={{ fontSize: 10, color: "#7a8c74", fontWeight: 700, whiteSpace: "nowrap" }}>
           {visibleLots.length} · {visibleLots.reduce((s, l) => s + (l.quantity || 0), 0).toLocaleString()}
         </span>
@@ -829,11 +953,9 @@ export default function InventoryView({ onBack }) {
           A small "Pull in latest plan rows" button stays in the toolbar for
           the case where the plan changes mid-season.) */}
 
-      {/* Undo bar — only when there are session changes to undo. Replaces
-          the older 'Delete shown' bar since destructive bulk-delete is now
-          available behind the long-press 🗑 per row + Undo handles in-session
-          mistakes. */}
-      {hasChanges && (
+      {/* Undo bar — only when there are session changes to undo AND we're in
+          Edit mode. */}
+      {editMode && hasChanges && (
         <div style={{ padding: "6px 12px", background: "#fff8e8", borderBottom: "1.5px solid #f0d8a8", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
           <div style={{ fontSize: 11, color: "#7a5a00", fontWeight: 700 }}>
             ✎ {sessionEdits.size + sessionAdded.size} change{sessionEdits.size + sessionAdded.size === 1 ? "" : "s"} this session
@@ -871,25 +993,28 @@ export default function InventoryView({ onBack }) {
                 </div>
               )}
 
-              {/* HEADER — context (Loc · Row) on the left, actions on the right.
-                  Loc and Row are tappable to re-pick, status pill in the middle,
-                  small actions on the right. */}
+              {/* HEADER — context (Loc · Row) on the left, actions on the right */}
               <div style={{ display: "flex", alignItems: "center", padding: "8px 6px 8px 12px", gap: 6, borderBottom: "1px solid #f0f4ec", background: "#fafbf7" }}>
-                <button onClick={() => openLocationPicker(lot)}
-                  style={{ background: "transparent", border: "none", padding: "2px 4px", fontSize: 13, fontWeight: 700, color: lot.location ? "#1e2d1a" : "#bbc8b6", cursor: "pointer", fontFamily: "inherit", wordBreak: "break-word", textAlign: "left", flexShrink: 1, minWidth: 0 }}>
+                <button onClick={editMode ? () => openLocationPicker(lot) : undefined}
+                  disabled={!editMode}
+                  style={{ background: "transparent", border: "none", padding: "2px 4px", fontSize: 13, fontWeight: 700, color: lot.location ? "#1e2d1a" : "#bbc8b6", cursor: editMode ? "pointer" : "default", fontFamily: "inherit", wordBreak: "break-word", textAlign: "left", flexShrink: 1, minWidth: 0 }}>
                   📍 {lot.location || "—"}
                 </button>
                 <span style={{ color: "#c8d8c0", fontSize: 12 }}>·</span>
-                <button onClick={() => lot.location ? openRowPicker(lot) : openLocationPicker(lot)}
-                  style={{ background: "transparent", border: "none", padding: "2px 4px", fontSize: 13, fontWeight: 800, color: lot.rowId ? "#4a7a35" : "#bbc8b6", cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}>
+                <button onClick={editMode ? () => (lot.location ? openRowPicker(lot) : openLocationPicker(lot)) : undefined}
+                  disabled={!editMode}
+                  style={{ background: "transparent", border: "none", padding: "2px 4px", fontSize: 13, fontWeight: 800, color: lot.rowId ? "#4a7a35" : "#bbc8b6", cursor: editMode ? "pointer" : "default", fontFamily: "inherit", flexShrink: 0 }}>
                   {lot.rowId || "—"}
                 </button>
                 <div style={{ flex: 1 }} />
                 <StatusPill lot={lot} />
-                <button onClick={() => duplicate(lot)} title="Duplicate (next row)"
-                  style={{ ...cardActionBtn("#fff", "#4a7a35", "#4a7a35"), display: "inline-flex", alignItems: "center", gap: 2, fontSize: 13 }}>
-                  📋<span style={{ fontSize: 10, fontWeight: 900, marginLeft: 1 }}>+1</span>
-                </button>
+                {editMode && (
+                  <button onClick={() => duplicate(lot)} title="Duplicate (next row)"
+                    style={{ ...cardActionBtn("#fff", "#4a7a35", "#4a7a35"), display: "inline-flex", alignItems: "center", gap: 2, fontSize: 13 }}>
+                    📋<span style={{ fontSize: 10, fontWeight: 900, marginLeft: 1 }}>+1</span>
+                  </button>
+                )}
+                {/* Camera + gallery always available — even in Locked mode */}
                 <button onClick={() => startCamera(lot)} title="Take a photo for this row"
                   style={cardActionBtn("#fff", "#4a90d9", "#4a90d9")}>
                   📷
@@ -900,48 +1025,59 @@ export default function InventoryView({ onBack }) {
                     🖼<sup style={{ fontSize: 9, marginLeft: 1 }}>{photoCount}</sup>
                   </button>
                 )}
-                <button onClick={() => { if (window.confirm(`Delete "${lot.variety || "this row"}"?`)) remove(lot.id); }}
-                  title="Delete" style={cardActionBtn("transparent", "#d94f3d", "#d94f3d")}>🗑</button>
+                {editMode && (
+                  <button onClick={() => { if (window.confirm(`Delete "${lot.variety || "this row"}"?`)) remove(lot.id); }}
+                    title="Delete" style={cardActionBtn("transparent", "#d94f3d", "#d94f3d")}>🗑</button>
+                )}
               </div>
 
-              {/* ITEM — large, readable, full width */}
-              <button onClick={() => openPicker(lot)}
+              {/* ITEM — read-only display in Locked mode */}
+              <button onClick={editMode ? () => openPicker(lot) : undefined}
+                disabled={!editMode}
                 style={{
                   width: "100%", textAlign: "left", background: "transparent", border: "none",
-                  padding: "12px 14px", cursor: "pointer", fontFamily: "inherit",
+                  padding: "12px 14px", cursor: editMode ? "pointer" : "default", fontFamily: "inherit",
                   color: lot.variety ? "#1e2d1a" : "#bbc8b6",
                   fontSize: 17, lineHeight: 1.3, wordBreak: "break-word",
                 }}>
                 {lot.variety
                   ? <span><span style={{ fontWeight: 900, color: "#4a7a35", fontSize: 18 }}>{lot.potSize || "—"}</span> <span style={{ color: "#7a8c74" }}>·</span> <span style={{ fontWeight: 700 }}>{lot.variety}</span></span>
-                  : "🔍 Tap to pick item…"}
+                  : (editMode ? "🔍 Tap to pick item…" : "—")}
               </button>
 
-              {/* QTY — dominant area, full card width, big buttons */}
+              {/* QTY — in Edit mode shows the live controls; in Locked mode
+                  shows a read-only display with plan/Δ/timestamp. */}
               <div style={{ padding: "0 8px 8px", borderTop: "1px dashed #e8ede4" }}>
-                <QtyCell lot={lot} walkMode={walkMode} patch={patch} markEmpty={markEmpty} />
+                {editMode
+                  ? <QtyCell lot={lot} walkMode={walkMode} patch={patch} markEmpty={markEmpty} />
+                  : <QtyDisplay lot={lot} />}
               </div>
 
-              {/* NOTES — full width below qty */}
-              <div style={{ padding: "0 10px 8px", display: "flex", alignItems: "stretch" }}>
-                <AutoTextarea value={lot.notes || ""}
-                  onChange={v => patch(lot, { notes: v })}
-                  placeholder="📝 notes (optional)" />
+              {/* NOTES — running log (always editable, even when Locked, so
+                  growers can leave observations without unlocking numbers). */}
+              <div style={{ padding: "0 10px 10px" }}>
+                <NoteLogPanel
+                  log={lot.noteLog}
+                  legacyNote={lot.notes}
+                  onAdd={(text) => appendNote(lot, text)}
+                />
               </div>
             </div>
           );
         })}
 
-        {/* Pinned "+ Add row" footer */}
-        <button onClick={() => addLot({ location: filterLocation })}
-          style={{
-            width: "100%", padding: "14px", textAlign: "center",
-            background: "#f2f5ef", border: "1.5px dashed #c8d8c0", borderRadius: 10,
-            fontSize: 14, fontWeight: 800, color: "#4a7a35", cursor: "pointer", fontFamily: "inherit",
-            marginBottom: 10,
-          }}>
-          + Add row
-        </button>
+        {/* Pinned "+ Add row" footer — Edit mode only */}
+        {editMode && (
+          <button onClick={() => addLot({ location: filterLocation })}
+            style={{
+              width: "100%", padding: "14px", textAlign: "center",
+              background: "#f2f5ef", border: "1.5px dashed #c8d8c0", borderRadius: 10,
+              fontSize: 14, fontWeight: 800, color: "#4a7a35", cursor: "pointer", fontFamily: "inherit",
+              marginBottom: 10,
+            }}>
+            + Add row
+          </button>
+        )}
       </div>
 
       <div style={{ padding: "8px 14px 80px", fontSize: 10, color: "#7a8c74", lineHeight: 1.4 }}>
@@ -950,7 +1086,8 @@ export default function InventoryView({ onBack }) {
         <div style={{ marginTop: 4 }}>Amber stripe = duplicate (same loc · row · variety on another row). ⬇ XLSX in the header exports what you're looking at.</div>
       </div>
 
-      {/* Sticky bottom action bar — Save & done with location-check confirm */}
+      {/* Sticky bottom action bar — Save & Done in Edit mode; plain ← Done
+          in Locked mode (no session to save). */}
       <div style={{
         position: "fixed", left: 0, right: 0, bottom: 0,
         background: "#1e2d1a", color: "#c8e6b8", padding: "10px 14px",
@@ -960,10 +1097,17 @@ export default function InventoryView({ onBack }) {
         <div style={{ fontSize: 11, fontWeight: 800, color: "#c8e6b8", flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
           📍 {filterLocation || "All locations"}
         </div>
-        <button onClick={saveAndDone}
-          style={{ background: "#7fb069", color: "#1e2d1a", border: "none", borderRadius: 10, padding: "10px 18px", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
-          ✓ Save &amp; Done
-        </button>
+        {editMode ? (
+          <button onClick={saveAndDone}
+            style={{ background: "#7fb069", color: "#1e2d1a", border: "none", borderRadius: 10, padding: "10px 18px", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+            ✓ Save &amp; Done
+          </button>
+        ) : (
+          <button onClick={() => setScreen("index")}
+            style={{ background: "#7fb069", color: "#1e2d1a", border: "none", borderRadius: 10, padding: "10px 18px", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+            ← Done
+          </button>
+        )}
       </div>
 
       {/* Hidden camera input — triggered by tapping 📷 on any row.
@@ -1225,6 +1369,177 @@ export default function InventoryView({ onBack }) {
               </>
             )}
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Edit / Lock toggle pill ──────────────────────────────────────────────────
+// Renders on both the index and the sheet headers. Green = Locked (safe for
+// growers — photos, gallery, notes still work). Amber = Edit (qty + item +
+// loc/row pickers + add/delete unlocked, auto-expires after 2 hours).
+function EditLockToggle({ editMode, editMsLeft, onToggle, fmtTimeLeft }) {
+  return (
+    <div style={{
+      padding: "8px 12px", background: editMode ? "#fff7d6" : "#eef7e8",
+      borderBottom: `1.5px solid ${editMode ? "#f0d8a8" : "#b8d8b0"}`,
+      display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+    }}>
+      <div style={{ fontSize: 11, color: editMode ? "#7a5a00" : "#2e5e1a", fontWeight: 700, lineHeight: 1.3 }}>
+        {editMode
+          ? <><strong>✏ Edit mode</strong> — auto-locks in <strong>{fmtTimeLeft(editMsLeft)}</strong>. Counts + items can be changed.</>
+          : <><strong>🔒 Locked</strong> — photos + notes only. Tap Edit before counting.</>}
+      </div>
+      <button onClick={onToggle}
+        style={{
+          background: editMode ? "#fff" : "#4a7a35",
+          color: editMode ? "#7a5a00" : "#fff",
+          border: editMode ? "1.5px solid #e89a3a" : "none",
+          borderRadius: 999, padding: "6px 14px", fontSize: 12, fontWeight: 800,
+          cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap",
+        }}>
+        {editMode ? "🔒 Lock" : "✏ Edit"}
+      </button>
+    </div>
+  );
+}
+
+// ── Read-only qty display for Locked mode ────────────────────────────────────
+function QtyDisplay({ lot }) {
+  const counted = lot.lastCountedAt && lot.quantity != null;
+  return (
+    <div style={{ width: "100%", padding: "10px 0", display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+      <div style={{ fontSize: 32, fontWeight: 900, color: counted ? "#1e2d1a" : "#bbc8b6", letterSpacing: 0.5 }}>
+        {counted ? lot.quantity.toLocaleString() : "—"}
+      </div>
+      {Number.isFinite(lot.plannedQty) && <PlanVariance lot={lot} />}
+    </div>
+  );
+}
+
+// ── Per-lot running note log ─────────────────────────────────────────────────
+// Append-only — past notes never disappear so a season-long log builds up
+// for each lot. Always editable, even in Locked mode.
+function NoteLogPanel({ log, legacyNote, onAdd }) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState("");
+  const entries = Array.isArray(log) ? log : [];
+  // If there's a legacy `notes` field from before the log existed, show it
+  // once as a single un-timestamped legacy entry.
+  const hasLegacy = !entries.length && (legacyNote || "").trim();
+  async function save() {
+    const v = draft.trim();
+    if (!v) return;
+    await onAdd(v);
+    setDraft("");
+    setOpen(false);
+  }
+  return (
+    <div style={{ background: "#fffbe8", border: "1px solid #f0e6b8", borderRadius: 8, padding: "6px 8px", fontSize: 12, color: "#5a6a55" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: entries.length > 0 || hasLegacy ? 4 : 0 }}>
+        <div style={{ fontWeight: 800, color: "#7a5a00", textTransform: "uppercase", fontSize: 10, letterSpacing: 0.5 }}>
+          📝 Notes {entries.length > 0 && `· ${entries.length}`}
+        </div>
+        <button onClick={() => setOpen(o => !o)}
+          style={{ background: "transparent", border: "1px dashed #c8d8c0", color: "#7a5a00", borderRadius: 6, padding: "2px 10px", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+          {open ? "Cancel" : "+ Add note"}
+        </button>
+      </div>
+      {open && (
+        <div style={{ display: "flex", gap: 6, marginTop: 6, marginBottom: 6 }}>
+          <input
+            autoFocus
+            value={draft}
+            onChange={e => setDraft(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") save(); }}
+            placeholder="e.g. showed up small, wilted, sprayed for thrips…"
+            style={{ flex: 1, padding: "6px 8px", border: "1.5px solid #c8d8c0", borderRadius: 6, fontSize: 13, fontFamily: "inherit" }}
+          />
+          <button onClick={save}
+            style={{ background: "#4a7a35", color: "#fff", border: "none", borderRadius: 6, padding: "6px 12px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+            Save
+          </button>
+        </div>
+      )}
+      {entries.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+          {[...entries].reverse().map((n, i) => (
+            <div key={i} style={{ borderTop: i > 0 ? "1px dashed #e8ddb8" : "none", paddingTop: i > 0 ? 3 : 0, fontSize: 12, color: "#1e2d1a", whiteSpace: "pre-wrap", lineHeight: 1.35 }}>
+              <span>{n.text}</span>
+              <span style={{ fontSize: 9, color: "#9a8c80", fontWeight: 700, marginLeft: 6 }}>
+                · {n.addedBy || "?"} · {n.addedAt ? new Date(n.addedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : ""}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      {hasLegacy && (
+        <div style={{ fontSize: 12, color: "#1e2d1a", whiteSpace: "pre-wrap", lineHeight: 1.35 }}>
+          {legacyNote}
+          <span style={{ fontSize: 9, color: "#9a8c80", fontWeight: 700, marginLeft: 6 }}>· legacy</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── House-wide note panel ────────────────────────────────────────────────────
+// Sits at the top of the sheet view when filtered to one location. Same UX
+// as NoteLogPanel but tied to a location instead of a lot.
+function HouseNotePanel({ location, log, onAdd }) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState("");
+  const entries = Array.isArray(log) ? log : [];
+  async function save() {
+    const v = draft.trim();
+    if (!v) return;
+    await onAdd(v);
+    setDraft("");
+    setOpen(false);
+  }
+  return (
+    <div style={{ background: "#fff7d6", borderBottom: "1.5px solid #f0e6b8", padding: "8px 12px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ fontSize: 11, fontWeight: 800, color: "#7a5a00", textTransform: "uppercase", letterSpacing: 0.5 }}>
+          🏠 House note · {location}{entries.length > 0 ? ` (${entries.length})` : ""}
+        </div>
+        <button onClick={() => setOpen(o => !o)}
+          style={{ background: "#fff", border: "1.5px solid #e89a3a", color: "#7a5a00", borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+          {open ? "Cancel" : "+ Add"}
+        </button>
+      </div>
+      {open && (
+        <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+          <input
+            autoFocus
+            value={draft}
+            onChange={e => setDraft(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") save(); }}
+            placeholder="Whole-house observation, treatment applied, etc."
+            style={{ flex: 1, padding: "8px 10px", border: "1.5px solid #c8d8c0", borderRadius: 6, fontSize: 13, fontFamily: "inherit" }}
+          />
+          <button onClick={save}
+            style={{ background: "#4a7a35", color: "#fff", border: "none", borderRadius: 6, padding: "8px 14px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+            Save
+          </button>
+        </div>
+      )}
+      {entries.length > 0 && (
+        <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
+          {[...entries].slice(-3).reverse().map((n, i) => (
+            <div key={i} style={{ fontSize: 12, color: "#1e2d1a", whiteSpace: "pre-wrap", lineHeight: 1.35 }}>
+              <span>{n.text}</span>
+              <span style={{ fontSize: 9, color: "#9a8c80", fontWeight: 700, marginLeft: 6 }}>
+                · {n.addedBy || "?"} · {n.addedAt ? new Date(n.addedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : ""}
+              </span>
+            </div>
+          ))}
+          {entries.length > 3 && (
+            <div style={{ fontSize: 10, color: "#7a5a00", fontWeight: 700 }}>
+              + {entries.length - 3} earlier
+            </div>
+          )}
         </div>
       )}
     </div>
