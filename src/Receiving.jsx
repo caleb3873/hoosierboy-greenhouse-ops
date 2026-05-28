@@ -456,6 +456,30 @@ export function ReceivingWeekSummary({ onBack }) {
     await upsertLine({ ...existing, status: "pending", receivedQty: null, receivedAt: null, receivedBy: null });
   }
 
+  // Free-text note per line — for things like "showed up small", "wilted",
+  // "looks great". Doesn't change status, just adds context.
+  async function updateNote(it, noteText) {
+    const key = `${it.orderNumber}||${it.variety}||${weekTag}`;
+    const existing = lineByKey.get(key);
+    const payload = {
+      id: existing?.id || crypto.randomUUID(),
+      orderNumber: it.orderNumber,
+      variety: it.variety,
+      shipWeek: weekTag,
+      broker: it.broker,
+      expectedQty: it.arriving,
+      // Preserve existing status / received fields so adding a note doesn't
+      // demote a received line back to pending.
+      receivedQty: existing?.receivedQty ?? null,
+      status: existing?.status || "pending",
+      receivedBy: existing?.receivedBy || null,
+      receivedAt: existing?.receivedAt || null,
+      ...existing,
+      notes: noteText.trim() || null,
+    };
+    await upsertLine(payload);
+  }
+
   return (
     <div style={{ fontFamily: "'DM Sans','Segoe UI',sans-serif", minHeight: "100vh", background: "#f2f5ef", paddingBottom: 80 }}>
       {/* Header */}
@@ -516,6 +540,7 @@ export function ReceivingWeekSummary({ onBack }) {
                 upsertOrder={upsertOrder}
                 onMarkReceived={markReceived}
                 onUndoReceived={undoReceived}
+                onUpdateNote={updateNote}
                 onClaim={(item) => setClaimLine({ ...item, broker, weekTag })}
                 currentUserName={displayName}
               />
@@ -538,7 +563,7 @@ export function ReceivingWeekSummary({ onBack }) {
 }
 
 // ── Order card (broker section row, expandable) ──────────────────────────
-function OrderCard({ broker, order, weekTag, isOpen, onToggle, lineByKey, orderRecord, upsertOrder, onMarkReceived, onUndoReceived, onClaim, currentUserName }) {
+function OrderCard({ broker, order, weekTag, isOpen, onToggle, lineByKey, orderRecord, upsertOrder, onMarkReceived, onUndoReceived, onUpdateNote, onClaim, currentUserName }) {
   // How many lines for this order are already received (any status set)?
   const lineStates = order.items.map(it => lineByKey.get(`${it.orderNumber}||${it.variety}||${weekTag}`));
   const receivedCount = lineStates.filter(l => l?.status === "received").length;
@@ -585,6 +610,7 @@ function OrderCard({ broker, order, weekTag, isOpen, onToggle, lineByKey, orderR
                 row={row}
                 onReceive={() => onMarkReceived(it)}
                 onUndo={() => onUndoReceived(it)}
+                onUpdateNote={(text) => onUpdateNote(it, text)}
                 onClaim={() => onClaim(it)}
               />
             );
@@ -683,7 +709,7 @@ function PackingSlipThumb({ path }) {
 }
 
 // ── Single variety row (Receive / Claim buttons) ────────────────────────
-function LineRow({ item, row, onReceive, onUndo, onClaim }) {
+function LineRow({ item, row, onReceive, onUndo, onClaim, onUpdateNote }) {
   const diff = item.arriving - item.needed;
   // UNCLAIMED rows have need=0 — don't flag them as "extra" since there's no plan to compare to.
   const orderedShort = !item.unclaimed && (diff < 0 || item.short);
@@ -691,12 +717,25 @@ function LineRow({ item, row, onReceive, onUndo, onClaim }) {
   const status = row?.status;
   const isReceived = status === "received";
   const isClaim = status === "claim" || row?.claimSentAt;
+  const note = row?.notes || "";
+
+  const [editingNote, setEditingNote] = useState(false);
+  const [noteDraft, setNoteDraft] = useState(note);
+
+  async function saveNote() {
+    if (noteDraft === note) { setEditingNote(false); return; }
+    await onUpdateNote(noteDraft);
+    setEditingNote(false);
+  }
 
   return (
-    <div style={{ padding: "10px 14px", borderTop: "1px solid #f0f4ec", background: isReceived ? "#f5fbf0" : isClaim ? "#fff5f3" : "#fff" }}>
-      {/* Top row: checkbox · variety · arriving qty · claim button — all
-          on the same baseline. Checkbox is the primary action — tap to mark
-          this variety received, tap again to undo. */}
+    <div style={{
+      padding: "10px 14px",
+      borderTop: "1px solid #f0f4ec",
+      background: isReceived ? "#f3f5f0" : isClaim ? "#fff5f3" : "#fff",
+      opacity: isReceived ? 0.62 : 1,
+    }}>
+      {/* Top row: checkbox · variety · arriving qty · claim button */}
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <button
           onClick={isReceived ? onUndo : onReceive}
@@ -711,7 +750,7 @@ function LineRow({ item, row, onReceive, onUndo, onClaim }) {
           }}>
           {isReceived ? "✓" : ""}
         </button>
-        <div style={{ flex: 1, fontSize: 13, fontWeight: 700, color: "#1e2d1a", minWidth: 0 }}>
+        <div style={{ flex: 1, fontSize: 13, fontWeight: 700, color: "#1e2d1a", minWidth: 0, textDecoration: isReceived ? "line-through" : "none" }}>
           {item.variety}
           {item.unclaimed && (
             <span style={{ display: "inline-block", marginLeft: 6, fontSize: 9, fontWeight: 800, background: "#e89a3a", color: "#fff", padding: "1px 6px", borderRadius: 999, verticalAlign: "middle" }}>
@@ -719,10 +758,6 @@ function LineRow({ item, row, onReceive, onUndo, onClaim }) {
             </span>
           )}
         </div>
-        {/* Two truths, both bold and same size: ARRIVING (per PDF, supplier
-            minimums baked in) and NEED (production plan). Different colors so
-            they stand apart at a glance. UNCLAIMED rows skip need since
-            there's no plan yet. */}
         <div style={{ textAlign: "right", whiteSpace: "nowrap", lineHeight: 1.15 }}>
           <div style={{ fontSize: 13, fontWeight: 800, color: "#4a7a35" }}>{item.arriving.toLocaleString()}</div>
           {item.unclaimed ? (
@@ -738,14 +773,49 @@ function LineRow({ item, row, onReceive, onUndo, onClaim }) {
       </div>
 
       {/* Secondary line — badges (extras / short vs plan), receipt/claim
-          metadata. Aligned with the variety text. */}
+          metadata, + Note button. Aligned with the variety text. */}
       <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, marginLeft: 44, flexWrap: "wrap", fontSize: 10, color: "#a8b0a0" }}>
         {orderedShort && <span style={{ fontSize: 9, fontWeight: 800, background: "#d94f3d", color: "#fff", padding: "1px 6px", borderRadius: 999 }}>SHORT {Math.abs(diff).toLocaleString()}</span>}
         {orderedExtra && <span style={{ fontSize: 9, fontWeight: 800, background: "#7fb069", color: "#1e2d1a", padding: "1px 6px", borderRadius: 999 }}>+{diff.toLocaleString()} extra</span>}
         {isClaim && !isReceived && <span style={{ fontSize: 9, fontWeight: 800, background: "#d94f3d", color: "#fff", padding: "1px 6px", borderRadius: 999 }}>📋 CLAIM</span>}
         {row?.receivedAt && <span style={{ color: "#4a7a35" }}>· received by {row.receivedBy} · {new Date(row.receivedAt).toLocaleDateString()}</span>}
         {row?.claimSentAt && <span style={{ color: "#d94f3d" }}>· claim emailed {new Date(row.claimSentAt).toLocaleDateString()}</span>}
+        {!editingNote && (
+          <button onClick={() => { setNoteDraft(note); setEditingNote(true); }}
+            style={{ marginLeft: "auto", background: "transparent", border: "1px dashed #c8d8c0", color: "#7a8c74", borderRadius: 6, padding: "2px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+            📝 {note ? "Edit note" : "Add note"}
+          </button>
+        )}
       </div>
+
+      {/* Existing note shown in-place when not editing */}
+      {!editingNote && note && (
+        <div style={{ marginLeft: 44, marginTop: 6, fontSize: 12, color: "#5a6a55", fontStyle: "italic", background: "#fffbe8", border: "1px solid #f0e6b8", borderRadius: 6, padding: "6px 8px" }}>
+          📝 {note}
+        </div>
+      )}
+
+      {/* Inline note editor */}
+      {editingNote && (
+        <div style={{ marginLeft: 44, marginTop: 8, display: "flex", gap: 6 }}>
+          <input
+            autoFocus
+            value={noteDraft}
+            onChange={e => setNoteDraft(e.target.value)}
+            placeholder="e.g. showed up small, wilted, looks great"
+            onKeyDown={e => { if (e.key === "Enter") saveNote(); if (e.key === "Escape") { setNoteDraft(note); setEditingNote(false); } }}
+            style={{ flex: 1, padding: "6px 10px", border: "1.5px solid #c8d8c0", borderRadius: 6, fontSize: 13, fontFamily: "inherit" }}
+          />
+          <button onClick={saveNote}
+            style={{ background: "#7fb069", color: "#1e2d1a", border: "none", borderRadius: 6, padding: "6px 12px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+            Save
+          </button>
+          <button onClick={() => { setNoteDraft(note); setEditingNote(false); }}
+            style={{ background: "#fff", border: "1.5px solid #c8d8c0", color: "#7a8c74", borderRadius: 6, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+            Cancel
+          </button>
+        </div>
+      )}
     </div>
   );
 }
