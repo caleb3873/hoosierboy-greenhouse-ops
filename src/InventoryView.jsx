@@ -924,19 +924,13 @@ export default function InventoryView({ onBack }) {
         />
       )}
 
-      {/* Filter + summary toolbar */}
+      {/* Toolbar — the in-line location filter is gone since the user already
+          drilled in via a location card. ↻ Sync plan + + Add row stay
+          (Edit mode only). */}
       <div style={{ padding: "8px 12px", background: "#fff", borderBottom: "1.5px solid #e0ead8", display: "flex", alignItems: "center", gap: 8 }}>
-        <input
-          list="invloc-list"
-          value={filterLocation}
-          onChange={e => setFilterLocation(e.target.value)}
-          placeholder="Filter by location"
-          style={{ flex: 1, minWidth: 0, padding: "6px 10px", borderRadius: 8, border: "1.5px solid #c8d8c0", fontSize: 12, fontFamily: "inherit" }}
-        />
-        <datalist id="invloc-list">{allLocations.map(l => <option key={l} value={l} />)}</datalist>
-        {filterLocation && (
-          <button onClick={() => setFilterLocation("")} style={btnSecondary}>✕</button>
-        )}
+        <span style={{ fontSize: 11, color: "#7a8c74", fontWeight: 700, flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          {visibleLots.length} row{visibleLots.length === 1 ? "" : "s"} · {visibleLots.reduce((s, l) => s + (l.quantity || 0), 0).toLocaleString()} pots
+        </span>
         {editMode && filterLocation && allLocations.some(l => l.toLowerCase() === filterLocation.toLowerCase()) && (
           <button onClick={() => walkFromPlan(filterLocation)} title="Pull in any newly-planned rows since you last walked"
             style={btnSecondary}>↻ Sync plan</button>
@@ -944,9 +938,6 @@ export default function InventoryView({ onBack }) {
         {editMode && (
           <button onClick={() => addLot({ location: filterLocation })} style={btnPrimary}>+ Add row</button>
         )}
-        <span style={{ fontSize: 10, color: "#7a8c74", fontWeight: 700, whiteSpace: "nowrap" }}>
-          {visibleLots.length} · {visibleLots.reduce((s, l) => s + (l.quantity || 0), 0).toLocaleString()}
-        </span>
       </div>
 
       {/* (Walk-from-plan now runs automatically when you tap a location card.

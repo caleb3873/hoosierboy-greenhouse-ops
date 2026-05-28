@@ -467,7 +467,11 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       if (statusFilter === "pending") r = r.filter(t => t.status !== "completed");
       else if (statusFilter === "completed") r = r.filter(t => t.status === "completed");
     }
-    if (locationFilter !== "all") r = r.filter(t => (t.location || "").toLowerCase() === locationFilter);
+    // Sales tasks are site-agnostic (office work, not floor work) — they
+    // should always show regardless of the Bluff/Sprague location filter.
+    if (locationFilter !== "all" && category !== "sales") {
+      r = r.filter(t => (t.location || "").toLowerCase() === locationFilter);
+    }
     if (category === "production" && prodTypeFilter !== "all") {
       r = r.filter(t => getProdType(t.title) === prodTypeFilter);
     }
@@ -1397,8 +1401,9 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       </div>
       )}
 
-      {/* Location filter — Sprague vs Bluff. Hidden on maintenance (facility tagging replaces it). */}
-      {category !== "brehob" && category !== "maintenance" && (
+      {/* Location filter — Sprague vs Bluff. Hidden on maintenance (facility
+          tagging replaces it) and on sales (sales tasks are site-agnostic). */}
+      {category !== "brehob" && category !== "maintenance" && category !== "sales" && (
       <div className="mtv-filter-row" style={{ padding: "0 20px 12px", background: "#fff", borderBottom: "1.5px solid #e0ead8", display: "flex", gap: 8 }}>
         {[{id:"all",label:"All"},{id:"bluff",label:"🌱 Bluff"},{id:"sprague",label:"🌿 Sprague"}].map(f => (
           <button key={f.id} onClick={() => setLocationFilter(f.id)}
