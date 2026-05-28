@@ -12,6 +12,23 @@ import {
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
 
+// Derive a "site" group from a location string so the picker can show top-
+// level chips like Bluff / SE Pad / North Pad / East Pad / BASKETS that
+// drill down into the specific quonset/pad.
+function siteFromLocation(loc) {
+  if (!loc) return loc;
+  let s = loc.trim();
+  // Strip "Quonset N", "Hut N"
+  s = s.replace(/\s+(Quonset|Hut)\s+\S+\s*$/i, "");
+  // Strip trailing number with optional letter suffix (SE Pad 06, SE Pad 06A)
+  s = s.replace(/\s+\d+[A-Z]?\s*$/i, "");
+  // For *Pad locations strip trailing direction qualifier
+  if (/\bPad\b/i.test(s)) {
+    s = s.replace(/\s+(North|South|East|West|Outside)\s*$/i, "");
+  }
+  return s.trim() || loc;
+}
+
 // Pull pot size out of a Fall Program category string.
 // "09\" MUM" → "9\"", "14\" MUM W/ GRASS" → "14\"", "MUM BASKET" → "HB"
 function sizeFromCategory(cat) {
@@ -64,6 +81,13 @@ export default function InventoryView({ onBack }) {
   // where scope is "row" (this row only) or "pad" (all lots at this location).
   const [photoLot, setPhotoLot] = useState(null);
   const [photoScope, setPhotoScope] = useState("row");
+  // Location picker — two-step: pick site, then pick location within site.
+  const [locPickerLot, setLocPickerLot] = useState(null);
+  const [locPickerSite, setLocPickerSite] = useState(null);
+  // Row picker — multi-select with "Select all". Confirming creates one lot
+  // per selected row, all sharing the source lot's location.
+  const [rowPickerLot, setRowPickerLot] = useState(null);
+  const [rowPickerSelection, setRowPickerSelection] = useState(new Set());
   // Item picker is two-step:
   //   1. pickerSize = null → show the size chip grid
   //   2. pickerSize = "9\"" (etc) → show varieties in that size, searchable
@@ -77,6 +101,21 @@ export default function InventoryView({ onBack }) {
     (planItems || []).forEach(p => p.location && set.add(p.location.trim()));
     return [...set].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   }, [planItems]);
+
+  // Sites → set of locations, computed once
+  const locationsBySite = useMemo(() => {
+    const m = new Map();
+    allLocations.forEach(loc => {
+      const site = siteFromLocation(loc);
+      if (!m.has(site)) m.set(site, new Set());
+      m.get(site).add(loc);
+    });
+    return m;
+  }, [allLocations]);
+
+  const allSites = useMemo(() => {
+    return [...locationsBySite.keys()].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  }, [locationsBySite]);
 
   // Map: location → set of row_ids planted there
   const rowsForLocation = useMemo(() => {
@@ -194,6 +233,66 @@ export default function InventoryView({ onBack }) {
       countedAt: new Date().toISOString(),
       countedBy: displayName || "Manager",
     });
+  }
+
+  // ── Location picker ────────────────────────────────────────────────────────
+  function openLocationPicker(lot) {
+    setLocPickerLot(lot);
+    setLocPickerSite(lot.location ? siteFromLocation(lot.location) : null);
+  }
+  function closeLocationPicker() {
+    setLocPickerLot(null);
+    setLocPickerSite(null);
+  }
+  async function applyLocationToLot(loc) {
+    if (!locPickerLot) return;
+    // Changing the location invalidates the row id, so clear it
+    await patch(locPickerLot, { location: loc, rowId: "" });
+    closeLocationPicker();
+  }
+
+  // ── Row picker (multi-select / select all) ─────────────────────────────────
+  function openRowPicker(lot) {
+    setRowPickerLot(lot);
+    setRowPickerSelection(new Set(lot.rowId ? [lot.rowId] : []));
+  }
+  function closeRowPicker() {
+    setRowPickerLot(null);
+    setRowPickerSelection(new Set());
+  }
+  function toggleRowSelection(rowId) {
+    setRowPickerSelection(prev => {
+      const next = new Set(prev);
+      if (next.has(rowId)) next.delete(rowId);
+      else next.add(rowId);
+      return next;
+    });
+  }
+  async function confirmRowSelection() {
+    if (!rowPickerLot) return;
+    const picks = [...rowPickerSelection].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    if (picks.length === 0) {
+      // Nothing selected — just close
+      closeRowPicker();
+      return;
+    }
+    // First pick goes on the source lot. Remaining picks become new lots
+    // sharing the same location, blank item/qty so the user can fill in.
+    await patch(rowPickerLot, { rowId: picks[0] });
+    for (let i = 1; i < picks.length; i++) {
+      await insert({
+        location: rowPickerLot.location || "",
+        rowId: picks[i],
+        potSize: "",
+        plantType: "",
+        variety: "",
+        quantity: 0,
+        notes: "",
+        countedAt: new Date().toISOString(),
+        countedBy: displayName || "Manager",
+      });
+    }
+    closeRowPicker();
   }
 
   function openPicker(lot) {
@@ -338,8 +437,6 @@ export default function InventoryView({ onBack }) {
           )}
 
           {visibleLots.map((lot, idx) => {
-            const rowOptions = rowsForLocation.get(lot.location) || new Set();
-            const varOptions = varietiesForType.get(lot.plantType) || new Set();
             const altBg = idx % 2 === 0 ? "#fff" : "#fafbf7";
             return (
               <div key={lot.id} style={{
@@ -348,37 +445,28 @@ export default function InventoryView({ onBack }) {
                 background: altBg, borderTop: "1px solid #e0ead8",
                 alignItems: "stretch",
               }}>
-                {/* Sticky Location — uses textarea for wrap */}
+                {/* Sticky Location — tap opens site → location picker */}
                 <Cell sticky stickyBg={altBg} width={locWidth}>
-                  <AutoTextarea
-                    list={`locs-${lot.id}`} value={lot.location || ""}
-                    onChange={v => patch(lot, { location: v })}
-                    placeholder="Bluff Q10" />
-                  <datalist id={`locs-${lot.id}`}>{allLocations.map(l => <option key={l} value={l} />)}</datalist>
+                  <button onClick={() => openLocationPicker(lot)} style={pickerCellBtn(lot.location)}>
+                    {lot.location || <span style={{ color: "#bbc8b6" }}>—</span>}
+                  </button>
                 </Cell>
-                {/* Row */}
+                {/* Row — tap opens the row picker (multi-select / select all) */}
                 <Cell>
-                  <AutoTextarea
-                    list={`rows-${lot.id}`} value={lot.rowId || ""}
-                    onChange={v => patch(lot, { rowId: v })}
-                    placeholder="BQ1003" />
-                  <datalist id={`rows-${lot.id}`}>{[...rowOptions].sort().map(r => <option key={r} value={r} />)}</datalist>
+                  <button
+                    onClick={() => lot.location ? openRowPicker(lot) : openLocationPicker(lot)}
+                    title={lot.location ? "Pick row(s)" : "Pick a location first"}
+                    style={pickerCellBtn(lot.rowId)}>
+                    {lot.rowId || <span style={{ color: "#bbc8b6" }}>—</span>}
+                  </button>
                 </Cell>
                 {/* Item — tap to open the two-step Fall Program picker
-                    (pick size, then pick variety in that size). The chosen
-                    size + variety are stored on this lot. */}
+                    (pick size, then pick variety in that size). */}
                 <Cell>
-                  <button onClick={() => openPicker(lot)}
-                    style={{
-                      width: "100%", textAlign: "left", background: "transparent",
-                      border: "none", padding: "6px 6px", cursor: "pointer", fontFamily: "inherit",
-                      color: lot.variety ? "#1e2d1a" : "#9aaa90",
-                      fontSize: 12, lineHeight: 1.3, wordBreak: "break-word",
-                      minHeight: 28, display: "flex", alignItems: "center",
-                    }}>
+                  <button onClick={() => openPicker(lot)} style={pickerCellBtn(lot.variety)}>
                     {lot.variety
                       ? <span><span style={{ fontWeight: 800, color: "#4a7a35" }}>{lot.potSize || "—"}</span> · {lot.variety}</span>
-                      : "🔍 Tap to pick item…"}
+                      : <span style={{ color: "#bbc8b6" }}>—</span>}
                   </button>
                 </Cell>
                 {/* Qty */}
@@ -391,7 +479,7 @@ export default function InventoryView({ onBack }) {
                 <Cell>
                   <AutoTextarea value={lot.notes || ""}
                     onChange={v => patch(lot, { notes: v })}
-                    placeholder="small, wilted…" />
+                    placeholder="—" />
                 </Cell>
                 {/* Actions */}
                 <div style={{ padding: 4, display: "flex", alignItems: "center", gap: 3, borderRight: "1px solid #e8ede4", flexWrap: "wrap" }}>
@@ -420,7 +508,7 @@ export default function InventoryView({ onBack }) {
       </div>
 
       <div style={{ padding: "8px 14px", fontSize: 10, color: "#7a8c74", lineHeight: 1.4 }}>
-        Tip: set the Location once, then "+ Add row" keeps the location and bumps the row id automatically. Tap 📷 on any row to take or review photos across the season.
+        Tip: tap Loc → pick site → pick location. Tap Row → check the rows you want (or Select all) → tap Add. Each picked row becomes its own grid row; just tap Item and type the qty.
       </div>
 
       {/* Photo viewer modal */}
@@ -435,6 +523,135 @@ export default function InventoryView({ onBack }) {
           onClose={() => setPhotoLot(null)}
         />
       )}
+
+      {/* Location picker — site chip grid, then locations within a site */}
+      {locPickerLot && (
+        <div onClick={closeLocationPicker}
+          style={{ position: "fixed", inset: 0, background: "rgba(20,30,18,0.55)", zIndex: 100, display: "flex", alignItems: "stretch", justifyContent: "center" }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{ background: "#fff", width: "100%", maxWidth: 480, display: "flex", flexDirection: "column", height: "100%" }}>
+            <div style={{ background: "#1e2d1a", color: "#c8e6b8", padding: "12px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+              {locPickerSite ? (
+                <button onClick={() => setLocPickerSite(null)}
+                  style={{ background: "transparent", border: "1px solid #4a6a3a", borderRadius: 8, color: "#c8e6b8", padding: "6px 10px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                  ← Site
+                </button>
+              ) : <div style={{ width: 60 }} />}
+              <div style={{ fontSize: 14, fontWeight: 800, flex: 1, textAlign: "center" }}>
+                {locPickerSite ? `${locPickerSite} · pick location` : "Pick site"}
+              </div>
+              <button onClick={closeLocationPicker}
+                style={{ background: "transparent", border: "1px solid #4a6a3a", borderRadius: 8, color: "#c8e6b8", padding: "6px 10px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                Close
+              </button>
+            </div>
+            {!locPickerSite ? (
+              <div style={{ padding: 14, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, overflowY: "auto" }}>
+                {allSites.length === 0 && (
+                  <div style={{ gridColumn: "1 / -1", textAlign: "center", color: "#7a8c74", padding: 20, fontSize: 13 }}>No locations found.</div>
+                )}
+                {allSites.map(site => {
+                  const count = (locationsBySite.get(site) || new Set()).size;
+                  return (
+                    <button key={site} onClick={() => setLocPickerSite(site)}
+                      style={{
+                        padding: "18px 12px", borderRadius: 12, border: "1.5px solid #c8d8c0",
+                        background: "#f7faf3", cursor: "pointer", fontFamily: "inherit",
+                        display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
+                      }}>
+                      <div style={{ fontSize: 16, fontWeight: 900, color: "#1e2d1a", textAlign: "center" }}>{site}</div>
+                      <div style={{ fontSize: 11, color: "#7a8c74", fontWeight: 700 }}>{count} location{count === 1 ? "" : "s"}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div style={{ flex: 1, overflowY: "auto" }}>
+                {[...(locationsBySite.get(locPickerSite) || new Set())]
+                  .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+                  .map((loc, i) => (
+                    <button key={loc} onClick={() => applyLocationToLot(loc)}
+                      style={{
+                        width: "100%", textAlign: "left", background: i % 2 === 0 ? "#fff" : "#fafbf7",
+                        border: "none", borderBottom: "1px solid #f0f4ec",
+                        padding: "13px 16px", cursor: "pointer", fontFamily: "inherit",
+                        fontSize: 14, fontWeight: 700, color: "#1e2d1a",
+                      }}>
+                      📍 {loc}
+                    </button>
+                  ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Row picker — multi-select rows for the lot's location. First pick
+          patches this lot's row; remaining picks become new lots in the grid. */}
+      {rowPickerLot && (() => {
+        const rowsAtLoc = [...(rowsForLocation.get(rowPickerLot.location) || new Set())]
+          .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+        const allSelected = rowsAtLoc.length > 0 && rowsAtLoc.every(r => rowPickerSelection.has(r));
+        return (
+          <div onClick={closeRowPicker}
+            style={{ position: "fixed", inset: 0, background: "rgba(20,30,18,0.55)", zIndex: 100, display: "flex", alignItems: "stretch", justifyContent: "center" }}>
+            <div onClick={e => e.stopPropagation()}
+              style={{ background: "#fff", width: "100%", maxWidth: 480, display: "flex", flexDirection: "column", height: "100%" }}>
+              <div style={{ background: "#1e2d1a", color: "#c8e6b8", padding: "12px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+                <button onClick={closeRowPicker}
+                  style={{ background: "transparent", border: "1px solid #4a6a3a", borderRadius: 8, color: "#c8e6b8", padding: "6px 10px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                  Cancel
+                </button>
+                <div style={{ fontSize: 13, fontWeight: 800, flex: 1, textAlign: "center", padding: "0 6px" }}>
+                  Rows · {rowPickerLot.location}
+                </div>
+                <button onClick={confirmRowSelection} disabled={rowPickerSelection.size === 0}
+                  style={{ background: rowPickerSelection.size > 0 ? "#7fb069" : "#3a5a35", border: "none", borderRadius: 8, color: "#1e2d1a", padding: "6px 10px", fontSize: 12, fontWeight: 800, cursor: rowPickerSelection.size > 0 ? "pointer" : "default", fontFamily: "inherit", opacity: rowPickerSelection.size > 0 ? 1 : 0.55 }}>
+                  Add {rowPickerSelection.size || ""}
+                </button>
+              </div>
+              <div style={{ padding: "10px 14px", borderBottom: "1.5px solid #e0ead8", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <button onClick={() => setRowPickerSelection(allSelected ? new Set() : new Set(rowsAtLoc))}
+                  style={{ background: "#f2f5ef", border: "1.5px solid #c8d8c0", borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 800, color: "#1e2d1a", cursor: "pointer", fontFamily: "inherit" }}>
+                  {allSelected ? "Clear" : `Select all (${rowsAtLoc.length})`}
+                </button>
+                <div style={{ fontSize: 11, color: "#7a8c74", fontWeight: 700 }}>
+                  {rowPickerSelection.size} of {rowsAtLoc.length} selected
+                </div>
+              </div>
+              <div style={{ flex: 1, overflowY: "auto" }}>
+                {rowsAtLoc.length === 0 ? (
+                  <div style={{ padding: 30, textAlign: "center", color: "#7a8c74", fontSize: 13 }}>
+                    No rows for this location in the Fall Program plan.
+                  </div>
+                ) : (
+                  rowsAtLoc.map((r, i) => {
+                    const checked = rowPickerSelection.has(r);
+                    return (
+                      <button key={r} onClick={() => toggleRowSelection(r)}
+                        style={{
+                          width: "100%", textAlign: "left", background: i % 2 === 0 ? "#fff" : "#fafbf7",
+                          border: "none", borderBottom: "1px solid #f0f4ec",
+                          padding: "12px 16px", cursor: "pointer", fontFamily: "inherit",
+                          display: "flex", alignItems: "center", gap: 12,
+                        }}>
+                        <div style={{
+                          width: 22, height: 22, borderRadius: 6, flexShrink: 0,
+                          background: checked ? "#7fb069" : "#fff",
+                          border: `2px solid ${checked ? "#7fb069" : "#c8d8c0"}`,
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          color: "#1e2d1a", fontSize: 14, fontWeight: 900, lineHeight: 1,
+                        }}>{checked ? "✓" : ""}</div>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: "#1e2d1a" }}>{r}</div>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Two-step Fall Program item picker */}
       {pickerLot && (
@@ -575,6 +792,15 @@ const miniBtn = (bg, color, border = null) => ({
   background: bg, color, border: border ? `1.5px solid ${border}` : "none",
   borderRadius: 6, padding: "6px 6px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit",
   flex: 1, minWidth: 0,
+});
+
+// Shared style for cells that act as picker triggers (Location, Row, Item)
+const pickerCellBtn = (hasValue) => ({
+  width: "100%", textAlign: "left", background: "transparent",
+  border: "none", padding: "6px 6px", cursor: "pointer", fontFamily: "inherit",
+  color: hasValue ? "#1e2d1a" : "#bbc8b6",
+  fontSize: 12, lineHeight: 1.3, wordBreak: "break-word",
+  minHeight: 28, display: "flex", alignItems: "center",
 });
 
 // ── Photo viewer / uploader modal ────────────────────────────────────────────
