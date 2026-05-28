@@ -76,6 +76,16 @@ export default function InventoryView({ onBack }) {
   // Screen mode: "index" = location drilldown cards (like maintenance houses);
   // "sheet" = the spreadsheet for a single location (or the flat view).
   const [screen, setScreen] = useState("index");
+  // First-visit explainer modal — auto-shown once per device, manually
+  // re-openable via the ? icon in the header.
+  const EXPLAINER_KEY = "gh_inventory_explainer_seen_v1";
+  const [showExplainer, setShowExplainer] = useState(() => {
+    try { return !localStorage.getItem(EXPLAINER_KEY); } catch { return false; }
+  });
+  function dismissExplainer() {
+    try { localStorage.setItem(EXPLAINER_KEY, "1"); } catch {}
+    setShowExplainer(false);
+  }
   // Walk mode within the sheet: "census" counts everything, "sweep" focuses
   // on clearing emptied rows (subsequent visits after the initial count).
   const [walkMode, setWalkMode] = useState("census");
@@ -214,23 +224,20 @@ export default function InventoryView({ onBack }) {
         planHere.forEach(p => { if (p.rowId && p.variety) plannedKeys.add(`${p.rowId}||${p.variety}`); });
         const walkedKeys = new Set();
         lotsHere.forEach(l => { if (l.rowId && l.variety) walkedKeys.add(`${l.rowId}||${l.variety}`); });
-        const unwalked = [...plannedKeys].filter(k => !walkedKeys.has(k)).length;
         const lastCount = lotsHere
           .map(l => l.lastCountedAt).filter(Boolean)
           .sort().reverse()[0] || null;
-        const countedToday = lotsHere.filter(l => {
-          if (!l.lastCountedAt) return false;
-          return new Date(l.lastCountedAt).toDateString() === new Date().toDateString();
-        }).length;
+        // Lots without a lastCountedAt are pre-loaded but not yet counted —
+        // surface that as "X to count" in the chip.
+        const uncountedLots = lotsHere.filter(l => !l.lastCountedAt).length;
         return {
           location: loc,
           plannedCount: plannedKeys.size,
           walkedCount: walkedKeys.size,
-          unwalked,
+          uncountedLots,
           lots: lotsHere.length,
           totalPots: lotsHere.reduce((s, l) => s + (l.quantity || 0), 0),
           lastCount,
-          countedToday,
         };
       })
       .sort((a, b) => a.location.localeCompare(b.location, undefined, { numeric: true }));
@@ -619,17 +626,24 @@ export default function InventoryView({ onBack }) {
   if (screen === "index") {
     return (
       <div style={{ ...FONT, minHeight: "100vh", background: "#f2f5ef", paddingBottom: 70 }}>
-        <div style={{ background: "#1e2d1a", color: "#c8e6b8", padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ background: "#1e2d1a", color: "#c8e6b8", padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
           <button onClick={onBack}
             style={{ background: "transparent", border: "1px solid #4a6a3a", borderRadius: 8, color: "#c8e6b8", padding: "6px 10px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
             ← Hub
           </button>
           <div style={{ fontSize: 15, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif" }}>📊 Inventory</div>
-          <button onClick={() => { setFilterLocation(""); setScreen("sheet"); }}
-            style={{ background: "transparent", border: "1px solid #4a6a3a", borderRadius: 8, color: "#c8e6b8", padding: "6px 10px", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
-            Flat view
-          </button>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button onClick={() => setShowExplainer(true)} title="How does Inventory work?"
+              style={{ background: "transparent", border: "1px solid #4a6a3a", borderRadius: 8, color: "#c8e6b8", padding: "6px 10px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+              ?
+            </button>
+            <button onClick={() => { setFilterLocation(""); setScreen("sheet"); }}
+              style={{ background: "transparent", border: "1px solid #4a6a3a", borderRadius: 8, color: "#c8e6b8", padding: "6px 10px", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+              Flat
+            </button>
+          </div>
         </div>
+        {showExplainer && <InventoryExplainer onClose={dismissExplainer} />}
 
         <div style={{ padding: "12px 14px 4px", fontSize: 12, color: "#7a8c74", lineHeight: 1.4 }}>
           Tap a location to count it. <strong>Initial walk</strong> uses <em>Census</em> (count every row). After that, switch to <em>Sweep</em> to quickly clear rows that have emptied out.
@@ -642,16 +656,18 @@ export default function InventoryView({ onBack }) {
             </div>
           )}
           {locationSummary.map(s => {
-            // Status: counted today, partial, stale, never
-            const planFull = s.plannedCount > 0;
-            const isCounted = s.lastCount && new Date(s.lastCount).toDateString() === new Date().toDateString();
+            // Cascading status decision — guard the "Nd ago" branches behind
+            // an explicit lastCount existence check so we can never render
+            // "nullD ago" when a location has lots but no counts yet.
             const daysAgo = s.lastCount ? Math.floor((Date.now() - new Date(s.lastCount).getTime()) / 86400000) : null;
             let chip, chipBg, chipColor;
-            if (!s.lots && planFull)             { chip = "Not walked"; chipBg = "#e8eee5"; chipColor = "#7a8c74"; }
-            else if (isCounted && s.unwalked === 0) { chip = "Counted today"; chipBg = "#dff2d2"; chipColor = "#2e5e1a"; }
-            else if (s.unwalked > 0)             { chip = `${s.unwalked} unwalked`; chipBg = "#fff3c4"; chipColor = "#7a5a00"; }
-            else if (daysAgo > 7)                { chip = `${daysAgo}d ago · stale`; chipBg = "#fdecea"; chipColor = "#7a2418"; }
-            else                                 { chip = daysAgo === 1 ? "1 day ago" : `${daysAgo}d ago`; chipBg = "#fff3c4"; chipColor = "#7a5a00"; }
+            if (s.lots === 0)               { chip = "Not walked";              chipBg = "#e8eee5"; chipColor = "#7a8c74"; }
+            else if (!s.lastCount)          { chip = `${s.uncountedLots} to count`; chipBg = "#fff3c4"; chipColor = "#7a5a00"; }
+            else if (s.uncountedLots > 0)   { chip = `${s.uncountedLots} to count`; chipBg = "#fff3c4"; chipColor = "#7a5a00"; }
+            else if (daysAgo === 0)         { chip = "Counted today";           chipBg = "#dff2d2"; chipColor = "#2e5e1a"; }
+            else if (daysAgo === 1)         { chip = "Yesterday";               chipBg = "#fff3c4"; chipColor = "#7a5a00"; }
+            else if (daysAgo <= 7)          { chip = `${daysAgo}d ago`;         chipBg = "#fff3c4"; chipColor = "#7a5a00"; }
+            else                            { chip = `${daysAgo}d · stale`;     chipBg = "#fdecea"; chipColor = "#7a2418"; }
             return (
               <button key={s.location} onClick={() => openLocation(s.location)}
                 style={{
@@ -1148,15 +1164,7 @@ function QtyCell({ lot, walkMode, patch, markEmpty }) {
             ✓ {lot.plannedQty}
           </button>
         ) : (
-          // Big editable input — focus on tap to change the number
-          <input type="number" inputMode="numeric" value={lot.quantity ?? ""}
-            onChange={e => patch(lot, { quantity: e.target.value === "" ? null : parseInt(e.target.value, 10) || 0 })}
-            placeholder="—"
-            style={{
-              ...cellInputBase, flex: 1, fontWeight: 900, textAlign: "center",
-              fontSize: 34, padding: "16px 8px", border: "1.5px solid #c8d8c0",
-              borderRadius: 10, background: "#fff", minHeight: 76, letterSpacing: 0.5,
-            }} />
+          <QtyNumberInput lot={lot} patch={patch} />
         )}
         {/* ✕ — set qty = 0. Small, sits to the right of the number. */}
         <button onClick={() => patch(lot, { quantity: 0 })}
@@ -1174,18 +1182,55 @@ function QtyCell({ lot, walkMode, patch, markEmpty }) {
   );
 }
 
-function PlanVariance({ lot }) {
-  if (!Number.isFinite(lot.plannedQty)) return null;
-  const delta = (lot.quantity || 0) - lot.plannedQty;
-  const isShort = delta < 0 && lot.quantity != null;
-  const isExtra = delta > 0;
+// The "counted" qty cell. Renders as a static-looking display by default
+// (locked) — tap to focus, which highlights it as editable; tap outside
+// (blur) to lock it again. Auto-saves on every keystroke as before.
+function QtyNumberInput({ lot, patch }) {
+  const [focused, setFocused] = useState(false);
+  const ref = useRef(null);
   return (
-    <div style={{ fontSize: 13, color: "#7a8c74", textAlign: "center", padding: "4px 6px 0", lineHeight: 1.3, fontWeight: 700, display: "flex", justifyContent: "center", gap: 12 }}>
-      <span>plan {lot.plannedQty}</span>
-      {lot.quantity != null && (isShort || isExtra) && (
-        <span style={{ color: isShort ? "#d94f3d" : "#4a7a35", fontWeight: 900 }}>
-          {isShort ? "" : "+"}{delta}
-        </span>
+    <input
+      ref={ref}
+      type="number" inputMode="numeric"
+      value={lot.quantity ?? ""}
+      onChange={e => patch(lot, { quantity: e.target.value === "" ? null : parseInt(e.target.value, 10) || 0 })}
+      onFocus={(e) => { setFocused(true); e.target.select(); }}
+      onBlur={() => setFocused(false)}
+      placeholder="—"
+      style={{
+        ...cellInputBase, flex: 1, fontWeight: 900, textAlign: "center",
+        fontSize: 34, padding: "16px 8px", borderRadius: 10, minHeight: 76, letterSpacing: 0.5,
+        background: focused ? "#fffce8" : "#fff",
+        border: focused ? "2.5px solid #4a7a35" : "1.5px solid #e8ede4",
+        boxShadow: focused ? "0 0 0 4px rgba(74,122,53,0.15)" : "none",
+        transition: "background 0.15s, border-color 0.15s, box-shadow 0.15s",
+      }} />
+  );
+}
+
+function PlanVariance({ lot }) {
+  const hasPlan = Number.isFinite(lot.plannedQty);
+  const ts = lot.lastCountedAt ? new Date(lot.lastCountedAt) : null;
+  if (!hasPlan && !ts) return null;
+  const delta = hasPlan ? (lot.quantity || 0) - lot.plannedQty : 0;
+  const isShort = hasPlan && delta < 0 && lot.quantity != null;
+  const isExtra = hasPlan && delta > 0;
+  return (
+    <div style={{ textAlign: "center", padding: "4px 6px 0", lineHeight: 1.3 }}>
+      {hasPlan && (
+        <div style={{ fontSize: 13, color: "#7a8c74", fontWeight: 700, display: "flex", justifyContent: "center", gap: 12 }}>
+          <span>plan {lot.plannedQty}</span>
+          {lot.quantity != null && (isShort || isExtra) && (
+            <span style={{ color: isShort ? "#d94f3d" : "#4a7a35", fontWeight: 900 }}>
+              {isShort ? "" : "+"}{delta}
+            </span>
+          )}
+        </div>
+      )}
+      {ts && (
+        <div style={{ fontSize: 10, color: "#9aaa90", fontWeight: 600, marginTop: 2 }}>
+          counted {ts.toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+        </div>
       )}
     </div>
   );
@@ -1295,6 +1340,67 @@ const pickerCellBtn = (hasValue) => ({
   fontSize: 12, lineHeight: 1.25, wordBreak: "break-word", overflowWrap: "anywhere",
   minHeight: 36, display: "flex", alignItems: "flex-start",
 });
+
+// ── First-visit explainer modal ──────────────────────────────────────────────
+// Shown automatically the first time someone opens Inventory on this device.
+// Also re-openable via the ? button in the header. Focus is on what Sync
+// actually does, since that's the part that's not obvious from the UI.
+function InventoryExplainer({ onClose }) {
+  return (
+    <div onClick={onClose}
+      style={{ position: "fixed", inset: 0, background: "rgba(20,30,18,0.6)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 14 }}>
+      <div onClick={e => e.stopPropagation()}
+        style={{ background: "#fff", borderRadius: 16, maxWidth: 480, width: "100%", maxHeight: "90vh", overflowY: "auto", border: "1.5px solid #e0ead8" }}>
+        <div style={{ background: "#1e2d1a", color: "#c8e6b8", padding: "14px 16px", borderRadius: "14px 14px 0 0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ fontSize: 17, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif" }}>📊 How Inventory Works</div>
+          <button onClick={onClose}
+            style={{ background: "transparent", border: "1px solid #4a6a3a", borderRadius: 8, color: "#c8e6b8", padding: "4px 10px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+            ✕
+          </button>
+        </div>
+        <div style={{ padding: "16px 18px", fontSize: 14, lineHeight: 1.5, color: "#1e2d1a" }}>
+          <p style={{ marginTop: 0 }}>
+            Each card on the home screen is a real-world location (Bluff Quonset, SE Pad, etc).
+          </p>
+
+          <h3 style={{ fontSize: 14, fontWeight: 800, color: "#4a7a35", marginTop: 14, marginBottom: 6 }}>👣 To do a count</h3>
+          <ol style={{ paddingLeft: 22, margin: 0 }}>
+            <li>Tap a location card.</li>
+            <li>Every row from the Fall Program plan loads automatically. Each shows the planned qty.</li>
+            <li>Walk the location. For each row tap <strong style={{ color: "#4a7a35" }}>✓ N</strong> to confirm the plan, the <strong>number</strong> to type a different count, or the small <strong style={{ color: "#d94f3d" }}>✕</strong> to mark empty.</li>
+            <li>Hit <strong>✓ Save &amp; Done</strong> at the bottom.</li>
+          </ol>
+
+          <h3 style={{ fontSize: 14, fontWeight: 800, color: "#4a7a35", marginTop: 14, marginBottom: 6 }}>↻ What's "Sync plan"?</h3>
+          <p style={{ margin: "6px 0" }}>
+            Walking a location pulls in the Fall Program plan as it was at that moment. <strong>You almost never need to tap Sync.</strong>
+          </p>
+          <p style={{ margin: "6px 0" }}>
+            The exception: if the Fall Program plan changes after you started a walk — a new variety gets planted at this location, a row moves in, etc. — tap <strong>↻ Sync plan</strong> to pull in those new rows <em>without</em> losing the counts you've already entered.
+          </p>
+          <p style={{ margin: "6px 0", color: "#7a8c74", fontStyle: "italic" }}>
+            Sync never deletes anything or overwrites your counts. It only adds rows that aren't there yet.
+          </p>
+
+          <h3 style={{ fontSize: 14, fontWeight: 800, color: "#4a7a35", marginTop: 14, marginBottom: 6 }}>🌿 Census vs Sweep</h3>
+          <p style={{ margin: "6px 0" }}>
+            <strong>Census</strong> is the initial walk — type a count per row. <strong>Sweep</strong> is for follow-up walks once you've already done a Census; tap the big red button on rows that have emptied out since last time.
+          </p>
+
+          <h3 style={{ fontSize: 14, fontWeight: 800, color: "#4a7a35", marginTop: 14, marginBottom: 6 }}>📷 + Add row</h3>
+          <p style={{ margin: "6px 0 16px" }}>
+            Use <strong>+ Add row</strong> if you find something the plan didn't predict — a second variety in a row, or a row that's not in the plan at all.
+          </p>
+
+          <button onClick={onClose}
+            style={{ width: "100%", background: "#4a7a35", color: "#fff", border: "none", borderRadius: 10, padding: "14px", fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+            Got it
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ── Photo viewer / uploader modal ────────────────────────────────────────────
 // Shows photos at a single row OR across the whole pad (location). Lets the
