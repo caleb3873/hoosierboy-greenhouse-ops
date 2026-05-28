@@ -2,11 +2,12 @@
 // phones: tap a Fall Program item from the search to auto-create a row
 // pre-filled with location/row/size/type/variety — count is the only thing
 // the user types.
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import { useAuth } from "./Auth";
 import {
   useInventoryLots,
   useFallProgramItems,
+  getSupabase,
 } from "./supabase";
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
@@ -59,6 +60,10 @@ export default function InventoryView({ onBack }) {
   const { rows: planItems } = useFallProgramItems();
 
   const [filterLocation, setFilterLocation] = useState("");
+  // Photo viewer modal — opens when 📷 is tapped on a row. Holds { lot, scope }
+  // where scope is "row" (this row only) or "pad" (all lots at this location).
+  const [photoLot, setPhotoLot] = useState(null);
+  const [photoScope, setPhotoScope] = useState("row");
   // Item picker is two-step:
   //   1. pickerSize = null → show the size chip grid
   //   2. pickerSize = "9\"" (etc) → show varieties in that size, searchable
@@ -158,14 +163,32 @@ export default function InventoryView({ onBack }) {
     );
   }, [lots, filterLocation]);
 
+  // Most recently touched lot — drives the "+ Add row" autofill. useInventoryLots
+  // orders by updated_at desc, so lots[0] is whatever the user just edited or
+  // inserted. Walking a pad means: set location once, then "+ Add row" keeps
+  // pre-filling location + next row id so you only pick item + qty.
+  const lastLot = (lots || [])[0];
+
+  function nextRowId(currentRowId) {
+    if (!currentRowId) return "";
+    const m = currentRowId.match(/(\d+)(?!.*\d)/);
+    if (!m) return currentRowId;
+    const n = String(parseInt(m[1], 10) + 1).padStart(m[1].length, "0");
+    return currentRowId.slice(0, m.index) + n + currentRowId.slice(m.index + m[1].length);
+  }
+
   // ── Actions ────────────────────────────────────────────────────────────────
+  // addLot called from "+ Add row" buttons. If no explicit seed, pre-fills
+  // location + incremented row from the last edited lot.
   async function addLot(seed = {}) {
+    const fallbackLocation = filterLocation || lastLot?.location || "";
+    const fallbackRowId    = lastLot?.location === fallbackLocation ? nextRowId(lastLot?.rowId) : "";
     await insert({
-      location: seed.location || filterLocation || "",
-      rowId: seed.rowId || "",
-      potSize: seed.potSize || "",
+      location: seed.location ?? fallbackLocation,
+      rowId:    seed.rowId    ?? fallbackRowId,
+      potSize:  seed.potSize  || "",
       plantType: seed.plantType || "",
-      variety: seed.variety || "",
+      variety:  seed.variety || "",
       quantity: seed.quantity ?? 0,
       notes: "",
       countedAt: new Date().toISOString(),
@@ -186,16 +209,14 @@ export default function InventoryView({ onBack }) {
     setPickerQuery("");
   }
 
-  // Step-2 selection: patches the lot with the picked size + variety.
-  // Existing Location/Row win since the user might be counting at a spot
-  // different from the plan.
+  // Step-2 selection: patches the lot with ONLY the picked size + variety.
+  // Location/Row are set by the user (they're standing in the row counting);
+  // the plan's location is just shown in the picker list for orientation.
   async function applyPlanItemToLot(p) {
     if (!pickerLot) return;
     await patch(pickerLot, {
-      location:  pickerLot.location  || p.location  || "",
-      rowId:     pickerLot.rowId     || p.rowId     || "",
-      potSize:   pickerSize || sizeFromCategory(p.category) || "",
-      plantType: pickerLot.plantType || typeFromCategory(p.category, p.variety) || "",
+      potSize:   pickerSize || sizeFromCategory(p.category) || pickerLot.potSize || "",
+      plantType: typeFromCategory(p.category, p.variety) || pickerLot.plantType || "",
       variety:   p.variety || "",
     });
     closePicker();
@@ -209,16 +230,42 @@ export default function InventoryView({ onBack }) {
     });
   }
 
+  // ── Photos ─────────────────────────────────────────────────────────────────
+  async function uploadPhotoForLot(lot, file) {
+    const sb = getSupabase();
+    const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
+    const safeLoc = (lot.location || "no-loc").replace(/[^a-z0-9-]/gi, "_");
+    const path = `${safeLoc}/${lot.id}/${Date.now()}.${ext}`;
+    const { error } = await sb.storage.from("inventory-photos").upload(path, file, { upsert: false });
+    if (error) throw error;
+    const entry = { path, takenAt: new Date().toISOString(), takenBy: displayName || "Manager" };
+    const nextPhotos = [...(lot.photos || []), entry];
+    await patch(lot, { photos: nextPhotos });
+  }
+
+  async function removePhotoFromLot(lot, photoPath) {
+    const sb = getSupabase();
+    await sb.storage.from("inventory-photos").remove([photoPath]);
+    const nextPhotos = (lot.photos || []).filter(p => p.path !== photoPath);
+    await patch(lot, { photos: nextPhotos });
+  }
+
+  // Gather photos for the viewer. Scope = "row" → only this lot's photos.
+  // Scope = "pad" → all photos across every lot at the same location.
+  function photosFor(lot, scope) {
+    if (!lot) return [];
+    const seed = scope === "pad"
+      ? (lots || []).filter(l => (l.location || "").toLowerCase() === (lot.location || "").toLowerCase())
+      : [lot];
+    const out = [];
+    seed.forEach(l => (l.photos || []).forEach(p => out.push({ ...p, _lot: l })));
+    return out.sort((a, b) => (b.takenAt || "").localeCompare(a.takenAt || ""));
+  }
+
   function duplicate(lot) {
-    let nextRow = lot.rowId || "";
-    const m = nextRow.match(/(\d+)(?!.*\d)/);
-    if (m) {
-      const n = String(parseInt(m[1], 10) + 1).padStart(m[1].length, "0");
-      nextRow = nextRow.slice(0, m.index) + n + nextRow.slice(m.index + m[1].length);
-    }
     addLot({
       location: lot.location,
-      rowId: nextRow,
+      rowId: nextRowId(lot.rowId),
       potSize: lot.potSize,
       plantType: lot.plantType,
       variety: lot.variety,
@@ -347,8 +394,12 @@ export default function InventoryView({ onBack }) {
                     placeholder="small, wilted…" />
                 </Cell>
                 {/* Actions */}
-                <div style={{ padding: 4, display: "flex", alignItems: "center", gap: 3, borderRight: "1px solid #e8ede4" }}>
+                <div style={{ padding: 4, display: "flex", alignItems: "center", gap: 3, borderRight: "1px solid #e8ede4", flexWrap: "wrap" }}>
                   <button onClick={() => duplicate(lot)} title="Duplicate (next row)" style={miniBtn("#7fb069", "#1e2d1a")}>⎘</button>
+                  <button onClick={() => { setPhotoLot(lot); setPhotoScope("row"); }} title="Photos for this row"
+                    style={miniBtn("#fff", "#4a90d9", "#4a90d9")}>
+                    📷{(lot.photos || []).length > 0 ? <sup style={{ fontSize: 9, marginLeft: 1 }}>{(lot.photos || []).length}</sup> : ""}
+                  </button>
                   <button onClick={() => { if (window.confirm(`Delete "${lot.variety || "this row"}"?`)) remove(lot.id); }}
                     title="Delete" style={miniBtn("transparent", "#d94f3d", "#d94f3d")}>🗑</button>
                 </div>
@@ -369,8 +420,21 @@ export default function InventoryView({ onBack }) {
       </div>
 
       <div style={{ padding: "8px 14px", fontSize: 10, color: "#7a8c74", lineHeight: 1.4 }}>
-        Tip: tap the Item cell → pick a size (9", 12", HB…) → pick the variety in that size. Smaller list each time, less typing.
+        Tip: set the Location once, then "+ Add row" keeps the location and bumps the row id automatically. Tap 📷 on any row to take or review photos across the season.
       </div>
+
+      {/* Photo viewer modal */}
+      {photoLot && (
+        <PhotoViewer
+          lot={photoLot}
+          scope={photoScope}
+          setScope={setPhotoScope}
+          photos={photosFor(photoLot, photoScope)}
+          onUpload={file => uploadPhotoForLot(photoLot, file)}
+          onRemove={(p) => removePhotoFromLot(p._lot || photoLot, p.path)}
+          onClose={() => setPhotoLot(null)}
+        />
+      )}
 
       {/* Two-step Fall Program item picker */}
       {pickerLot && (
@@ -512,3 +576,130 @@ const miniBtn = (bg, color, border = null) => ({
   borderRadius: 6, padding: "6px 6px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit",
   flex: 1, minWidth: 0,
 });
+
+// ── Photo viewer / uploader modal ────────────────────────────────────────────
+// Shows photos at a single row OR across the whole pad (location). Lets the
+// user take new photos with the device camera. Each thumb shows the date so
+// you can scrub the season's development.
+function PhotoViewer({ lot, scope, setScope, photos, onUpload, onRemove, onClose }) {
+  const fileRef = useRef(null);
+  const [uploading, setUploading] = useState(false);
+  const [lightbox, setLightbox] = useState(null);
+
+  async function handlePick(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try { await onUpload(file); }
+    catch (err) { alert("Upload failed: " + (err?.message || err)); }
+    finally { setUploading(false); if (fileRef.current) fileRef.current.value = ""; }
+  }
+
+  return (
+    <div onClick={onClose}
+      style={{ position: "fixed", inset: 0, background: "rgba(20,30,18,0.6)", zIndex: 110, display: "flex", alignItems: "stretch", justifyContent: "center" }}>
+      <div onClick={e => e.stopPropagation()}
+        style={{ background: "#f2f5ef", width: "100%", maxWidth: 520, display: "flex", flexDirection: "column", height: "100%" }}>
+        <div style={{ background: "#1e2d1a", color: "#c8e6b8", padding: "12px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <button onClick={onClose}
+            style={{ background: "transparent", border: "1px solid #4a6a3a", borderRadius: 8, color: "#c8e6b8", padding: "6px 10px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+            ← Back
+          </button>
+          <div style={{ fontSize: 14, fontWeight: 800, textAlign: "center", flex: 1, padding: "0 8px" }}>
+            📷 {lot.location || "—"}{scope === "row" && lot.rowId ? ` · ${lot.rowId}` : ""}
+          </div>
+          <button onClick={() => fileRef.current?.click()} disabled={uploading}
+            style={{ background: "#7fb069", border: "none", borderRadius: 8, color: "#1e2d1a", padding: "6px 12px", fontSize: 12, fontWeight: 800, cursor: uploading ? "default" : "pointer", fontFamily: "inherit" }}>
+            {uploading ? "…" : "+ Photo"}
+          </button>
+          <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={handlePick} style={{ display: "none" }} />
+        </div>
+
+        {/* Scope toggle */}
+        <div style={{ background: "#fff", borderBottom: "1.5px solid #e0ead8", padding: "8px 12px", display: "flex", gap: 6 }}>
+          {[
+            { id: "row", label: "This row" },
+            { id: "pad", label: `Whole ${(lot.location || "").includes("Pad") ? "pad" : "location"}` },
+          ].map(s => (
+            <button key={s.id} onClick={() => setScope(s.id)}
+              style={{
+                flex: 1, padding: "8px 10px", borderRadius: 8,
+                background: scope === s.id ? "#1e2d1a" : "#f2f5ef",
+                color: scope === s.id ? "#c8e6b8" : "#7a8c74",
+                border: `1.5px solid ${scope === s.id ? "#1e2d1a" : "#c8d8c0"}`,
+                fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit",
+              }}>{s.label}</button>
+          ))}
+        </div>
+
+        {/* Photo grid */}
+        <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
+          {photos.length === 0 ? (
+            <div style={{ textAlign: "center", padding: 30, color: "#7a8c74" }}>
+              <div style={{ fontSize: 30, marginBottom: 6 }}>📷</div>
+              <div style={{ fontSize: 13, fontWeight: 700 }}>No photos yet</div>
+              <div style={{ fontSize: 11, marginTop: 4 }}>Tap "+ Photo" to take one with the camera.</div>
+            </div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 8 }}>
+              {photos.map((p, i) => (
+                <InventoryPhotoThumb key={`${p.path}-${i}`} photo={p} onOpen={() => setLightbox(p)} onRemove={() => onRemove(p)} />
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Lightbox */}
+        {lightbox && (
+          <PhotoLightbox photo={lightbox} onClose={() => setLightbox(null)} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function InventoryPhotoThumb({ photo, onOpen, onRemove }) {
+  const [url, setUrl] = useState(null);
+  React.useEffect(() => {
+    const sb = getSupabase();
+    sb.storage.from("inventory-photos").createSignedUrl(photo.path, 3600).then(({ data }) => {
+      if (data?.signedUrl) setUrl(data.signedUrl);
+    });
+  }, [photo.path]);
+  const date = photo.takenAt ? new Date(photo.takenAt).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "";
+  return (
+    <div style={{ background: "#fff", border: "1.5px solid #e0ead8", borderRadius: 10, overflow: "hidden", position: "relative" }}>
+      <button onClick={onOpen} style={{ background: "transparent", border: "none", padding: 0, cursor: "pointer", display: "block", width: "100%" }}>
+        {url
+          ? <img src={url} alt={photo.path} style={{ width: "100%", height: 140, objectFit: "cover" }} />
+          : <div style={{ width: "100%", height: 140, background: "#e0ead8" }} />}
+      </button>
+      <div style={{ padding: "6px 8px", fontSize: 11, color: "#1e2d1a", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span style={{ fontWeight: 700 }}>{date}</span>
+        <button onClick={(e) => { e.stopPropagation(); if (window.confirm("Delete this photo?")) onRemove(); }}
+          style={{ background: "transparent", border: "none", color: "#d94f3d", fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>🗑</button>
+      </div>
+      {photo._lot?.rowId && (
+        <div style={{ padding: "0 8px 6px", fontSize: 10, color: "#7a8c74" }}>{photo._lot.rowId}{photo._lot.variety ? ` · ${photo._lot.variety}` : ""}</div>
+      )}
+    </div>
+  );
+}
+
+function PhotoLightbox({ photo, onClose }) {
+  const [url, setUrl] = useState(null);
+  React.useEffect(() => {
+    const sb = getSupabase();
+    sb.storage.from("inventory-photos").createSignedUrl(photo.path, 3600).then(({ data }) => {
+      if (data?.signedUrl) setUrl(data.signedUrl);
+    });
+  }, [photo.path]);
+  return (
+    <div onClick={onClose}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.92)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 14 }}>
+      {url
+        ? <img src={url} alt={photo.path} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} />
+        : <div style={{ color: "#fff" }}>Loading…</div>}
+    </div>
+  );
+}
