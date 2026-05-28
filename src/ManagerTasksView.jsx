@@ -1025,26 +1025,26 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
                   </div>
                 )}
 
+                {/* Receiving — sits right under Sales now */}
+                {canSeeReceiving && (
+                  <div className="hub-card" onClick={() => setCurrentView("receiving")} style={{ borderTopColor: "#a86a10", borderTopWidth: 4 }}>
+                    <div className="hub-card-emoji">📦</div>
+                    <div className="hub-card-title">Receiving</div>
+                    <div className="hub-card-sub">
+                      {receivingThisWeek.lineCount === 0
+                        ? "Nothing this week"
+                        : `${receivingThisWeek.plantTotal.toLocaleString()} plants this week`}
+                    </div>
+                    {receivingThisWeek.lineCount > 0 && <span className="hub-card-badge ok">{receivingThisWeek.lineCount}</span>}
+                  </div>
+                )}
+
                 {/* Vacation */}
                 <div className="hub-card" onClick={() => setCurrentView("vacation")} style={{ borderTopColor: "#7fb069", borderTopWidth: 4 }}>
                   <div className="hub-card-emoji">🌴</div>
                   <div className="hub-card-title">Vacation</div>
                   <div className="hub-card-sub">{canApproveVacation ? "Approve · request · view" : "Request time off"}</div>
                   {canApproveVacation && pendingVacations.length > 0 && <span className="hub-card-badge warn">{pendingVacations.length} pending</span>}
-                </div>
-
-                {/* Company Announcement */}
-                <div className="hub-card"
-                  onClick={() => canAnnounce ? setShowAnnouncer(true) : setCurrentView("messages")}
-                  style={{ borderTopColor: "#7fb069", borderTopWidth: 4 }}>
-                  <div className="hub-card-emoji">📢</div>
-                  <div className="hub-card-title">Company Announcement</div>
-                  <div className="hub-card-sub">
-                    {canAnnounce
-                      ? (activeAnnouncements.length > 0 ? `Post or view (${activeAnnouncements.length} active)` : "Post to all staff")
-                      : (activeAnnouncements.length > 0 ? `${activeAnnouncements.length} active` : "No announcements")}
-                  </div>
-                  {activeAnnouncements.length > 0 && <span className="hub-card-badge ok">{activeAnnouncements.length}</span>}
                 </div>
 
                 {/* Message Trish */}
@@ -1058,21 +1058,6 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
                   </div>
                   {isTrish && unreadHrMessages.length > 0 && <span className="hub-card-badge">{unreadHrMessages.length} unread</span>}
                 </div>
-
-                {isAnyManager && (
-                  <>
-                    <div className="hub-card" onClick={() => setCurrentView("today")} style={{ background: "#162212", color: "#c8e6b8" }}>
-                      <div className="hub-card-emoji" style={{ color: "#7fb069" }}>📅</div>
-                      <div className="hub-card-title" style={{ color: "#c8e6b8" }}>Today</div>
-                      <div className="hub-card-sub" style={{ color: "#7a9a6a" }}>All depts</div>
-                    </div>
-                    <div className="hub-card" onClick={() => setCurrentView("week")} style={{ background: "#162212", color: "#c8e6b8" }}>
-                      <div className="hub-card-emoji" style={{ color: "#7fb069" }}>📆</div>
-                      <div className="hub-card-title" style={{ color: "#c8e6b8" }}>This Week</div>
-                      <div className="hub-card-sub" style={{ color: "#7a9a6a" }}>All depts</div>
-                    </div>
-                  </>
-                )}
 
                 <div style={{ gridColumn: "span 2" }}>
                   <DriverRequestStatusList scope="all" onTapHeader={() => setCurrentView("driver-requests")} />
@@ -1102,19 +1087,35 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
                   <div className="hub-card-sub">{(brehobItems || []).filter(b => b.status === "on_list").length} items on list</div>
                 </div>
 
-                {/* Receiving — gated to people whose Access Control flags include it */}
-                {canSeeReceiving && (
-                  <div className="hub-card" onClick={() => setCurrentView("receiving")} style={{ borderTopColor: "#a86a10", borderTopWidth: 4 }}>
-                    <div className="hub-card-emoji">📦</div>
-                    <div className="hub-card-title">Receiving</div>
-                    <div className="hub-card-sub">
-                      {receivingThisWeek.lineCount === 0
-                        ? "Nothing this week"
-                        : `${receivingThisWeek.plantTotal.toLocaleString()} plants this week`}
+                {/* Today / This Week — bumped down so day-of-week tools land below daily action cards */}
+                {isAnyManager && (
+                  <>
+                    <div className="hub-card" onClick={() => setCurrentView("today")} style={{ background: "#162212", color: "#c8e6b8" }}>
+                      <div className="hub-card-emoji" style={{ color: "#7fb069" }}>📅</div>
+                      <div className="hub-card-title" style={{ color: "#c8e6b8" }}>Today</div>
+                      <div className="hub-card-sub" style={{ color: "#7a9a6a" }}>All depts</div>
                     </div>
-                    {receivingThisWeek.lineCount > 0 && <span className="hub-card-badge ok">{receivingThisWeek.lineCount}</span>}
-                  </div>
+                    <div className="hub-card" onClick={() => setCurrentView("week")} style={{ background: "#162212", color: "#c8e6b8" }}>
+                      <div className="hub-card-emoji" style={{ color: "#7fb069" }}>📆</div>
+                      <div className="hub-card-title" style={{ color: "#c8e6b8" }}>This Week</div>
+                      <div className="hub-card-sub" style={{ color: "#7a9a6a" }}>All depts</div>
+                    </div>
+                  </>
                 )}
+
+                {/* Company Announcement — bumped down */}
+                <div className="hub-card"
+                  onClick={() => canAnnounce ? setShowAnnouncer(true) : setCurrentView("messages")}
+                  style={{ borderTopColor: "#7fb069", borderTopWidth: 4 }}>
+                  <div className="hub-card-emoji">📢</div>
+                  <div className="hub-card-title">Company Announcement</div>
+                  <div className="hub-card-sub">
+                    {canAnnounce
+                      ? (activeAnnouncements.length > 0 ? `Post or view (${activeAnnouncements.length} active)` : "Post to all staff")
+                      : (activeAnnouncements.length > 0 ? `${activeAnnouncements.length} active` : "No announcements")}
+                  </div>
+                  {activeAnnouncements.length > 0 && <span className="hub-card-badge ok">{activeAnnouncements.length}</span>}
+                </div>
 
                 {/* Access Control — Tyler / Paul only */}
                 {canManageAccess && (
