@@ -317,11 +317,76 @@ export default function InventoryView({ onBack }) {
   }
 
   async function patch(lot, changes) {
+    // If qty changed and is a real number, append a count history entry so we
+    // have a season-long timeline per lot ("counted 198 last Tue, 174 Wed,
+    // 156 today"). Also stamp last_counted_at for the status pill.
+    const qtyChanged = ("quantity" in changes) && changes.quantity !== lot.quantity;
+    let countHistory = lot.countHistory || [];
+    let lastCountedAt = lot.lastCountedAt || null;
+    if (qtyChanged && Number.isFinite(changes.quantity)) {
+      lastCountedAt = new Date().toISOString();
+      countHistory = [...countHistory, { qty: changes.quantity, countedAt: lastCountedAt, countedBy: displayName || "Manager" }];
+    }
     await update(lot.id, {
       ...changes,
       countedAt: new Date().toISOString(),
       countedBy: displayName || lot.countedBy,
+      ...(qtyChanged ? { countHistory, lastCountedAt } : {}),
     });
+  }
+
+  // ── Walk-from-Plan ─────────────────────────────────────────────────────────
+  // For a given location, look at fall_program_items and create an inventory
+  // lot for every planned (location · row · variety) that doesn't already
+  // exist. Pre-fills size, plant type, variety, planned_qty. Existing lots
+  // are untouched — re-running this is idempotent and safe mid-season.
+  async function walkFromPlan(location) {
+    if (!location) return;
+    const planned = (planItems || []).filter(p =>
+      (p.location || "").trim().toLowerCase() === location.trim().toLowerCase() &&
+      p.variety && p.rowId
+    );
+    if (planned.length === 0) {
+      alert(`No Fall Program plan rows for "${location}".`);
+      return;
+    }
+    // Aggregate planned qty by (rowId · variety) since multi-bench varieties
+    // can have multiple rows in the plan
+    const byKey = new Map();
+    for (const p of planned) {
+      const k = `${p.rowId}||${p.variety}`;
+      const prev = byKey.get(k) || { ...p, qty: 0 };
+      prev.qty += (p.qty || 0) * (p.ppp || 1);
+      byKey.set(k, prev);
+    }
+    // Skip rows that already exist as inventory lots for this location
+    const existing = new Set(
+      (lots || [])
+        .filter(l => (l.location || "").toLowerCase() === location.toLowerCase())
+        .map(l => `${l.rowId || ""}||${l.variety || ""}`)
+    );
+    const toCreate = [...byKey.values()].filter(p => !existing.has(`${p.rowId}||${p.variety}`));
+    if (toCreate.length === 0) {
+      alert(`Already walked — all ${byKey.size} planned rows at "${location}" are in the grid.`);
+      return;
+    }
+    if (!window.confirm(`Add ${toCreate.length} planned row${toCreate.length === 1 ? "" : "s"} for "${location}"?\n\nExisting rows won't be touched.`)) return;
+    for (const p of toCreate) {
+      await insert({
+        location: p.location,
+        rowId: p.rowId,
+        potSize: sizeFromCategory(p.category),
+        plantType: typeFromCategory(p.category, p.variety),
+        variety: p.variety,
+        quantity: 0,
+        plannedQty: p.qty,
+        notes: "",
+        countedAt: new Date().toISOString(),
+        countedBy: displayName || "Manager",
+      });
+    }
+    // Auto-filter so the user immediately sees what they just walked
+    setFilterLocation(location);
   }
 
   // ── Photos ─────────────────────────────────────────────────────────────────
@@ -414,6 +479,21 @@ export default function InventoryView({ onBack }) {
         </span>
       </div>
 
+      {/* Walk-from-Plan bar — appears when filtered to a real location.
+          Pulls every planned (row · variety) from fall_program_items and
+          inserts a pre-filled lot for each. Idempotent: rerun any time. */}
+      {filterLocation && allLocations.some(l => l.toLowerCase() === filterLocation.toLowerCase()) && (
+        <div style={{ padding: "8px 12px", background: "#eef7e8", borderBottom: "1.5px solid #b8d8b0", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+          <div style={{ fontSize: 11, color: "#1e2d1a", fontWeight: 700, lineHeight: 1.35 }}>
+            <span style={{ color: "#4a7a35", fontWeight: 900 }}>🚶 Walk this location?</span> Pre-fills every planned row + variety for <strong>{filterLocation}</strong>. Existing rows stay put.
+          </div>
+          <button onClick={() => walkFromPlan(filterLocation)}
+            style={{ background: "#4a7a35", color: "#fff", border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+            Walk
+          </button>
+        </div>
+      )}
+
       {/* Bulk delete bar — only renders when there's something to delete.
           Confirms with the count + 'shown' if a filter is active so the
           user knows exactly what's being cleared. */}
@@ -479,14 +559,33 @@ export default function InventoryView({ onBack }) {
                   </button>
                 </Cell>
                 <Cell>
-                  <input type="number" inputMode="numeric" value={lot.quantity ?? 0}
-                    onChange={e => patch(lot, { quantity: parseInt(e.target.value, 10) || 0 })}
-                    style={{ ...cellInputBase, fontWeight: 800, textAlign: "right", fontSize: 15 }} />
+                  <div style={{ width: "100%", display: "flex", flexDirection: "column", padding: "2px 0" }}>
+                    <input type="number" inputMode="numeric" value={lot.quantity ?? 0}
+                      onChange={e => patch(lot, { quantity: parseInt(e.target.value, 10) || 0 })}
+                      style={{ ...cellInputBase, fontWeight: 800, textAlign: "right", fontSize: 15, padding: "4px 6px" }} />
+                    {/* Plan / variance — only shown when a plan exists on this lot */}
+                    {Number.isFinite(lot.plannedQty) && (() => {
+                      const delta = (lot.quantity || 0) - lot.plannedQty;
+                      const isShort = delta < 0;
+                      const isExtra = delta > 0;
+                      return (
+                        <div style={{ fontSize: 9, color: "#7a8c74", textAlign: "right", padding: "1px 6px 2px", lineHeight: 1.2 }}>
+                          <div>plan {lot.plannedQty}</div>
+                          {(isShort || isExtra) && (
+                            <div style={{ color: isShort ? "#d94f3d" : "#4a7a35", fontWeight: 800 }}>
+                              {isShort ? "" : "+"}{delta}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
                 </Cell>
               </div>
-              {/* Bottom row — Notes (flex) + Actions (right) */}
+              {/* Bottom row — status pill + notes + actions */}
               <div style={{ display: "flex", alignItems: "stretch", borderTop: "1px dashed #e8ede4", background: altBg }}>
-                <div style={{ flex: 1, padding: "2px 4px", borderRight: "1px dashed #e8ede4", display: "flex" }}>
+                <div style={{ flex: 1, padding: "4px 6px", borderRight: "1px dashed #e8ede4", display: "flex", flexDirection: "column", gap: 4 }}>
+                  <StatusPill lot={lot} />
                   <AutoTextarea value={lot.notes || ""}
                     onChange={v => patch(lot, { notes: v })}
                     placeholder="📝 notes — small, wilted, etc." />
@@ -517,7 +616,7 @@ export default function InventoryView({ onBack }) {
       </div>
 
       <div style={{ padding: "8px 14px", fontSize: 10, color: "#7a8c74", lineHeight: 1.4 }}>
-        Tip: tap Loc → site → location. Tap Row → check rows (or Select all) → Add. Each picked row becomes its own grid row — just tap Item and type the qty. Notes + actions sit below each row.
+        Fastest walk: filter to a location → tap <strong>Walk</strong> → every planned row + variety pre-fills with the planned qty. Just type the actual count for each. Variance (+/-) shows automatically. Manual rows (no plan) work too — just <strong>+ Add</strong>.
       </div>
 
       {/* Photo viewer modal */}
@@ -743,6 +842,33 @@ export default function InventoryView({ onBack }) {
         </div>
       )}
     </div>
+  );
+}
+
+// ── Status pill on each record ───────────────────────────────────────────────
+// "Uncounted" → grey, "Counted today" → green, "X days ago" → amber → red
+// when stale > 7 days.
+function StatusPill({ lot }) {
+  const ts = lot.lastCountedAt ? new Date(lot.lastCountedAt) : null;
+  if (!ts) {
+    return (
+      <span style={{ alignSelf: "flex-start", background: "#e8eee5", color: "#7a8c74", borderRadius: 999, padding: "2px 8px", fontSize: 10, fontWeight: 800, letterSpacing: 0.3 }}>
+        ◯ Uncounted
+      </span>
+    );
+  }
+  const diffMs = Date.now() - ts.getTime();
+  const days = Math.floor(diffMs / 86400000);
+  let label, bg, color;
+  if (days === 0)       { label = "Counted today";   bg = "#dff2d2"; color = "#2e5e1a"; }
+  else if (days === 1)  { label = "1 day ago";       bg = "#fff3c4"; color = "#7a5a00"; }
+  else if (days <= 7)   { label = `${days} days ago`; bg = "#fff3c4"; color = "#7a5a00"; }
+  else                  { label = `${days}d ago · stale`; bg = "#fdecea"; color = "#7a2418"; }
+  const history = (lot.countHistory || []).length;
+  return (
+    <span style={{ alignSelf: "flex-start", background: bg, color, borderRadius: 999, padding: "2px 8px", fontSize: 10, fontWeight: 800, letterSpacing: 0.3 }}>
+      ✓ {label}{history > 1 ? ` · ${history} counts` : ""}
+    </span>
   );
 }
 
