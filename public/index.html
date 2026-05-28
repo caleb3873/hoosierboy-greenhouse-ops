@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
     <meta name="theme-color" content="#1a2a1a" />
     <meta name="description" content="Hoosier Boy Greenhouse Ops" />
     <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
@@ -18,6 +18,29 @@
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Myanmar:wght@400;700&display=swap" rel="stylesheet" />
     <style>
       :lang(my), [lang="my"] { font-family: 'Noto Sans Myanmar', 'DM Sans', sans-serif; }
+
+      /* Fixed-frame web-app feel — locks horizontal panning and iOS rubber-
+         band scroll so the app doesn't slide side-to-side or bounce when
+         the user starts a vertical scroll. */
+      html, body {
+        overflow-x: hidden;
+        overscroll-behavior: none;
+        -webkit-overflow-scrolling: auto;
+        touch-action: pan-y;
+        position: relative;
+        width: 100%;
+        max-width: 100vw;
+      }
+      body {
+        /* Prevent text selection from triggering scroll on long-press */
+        -webkit-tap-highlight-color: transparent;
+      }
+      #root {
+        max-width: 100vw;
+        overflow-x: hidden;
+      }
+      /* Inputs still need pan-y to allow scroll within textareas */
+      input, textarea, select, button { touch-action: manipulation; }
     </style>
     <title>Hoosier Boy Greenhouse Ops</title>
   </head>
