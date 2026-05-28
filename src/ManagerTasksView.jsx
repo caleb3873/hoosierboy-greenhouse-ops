@@ -2754,15 +2754,133 @@ export function TaskViewer({ task, onBack, onAppend, readOnly = true }) {
   );
 }
 
+function Section({ title, children }) {
+  return (
+    <div style={{ background: "#fff", borderRadius: 12, border: "1.5px solid #e0ead8", padding: "14px 16px", marginBottom: 10 }}>
+      <div style={{ fontSize: 11, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 8 }}>{title}</div>
+      {children}
+    </div>
+  );
+}
+
 function TaskDetail({ task, onBack, onSave }) {
   const [t, setT] = useState({ ...task });
   const [dirty, setDirty] = useState(false);
+  // Open in read-only view by default — tap Edit to mutate
+  const [mode, setMode] = useState("view");
   const upd = (k, v) => { setT(p => ({ ...p, [k]: v })); setDirty(true); };
 
   const handleBack = () => {
     if (dirty) { onSave(t); return; }
     onBack();
   };
+
+  // View-only screen: location bar + title + body + photos + status, with Edit
+  if (mode === "view") {
+    // Same parsing as the task card so the bar reads "Bluff Quonset 02, 10, 14"
+    let locText = "";
+    const descLocMatch = (t.description || "").match(/^LOCATION:\s*([^\n]+)/m);
+    if (descLocMatch) {
+      locText = [...new Set(descLocMatch[1].split(",").map(s => s.trim()).filter(Boolean))].join(", ");
+    }
+    if (!locText) locText = (t.location || "").trim();
+    const locUpper = locText.toUpperCase();
+    let locBarBg = "#7a8c74";
+    if (locUpper.includes("BLUFF"))       locBarBg = "#1e2d1a";
+    else if (locUpper.includes("SPRAGUE")) locBarBg = "#4a90d9";
+    else if (locUpper.includes("PAD"))    locBarBg = "#7d3c98";
+
+    const bodyText = descLocMatch ? (t.description || "").replace(/^LOCATION:[^\n]*\n?/m, "").trim() : (t.description || "");
+    const isDone = t.status === "completed";
+
+    return (
+      <div style={{ ...FONT, minHeight: "100vh", background: "#f2f5ef" }}>
+        <div style={{ background: "#1e2d1a", padding: "16px 20px", color: "#c8e6b8", display: "flex", alignItems: "center", gap: 12 }}>
+          <button onClick={onBack} style={{ background: "none", border: "none", color: "#c8e6b8", fontSize: 22, cursor: "pointer" }}>&larr;</button>
+          <div style={{ fontSize: 17, fontWeight: 800, flex: 1 }}>Task</div>
+          <button onClick={() => setMode("edit")}
+            style={{ background: "#7fb069", color: "#1e2d1a", border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+            ✏ Edit
+          </button>
+        </div>
+
+        <div style={{ padding: 16 }}>
+          <div style={{ background: "#fff", borderRadius: 14, border: "1.5px solid #e0ead8", overflow: "hidden", marginBottom: 14 }}>
+            {locText && (
+              <div style={{ background: locBarBg, color: "#fff", padding: "12px 16px", fontSize: 16, fontWeight: 800, letterSpacing: 0.5, textTransform: "uppercase", display: "flex", alignItems: "flex-start", gap: 8, lineHeight: 1.3 }}>
+                <span style={{ flexShrink: 0 }}>📍</span>
+                <span>{locText}</span>
+              </div>
+            )}
+            <div style={{ padding: "16px 18px" }}>
+              <div style={{ fontSize: 19, fontWeight: 800, color: isDone ? "#7a8c74" : "#1e2d1a", lineHeight: 1.3, textDecoration: isDone ? "line-through" : "none" }}>
+                {t.title}
+              </div>
+              {t.targetDate && (
+                <div style={{ fontSize: 13, color: "#7a8c74", marginTop: 8, fontWeight: 600 }}>📅 {formatTargetDate(t.targetDate)}</div>
+              )}
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
+                {isDone && <span style={{ background: "#7fb069", color: "#1e2d1a", borderRadius: 999, padding: "3px 10px", fontSize: 11, fontWeight: 800 }}>✓ DONE</span>}
+                {t.carriedOver && !isDone && <span style={{ background: "#d94f3d", color: "#fff", borderRadius: 999, padding: "3px 10px", fontSize: 11, fontWeight: 800 }}>OVERDUE</span>}
+                {t.assignedTo && <span style={{ background: "#4a90d9", color: "#fff", borderRadius: 999, padding: "3px 10px", fontSize: 11, fontWeight: 800 }}>👤 {t.assignedTo}</span>}
+                {t.claimedBy && !isDone && <span style={{ background: "#e89a3a", color: "#fff", borderRadius: 999, padding: "3px 10px", fontSize: 11, fontWeight: 800 }}>🔒 Claimed by {t.claimedBy}</span>}
+                {t.team === "houseplants" && <span style={{ background: "#7fb069", color: "#1e2d1a", borderRadius: 999, padding: "3px 10px", fontSize: 11, fontWeight: 800 }}>🪴 Houseplants</span>}
+              </div>
+            </div>
+          </div>
+
+          {/* Body / description */}
+          {bodyText && (
+            <Section title="Details">
+              <div style={{ fontSize: 14, color: "#1e2d1a", whiteSpace: "pre-wrap", lineHeight: 1.45 }}>{bodyText}</div>
+            </Section>
+          )}
+
+          {/* Notes added during claim / release / done */}
+          {t.notes && (
+            <Section title="Notes">
+              <div style={{ fontSize: 14, color: "#1e2d1a", whiteSpace: "pre-wrap", fontStyle: "italic" }}>📝 {t.notes}</div>
+            </Section>
+          )}
+
+          {/* Bench numbers if any */}
+          {Array.isArray(t.benchNumbers) && t.benchNumbers.length > 0 && (
+            <Section title="Bench Numbers">
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {t.benchNumbers.map((b, i) => (
+                  <span key={i} style={{ background: "#f2f5ef", border: "1.5px solid #c8d8c0", borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700, color: "#1e2d1a" }}>{b}</span>
+                ))}
+              </div>
+            </Section>
+          )}
+
+          {/* Photos */}
+          {Array.isArray(t.photos) && t.photos.length > 0 && (
+            <Section title={`Photos · ${t.photos.length}`}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(110px, 1fr))", gap: 8 }}>
+                {t.photos.map((p, i) => <TaskPhoto key={i} src={p} size={110} />)}
+              </div>
+            </Section>
+          )}
+
+          {/* Status history */}
+          <Section title="History">
+            <div style={{ fontSize: 13, color: "#1e2d1a", display: "flex", flexDirection: "column", gap: 4 }}>
+              <div>Created by <strong>{t.createdBy || "Manager"}</strong></div>
+              {t.assignedAt && <div>Assigned to <strong>{t.assignedTo}</strong> · {formatTime(t.assignedAt)}</div>}
+              {t.claimedBy && <div>Claimed by <strong>{t.claimedBy}</strong>{t.claimedAt ? ` · ${formatTime(t.claimedAt)}` : ""}</div>}
+              {isDone && <div>Completed by <strong>{t.completedBy}</strong> · {formatTime(t.completedAt)}</div>}
+            </div>
+          </Section>
+
+          <button onClick={() => setMode("edit")}
+            style={{ width: "100%", marginTop: 10, background: "#1e2d1a", color: "#c8e6b8", border: "none", borderRadius: 10, padding: "14px 16px", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+            ✏ Edit this task
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // Warn on browser close/refresh with unsaved changes
   useEffect(() => {
