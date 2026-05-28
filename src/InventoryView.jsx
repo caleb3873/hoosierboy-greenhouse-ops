@@ -78,6 +78,12 @@ export default function InventoryView({ onBack }) {
   // Walk mode within the sheet: "census" counts everything, "sweep" focuses
   // on clearing emptied rows (subsequent visits after the initial count).
   const [walkMode, setWalkMode] = useState("census");
+  // Session state — tracks edits + manual additions since this location was
+  // opened so the user can Undo before hitting Save & done.
+  //   sessionEdits: Map<lotId, {field → original value}>
+  //   sessionAdded: Set<lotId> for rows the user added manually this session
+  const [sessionEdits, setSessionEdits] = useState(new Map());
+  const [sessionAdded, setSessionAdded] = useState(new Set());
   const [filterLocation, setFilterLocation] = useState("");
   // Photo viewer modal — opens when 📷 is tapped on a row. Holds { lot, scope }
   // where scope is "row" (this row only) or "pad" (all lots at this location).
@@ -271,21 +277,25 @@ export default function InventoryView({ onBack }) {
 
   // ── Actions ────────────────────────────────────────────────────────────────
   // addLot called from "+ Add row" buttons. If no explicit seed, pre-fills
-  // location + incremented row from the last edited lot.
+  // location + incremented row from the last edited lot. Records the new row
+  // in sessionAdded so Undo can remove it.
   async function addLot(seed = {}) {
     const fallbackLocation = filterLocation || lastLot?.location || "";
     const fallbackRowId    = lastLot?.location === fallbackLocation ? nextRowId(lastLot?.rowId) : "";
-    await insert({
+    const created = await insert({
       location: seed.location ?? fallbackLocation,
       rowId:    seed.rowId    ?? fallbackRowId,
       potSize:  seed.potSize  || "",
       plantType: seed.plantType || "",
       variety:  seed.variety || "",
-      quantity: seed.quantity ?? 0,
+      quantity: seed.quantity ?? null,
       notes: "",
       countedAt: new Date().toISOString(),
       countedBy: displayName || "Manager",
     });
+    if (created?.id && screen === "sheet") {
+      setSessionAdded(prev => new Set(prev).add(created.id));
+    }
   }
 
   // ── Location picker ────────────────────────────────────────────────────────
@@ -375,6 +385,19 @@ export default function InventoryView({ onBack }) {
   }
 
   async function patch(lot, changes) {
+    // Record original values for Undo, only for fields not yet snapshotted
+    // this session. Only do this in the sheet (drilled-in) view.
+    if (screen === "sheet") {
+      setSessionEdits(prev => {
+        const next = new Map(prev);
+        const snap = { ...(next.get(lot.id) || {}) };
+        for (const key of Object.keys(changes)) {
+          if (!(key in snap)) snap[key] = lot[key] ?? null;
+        }
+        next.set(lot.id, snap);
+        return next;
+      });
+    }
     // If qty changed and is a real number, append a count history entry so we
     // have a season-long timeline per lot ("counted 198 last Tue, 174 Wed,
     // 156 today"). Also stamp last_counted_at for the status pill.
@@ -394,22 +417,24 @@ export default function InventoryView({ onBack }) {
   }
 
   // ── Walk-from-Plan ─────────────────────────────────────────────────────────
-  // For a given location, look at fall_program_items and create an inventory
-  // lot for every planned (location · row · variety) that doesn't already
-  // exist. Pre-fills size, plant type, variety, planned_qty. Existing lots
-  // are untouched — re-running this is idempotent and safe mid-season.
-  async function walkFromPlan(location) {
-    if (!location) return;
+  // Reads fall_program_items for the location and creates an inventory lot
+  // for every planned (location · row · variety) that doesn't already exist.
+  // Existing lots are untouched — idempotent + safe mid-season.
+  //
+  // silent=true skips alerts/confirmations so we can call it automatically
+  // when the user drills into a location for the first time.
+  async function walkFromPlan(location, { silent = false } = {}) {
+    if (!location) return 0;
     const planned = (planItems || []).filter(p =>
       (p.location || "").trim().toLowerCase() === location.trim().toLowerCase() &&
       p.variety && p.rowId
     );
     if (planned.length === 0) {
-      alert(`No Fall Program plan rows for "${location}".`);
-      return;
+      if (!silent) alert(`No Fall Program plan rows for "${location}".`);
+      return 0;
     }
-    // Aggregate planned qty by (rowId · variety) since multi-bench varieties
-    // can have multiple rows in the plan
+    // Aggregate planned qty by (rowId · variety) — multi-bench varieties
+    // can appear as several rows in the plan.
     const byKey = new Map();
     for (const p of planned) {
       const k = `${p.rowId}||${p.variety}`;
@@ -417,7 +442,6 @@ export default function InventoryView({ onBack }) {
       prev.qty += (p.qty || 0) * (p.ppp || 1);
       byKey.set(k, prev);
     }
-    // Skip rows that already exist as inventory lots for this location
     const existing = new Set(
       (lots || [])
         .filter(l => (l.location || "").toLowerCase() === location.toLowerCase())
@@ -425,10 +449,10 @@ export default function InventoryView({ onBack }) {
     );
     const toCreate = [...byKey.values()].filter(p => !existing.has(`${p.rowId}||${p.variety}`));
     if (toCreate.length === 0) {
-      alert(`Already walked — all ${byKey.size} planned rows at "${location}" are in the grid.`);
-      return;
+      if (!silent) alert(`Nothing to add — every planned row at "${location}" is already in the grid.`);
+      return 0;
     }
-    if (!window.confirm(`Add ${toCreate.length} planned row${toCreate.length === 1 ? "" : "s"} for "${location}"?\n\nExisting rows won't be touched.`)) return;
+    if (!silent && !window.confirm(`Add ${toCreate.length} planned row${toCreate.length === 1 ? "" : "s"} for "${location}"?\n\nExisting rows won't be touched.`)) return 0;
     for (const p of toCreate) {
       await insert({
         location: p.location,
@@ -436,15 +460,14 @@ export default function InventoryView({ onBack }) {
         potSize: sizeFromCategory(p.category),
         plantType: typeFromCategory(p.category, p.variety),
         variety: p.variety,
-        quantity: 0,
+        // Quantity intentionally null until the user counts — lets us tell
+        // 'uncounted' apart from 'counted 0'. lastCountedAt stays null too.
+        quantity: null,
         plannedQty: p.qty,
         notes: "",
-        countedAt: new Date().toISOString(),
-        countedBy: displayName || "Manager",
       });
     }
-    // Auto-filter so the user immediately sees what they just walked
-    setFilterLocation(location);
+    return toCreate.length;
   }
 
   // ── Photos ─────────────────────────────────────────────────────────────────
@@ -545,11 +568,50 @@ export default function InventoryView({ onBack }) {
 
   // (Layout now responsive — no fixed widths needed)
 
-  // Drilldown helper — enter the sheet for one location, with census mode
-  function openLocation(loc) {
+  // Drilldown helper — enter the sheet for one location, in census mode, and
+  // silently pre-load every planned row so the user just confirms or changes
+  // counts. Idempotent: re-entering pulls in any new planned rows added
+  // mid-season without disturbing existing counts.
+  async function openLocation(loc) {
     setFilterLocation(loc);
     setScreen("sheet");
     setWalkMode("census");
+    // Start a fresh session — clear undo state. walkFromPlan inserts are
+    // pre-load, not user edits, so we don't track them as session adds.
+    setSessionEdits(new Map());
+    setSessionAdded(new Set());
+    await walkFromPlan(loc, { silent: true });
+  }
+
+  const hasChanges = sessionEdits.size > 0 || sessionAdded.size > 0;
+
+  // Undo every edit + manual addition made since openLocation. Edits revert
+  // to their pre-session values; manually-added rows are deleted.
+  async function undoChanges() {
+    if (!hasChanges) return;
+    if (!window.confirm(`Undo all ${sessionEdits.size + sessionAdded.size} change${sessionEdits.size + sessionAdded.size === 1 ? "" : "s"} made this session?`)) return;
+    // Revert edits
+    for (const [lotId, snapshot] of sessionEdits) {
+      const cur = (lots || []).find(l => l.id === lotId);
+      if (!cur) continue;
+      await update(lotId, snapshot);
+    }
+    // Remove manually-added rows
+    for (const lotId of sessionAdded) {
+      await remove(lotId);
+    }
+    setSessionEdits(new Map());
+    setSessionAdded(new Set());
+  }
+
+  // Save = location-check confirmation + return to index. Data is already in
+  // the DB (we patch-on-edit for safety + history); this just clears the
+  // session and bounces back to the location grid.
+  function saveAndDone() {
+    if (!window.confirm(`Save count for "${filterLocation || "all locations"}"?\n\nAre you in the right house / location?`)) return;
+    setSessionEdits(new Map());
+    setSessionAdded(new Set());
+    setScreen("index");
   }
 
   // ── INDEX SCREEN — list of locations like the maintenance facility cards ──
@@ -607,6 +669,11 @@ export default function InventoryView({ onBack }) {
                     ? <>{s.lots} row{s.lots === 1 ? "" : "s"} · <strong style={{ color: "#1e2d1a" }}>{s.totalPots.toLocaleString()}</strong> pots</>
                     : <>{s.plannedCount} planned row{s.plannedCount === 1 ? "" : "s"}</>}
                 </div>
+                {s.lastCount && (
+                  <div style={{ fontSize: 10, color: "#7a8c74", marginTop: 2 }}>
+                    Last: {new Date(s.lastCount).toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+                  </div>
+                )}
               </button>
             );
           })}
@@ -667,35 +734,32 @@ export default function InventoryView({ onBack }) {
         {filterLocation && (
           <button onClick={() => setFilterLocation("")} style={btnSecondary}>✕</button>
         )}
-        <button onClick={() => addLot({ location: filterLocation })} style={btnPrimary}>+ Add</button>
+        {filterLocation && allLocations.some(l => l.toLowerCase() === filterLocation.toLowerCase()) && (
+          <button onClick={() => walkFromPlan(filterLocation)} title="Pull in any newly-planned rows since you last walked"
+            style={btnSecondary}>↻ Sync plan</button>
+        )}
+        <button onClick={() => addLot({ location: filterLocation })} style={btnPrimary}>+ Add row</button>
         <span style={{ fontSize: 10, color: "#7a8c74", fontWeight: 700, whiteSpace: "nowrap" }}>
           {visibleLots.length} · {visibleLots.reduce((s, l) => s + (l.quantity || 0), 0).toLocaleString()}
         </span>
       </div>
 
-      {/* Walk-from-Plan bar — appears when filtered to a real location.
-          Pulls every planned (row · variety) from fall_program_items and
-          inserts a pre-filled lot for each. Idempotent: rerun any time. */}
-      {filterLocation && allLocations.some(l => l.toLowerCase() === filterLocation.toLowerCase()) && (
-        <div style={{ padding: "8px 12px", background: "#eef7e8", borderBottom: "1.5px solid #b8d8b0", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-          <div style={{ fontSize: 11, color: "#1e2d1a", fontWeight: 700, lineHeight: 1.35 }}>
-            <span style={{ color: "#4a7a35", fontWeight: 900 }}>🚶 Walk this location?</span> Pre-fills every planned row + variety for <strong>{filterLocation}</strong>. Existing rows stay put.
-          </div>
-          <button onClick={() => walkFromPlan(filterLocation)}
-            style={{ background: "#4a7a35", color: "#fff", border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
-            Walk
-          </button>
-        </div>
-      )}
+      {/* (Walk-from-plan now runs automatically when you tap a location card.
+          A small "Pull in latest plan rows" button stays in the toolbar for
+          the case where the plan changes mid-season.) */}
 
-      {/* Bulk delete bar — only renders when there's something to delete.
-          Confirms with the count + 'shown' if a filter is active so the
-          user knows exactly what's being cleared. */}
-      {visibleLots.length > 0 && (
-        <div style={{ padding: "6px 12px", background: "#fff8f7", borderBottom: "1.5px solid #f3d3cf", display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8 }}>
-          <button onClick={() => deleteAllShown()}
-            style={{ background: "#fff", border: "1.5px solid #d94f3d", color: "#d94f3d", borderRadius: 8, padding: "6px 12px", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
-            🗑 Delete {filterLocation ? "shown" : "all"} ({visibleLots.length})
+      {/* Undo bar — only when there are session changes to undo. Replaces
+          the older 'Delete shown' bar since destructive bulk-delete is now
+          available behind the long-press 🗑 per row + Undo handles in-session
+          mistakes. */}
+      {hasChanges && (
+        <div style={{ padding: "6px 12px", background: "#fff8e8", borderBottom: "1.5px solid #f0d8a8", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+          <div style={{ fontSize: 11, color: "#7a5a00", fontWeight: 700 }}>
+            ✎ {sessionEdits.size + sessionAdded.size} change{sessionEdits.size + sessionAdded.size === 1 ? "" : "s"} this session
+          </div>
+          <button onClick={undoChanges}
+            style={{ background: "#fff", border: "1.5px solid #e89a3a", color: "#a86a10", borderRadius: 8, padding: "6px 12px", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+            ↺ Undo changes
           </button>
         </div>
       )}
@@ -762,42 +826,7 @@ export default function InventoryView({ onBack }) {
                   </button>
                 </Cell>
                 <Cell>
-                  <div style={{ width: "100%", display: "flex", flexDirection: "column", padding: "2px 0" }}>
-                    {walkMode === "sweep" ? (
-                      // Sweep mode — one-tap "empty" instead of typing a number.
-                      // Already-zero rows show their state but still respond.
-                      <button onClick={() => markEmpty(lot)}
-                        style={{
-                          background: (lot.quantity || 0) === 0 ? "#fdecea" : "#d94f3d",
-                          color: (lot.quantity || 0) === 0 ? "#7a2418" : "#fff",
-                          border: "none", borderRadius: 8, padding: "10px 6px",
-                          fontSize: 12, fontWeight: 900, cursor: "pointer", fontFamily: "inherit",
-                          width: "100%",
-                        }}>
-                        {(lot.quantity || 0) === 0 ? "✓ Empty" : "Tap = Empty"}
-                      </button>
-                    ) : (
-                      <input type="number" inputMode="numeric" value={lot.quantity ?? 0}
-                        onChange={e => patch(lot, { quantity: parseInt(e.target.value, 10) || 0 })}
-                        style={{ ...cellInputBase, fontWeight: 800, textAlign: "right", fontSize: 15, padding: "4px 6px" }} />
-                    )}
-                    {/* Plan / variance — only shown when a plan exists on this lot */}
-                    {Number.isFinite(lot.plannedQty) && (() => {
-                      const delta = (lot.quantity || 0) - lot.plannedQty;
-                      const isShort = delta < 0;
-                      const isExtra = delta > 0;
-                      return (
-                        <div style={{ fontSize: 9, color: "#7a8c74", textAlign: "right", padding: "1px 6px 2px", lineHeight: 1.2 }}>
-                          <div>plan {lot.plannedQty}</div>
-                          {(isShort || isExtra) && (
-                            <div style={{ color: isShort ? "#d94f3d" : "#4a7a35", fontWeight: 800 }}>
-                              {isShort ? "" : "+"}{delta}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })()}
-                  </div>
+                  <QtyCell lot={lot} walkMode={walkMode} patch={patch} markEmpty={markEmpty} />
                 </Cell>
               </div>
               {/* Bottom row — status pill + notes + actions */}
@@ -833,10 +862,26 @@ export default function InventoryView({ onBack }) {
         </button>
       </div>
 
-      <div style={{ padding: "8px 14px", fontSize: 10, color: "#7a8c74", lineHeight: 1.4 }}>
-        <div><strong>Census</strong> mode — type the actual qty per row. Use this for the initial walk after planting.</div>
-        <div style={{ marginTop: 4 }}><strong>Sweep</strong> mode — tap the red button to mark a row Empty (qty = 0). Use this for follow-up walks where most rows haven't changed.</div>
+      <div style={{ padding: "8px 14px 80px", fontSize: 10, color: "#7a8c74", lineHeight: 1.4 }}>
+        <div><strong>Census</strong> mode — tap ✓ to confirm planned qty, ✏ to type a different number, or ✕0 to mark empty. Already-confirmed rows show a regular input.</div>
+        <div style={{ marginTop: 4 }}><strong>Sweep</strong> mode — single red button per row, tap to mark Empty. Use for follow-up walks.</div>
         <div style={{ marginTop: 4 }}>Amber stripe = duplicate (same loc · row · variety on another row). ⬇ XLSX in the header exports what you're looking at.</div>
+      </div>
+
+      {/* Sticky bottom action bar — Save & done with location-check confirm */}
+      <div style={{
+        position: "fixed", left: 0, right: 0, bottom: 0,
+        background: "#1e2d1a", color: "#c8e6b8", padding: "10px 14px",
+        display: "flex", gap: 8, alignItems: "center", borderTop: "2px solid #4a6a3a",
+        zIndex: 50,
+      }}>
+        <div style={{ fontSize: 11, fontWeight: 800, color: "#c8e6b8", flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          📍 {filterLocation || "All locations"}
+        </div>
+        <button onClick={saveAndDone}
+          style={{ background: "#7fb069", color: "#1e2d1a", border: "none", borderRadius: 10, padding: "10px 18px", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+          ✓ Save &amp; Done
+        </button>
       </div>
 
       {/* Photo viewer modal */}
@@ -1059,6 +1104,84 @@ export default function InventoryView({ onBack }) {
               </>
             )}
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Qty cell — Census mode shows confirm/change/empty buttons until the user
+// commits a value; once committed, edits an input directly. Sweep mode is a
+// single big "Empty" button as before. ─────────────────────────────────────
+function QtyCell({ lot, walkMode, patch, markEmpty }) {
+  if (walkMode === "sweep") {
+    return (
+      <div style={{ width: "100%", display: "flex", flexDirection: "column", padding: "2px 0" }}>
+        <button onClick={() => markEmpty(lot)}
+          style={{
+            background: (lot.quantity || 0) === 0 ? "#fdecea" : "#d94f3d",
+            color: (lot.quantity || 0) === 0 ? "#7a2418" : "#fff",
+            border: "none", borderRadius: 8, padding: "10px 6px",
+            fontSize: 12, fontWeight: 900, cursor: "pointer", fontFamily: "inherit", width: "100%",
+          }}>
+          {(lot.quantity || 0) === 0 ? "✓ Empty" : "Tap = Empty"}
+        </button>
+        {Number.isFinite(lot.plannedQty) && <PlanVariance lot={lot} />}
+      </div>
+    );
+  }
+  // Census mode
+  const uncounted = !lot.lastCountedAt && lot.quantity == null;
+  // While unconfirmed AND plan exists, show 3 quick buttons. Once the user
+  // commits a value (or there's no plan), drop to a normal numeric input.
+  if (uncounted && Number.isFinite(lot.plannedQty)) {
+    return (
+      <div style={{ width: "100%", display: "flex", flexDirection: "column", padding: "2px 0", gap: 2 }}>
+        <button onClick={() => patch(lot, { quantity: lot.plannedQty })}
+          style={{ background: "#4a7a35", color: "#fff", border: "none", borderRadius: 6, padding: "6px 4px", fontSize: 12, fontWeight: 900, cursor: "pointer", fontFamily: "inherit" }}>
+          ✓ {lot.plannedQty}
+        </button>
+        <div style={{ display: "flex", gap: 2 }}>
+          <button onClick={() => {
+              const raw = window.prompt(`Count for ${lot.variety}?`, lot.plannedQty);
+              if (raw == null) return;
+              const n = parseInt(raw, 10);
+              if (Number.isFinite(n)) patch(lot, { quantity: n });
+            }}
+            style={{ flex: 1, background: "#fff", color: "#1e2d1a", border: "1.5px solid #c8d8c0", borderRadius: 6, padding: "4px 2px", fontSize: 10, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+            ✏
+          </button>
+          <button onClick={() => patch(lot, { quantity: 0 })}
+            style={{ flex: 1, background: "#fff", color: "#d94f3d", border: "1.5px solid #d94f3d", borderRadius: 6, padding: "4px 2px", fontSize: 10, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+            ✕0
+          </button>
+        </div>
+        <PlanVariance lot={lot} />
+      </div>
+    );
+  }
+  return (
+    <div style={{ width: "100%", display: "flex", flexDirection: "column", padding: "2px 0" }}>
+      <input type="number" inputMode="numeric" value={lot.quantity ?? ""}
+        onChange={e => patch(lot, { quantity: e.target.value === "" ? null : parseInt(e.target.value, 10) || 0 })}
+        placeholder="—"
+        style={{ ...cellInputBase, fontWeight: 800, textAlign: "right", fontSize: 15, padding: "4px 6px" }} />
+      {Number.isFinite(lot.plannedQty) && <PlanVariance lot={lot} />}
+    </div>
+  );
+}
+
+function PlanVariance({ lot }) {
+  if (!Number.isFinite(lot.plannedQty)) return null;
+  const delta = (lot.quantity || 0) - lot.plannedQty;
+  const isShort = delta < 0 && lot.quantity != null;
+  const isExtra = delta > 0;
+  return (
+    <div style={{ fontSize: 9, color: "#7a8c74", textAlign: "right", padding: "1px 6px 2px", lineHeight: 1.2 }}>
+      <div>plan {lot.plannedQty}</div>
+      {lot.quantity != null && (isShort || isExtra) && (
+        <div style={{ color: isShort ? "#d94f3d" : "#4a7a35", fontWeight: 800 }}>
+          {isShort ? "" : "+"}{delta}
         </div>
       )}
     </div>
