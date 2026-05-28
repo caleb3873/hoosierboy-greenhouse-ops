@@ -366,6 +366,21 @@ export default function InventoryView({ onBack }) {
     });
   }
 
+  // Bulk delete — wipes everything currently visible (respects the location
+  // filter). Two-step confirmation when more than 10 rows so a stray tap
+  // can't nuke a whole walk.
+  async function deleteAllShown() {
+    const count = visibleLots.length;
+    if (count === 0) return;
+    const scope = filterLocation ? `the ${count} row${count === 1 ? "" : "s"} at "${filterLocation}"` : `all ${count} inventory row${count === 1 ? "" : "s"}`;
+    if (!window.confirm(`Delete ${scope}? This can't be undone.`)) return;
+    if (count > 10 && !window.confirm(`Really delete ${count} rows? Tap OK once more to confirm.`)) return;
+    // Delete sequentially — useTable handles the in-memory state per call.
+    for (const lot of visibleLots) {
+      await remove(lot.id);
+    }
+  }
+
   // (Layout now responsive — no fixed widths needed)
 
   return (
@@ -398,6 +413,18 @@ export default function InventoryView({ onBack }) {
           {visibleLots.length} · {visibleLots.reduce((s, l) => s + (l.quantity || 0), 0).toLocaleString()}
         </span>
       </div>
+
+      {/* Bulk delete bar — only renders when there's something to delete.
+          Confirms with the count + 'shown' if a filter is active so the
+          user knows exactly what's being cleared. */}
+      {visibleLots.length > 0 && (
+        <div style={{ padding: "6px 12px", background: "#fff8f7", borderBottom: "1.5px solid #f3d3cf", display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8 }}>
+          <button onClick={() => deleteAllShown()}
+            style={{ background: "#fff", border: "1.5px solid #d94f3d", color: "#d94f3d", borderRadius: 8, padding: "6px 12px", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+            🗑 Delete {filterLocation ? "shown" : "all"} ({visibleLots.length})
+          </button>
+        </div>
+      )}
 
       {/* Two-line record list. No horizontal scroll — everything fits the phone width. */}
       <div style={{ background: "#fff", borderBottom: "1.5px solid #e0ead8" }}>
