@@ -64,8 +64,9 @@ const POT_SIZES = ["", "4.5\"", "6\"", "8\"", "9\"", "10\"", "12\"", "14\"", "HB
 // without horizontal scroll. Notes + Actions sit on a second line spanning
 // the full width. Header mirrors the top-row grid template.
 //
-// Top-row grid: fractional widths (sum 100%) — Item gets the most space.
-const TOP_COLS = "1.1fr 0.8fr 1.9fr 0.8fr";
+// Top-row grid: fractional widths (sum 100%). Qty gets extra room so the
+// confirm / type / empty buttons stay tap-friendly on a phone.
+const TOP_COLS = "1fr 0.7fr 1.6fr 1.1fr";
 
 export default function InventoryView({ onBack }) {
   const { displayName } = useAuth();
@@ -1132,40 +1133,59 @@ function QtyCell({ lot, walkMode, patch, markEmpty }) {
   }
   // Census mode
   const uncounted = !lot.lastCountedAt && lot.quantity == null;
-  // While unconfirmed AND plan exists, show 3 quick buttons. Once the user
-  // commits a value (or there's no plan), drop to a normal numeric input.
+  // While unconfirmed AND plan exists, show big tap-friendly buttons. Once
+  // the user commits a value (or there's no plan), drop to a normal numeric
+  // input.
   if (uncounted && Number.isFinite(lot.plannedQty)) {
     return (
-      <div style={{ width: "100%", display: "flex", flexDirection: "column", padding: "2px 0", gap: 2 }}>
+      <div style={{ width: "100%", display: "flex", flexDirection: "column", padding: "3px", gap: 4 }}>
+        {/* ✓ <plan_qty> — primary one-tap confirm. Larger and taller for fat fingers. */}
         <button onClick={() => patch(lot, { quantity: lot.plannedQty })}
-          style={{ background: "#4a7a35", color: "#fff", border: "none", borderRadius: 6, padding: "6px 4px", fontSize: 12, fontWeight: 900, cursor: "pointer", fontFamily: "inherit" }}>
+          style={{
+            background: "#4a7a35", color: "#fff", border: "none", borderRadius: 8,
+            padding: "14px 6px", fontSize: 18, fontWeight: 900, lineHeight: 1.1,
+            cursor: "pointer", fontFamily: "inherit", minHeight: 48,
+          }}>
           ✓ {lot.plannedQty}
         </button>
-        <div style={{ display: "flex", gap: 2 }}>
+        <div style={{ display: "flex", gap: 4 }}>
           <button onClick={() => {
               const raw = window.prompt(`Count for ${lot.variety}?`, lot.plannedQty);
               if (raw == null) return;
               const n = parseInt(raw, 10);
               if (Number.isFinite(n)) patch(lot, { quantity: n });
             }}
-            style={{ flex: 1, background: "#fff", color: "#1e2d1a", border: "1.5px solid #c8d8c0", borderRadius: 6, padding: "4px 2px", fontSize: 10, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+            style={{
+              flex: 1, background: "#fff", color: "#1e2d1a", border: "1.5px solid #c8d8c0",
+              borderRadius: 8, padding: "10px 4px", fontSize: 16, fontWeight: 800,
+              cursor: "pointer", fontFamily: "inherit", minHeight: 44,
+            }}>
             ✏
           </button>
           <button onClick={() => patch(lot, { quantity: 0 })}
-            style={{ flex: 1, background: "#fff", color: "#d94f3d", border: "1.5px solid #d94f3d", borderRadius: 6, padding: "4px 2px", fontSize: 10, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
-            ✕0
+            style={{
+              flex: 1, background: "#fff", color: "#d94f3d", border: "1.5px solid #d94f3d",
+              borderRadius: 8, padding: "10px 4px", fontSize: 15, fontWeight: 800,
+              cursor: "pointer", fontFamily: "inherit", minHeight: 44,
+            }}>
+            ✕ 0
           </button>
         </div>
         <PlanVariance lot={lot} />
       </div>
     );
   }
+  // Counted (or no plan) — large numeric input the user can re-edit
   return (
-    <div style={{ width: "100%", display: "flex", flexDirection: "column", padding: "2px 0" }}>
+    <div style={{ width: "100%", display: "flex", flexDirection: "column", padding: "3px" }}>
       <input type="number" inputMode="numeric" value={lot.quantity ?? ""}
         onChange={e => patch(lot, { quantity: e.target.value === "" ? null : parseInt(e.target.value, 10) || 0 })}
         placeholder="—"
-        style={{ ...cellInputBase, fontWeight: 800, textAlign: "right", fontSize: 15, padding: "4px 6px" }} />
+        style={{
+          ...cellInputBase, fontWeight: 900, textAlign: "right", fontSize: 22,
+          padding: "10px 8px", border: "1.5px solid #c8d8c0", borderRadius: 8,
+          background: "#fff", minHeight: 48,
+        }} />
       {Number.isFinite(lot.plannedQty) && <PlanVariance lot={lot} />}
     </div>
   );

@@ -640,6 +640,38 @@ function OrderCard({ broker, order, weekTag, isOpen, onToggle, lineByKey, orderR
 }
 
 // ── Packing slip photo upload row ───────────────────────────────────────
+// Compress a camera image down to a phone-friendly size before upload. A
+// typical phone snap is 3–6 MB at 12MP — way more than needed to read a
+// packing slip. Re-encoding at 1600px max edge / 0.72 JPEG quality usually
+// lands in the 150–400 KB range while staying perfectly legible.
+async function compressImage(file, { maxDim = 1600, quality = 0.72 } = {}) {
+  // Skip if it's not an image (or already small enough)
+  if (!file.type.startsWith("image/")) return file;
+  if (file.size < 350 * 1024) return file;
+  try {
+    const url = URL.createObjectURL(file);
+    const img = await new Promise((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = reject;
+      i.src = url;
+    });
+    URL.revokeObjectURL(url);
+    const longest = Math.max(img.naturalWidth, img.naturalHeight);
+    const scale = Math.min(1, maxDim / longest);
+    const w = Math.round(img.naturalWidth * scale);
+    const h = Math.round(img.naturalHeight * scale);
+    const canvas = document.createElement("canvas");
+    canvas.width = w; canvas.height = h;
+    canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+    const blob = await new Promise(r => canvas.toBlob(r, "image/jpeg", quality));
+    if (!blob || blob.size >= file.size) return file; // give up if we'd make it bigger
+    return new File([blob], (file.name.replace(/\.[^.]+$/, "") || "image") + ".jpg", { type: "image/jpeg", lastModified: Date.now() });
+  } catch {
+    return file; // fall back to the original on any error — never block the upload
+  }
+}
+
 function PackingSlipSection({ orderNumber, orderRecord, upsertOrder, currentUserName }) {
   const fileRef = useRef(null);
   const [uploading, setUploading] = useState(false);
@@ -651,9 +683,9 @@ function PackingSlipSection({ orderNumber, orderRecord, upsertOrder, currentUser
     setUploading(true);
     try {
       const sb = getSupabase();
-      const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
-      const path = `packing-slips/${orderNumber}/${Date.now()}.${ext}`;
-      const { error: upErr } = await sb.storage.from("receiving-photos").upload(path, file, { upsert: false });
+      const compressed = await compressImage(file);
+      const path = `packing-slips/${orderNumber}/${Date.now()}.jpg`;
+      const { error: upErr } = await sb.storage.from("receiving-photos").upload(path, compressed, { upsert: false, contentType: "image/jpeg" });
       if (upErr) throw upErr;
       const nextPhotos = [...photos, { path, uploadedAt: new Date().toISOString(), uploadedBy: currentUserName || "Receiving" }];
       await upsertOrder({
@@ -838,9 +870,9 @@ function ReceivingClaimModal({ line, existingRow, upsertLine, currentUserName, o
     setBusy(true);
     try {
       const sb = getSupabase();
-      const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
-      const path = `claims/${line.orderNumber}/${Date.now()}.${ext}`;
-      const { error: upErr } = await sb.storage.from("receiving-photos").upload(path, file, { upsert: false });
+      const compressed = await compressImage(file);
+      const path = `claims/${line.orderNumber}/${Date.now()}.jpg`;
+      const { error: upErr } = await sb.storage.from("receiving-photos").upload(path, compressed, { upsert: false, contentType: "image/jpeg" });
       if (upErr) throw upErr;
       const { data } = await sb.storage.from("receiving-photos").createSignedUrl(path, 3600);
       setPhotoPath(path);
