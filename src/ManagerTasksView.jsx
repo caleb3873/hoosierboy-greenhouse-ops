@@ -751,14 +751,14 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       else                                    asterPinchStyle = { bg: "#a86a10", color: "#fff" };
     }
     // Big colored location bar at the top of the card. Production tasks have
-    // `location: "bluff"` flat-stamped but the per-row locations live inside
-    // the description as a "ROWS (N): Bluff Quonset 02, Bluff Quonset 10, ..."
-    // line. Prefer those when present so the bar reads like the actual quonset.
+    // task.location='bluff' (flat) but the description carries the actual
+    // quonsets/pads on a "LOCATION: Bluff Quonset 02, Bluff Quonset 10, ..."
+    // line. Prefer that when present.  (ROWS is the per-row codes like BQ1003
+    // — that goes in the description body, NOT the location bar.)
     let locText = "";
-    const rowMatch = (t.description || "").match(/ROWS\s*\(\d+\):\s*([^\n]+)/);
-    if (rowMatch) {
-      // De-dup and trim — sometimes the row list repeats
-      locText = [...new Set(rowMatch[1].split(",").map(s => s.trim()).filter(Boolean))].join(", ");
+    const descLocMatch = (t.description || "").match(/^LOCATION:\s*([^\n]+)/m);
+    if (descLocMatch) {
+      locText = [...new Set(descLocMatch[1].split(",").map(s => s.trim()).filter(Boolean))].join(", ");
     }
     if (!locText) locText = (t.location || "").trim();
 
@@ -827,8 +827,8 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
             {t.targetDate && <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2, fontWeight: 600 }}>📅 {formatTargetDate(t.targetDate)}</div>}
             {t.description && (
               <div style={{ fontSize: 12, color: "#7a8c74", marginTop: 4, whiteSpace: "pre-wrap" }}>
-                {/* If the location bar already shows the row list, suppress the ROWS line in the description so it doesn't double up */}
-                {rowMatch ? (t.description || "").replace(/ROWS\s*\(\d+\):[^\n]*\n?/, "").trim() : t.description}
+                {/* If the location bar already shows the quonset list, suppress the LOCATION line in the body so it doesn't double up */}
+                {descLocMatch ? (t.description || "").replace(/^LOCATION:[^\n]*\n?/m, "").trim() : t.description}
               </div>
             )}
             {(t.photos || []).length > 0 && <div style={{ fontSize: 11, color: "#4a90d9", marginTop: 4 }}>📷 {t.photos.length} photo{t.photos.length !== 1 ? "s" : ""}</div>}
@@ -943,6 +943,21 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
           setSearchQuery("");
           setCurrentView("tasks");
         };
+        // ── Today / This Week global counts ─────────────────────────────────
+        // Anything visible to this user (respects Access Control) for the
+        // current ISO week. Drives the banner status bar.
+        const inVisibleCats = (t) => visibleCategories.has(t.category || "production");
+        const todayList = (tasks || []).filter(t =>
+          inVisibleCats(t) && t.status !== "requested" && t.status !== "rejected" &&
+          (t.targetDate === todayIso || (t.bucket === "today" && !t.targetDate))
+        );
+        const weekList = (tasks || []).filter(t =>
+          inVisibleCats(t) && t.status !== "requested" && t.status !== "rejected" &&
+          t.year === today.year && t.weekNumber === today.week
+        );
+        const weekDone     = weekList.filter(t => t.status === "completed").length;
+        const weekToDo     = weekList.filter(t => t.status !== "completed").length;
+        const weekOverdue  = weekList.filter(t => t.carriedOver && t.status !== "completed").length;
         return (
           <>
             <div style={{ background: "#1e2d1a", padding: "12px 14px", color: "#c8e6b8" }}>
@@ -962,6 +977,25 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
                   <button onClick={onSwitchMode} title="Log out"
                     style={{ background: "none", border: "1px solid #4a6a3a", borderRadius: 8, color: "#c8e6b8", padding: "8px 12px", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>↩</button>
                 </div>
+              </div>
+
+              {/* Today / This Week shortcuts + live status bar */}
+              {isAnyManager && (
+                <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button onClick={() => setCurrentView("today")}
+                    style={{ flex: "1 1 140px", background: "#7fb069", color: "#1e2d1a", border: "none", borderRadius: 10, padding: "10px 12px", fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                    📅 Today <span style={{ background: "#1e2d1a", color: "#c8e6b8", borderRadius: 999, padding: "1px 8px", fontSize: 11, fontWeight: 800 }}>{todayList.length}</span>
+                  </button>
+                  <button onClick={() => setCurrentView("week")}
+                    style={{ flex: "1 1 140px", background: "#c8e6b8", color: "#1e2d1a", border: "none", borderRadius: 10, padding: "10px 12px", fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                    📆 This Week <span style={{ background: "#1e2d1a", color: "#c8e6b8", borderRadius: 999, padding: "1px 8px", fontSize: 11, fontWeight: 800 }}>{weekList.length}</span>
+                  </button>
+                </div>
+              )}
+              <div style={{ marginTop: 8, display: "flex", gap: 6, fontSize: 11, fontWeight: 800, color: "#c8e6b8" }}>
+                <span style={{ flex: 1, background: "#2a3e22", borderRadius: 8, padding: "6px 8px", textAlign: "center" }}>✓ <span style={{ color: "#7fb069" }}>{weekDone}</span> done</span>
+                <span style={{ flex: 1, background: "#2a3e22", borderRadius: 8, padding: "6px 8px", textAlign: "center" }}>⏳ <span style={{ color: "#e89a3a" }}>{weekToDo}</span> to do</span>
+                <span style={{ flex: 1, background: weekOverdue > 0 ? "#3a1e18" : "#2a3e22", borderRadius: 8, padding: "6px 8px", textAlign: "center" }}>⚠ <span style={{ color: weekOverdue > 0 ? "#ff8a78" : "#7a9a6a" }}>{weekOverdue}</span> overdue</span>
               </div>
             </div>
             <AnnouncementBanner />
@@ -1100,6 +1134,20 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
                   {isTrish && unreadHrMessages.length > 0 && <span className="hub-card-badge">{unreadHrMessages.length} unread</span>}
                 </div>
 
+                {/* Company Announcement — pairs with Message Trish so the comms row stays together */}
+                <div className="hub-card"
+                  onClick={() => canAnnounce ? setShowAnnouncer(true) : setCurrentView("messages")}
+                  style={{ borderTopColor: "#7fb069", borderTopWidth: 4 }}>
+                  <div className="hub-card-emoji">📢</div>
+                  <div className="hub-card-title">Company Announcement</div>
+                  <div className="hub-card-sub">
+                    {canAnnounce
+                      ? (activeAnnouncements.length > 0 ? `Post or view (${activeAnnouncements.length} active)` : "Post to all staff")
+                      : (activeAnnouncements.length > 0 ? `${activeAnnouncements.length} active` : "No announcements")}
+                  </div>
+                  {activeAnnouncements.length > 0 && <span className="hub-card-badge ok">{activeAnnouncements.length}</span>}
+                </div>
+
                 <div style={{ gridColumn: "span 2" }}>
                   <DriverRequestStatusList scope="all" onTapHeader={() => setCurrentView("driver-requests")} />
                 </div>
@@ -1128,35 +1176,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
                   <div className="hub-card-sub">{(brehobItems || []).filter(b => b.status === "on_list").length} items on list</div>
                 </div>
 
-                {/* Today / This Week — bumped down so day-of-week tools land below daily action cards */}
-                {isAnyManager && (
-                  <>
-                    <div className="hub-card" onClick={() => setCurrentView("today")} style={{ background: "#162212", color: "#c8e6b8" }}>
-                      <div className="hub-card-emoji" style={{ color: "#7fb069" }}>📅</div>
-                      <div className="hub-card-title" style={{ color: "#c8e6b8" }}>Today</div>
-                      <div className="hub-card-sub" style={{ color: "#7a9a6a" }}>All depts</div>
-                    </div>
-                    <div className="hub-card" onClick={() => setCurrentView("week")} style={{ background: "#162212", color: "#c8e6b8" }}>
-                      <div className="hub-card-emoji" style={{ color: "#7fb069" }}>📆</div>
-                      <div className="hub-card-title" style={{ color: "#c8e6b8" }}>This Week</div>
-                      <div className="hub-card-sub" style={{ color: "#7a9a6a" }}>All depts</div>
-                    </div>
-                  </>
-                )}
-
-                {/* Company Announcement — bumped down */}
-                <div className="hub-card"
-                  onClick={() => canAnnounce ? setShowAnnouncer(true) : setCurrentView("messages")}
-                  style={{ borderTopColor: "#7fb069", borderTopWidth: 4 }}>
-                  <div className="hub-card-emoji">📢</div>
-                  <div className="hub-card-title">Company Announcement</div>
-                  <div className="hub-card-sub">
-                    {canAnnounce
-                      ? (activeAnnouncements.length > 0 ? `Post or view (${activeAnnouncements.length} active)` : "Post to all staff")
-                      : (activeAnnouncements.length > 0 ? `${activeAnnouncements.length} active` : "No announcements")}
-                  </div>
-                  {activeAnnouncements.length > 0 && <span className="hub-card-badge ok">{activeAnnouncements.length}</span>}
-                </div>
+                {/* Today / This Week + Company Announcement moved out of the grid — Today/Week now live in the dark top banner; Company Announcement sits next to Message Trish above. */}
 
                 {/* Access Control — Tyler / Paul only */}
                 {canManageAccess && (
