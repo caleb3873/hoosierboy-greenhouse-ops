@@ -749,14 +749,33 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       else if (titleUpper.includes("PURPLE")) asterPinchStyle = { bg: "#7d3c98", color: "#fff" };
       else                                    asterPinchStyle = { bg: "#a86a10", color: "#fff" };
     }
+    // Big colored location bar at the top of the card. Pulls from task.location
+    // — fall_program_items uses "Bluff Quonset 02" etc. Color-coded by site so
+    // Bluff vs Sprague vs SE Pad reads at a glance.
+    const locText = (t.location || "").trim();
+    const locUpper = locText.toUpperCase();
+    let locBarBg = null;
+    if (locText) {
+      if (locUpper.includes("BLUFF"))       locBarBg = "#1e2d1a"; // dark green
+      else if (locUpper.includes("SPRAGUE")) locBarBg = "#4a90d9"; // blue
+      else if (locUpper.includes("SE PAD") || locUpper.includes("EAST PAD") || locUpper.includes("WEST PAD") || locUpper.includes("NORTH PAD")) locBarBg = "#7d3c98"; // purple
+      else                                   locBarBg = "#7a8c74"; // muted
+    }
+
     return (
       <div key={t.id} style={{
         background: "#fff", borderRadius: 14,
         border: `1.5px solid ${isOverdue ? "#d94f3d" : isDone ? "#c8d8c0" : "#e0ead8"}`,
         boxShadow: isOverdue ? "0 0 0 2px rgba(217,79,61,0.15)" : "none",
-        padding: "14px 16px", marginBottom: 10, opacity: isDone ? 0.65 : 1,
+        marginBottom: 10, opacity: isDone ? 0.65 : 1, overflow: "hidden",
       }}>
-        <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+        {locBarBg && (
+          <div style={{ background: locBarBg, color: "#fff", padding: "8px 14px", fontSize: 14, fontWeight: 800, letterSpacing: 0.6, textTransform: "uppercase", display: "flex", alignItems: "center", gap: 6 }}>
+            <span>📍</span>
+            <span>{locText}</span>
+          </div>
+        )}
+        <div style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "14px 16px" }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
             <button onClick={() => moveTask(t, "up")} disabled={idx === 0 || isDone}
               style={{ background: "none", border: "none", color: idx === 0 || isDone ? "#d0d8cc" : "#7a8c74", fontSize: 16, cursor: idx === 0 || isDone ? "default" : "pointer", padding: "2px 6px" }}>&#9650;</button>
@@ -833,7 +852,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
 
         {/* Inline assign picker — opens just below this task when "Assign" is tapped */}
         {canAssign && assigningTaskId === t.id && (
-          <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1.5px dashed #c8d8c0", display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+          <div style={{ marginTop: 0, padding: "10px 16px 14px", borderTop: "1.5px dashed #c8d8c0", display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
             <span style={{ fontSize: 11, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", marginRight: 4 }}>Assign to:</span>
             {ASSIGNEES.map(a => {
               const isCurrent = (t.assignedTo || "") === a.key;
