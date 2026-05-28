@@ -6,6 +6,7 @@ import { HrComposeModal, HrInbox, isHrInboxOwner } from "./HrMessages";
 import { useAuth } from "./Auth";
 import { BrehobManagerView } from "./BrehobList";
 import { DriverRequestModal, DriverRequestStatusList, useDriverResponsePopup, DriverResponsePopup, DriverScheduleView, DriverRequestsSubPage } from "./DriverRequest";
+import AccessControl, { effectiveCategoriesFor } from "./AccessControl";
 import { FacilityPicker, FacilityHistoryView, facilityLabel } from "./Facilities";
 import HouseDetail from "./HouseDetail";
 import { ReceivingWeekSummary, aggregateFallReceivingForWeek } from "./Receiving";
@@ -308,17 +309,23 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
   const canApproveVacation = isVacationApprover(displayName);
   const canAnnounce = canPostAnnouncement(displayName);
   const isTrish = isHrInboxOwner(displayName);
-  // Sales card gated to sales-involved people only (Tyler / Paul / Trish /
-  // Mario, plus anyone tagged SALES in staff_group). Production / Growing /
-  // Maintenance managers (Zach, Evie, Sam, etc.) don't see it.
-  const canSeeSales = useMemo(() => {
+  // Per-user task category visibility. Pulls from floor_codes.task_categories
+  // (set via the Access Control admin page) — falls back to default visibility
+  // based on dept/name when no explicit list exists.
+  const visibleCategories = useMemo(
+    () => effectiveCategoriesFor({ ...(growerProfile || {}), workerName: displayName }),
+    [growerProfile, displayName]
+  );
+  const canSeeSales = visibleCategories.has("sales");
+  const canSeeReceiving = visibleCategories.has("receiving");
+  const canSeeProduction = visibleCategories.has("production");
+  const canSeeGrowing = visibleCategories.has("growing");
+  const canSeeMaintenance = visibleCategories.has("maintenance");
+  // Tyler / Paul get the access-control admin page
+  const canManageAccess = useMemo(() => {
     const n = (displayName || "").toLowerCase();
-    const group = (growerProfile?.group || "").toUpperCase();
-    return group === "SALES"
-      || n.includes("tyler") || n.includes("paul")
-      || n.includes("trish") || n.includes("patricia") || n.includes("garrison")
-      || n.includes("mario");
-  }, [displayName, growerProfile]);
+    return n.includes("tyler") || n.includes("paul") || isAdmin;
+  }, [displayName, isAdmin]);
   const isAnyManager = !!displayName; // every floor-code user gets the Today/Week shortcut
   const pendingVacations = useMemo(() => (vacationReqs || []).filter(v => v.status === "pending"), [vacationReqs]);
   const { rows: driverReqRows } = useDriverRequests();
@@ -954,30 +961,36 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
               /* ── FULL MANAGER HUB — unchanged ── */
               <div style={{ padding: "14px 14px 80px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                 {/* Production */}
-                <div className="hub-card" onClick={() => goToTasks("production")} style={{ borderTopColor: "#7fb069", borderTopWidth: 4 }}>
-                  <div className="hub-card-emoji">🌱</div>
-                  <div className="hub-card-title">Production</div>
-                  <div className="hub-card-sub">{tasksToday("production")} today</div>
-                  {overdueIn("production") > 0 && <span className="hub-card-badge">{overdueIn("production")} overdue</span>}
-                  {requestsIn("production") > 0 && overdueIn("production") === 0 && <span className="hub-card-badge warn">{requestsIn("production")} request{requestsIn("production") !== 1 ? "s" : ""}</span>}
-                </div>
+                {canSeeProduction && (
+                  <div className="hub-card" onClick={() => goToTasks("production")} style={{ borderTopColor: "#7fb069", borderTopWidth: 4 }}>
+                    <div className="hub-card-emoji">🌱</div>
+                    <div className="hub-card-title">Production</div>
+                    <div className="hub-card-sub">{tasksToday("production")} today</div>
+                    {overdueIn("production") > 0 && <span className="hub-card-badge">{overdueIn("production")} overdue</span>}
+                    {requestsIn("production") > 0 && overdueIn("production") === 0 && <span className="hub-card-badge warn">{requestsIn("production")} request{requestsIn("production") !== 1 ? "s" : ""}</span>}
+                  </div>
+                )}
 
                 {/* Growing */}
-                <div className="hub-card" onClick={() => goToTasks("growing")} style={{ borderTopColor: "#4a90d9", borderTopWidth: 4 }}>
-                  <div className="hub-card-emoji">🌿</div>
-                  <div className="hub-card-title">Growing</div>
-                  <div className="hub-card-sub">{tasksToday("growing")} today</div>
-                  {overdueIn("growing") > 0 && <span className="hub-card-badge">{overdueIn("growing")} overdue</span>}
-                  {requestsIn("growing") > 0 && overdueIn("growing") === 0 && <span className="hub-card-badge warn">{requestsIn("growing")} request{requestsIn("growing") !== 1 ? "s" : ""}</span>}
-                </div>
+                {canSeeGrowing && (
+                  <div className="hub-card" onClick={() => goToTasks("growing")} style={{ borderTopColor: "#4a90d9", borderTopWidth: 4 }}>
+                    <div className="hub-card-emoji">🌿</div>
+                    <div className="hub-card-title">Growing</div>
+                    <div className="hub-card-sub">{tasksToday("growing")} today</div>
+                    {overdueIn("growing") > 0 && <span className="hub-card-badge">{overdueIn("growing")} overdue</span>}
+                    {requestsIn("growing") > 0 && overdueIn("growing") === 0 && <span className="hub-card-badge warn">{requestsIn("growing")} request{requestsIn("growing") !== 1 ? "s" : ""}</span>}
+                  </div>
+                )}
 
                 {/* Maintenance */}
-                <div className="hub-card" onClick={() => goToTasks("maintenance")} style={{ borderTopColor: "#e89a3a", borderTopWidth: 4 }}>
-                  <div className="hub-card-emoji">🔧</div>
-                  <div className="hub-card-title">Maintenance</div>
-                  <div className="hub-card-sub">{tasksToday("maintenance")} today</div>
-                  {overdueIn("maintenance") > 0 && <span className="hub-card-badge">{overdueIn("maintenance")} overdue</span>}
-                </div>
+                {canSeeMaintenance && (
+                  <div className="hub-card" onClick={() => goToTasks("maintenance")} style={{ borderTopColor: "#e89a3a", borderTopWidth: 4 }}>
+                    <div className="hub-card-emoji">🔧</div>
+                    <div className="hub-card-title">Maintenance</div>
+                    <div className="hub-card-sub">{tasksToday("maintenance")} today</div>
+                    {overdueIn("maintenance") > 0 && <span className="hub-card-badge">{overdueIn("maintenance")} overdue</span>}
+                  </div>
+                )}
 
                 {/* Sales — Fundraising + Wholesale tabs inside. Gated to
                     sales-involved people; other managers don't see it. */}
@@ -1068,17 +1081,28 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
                   <div className="hub-card-sub">{(brehobItems || []).filter(b => b.status === "on_list").length} items on list</div>
                 </div>
 
-                {/* Receiving — standard single-column hub card next to Brehob/Maintenance */}
-                <div className="hub-card" onClick={() => setCurrentView("receiving")} style={{ borderTopColor: "#a86a10", borderTopWidth: 4 }}>
-                  <div className="hub-card-emoji">📦</div>
-                  <div className="hub-card-title">Receiving</div>
-                  <div className="hub-card-sub">
-                    {receivingThisWeek.lineCount === 0
-                      ? "Nothing this week"
-                      : `${receivingThisWeek.plantTotal.toLocaleString()} plants this week`}
+                {/* Receiving — gated to people whose Access Control flags include it */}
+                {canSeeReceiving && (
+                  <div className="hub-card" onClick={() => setCurrentView("receiving")} style={{ borderTopColor: "#a86a10", borderTopWidth: 4 }}>
+                    <div className="hub-card-emoji">📦</div>
+                    <div className="hub-card-title">Receiving</div>
+                    <div className="hub-card-sub">
+                      {receivingThisWeek.lineCount === 0
+                        ? "Nothing this week"
+                        : `${receivingThisWeek.plantTotal.toLocaleString()} plants this week`}
+                    </div>
+                    {receivingThisWeek.lineCount > 0 && <span className="hub-card-badge ok">{receivingThisWeek.lineCount}</span>}
                   </div>
-                  {receivingThisWeek.lineCount > 0 && <span className="hub-card-badge ok">{receivingThisWeek.lineCount}</span>}
-                </div>
+                )}
+
+                {/* Access Control — Tyler / Paul only */}
+                {canManageAccess && (
+                  <div className="hub-card" onClick={() => setCurrentView("access-control")} style={{ borderTopColor: "#1e2d1a", borderTopWidth: 4, background: "#162212" }}>
+                    <div className="hub-card-emoji" style={{ color: "#c8e6b8" }}>🔒</div>
+                    <div className="hub-card-title" style={{ color: "#c8e6b8" }}>Access Control</div>
+                    <div className="hub-card-sub" style={{ color: "#7a9a6a" }}>Toggle task visibility per person</div>
+                  </div>
+                )}
               </div>
             )}
           </>
@@ -1455,6 +1479,10 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       {/* ── RECEIVING — what's coming from suppliers this week ── */}
       {currentView === "receiving" && (
         <ReceivingWeekSummary onBack={() => setCurrentView("hub")} />
+      )}
+
+      {currentView === "access-control" && canManageAccess && (
+        <AccessControl onBack={() => setCurrentView("hub")} />
       )}
 
       {/* ── TODAY / THIS WEEK (any manager) ────────────────────────────── */}

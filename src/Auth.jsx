@@ -153,6 +153,7 @@ export function AuthProvider({ children }) {
           group: fc.staff_group || fc.staffGroup || null,
           language: fc.language || "en",
           phone: fc.phone || null,
+          taskCategories: fc.task_categories || fc.taskCategories || null,
         } : null;
         const session = { mode: fc.role, growerProfile: profile, team: fcTeam, expires: Date.now() + 12 * 60 * 60 * 1000 };
         localStorage.setItem(FLOOR_SESSION_KEY, JSON.stringify(session));
