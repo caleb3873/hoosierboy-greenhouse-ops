@@ -13,6 +13,36 @@ import {
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
 
+// Same compression strategy as receiving (1600px longest edge, 0.72 JPEG)
+// so phone snaps go from 4-6 MB to ~150-400 KB before upload. Falls back
+// to the original silently on any error so the upload never blocks.
+async function compressInventoryImage(file, { maxDim = 1600, quality = 0.72 } = {}) {
+  if (!file || !file.type?.startsWith("image/")) return file;
+  if (file.size < 350 * 1024) return file;
+  try {
+    const url = URL.createObjectURL(file);
+    const img = await new Promise((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = reject;
+      i.src = url;
+    });
+    URL.revokeObjectURL(url);
+    const longest = Math.max(img.naturalWidth, img.naturalHeight);
+    const scale = Math.min(1, maxDim / longest);
+    const w = Math.round(img.naturalWidth * scale);
+    const h = Math.round(img.naturalHeight * scale);
+    const canvas = document.createElement("canvas");
+    canvas.width = w; canvas.height = h;
+    canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+    const blob = await new Promise(r => canvas.toBlob(r, "image/jpeg", quality));
+    if (!blob || blob.size >= file.size) return file;
+    return new File([blob], (file.name.replace(/\.[^.]+$/, "") || "image") + ".jpg", { type: "image/jpeg", lastModified: Date.now() });
+  } catch {
+    return file;
+  }
+}
+
 // Derive a "site" group from a location string so the picker can show top-
 // level chips like Bluff / SE Pad / North Pad / East Pad / BASKETS that
 // drill down into the specific quonset/pad.
@@ -481,14 +511,36 @@ export default function InventoryView({ onBack }) {
   // ── Photos ─────────────────────────────────────────────────────────────────
   async function uploadPhotoForLot(lot, file) {
     const sb = getSupabase();
-    const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
+    const compressed = await compressInventoryImage(file);
     const safeLoc = (lot.location || "no-loc").replace(/[^a-z0-9-]/gi, "_");
-    const path = `${safeLoc}/${lot.id}/${Date.now()}.${ext}`;
-    const { error } = await sb.storage.from("inventory-photos").upload(path, file, { upsert: false });
+    const path = `${safeLoc}/${lot.id}/${Date.now()}.jpg`;
+    const { error } = await sb.storage.from("inventory-photos").upload(path, compressed, { upsert: false, contentType: "image/jpeg" });
     if (error) throw error;
     const entry = { path, takenAt: new Date().toISOString(), takenBy: displayName || "Manager" };
     const nextPhotos = [...(lot.photos || []), entry];
     await patch(lot, { photos: nextPhotos });
+  }
+
+  // Camera capture — bound to a hidden <input capture="environment">. Tapping
+  // 📷 on a row sets cameraLot then clicks the input, which on phones opens
+  // the camera straight away rather than going through the gallery / viewer.
+  const cameraInputRef = useRef(null);
+  const cameraLotRef = useRef(null);
+  function startCamera(lot) {
+    cameraLotRef.current = lot;
+    cameraInputRef.current?.click();
+  }
+  async function onCameraFile(e) {
+    const file = e.target.files?.[0];
+    const lot = cameraLotRef.current;
+    cameraLotRef.current = null;
+    if (e.target) e.target.value = "";
+    if (!file || !lot) return;
+    try {
+      await uploadPhotoForLot(lot, file);
+    } catch (err) {
+      alert("Photo upload failed: " + (err?.message || err));
+    }
   }
 
   async function removePhotoFromLot(lot, photoPath) {
@@ -824,10 +876,16 @@ export default function InventoryView({ onBack }) {
                 <StatusPill lot={lot} />
                 <button onClick={() => duplicate(lot)} title="Duplicate (next row)"
                   style={cardActionBtn("#7fb069", "#1e2d1a")}>⎘</button>
-                <button onClick={() => { setPhotoLot(lot); setPhotoScope("row"); }} title="Photos"
+                <button onClick={() => startCamera(lot)} title="Take a photo for this row"
                   style={cardActionBtn("#fff", "#4a90d9", "#4a90d9")}>
-                  📷{photoCount > 0 ? <sup style={{ fontSize: 9, marginLeft: 1 }}>{photoCount}</sup> : ""}
+                  📷
                 </button>
+                {photoCount > 0 && (
+                  <button onClick={() => { setPhotoLot(lot); setPhotoScope("row"); }} title="View photos"
+                    style={cardActionBtn("#eef5fb", "#1e4a7a", "#4a90d9")}>
+                    🖼<sup style={{ fontSize: 9, marginLeft: 1 }}>{photoCount}</sup>
+                  </button>
+                )}
                 <button onClick={() => { if (window.confirm(`Delete "${lot.variety || "this row"}"?`)) remove(lot.id); }}
                   title="Delete" style={cardActionBtn("transparent", "#d94f3d", "#d94f3d")}>🗑</button>
               </div>
@@ -893,6 +951,17 @@ export default function InventoryView({ onBack }) {
           ✓ Save &amp; Done
         </button>
       </div>
+
+      {/* Hidden camera input — triggered by tapping 📷 on any row.
+          capture="environment" tells the OS to open the back-facing camera. */}
+      <input
+        ref={cameraInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        style={{ display: "none" }}
+        onChange={onCameraFile}
+      />
 
       {/* Photo viewer modal */}
       {photoLot && (

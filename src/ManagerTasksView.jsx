@@ -2764,16 +2764,50 @@ function Section({ title, children }) {
 }
 
 function TaskDetail({ task, onBack, onSave }) {
+  // ── ALL hooks declared up front so they run in the same order regardless
+  // of which mode we're in. React's Rules of Hooks broke when the view-mode
+  // early return below skipped the photo / beforeunload hooks; flipping to
+  // edit mode then introduced new hooks and React crashed → white screen.
   const [t, setT] = useState({ ...task });
   const [dirty, setDirty] = useState(false);
   // Open in read-only view by default — tap Edit to mutate
   const [mode, setMode] = useState("view");
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  // Warn on browser close/refresh with unsaved changes
+  useEffect(() => {
+    const handler = (e) => {
+      if (dirty) { e.preventDefault(); e.returnValue = ""; }
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [dirty]);
+
   const upd = (k, v) => { setT(p => ({ ...p, [k]: v })); setDirty(true); };
 
   const handleBack = () => {
     if (dirty) { onSave(t); return; }
     onBack();
   };
+
+  async function handlePhoto(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingPhoto(true);
+    try {
+      const path = await uploadTaskPhoto(file);
+      const photos = [...(t.photos || []), path];
+      upd("photos", photos);
+    } catch (err) {
+      alert("Upload failed: " + err.message);
+    }
+    setUploadingPhoto(false);
+    e.target.value = ""; // allow re-selecting same file
+  }
+
+  function removePhoto(idx) {
+    const photos = (t.photos || []).filter((_, i) => i !== idx);
+    upd("photos", photos);
+  }
 
   // View-only screen: location bar + title + body + photos + status, with Edit
   if (mode === "view") {
@@ -2880,36 +2914,6 @@ function TaskDetail({ task, onBack, onSave }) {
         </div>
       </div>
     );
-  }
-
-  // Warn on browser close/refresh with unsaved changes
-  useEffect(() => {
-    const handler = (e) => {
-      if (dirty) { e.preventDefault(); e.returnValue = ""; }
-    };
-    window.addEventListener("beforeunload", handler);
-    return () => window.removeEventListener("beforeunload", handler);
-  }, [dirty]);
-
-  const [uploadingPhoto, setUploadingPhoto] = useState(false);
-  async function handlePhoto(e) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setUploadingPhoto(true);
-    try {
-      const path = await uploadTaskPhoto(file);
-      const photos = [...(t.photos || []), path];
-      upd("photos", photos);
-    } catch (err) {
-      alert("Upload failed: " + err.message);
-    }
-    setUploadingPhoto(false);
-    e.target.value = ""; // allow re-selecting same file
-  }
-
-  function removePhoto(idx) {
-    const photos = (t.photos || []).filter((_, i) => i !== idx);
-    upd("photos", photos);
   }
 
   return (
