@@ -223,7 +223,10 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
 
   const weekTasks = useMemo(() => {
     const r = tasks.filter(t => t.status !== "requested" && t.year === today.year && t.weekNumber === today.week && (t.category || "production") === "growing");
-    return [...r].sort((a, b) => (b.priority || 0) - (a.priority || 0));
+    return [...r].sort((a, b) =>
+      (a.targetDate || "9999-12-31").localeCompare(b.targetDate || "9999-12-31") ||
+      (b.priority || 0) - (a.priority || 0)
+    );
   }, [tasks, today]);
 
   const pending = weekTasks.filter(t => t.status !== "completed");

@@ -477,8 +477,9 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       const q = searchQuery.trim().toLowerCase();
       r = r.filter(t => (t.title || "").toLowerCase().includes(q));
     }
-    // Priority desc (manual reorder wins) → variety alphabetical (so sowing Marigold lands before Zinnia regardless of qty)
+    // targetDate asc (chronological within a bucket) → priority desc (manual reorder wins) → variety alphabetical
     return [...r].sort((a, b) =>
+      (a.targetDate || "9999-12-31").localeCompare(b.targetDate || "9999-12-31") ||
       (b.priority || 0) - (a.priority || 0) ||
       taskSortKey(a).localeCompare(taskSortKey(b), undefined, { numeric: true })
     );
