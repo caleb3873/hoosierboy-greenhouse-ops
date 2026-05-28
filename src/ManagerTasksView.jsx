@@ -732,6 +732,23 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
     const alertMatch = (t.title || "").match(/\s·\s⚠\s(.+?)$/);
     const displayTitle = alertMatch ? t.title.replace(alertMatch[0], "") : t.title;
     const alertText = alertMatch ? alertMatch[1] : null;
+
+    // Aster pinching reminder. Asters are titled "ASTER HENRY I/III ..." (or
+    // legacy "HENRY I/III"). They need to be pinched at plant time, so we
+    // surface a colored chip on production planting cards. Skip 🏷 tag cards.
+    const titleUpper = (t.title || "").toUpperCase();
+    const isAsterPlanting =
+      (t.category || "production") === "production" &&
+      /HENRY\s+I{1,3}/.test(titleUpper) &&
+      !titleUpper.includes("🏷");
+    let asterPinchStyle = null;
+    if (isAsterPlanting) {
+      // Match the chip color to the aster's flower color so it reads at a glance
+      if (titleUpper.includes("BLUE"))        asterPinchStyle = { bg: "#1f6fb8", color: "#fff" };
+      else if (titleUpper.includes("PINK"))   asterPinchStyle = { bg: "#e26ba3", color: "#fff" };
+      else if (titleUpper.includes("PURPLE")) asterPinchStyle = { bg: "#7d3c98", color: "#fff" };
+      else                                    asterPinchStyle = { bg: "#a86a10", color: "#fff" };
+    }
     return (
       <div key={t.id} style={{
         background: "#fff", borderRadius: 14,
@@ -758,6 +775,9 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
               <div style={{ fontSize: 15, fontWeight: 700, color: isOverdue ? "#d94f3d" : "#1e2d1a", textDecoration: isDone ? "line-through" : "none" }}>{displayTitle}</div>
               {alertText && (
                 <span style={{ background: "#fff3c4", color: "#7a5a00", border: "1.5px solid #e89a3a", borderRadius: 999, padding: "2px 8px", fontSize: 11, fontWeight: 800 }}>⚠ {alertText}</span>
+              )}
+              {asterPinchStyle && (
+                <span style={{ background: asterPinchStyle.bg, color: asterPinchStyle.color, borderRadius: 999, padding: "2px 8px", fontSize: 11, fontWeight: 800 }}>✂️ Pinch before planting</span>
               )}
               {isOverdue && <span style={{ background: "#d94f3d", color: "#fff", borderRadius: 999, padding: "2px 8px", fontSize: 10, fontWeight: 800 }}>OVERDUE</span>}
               {(t.createdBy || "").includes("Production Schedule") && (
