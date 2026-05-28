@@ -3,6 +3,7 @@
 // pre-filled with location/row/size/type/variety — count is the only thing
 // the user types.
 import React, { useMemo, useRef, useState } from "react";
+import * as XLSX from "xlsx";
 import { useAuth } from "./Auth";
 import {
   useInventoryLots,
@@ -71,6 +72,12 @@ export default function InventoryView({ onBack }) {
   const { rows: lots, insert, update, remove } = useInventoryLots();
   const { rows: planItems } = useFallProgramItems();
 
+  // Screen mode: "index" = location drilldown cards (like maintenance houses);
+  // "sheet" = the spreadsheet for a single location (or the flat view).
+  const [screen, setScreen] = useState("index");
+  // Walk mode within the sheet: "census" counts everything, "sweep" focuses
+  // on clearing emptied rows (subsequent visits after the initial count).
+  const [walkMode, setWalkMode] = useState("census");
   const [filterLocation, setFilterLocation] = useState("");
   // Photo viewer modal — opens when 📷 is tapped on a row. Holds { lot, scope }
   // where scope is "row" (this row only) or "pad" (all lots at this location).
@@ -185,6 +192,57 @@ export default function InventoryView({ onBack }) {
     }
     return out;
   }, [planItems, pickerLot, pickerSize, pickerQuery]);
+
+  // ── Per-location roll-up — drives the drilldown index cards ───────────────
+  const locationSummary = useMemo(() => {
+    // Union of plan locations + locations that have manual lots
+    const all = new Set([...allLocations]);
+    (lots || []).forEach(l => l.location && all.add(l.location));
+
+    return [...all]
+      .map(loc => {
+        const lotsHere = (lots || []).filter(l => (l.location || "") === loc);
+        const planHere = (planItems || []).filter(p => (p.location || "") === loc);
+        const plannedKeys = new Set();
+        planHere.forEach(p => { if (p.rowId && p.variety) plannedKeys.add(`${p.rowId}||${p.variety}`); });
+        const walkedKeys = new Set();
+        lotsHere.forEach(l => { if (l.rowId && l.variety) walkedKeys.add(`${l.rowId}||${l.variety}`); });
+        const unwalked = [...plannedKeys].filter(k => !walkedKeys.has(k)).length;
+        const lastCount = lotsHere
+          .map(l => l.lastCountedAt).filter(Boolean)
+          .sort().reverse()[0] || null;
+        const countedToday = lotsHere.filter(l => {
+          if (!l.lastCountedAt) return false;
+          return new Date(l.lastCountedAt).toDateString() === new Date().toDateString();
+        }).length;
+        return {
+          location: loc,
+          plannedCount: plannedKeys.size,
+          walkedCount: walkedKeys.size,
+          unwalked,
+          lots: lotsHere.length,
+          totalPots: lotsHere.reduce((s, l) => s + (l.quantity || 0), 0),
+          lastCount,
+          countedToday,
+        };
+      })
+      .sort((a, b) => a.location.localeCompare(b.location, undefined, { numeric: true }));
+  }, [allLocations, lots, planItems]);
+
+  // ── Duplicate detection: groups of lots sharing (location · row · variety) ─
+  const duplicateKeys = useMemo(() => {
+    const counts = new Map();
+    (lots || []).forEach(l => {
+      if (!l.location || !l.rowId || !l.variety) return;
+      const k = `${l.location}||${l.rowId}||${l.variety}`;
+      counts.set(k, (counts.get(k) || 0) + 1);
+    });
+    return new Set([...counts.entries()].filter(([, n]) => n > 1).map(([k]) => k));
+  }, [lots]);
+  const isDup = (lot) => {
+    if (!lot.location || !lot.rowId || !lot.variety) return false;
+    return duplicateKeys.has(`${lot.location}||${lot.rowId}||${lot.variety}`);
+  };
 
   // ── Visible lots (filter + sort) ───────────────────────────────────────────
   const visibleLots = useMemo(() => {
@@ -431,6 +489,45 @@ export default function InventoryView({ onBack }) {
     });
   }
 
+  // Sweep mode: one-tap "this row is empty now". Sets qty=0, stamps history.
+  async function markEmpty(lot) {
+    if ((lot.quantity || 0) === 0) return; // already 0, nothing to do
+    await patch(lot, { quantity: 0 });
+  }
+
+  // XLSX export — current visible lots, columns matched to what Tyler used
+  // in the old Google Sheet (so it drops in without retraining).
+  function exportExcel() {
+    const rows = visibleLots.map(l => ({
+      Location: l.location || "",
+      Row: l.rowId || "",
+      Size: l.potSize || "",
+      Type: l.plantType || "",
+      Variety: l.variety || "",
+      Plan: Number.isFinite(l.plannedQty) ? l.plannedQty : "",
+      Count: l.quantity ?? 0,
+      Variance: Number.isFinite(l.plannedQty) ? ((l.quantity || 0) - l.plannedQty) : "",
+      "Counts taken": (l.countHistory || []).length,
+      "Last counted": l.lastCountedAt ? new Date(l.lastCountedAt).toLocaleString() : "",
+      "Counted by": l.countedBy || "",
+      Notes: l.notes || "",
+      Duplicate: isDup(l) ? "yes" : "",
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    // Column widths
+    ws["!cols"] = [
+      { wch: 22 }, { wch: 10 }, { wch: 7 }, { wch: 10 }, { wch: 28 },
+      { wch: 6 }, { wch: 7 }, { wch: 9 }, { wch: 8 },
+      { wch: 18 }, { wch: 14 }, { wch: 30 }, { wch: 9 },
+    ];
+    const wb = XLSX.utils.book_new();
+    const sheetName = (filterLocation || "Inventory").replace(/[^a-z0-9 _-]/gi, "").slice(0, 31) || "Inventory";
+    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+    const today = new Date().toISOString().slice(0, 10);
+    const scope = filterLocation ? filterLocation.replace(/[^a-z0-9_-]/gi, "_") : "all";
+    XLSX.writeFile(wb, `inventory_${scope}_${today}.xlsx`);
+  }
+
   // Bulk delete — wipes everything currently visible (respects the location
   // filter). Two-step confirmation when more than 10 rows so a stray tap
   // can't nuke a whole walk.
@@ -448,16 +545,113 @@ export default function InventoryView({ onBack }) {
 
   // (Layout now responsive — no fixed widths needed)
 
+  // Drilldown helper — enter the sheet for one location, with census mode
+  function openLocation(loc) {
+    setFilterLocation(loc);
+    setScreen("sheet");
+    setWalkMode("census");
+  }
+
+  // ── INDEX SCREEN — list of locations like the maintenance facility cards ──
+  if (screen === "index") {
+    return (
+      <div style={{ ...FONT, minHeight: "100vh", background: "#f2f5ef", paddingBottom: 70 }}>
+        <div style={{ background: "#1e2d1a", color: "#c8e6b8", padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <button onClick={onBack}
+            style={{ background: "transparent", border: "1px solid #4a6a3a", borderRadius: 8, color: "#c8e6b8", padding: "6px 10px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+            ← Hub
+          </button>
+          <div style={{ fontSize: 15, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif" }}>📊 Inventory</div>
+          <button onClick={() => { setFilterLocation(""); setScreen("sheet"); }}
+            style={{ background: "transparent", border: "1px solid #4a6a3a", borderRadius: 8, color: "#c8e6b8", padding: "6px 10px", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+            Flat view
+          </button>
+        </div>
+
+        <div style={{ padding: "12px 14px 4px", fontSize: 12, color: "#7a8c74", lineHeight: 1.4 }}>
+          Tap a location to count it. <strong>Initial walk</strong> uses <em>Census</em> (count every row). After that, switch to <em>Sweep</em> to quickly clear rows that have emptied out.
+        </div>
+
+        <div style={{ padding: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          {locationSummary.length === 0 && (
+            <div style={{ gridColumn: "1 / -1", textAlign: "center", color: "#7a8c74", padding: 30 }}>
+              No locations in the Fall Program yet.
+            </div>
+          )}
+          {locationSummary.map(s => {
+            // Status: counted today, partial, stale, never
+            const planFull = s.plannedCount > 0;
+            const isCounted = s.lastCount && new Date(s.lastCount).toDateString() === new Date().toDateString();
+            const daysAgo = s.lastCount ? Math.floor((Date.now() - new Date(s.lastCount).getTime()) / 86400000) : null;
+            let chip, chipBg, chipColor;
+            if (!s.lots && planFull)             { chip = "Not walked"; chipBg = "#e8eee5"; chipColor = "#7a8c74"; }
+            else if (isCounted && s.unwalked === 0) { chip = "Counted today"; chipBg = "#dff2d2"; chipColor = "#2e5e1a"; }
+            else if (s.unwalked > 0)             { chip = `${s.unwalked} unwalked`; chipBg = "#fff3c4"; chipColor = "#7a5a00"; }
+            else if (daysAgo > 7)                { chip = `${daysAgo}d ago · stale`; chipBg = "#fdecea"; chipColor = "#7a2418"; }
+            else                                 { chip = daysAgo === 1 ? "1 day ago" : `${daysAgo}d ago`; chipBg = "#fff3c4"; chipColor = "#7a5a00"; }
+            return (
+              <button key={s.location} onClick={() => openLocation(s.location)}
+                style={{
+                  background: "#fff", border: "1.5px solid #e0ead8", borderRadius: 12,
+                  padding: 12, cursor: "pointer", fontFamily: "inherit", textAlign: "left",
+                  display: "flex", flexDirection: "column", gap: 6,
+                }}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: "#1e2d1a", lineHeight: 1.25, wordBreak: "break-word" }}>
+                  📍 {s.location}
+                </div>
+                <div style={{ alignSelf: "flex-start", background: chipBg, color: chipColor, borderRadius: 999, padding: "2px 8px", fontSize: 10, fontWeight: 800, letterSpacing: 0.3 }}>
+                  {chip}
+                </div>
+                <div style={{ fontSize: 11, color: "#7a8c74", lineHeight: 1.35 }}>
+                  {s.lots > 0
+                    ? <>{s.lots} row{s.lots === 1 ? "" : "s"} · <strong style={{ color: "#1e2d1a" }}>{s.totalPots.toLocaleString()}</strong> pots</>
+                    : <>{s.plannedCount} planned row{s.plannedCount === 1 ? "" : "s"}</>}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  // ── SHEET SCREEN — the existing spreadsheet, now reached via drilldown ────
   return (
     <div style={{ ...FONT, minHeight: "100vh", background: "#f2f5ef", paddingBottom: 70 }}>
       {/* Header */}
       <div style={{ background: "#1e2d1a", color: "#c8e6b8", padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <button onClick={onBack}
+        <button onClick={() => setScreen("index")}
           style={{ background: "transparent", border: "1px solid #4a6a3a", borderRadius: 8, color: "#c8e6b8", padding: "6px 10px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
-          ← Hub
+          ← Locations
         </button>
-        <div style={{ fontSize: 15, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif" }}>📊 Inventory</div>
-        <div style={{ width: 50 }} />
+        <div style={{ fontSize: 14, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif", textAlign: "center", flex: 1, padding: "0 6px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          {filterLocation || "All locations"}
+        </div>
+        <button onClick={exportExcel} title="Download Excel"
+          style={{ background: "transparent", border: "1px solid #4a6a3a", borderRadius: 8, color: "#c8e6b8", padding: "6px 10px", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+          ⬇ XLSX
+        </button>
+      </div>
+
+      {/* Mode toggle — Census vs Sweep */}
+      <div style={{ background: "#fff", borderBottom: "1.5px solid #e0ead8", padding: "8px 12px", display: "flex", gap: 6 }}>
+        {[
+          { id: "census", label: "Census", desc: "type qty" },
+          { id: "sweep",  label: "Sweep",  desc: "tap empty" },
+        ].map(m => (
+          <button key={m.id} onClick={() => setWalkMode(m.id)}
+            style={{
+              flex: 1, padding: "8px 10px", borderRadius: 8,
+              background: walkMode === m.id ? "#1e2d1a" : "#f2f5ef",
+              color: walkMode === m.id ? "#c8e6b8" : "#7a8c74",
+              border: `1.5px solid ${walkMode === m.id ? "#1e2d1a" : "#c8d8c0"}`,
+              fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit",
+              display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
+            }}>
+            <span>{m.label}</span>
+            <span style={{ fontSize: 9, fontWeight: 700, opacity: 0.8 }}>{m.desc}</span>
+          </button>
+        ))}
       </div>
 
       {/* Filter + summary toolbar */}
@@ -534,9 +728,18 @@ export default function InventoryView({ onBack }) {
 
         {visibleLots.map((lot, idx) => {
           const altBg = idx % 2 === 0 ? "#fff" : "#fafbf7";
+          const dup = isDup(lot);
           return (
-            <div key={lot.id} style={{ background: altBg, borderTop: "1px solid #e0ead8" }}>
-              {/* Top row — Loc · Row · Item · Qty */}
+            <div key={lot.id} style={{
+              background: altBg, borderTop: "1px solid #e0ead8",
+              ...(dup ? { boxShadow: "inset 4px 0 0 #e89a3a" } : {}),
+            }}>
+              {dup && (
+                <div style={{ background: "#fff3c4", color: "#7a5a00", padding: "2px 10px", fontSize: 10, fontWeight: 800, letterSpacing: 0.3 }}>
+                  ⚠ DUPLICATE — same location · row · variety as another row
+                </div>
+              )}
+              {/* Top row — Loc · Row · Item · Qty (+ Empty in Sweep mode) */}
               <div style={{ display: "grid", gridTemplateColumns: TOP_COLS, alignItems: "stretch" }}>
                 <Cell>
                   <button onClick={() => openLocationPicker(lot)} style={pickerCellBtn(lot.location)}>
@@ -560,9 +763,24 @@ export default function InventoryView({ onBack }) {
                 </Cell>
                 <Cell>
                   <div style={{ width: "100%", display: "flex", flexDirection: "column", padding: "2px 0" }}>
-                    <input type="number" inputMode="numeric" value={lot.quantity ?? 0}
-                      onChange={e => patch(lot, { quantity: parseInt(e.target.value, 10) || 0 })}
-                      style={{ ...cellInputBase, fontWeight: 800, textAlign: "right", fontSize: 15, padding: "4px 6px" }} />
+                    {walkMode === "sweep" ? (
+                      // Sweep mode — one-tap "empty" instead of typing a number.
+                      // Already-zero rows show their state but still respond.
+                      <button onClick={() => markEmpty(lot)}
+                        style={{
+                          background: (lot.quantity || 0) === 0 ? "#fdecea" : "#d94f3d",
+                          color: (lot.quantity || 0) === 0 ? "#7a2418" : "#fff",
+                          border: "none", borderRadius: 8, padding: "10px 6px",
+                          fontSize: 12, fontWeight: 900, cursor: "pointer", fontFamily: "inherit",
+                          width: "100%",
+                        }}>
+                        {(lot.quantity || 0) === 0 ? "✓ Empty" : "Tap = Empty"}
+                      </button>
+                    ) : (
+                      <input type="number" inputMode="numeric" value={lot.quantity ?? 0}
+                        onChange={e => patch(lot, { quantity: parseInt(e.target.value, 10) || 0 })}
+                        style={{ ...cellInputBase, fontWeight: 800, textAlign: "right", fontSize: 15, padding: "4px 6px" }} />
+                    )}
                     {/* Plan / variance — only shown when a plan exists on this lot */}
                     {Number.isFinite(lot.plannedQty) && (() => {
                       const delta = (lot.quantity || 0) - lot.plannedQty;
@@ -616,7 +834,9 @@ export default function InventoryView({ onBack }) {
       </div>
 
       <div style={{ padding: "8px 14px", fontSize: 10, color: "#7a8c74", lineHeight: 1.4 }}>
-        Fastest walk: filter to a location → tap <strong>Walk</strong> → every planned row + variety pre-fills with the planned qty. Just type the actual count for each. Variance (+/-) shows automatically. Manual rows (no plan) work too — just <strong>+ Add</strong>.
+        <div><strong>Census</strong> mode — type the actual qty per row. Use this for the initial walk after planting.</div>
+        <div style={{ marginTop: 4 }}><strong>Sweep</strong> mode — tap the red button to mark a row Empty (qty = 0). Use this for follow-up walks where most rows haven't changed.</div>
+        <div style={{ marginTop: 4 }}>Amber stripe = duplicate (same loc · row · variety on another row). ⬇ XLSX in the header exports what you're looking at.</div>
       </div>
 
       {/* Photo viewer modal */}
