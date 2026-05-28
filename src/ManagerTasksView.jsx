@@ -184,6 +184,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
     if (cat === "production") return "Production";
     if (cat === "growing") return "Growing";
     if (cat === "maintenance") return "Maintenance";
+    if (cat === "sales") return "Sales";
     return "My dept";
   }
 
@@ -250,6 +251,10 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
   const [statusFilter, setStatusFilter] = useState("pending"); // all | pending | completed
   // Asst-manager tabs: simplified to My Tasks / [Dept] Tasks / Done
   const [asstTab, setAsstTab] = useState("dept");
+  // Search box on tasks page — filters visibleTasks by title (current week only).
+  const [searchQuery, setSearchQuery] = useState("");
+  // Sales sub-tab (Fundraising | Wholesale) when category === "sales"
+  const [salesTab, setSalesTab] = useState("fundraising");
 
   // Tyler is the maintenance task planner. He defaults to the Houses (facility
   // picker) view; everyone else lands on the prioritized All Tasks list and
@@ -447,14 +452,21 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
     if (category === "production" && prodTypeFilter !== "all") {
       r = r.filter(t => getProdType(t.title) === prodTypeFilter);
     }
+    if (category === "sales") {
+      r = r.filter(t => (t.salesType || "fundraising") === salesTab);
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      r = r.filter(t => (t.title || "").toLowerCase().includes(q));
+    }
     // Priority desc (manual reorder wins) → variety alphabetical (so sowing Marigold lands before Zinnia regardless of qty)
     return [...r].sort((a, b) =>
       (b.priority || 0) - (a.priority || 0) ||
       taskSortKey(a).localeCompare(taskSortKey(b), undefined, { numeric: true })
     );
-  }, [tasks, selectedWeek, statusFilter, category, locationFilter, prodTypeFilter, isAsstManager, asstTab, defaultCategory, displayName, selectedFacility]);
+  }, [tasks, selectedWeek, statusFilter, category, locationFilter, prodTypeFilter, isAsstManager, asstTab, defaultCategory, displayName, selectedFacility, salesTab, searchQuery]);
 
-  const canCreateInCurrentCategory = category === "production" || canCreateGrowing;
+  const canCreateInCurrentCategory = category === "production" || category === "sales" || canCreateGrowing;
 
   async function createTask(title, bucket = "today", location) {
     if (!title.trim()) return;
@@ -465,6 +477,12 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
     const firstName = (displayName || "").split(/\s+/)[0];
     let assignedTo = firstName && firstName !== "Manager" ? firstName : null;
     if (category === "maintenance") assignedTo = "Gerry";
+    // Amanda's pot-filling requests auto-route to Sam (head of pot filling).
+    // Detected by 📦 emoji prefix the VoiceRecorderModal stamps when
+    // "Pot Filling" is selected as the task type.
+    if (category === "production" && title.trim().startsWith("📦") && /AMANDA/i.test(displayName || "")) {
+      assignedTo = "Sam";
+    }
     await upsert({
       id: crypto.randomUUID(),
       title: title.trim(),
@@ -475,6 +493,8 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       category,
       // Auto-tag facility when creating from a focused facility view in Maintenance
       facility: category === "maintenance" && selectedFacility ? selectedFacility : null,
+      // Sales sub-tab — stamp fundraising / wholesale so the right tab picks it up
+      salesType: category === "sales" ? salesTab : null,
       bucket,
       targetDate: bucketToDate(bucket),
       carriedOver: false,
@@ -845,23 +865,28 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
         const requestsIn = (cat) => tasks.filter(t =>
           (t.category || "production") === cat && t.status === "requested"
         ).length;
-        const goToTasks = (cat) => { setCategory(cat); setCurrentView("tasks"); };
+        const goToTasks = (cat) => {
+          setCategory(cat);
+          setSelectedWeek(today); // always reset to current week when entering from the hub
+          setSearchQuery("");
+          setCurrentView("tasks");
+        };
         return (
           <>
-            <div style={{ background: "#1e2d1a", padding: "14px 16px", color: "#c8e6b8" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-                <div style={{ minWidth: 0 }}>
+            <div style={{ background: "#1e2d1a", padding: "12px 14px", color: "#c8e6b8" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <div style={{ minWidth: 0, flex: "1 1 auto" }}>
                   <div style={{ fontSize: 10, fontWeight: 800, color: "#7a9a6a", letterSpacing: 1.2, textTransform: "uppercase" }}>Floor View</div>
-                  <div style={{ fontSize: 20, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif" }}>Hi {(displayName || "").split(" ")[0] || "there"}</div>
-                  <div style={{ fontSize: 11, color: "#7a9a6a", marginTop: 2 }}>Week {today.week}, {today.year}</div>
+                  <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif", lineHeight: 1.1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>Hi {(displayName || "").split(" ")[0] || "there"}</div>
+                  <div style={{ fontSize: 10, color: "#7a9a6a", marginTop: 2 }}>Week {today.week}, {today.year}</div>
                 </div>
-                <div style={{ display: "flex", gap: 6 }}>
-                  <HeaderIconButton emoji="🚛" title="Driver requests" badge={pendingDriverRequests.length}
-                    onClick={() => setCurrentView("driver-requests")} />
-                  <HeaderIconButton emoji="🌴" title="Vacation" badge={canApproveVacation ? pendingVacations.length : 0}
-                    onClick={() => setCurrentView("vacation")} />
-                  <HeaderIconButton emoji="📥" title="Inbox" badge={isTrish ? unreadHrMessages.length : 0}
-                    onClick={() => setCurrentView(isTrish ? "hr-inbox" : "messages")} />
+                <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                  <HeaderIconButton
+                    emoji="📥"
+                    title={isTrish ? "HR Inbox" : "Requests + announcements"}
+                    badge={(isTrish ? unreadHrMessages.length : 0) + pendingRequests.length}
+                    onClick={() => setCurrentView(isTrish ? "hr-inbox" : "messages")}
+                  />
                   <button onClick={onSwitchMode} title="Log out"
                     style={{ background: "none", border: "1px solid #4a6a3a", borderRadius: 8, color: "#c8e6b8", padding: "8px 12px", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>↩</button>
                 </div>
@@ -943,6 +968,15 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
                   {overdueIn("maintenance") > 0 && <span className="hub-card-badge">{overdueIn("maintenance")} overdue</span>}
                 </div>
 
+                {/* Sales — Fundraising + Wholesale tabs inside */}
+                <div className="hub-card" onClick={() => { setSalesTab("fundraising"); goToTasks("sales"); }} style={{ borderTopColor: "#8e44ad", borderTopWidth: 4 }}>
+                  <div className="hub-card-emoji">💼</div>
+                  <div className="hub-card-title">Sales</div>
+                  <div className="hub-card-sub">{tasksToday("sales")} today · Fundraising / Wholesale</div>
+                  {overdueIn("sales") > 0 && <span className="hub-card-badge">{overdueIn("sales")} overdue</span>}
+                  {requestsIn("sales") > 0 && overdueIn("sales") === 0 && <span className="hub-card-badge warn">{requestsIn("sales")} request{requestsIn("sales") !== 1 ? "s" : ""}</span>}
+                </div>
+
                 {/* Vacation */}
                 <div className="hub-card" onClick={() => setCurrentView("vacation")} style={{ borderTopColor: "#7fb069", borderTopWidth: 4 }}>
                   <div className="hub-card-emoji">🌴</div>
@@ -1020,22 +1054,16 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
                   <div className="hub-card-sub">{(brehobItems || []).filter(b => b.status === "on_list").length} items on list</div>
                 </div>
 
-                {/* Receiving — what's coming from suppliers this week */}
-                <div className="hub-card" onClick={() => setCurrentView("receiving")} style={{ gridColumn: "span 2", borderTopColor: "#a86a10", borderTopWidth: 4 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-                      <span style={{ fontSize: 26 }}>📦</span>
-                      <div>
-                        <div style={{ fontSize: 16, fontWeight: 800, color: "#1e2d1a" }}>Receiving</div>
-                        <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2 }}>
-                          {receivingThisWeek.lineCount === 0
-                            ? "Nothing scheduled this week"
-                            : `${receivingThisWeek.plantTotal.toLocaleString()} plants coming in this week`}
-                        </div>
-                      </div>
-                    </div>
-                    {receivingThisWeek.lineCount > 0 && <span className="hub-card-badge ok">{receivingThisWeek.lineCount}</span>}
+                {/* Receiving — standard single-column hub card next to Brehob/Maintenance */}
+                <div className="hub-card" onClick={() => setCurrentView("receiving")} style={{ borderTopColor: "#a86a10", borderTopWidth: 4 }}>
+                  <div className="hub-card-emoji">📦</div>
+                  <div className="hub-card-title">Receiving</div>
+                  <div className="hub-card-sub">
+                    {receivingThisWeek.lineCount === 0
+                      ? "Nothing this week"
+                      : `${receivingThisWeek.plantTotal.toLocaleString()} plants this week`}
                   </div>
+                  {receivingThisWeek.lineCount > 0 && <span className="hub-card-badge ok">{receivingThisWeek.lineCount}</span>}
                 </div>
               </div>
             )}
@@ -1053,49 +1081,30 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
             style={{ background: "transparent", border: "1px solid #4a6a3a", borderRadius: 8, color: "#c8e6b8", padding: "6px 10px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}>
             ← Hub
           </button>
-          <div style={{ minWidth: 0 }}>
+          <div style={{ minWidth: 0, flex: 1 }}>
             <div style={{ fontSize: 10, fontWeight: 800, color: "#7a9a6a", letterSpacing: 1.2, textTransform: "uppercase" }}>Floor View</div>
-            <div className="mtv-header-title" style={{ fontSize: 22, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            <div className="mtv-header-title" style={{ fontSize: 19, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
               {category === "production"  && "🌱 Production"}
               {category === "growing"     && "🌿 Growing"}
               {category === "maintenance" && "🔧 Maintenance"}
               {category === "brehob"      && "🛒 Brehob"}
+              {category === "sales"       && "💼 Sales"}
             </div>
           </div>
-          <div className="mtv-header-buttons" style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
-            {onBackToApp && (
-              <button onClick={onBackToApp}
-                style={{ background: "#7fb069", border: "none", borderRadius: 8, color: "#1e2d1a", padding: "6px 12px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
-                <span className="label-text">App </span>→
-              </button>
-            )}
-            {canAnnounce && (
-              <button onClick={() => setShowAnnouncer(true)}
-                style={{ background: "#1e2d1a", border: "1px solid #4a6a3a", borderRadius: 8, color: "#c8e6b8", padding: "6px 12px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
-                📢<span className="label-text"> Announce</span>
-              </button>
-            )}
-            <button onClick={() => setShowVacationForm(true)}
-              style={{ background: "#7fb069", border: "none", borderRadius: 8, color: "#fff", padding: "6px 12px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
-              🌴<span className="label-text"> Vacation</span>
-            </button>
-            {canApproveVacation && (
-              <button onClick={() => setShowVacationInbox(true)}
-                style={{ background: pendingVacations.length > 0 ? "#e89a3a" : "#c8e6b8", border: "none", borderRadius: 8, color: "#1e2d1a", padding: "6px 12px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
-                🌴<span className="label-text"> Inbox</span>{pendingVacations.length > 0 ? ` (${pendingVacations.length})` : ""}
-              </button>
-            )}
+          <div className="mtv-header-buttons" style={{ display: "flex", gap: 6, flexShrink: 0 }}>
             <button onClick={() => setShowRequests(true)}
-              style={{ background: pendingRequests.length > 0 ? "#e89a3a" : "#c8e6b8", border: "none", borderRadius: 8, color: "#1e2d1a", padding: "6px 12px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
-              📥<span className="label-text"> Requests</span>{pendingRequests.length > 0 ? ` (${pendingRequests.length})` : ""}
-            </button>
-            <button onClick={() => setShowCodes(true)}
-              style={{ background: "#c8e6b8", border: "none", borderRadius: 8, color: "#1e2d1a", padding: "6px 12px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
-              🔑<span className="label-text"> Codes</span>
+              title="Requests inbox"
+              style={{ position: "relative", background: "#c8e6b8", border: "none", borderRadius: 10, color: "#1e2d1a", padding: "8px 12px", fontSize: 18, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", lineHeight: 1 }}>
+              📥
+              {pendingRequests.length > 0 && (
+                <span style={{ position: "absolute", top: -4, right: -4, background: "#d94f3d", color: "#fff", borderRadius: 999, fontSize: 10, fontWeight: 800, minWidth: 18, height: 18, padding: "0 5px", display: "inline-flex", alignItems: "center", justifyContent: "center", border: "2px solid #1e2d1a" }}>
+                  {pendingRequests.length}
+                </span>
+              )}
             </button>
             <button onClick={onSwitchMode}
-              style={{ background: "none", border: "1px solid #4a6a3a", borderRadius: 8, color: "#c8e6b8", padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
-              ↩<span className="label-text"> Log out</span>
+              style={{ background: "none", border: "1px solid #4a6a3a", borderRadius: 8, color: "#c8e6b8", padding: "8px 12px", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", lineHeight: 1 }}>
+              ↩
             </button>
           </div>
         </div>
@@ -1145,6 +1154,40 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
           ))}
         </div>
       )}
+      {/* Sales sub-tabs: Fundraising · Wholesale */}
+      {category === "sales" && (
+        <div style={{ background: "#fff", borderBottom: "1.5px solid #e0ead8", padding: "10px 16px 0", display: "flex", gap: 6 }}>
+          {[
+            { id: "fundraising", label: "💰 Fundraising" },
+            { id: "wholesale",   label: "🚚 Wholesale" },
+          ].map(t => (
+            <button key={t.id} onClick={() => setSalesTab(t.id)}
+              style={{
+                flex: 1, padding: "10px 0", borderRadius: "10px 10px 0 0", fontSize: 12, fontWeight: 800,
+                background: salesTab === t.id ? "#1e2d1a" : "#f2f5ef",
+                color:      salesTab === t.id ? "#c8e6b8" : "#7a8c74",
+                border: `1.5px solid ${salesTab === t.id ? "#1e2d1a" : "#c8d8c0"}`,
+                borderBottom: "none",
+                cursor: "pointer", fontFamily: "inherit",
+              }}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Search box — filters the visible task list within the current category */}
+      {!isAsstManager && (category === "production" || category === "growing" || category === "maintenance" || category === "sales") && (
+        <div style={{ padding: "10px 16px 0", background: "#fff" }}>
+          <input
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            placeholder="🔍 Search tasks by title…"
+            style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "1.5px solid #c8d8c0", fontSize: 14, fontFamily: "inherit", boxSizing: "border-box", color: "#1e2d1a" }}
+          />
+        </div>
+      )}
+
       {/* Brehob shopping list — renders in place of tasks when selected */}
       {category === "brehob" && (
         <div style={{ padding: "20px" }}>

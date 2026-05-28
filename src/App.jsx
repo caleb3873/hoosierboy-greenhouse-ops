@@ -289,6 +289,7 @@ function FloorAppRouter({ role, isManager, growerProfile, signOut }) {
   if (group === "PRODUCTION") defaultCategory = "production";
   else if (group === "GROWING") defaultCategory = "growing";
   else if (group === "MAINTENANCE") defaultCategory = "maintenance";
+  else if (group === "SALES") defaultCategory = "sales";
   else if (["Evie", "Sam", "Ryan", "Nick", "Tyler"].some(n => name.includes(n))) defaultCategory = "production";
   // Manager + Reese start in task creator. Other workers start in worker checklist.
   const initial = isManager || isReese ? "creator" : "worker";
