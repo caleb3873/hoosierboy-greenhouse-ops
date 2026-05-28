@@ -176,7 +176,7 @@ export function formatTargetDate(iso) {
 // ══════════════════════════════════════════════════════════════════════════════
 export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateGrowing = true, defaultCategory, isAsstManager = false }) {
   const { rows: tasks, upsert, remove, refresh } = useManagerTasks();
-  const { displayName, isAdmin } = useAuth();
+  const { displayName, isAdmin, growerProfile } = useAuth();
 
   // Human-readable label for a category code, used on the asst-manager hub
   // "Tasks" card subtitle ("My Tasks · Production · Done").
@@ -308,6 +308,17 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
   const canApproveVacation = isVacationApprover(displayName);
   const canAnnounce = canPostAnnouncement(displayName);
   const isTrish = isHrInboxOwner(displayName);
+  // Sales card gated to sales-involved people only (Tyler / Paul / Trish /
+  // Mario, plus anyone tagged SALES in staff_group). Production / Growing /
+  // Maintenance managers (Zach, Evie, Sam, etc.) don't see it.
+  const canSeeSales = useMemo(() => {
+    const n = (displayName || "").toLowerCase();
+    const group = (growerProfile?.group || "").toUpperCase();
+    return group === "SALES"
+      || n.includes("tyler") || n.includes("paul")
+      || n.includes("trish") || n.includes("patricia") || n.includes("garrison")
+      || n.includes("mario");
+  }, [displayName, growerProfile]);
   const isAnyManager = !!displayName; // every floor-code user gets the Today/Week shortcut
   const pendingVacations = useMemo(() => (vacationReqs || []).filter(v => v.status === "pending"), [vacationReqs]);
   const { rows: driverReqRows } = useDriverRequests();
@@ -968,14 +979,17 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
                   {overdueIn("maintenance") > 0 && <span className="hub-card-badge">{overdueIn("maintenance")} overdue</span>}
                 </div>
 
-                {/* Sales — Fundraising + Wholesale tabs inside */}
-                <div className="hub-card" onClick={() => { setSalesTab("fundraising"); goToTasks("sales"); }} style={{ borderTopColor: "#8e44ad", borderTopWidth: 4 }}>
-                  <div className="hub-card-emoji">💼</div>
-                  <div className="hub-card-title">Sales</div>
-                  <div className="hub-card-sub">{tasksToday("sales")} today · Fundraising / Wholesale</div>
-                  {overdueIn("sales") > 0 && <span className="hub-card-badge">{overdueIn("sales")} overdue</span>}
-                  {requestsIn("sales") > 0 && overdueIn("sales") === 0 && <span className="hub-card-badge warn">{requestsIn("sales")} request{requestsIn("sales") !== 1 ? "s" : ""}</span>}
-                </div>
+                {/* Sales — Fundraising + Wholesale tabs inside. Gated to
+                    sales-involved people; other managers don't see it. */}
+                {canSeeSales && (
+                  <div className="hub-card" onClick={() => { setSalesTab("fundraising"); goToTasks("sales"); }} style={{ borderTopColor: "#8e44ad", borderTopWidth: 4 }}>
+                    <div className="hub-card-emoji">💼</div>
+                    <div className="hub-card-title">Sales</div>
+                    <div className="hub-card-sub">{tasksToday("sales")} today · Fundraising / Wholesale</div>
+                    {overdueIn("sales") > 0 && <span className="hub-card-badge">{overdueIn("sales")} overdue</span>}
+                    {requestsIn("sales") > 0 && overdueIn("sales") === 0 && <span className="hub-card-badge warn">{requestsIn("sales")} request{requestsIn("sales") !== 1 ? "s" : ""}</span>}
+                  </div>
+                )}
 
                 {/* Vacation */}
                 <div className="hub-card" onClick={() => setCurrentView("vacation")} style={{ borderTopColor: "#7fb069", borderTopWidth: 4 }}>
