@@ -765,88 +765,78 @@ export default function InventoryView({ onBack }) {
         </div>
       )}
 
-      {/* Two-line record list. No horizontal scroll — everything fits the phone width. */}
-      <div style={{ background: "#fff", borderBottom: "1.5px solid #e0ead8" }}>
-        {/* Sticky header — mirrors the top row of each record */}
-        <div style={{
-          display: "grid", gridTemplateColumns: TOP_COLS,
-          background: "#162212", color: "#c8e6b8",
-          position: "sticky", top: 0, zIndex: 6,
-        }}>
-          {["Loc", "Row", "Item", "Qty"].map(label => (
-            <div key={label} style={{
-              padding: "8px 8px", fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.6,
-              borderRight: "1px solid #2a3e22",
-            }}>
-              {label}
-            </div>
-          ))}
-        </div>
-
+      {/* Stacked record cards — Qty gets its own full-width row so the
+          confirm button is huge. Actions live in the card header so they
+          never compete with the qty area for tap space. */}
+      <div style={{ padding: "8px 8px 0" }}>
         {visibleLots.length === 0 && (
           <div style={{ padding: "28px 14px", textAlign: "center", color: "#7a8c74" }}>
             <div style={{ fontSize: 28, marginBottom: 6 }}>📊</div>
             <div style={{ fontSize: 13, fontWeight: 700 }}>No rows yet.</div>
-            <div style={{ fontSize: 11, marginTop: 4 }}>Tap "+ Add" to start.</div>
+            <div style={{ fontSize: 11, marginTop: 4 }}>Tap "+ Add row" to start.</div>
           </div>
         )}
 
-        {visibleLots.map((lot, idx) => {
-          const altBg = idx % 2 === 0 ? "#fff" : "#fafbf7";
+        {visibleLots.map(lot => {
           const dup = isDup(lot);
+          const photoCount = (lot.photos || []).length;
           return (
             <div key={lot.id} style={{
-              background: altBg, borderTop: "1px solid #e0ead8",
-              ...(dup ? { boxShadow: "inset 4px 0 0 #e89a3a" } : {}),
+              background: "#fff", border: `1.5px solid ${dup ? "#e89a3a" : "#e0ead8"}`,
+              borderRadius: 12, marginBottom: 8, overflow: "hidden",
             }}>
               {dup && (
-                <div style={{ background: "#fff3c4", color: "#7a5a00", padding: "2px 10px", fontSize: 10, fontWeight: 800, letterSpacing: 0.3 }}>
+                <div style={{ background: "#fff3c4", color: "#7a5a00", padding: "3px 10px", fontSize: 10, fontWeight: 800, letterSpacing: 0.3 }}>
                   ⚠ DUPLICATE — same location · row · variety as another row
                 </div>
               )}
-              {/* Top row — Loc · Row · Item · Qty (+ Empty in Sweep mode) */}
-              <div style={{ display: "grid", gridTemplateColumns: TOP_COLS, alignItems: "stretch" }}>
-                <Cell>
-                  <button onClick={() => openLocationPicker(lot)} style={pickerCellBtn(lot.location)}>
-                    {lot.location || <span style={{ color: "#bbc8b6" }}>—</span>}
-                  </button>
-                </Cell>
-                <Cell>
-                  <button
-                    onClick={() => lot.location ? openRowPicker(lot) : openLocationPicker(lot)}
-                    title={lot.location ? "Pick row(s)" : "Pick a location first"}
-                    style={pickerCellBtn(lot.rowId)}>
-                    {lot.rowId || <span style={{ color: "#bbc8b6" }}>—</span>}
-                  </button>
-                </Cell>
-                <Cell>
-                  <button onClick={() => openPicker(lot)} style={pickerCellBtn(lot.variety)}>
-                    {lot.variety
-                      ? <span><span style={{ fontWeight: 800, color: "#4a7a35" }}>{lot.potSize || "—"}</span> · {lot.variety}</span>
-                      : <span style={{ color: "#bbc8b6" }}>—</span>}
-                  </button>
-                </Cell>
-                <Cell>
-                  <QtyCell lot={lot} walkMode={walkMode} patch={patch} markEmpty={markEmpty} />
-                </Cell>
+
+              {/* HEADER — context (Loc · Row) on the left, actions on the right */}
+              <div style={{ display: "flex", alignItems: "center", padding: "6px 4px 6px 10px", gap: 6, borderBottom: "1px solid #f0f4ec", background: "#fafbf7" }}>
+                <button onClick={() => openLocationPicker(lot)}
+                  style={{ background: "transparent", border: "none", padding: "2px 4px", fontSize: 11, fontWeight: 700, color: lot.location ? "#1e2d1a" : "#bbc8b6", cursor: "pointer", fontFamily: "inherit", wordBreak: "break-word", textAlign: "left", flexShrink: 1, minWidth: 0 }}>
+                  📍 {lot.location || "—"}
+                </button>
+                <span style={{ color: "#c8d8c0", fontSize: 10 }}>·</span>
+                <button onClick={() => lot.location ? openRowPicker(lot) : openLocationPicker(lot)}
+                  style={{ background: "transparent", border: "none", padding: "2px 4px", fontSize: 11, fontWeight: 800, color: lot.rowId ? "#4a7a35" : "#bbc8b6", cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}>
+                  {lot.rowId || "—"}
+                </button>
+                <div style={{ flex: 1 }} />
+                <StatusPill lot={lot} />
+                <button onClick={() => duplicate(lot)} title="Duplicate (next row)"
+                  style={cardActionBtn("#7fb069", "#1e2d1a")}>⎘</button>
+                <button onClick={() => { setPhotoLot(lot); setPhotoScope("row"); }} title="Photos"
+                  style={cardActionBtn("#fff", "#4a90d9", "#4a90d9")}>
+                  📷{photoCount > 0 ? <sup style={{ fontSize: 8, marginLeft: 1 }}>{photoCount}</sup> : ""}
+                </button>
+                <button onClick={() => { if (window.confirm(`Delete "${lot.variety || "this row"}"?`)) remove(lot.id); }}
+                  title="Delete" style={cardActionBtn("transparent", "#d94f3d", "#d94f3d")}>🗑</button>
               </div>
-              {/* Bottom row — status pill + notes + actions */}
-              <div style={{ display: "flex", alignItems: "stretch", borderTop: "1px dashed #e8ede4", background: altBg }}>
-                <div style={{ flex: 1, padding: "4px 6px", borderRight: "1px dashed #e8ede4", display: "flex", flexDirection: "column", gap: 4 }}>
-                  <StatusPill lot={lot} />
-                  <AutoTextarea value={lot.notes || ""}
-                    onChange={v => patch(lot, { notes: v })}
-                    placeholder="📝 notes — small, wilted, etc." />
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 6px", flexShrink: 0 }}>
-                  <button onClick={() => duplicate(lot)} title="Duplicate (next row)" style={actionBtn("#7fb069", "#1e2d1a")}>⎘</button>
-                  <button onClick={() => { setPhotoLot(lot); setPhotoScope("row"); }} title="Photos"
-                    style={actionBtn("#fff", "#4a90d9", "#4a90d9")}>
-                    📷{(lot.photos || []).length > 0 ? <sup style={{ fontSize: 9, marginLeft: 1 }}>{(lot.photos || []).length}</sup> : ""}
-                  </button>
-                  <button onClick={() => { if (window.confirm(`Delete "${lot.variety || "this row"}"?`)) remove(lot.id); }}
-                    title="Delete" style={actionBtn("transparent", "#d94f3d", "#d94f3d")}>🗑</button>
-                </div>
+
+              {/* ITEM — large, readable, full width */}
+              <button onClick={() => openPicker(lot)}
+                style={{
+                  width: "100%", textAlign: "left", background: "transparent", border: "none",
+                  padding: "10px 12px", cursor: "pointer", fontFamily: "inherit",
+                  color: lot.variety ? "#1e2d1a" : "#bbc8b6",
+                  fontSize: 14, lineHeight: 1.3, wordBreak: "break-word",
+                }}>
+                {lot.variety
+                  ? <span><span style={{ fontWeight: 900, color: "#4a7a35", fontSize: 15 }}>{lot.potSize || "—"}</span> <span style={{ color: "#7a8c74" }}>·</span> <span style={{ fontWeight: 700 }}>{lot.variety}</span></span>
+                  : "🔍 Tap to pick item…"}
+              </button>
+
+              {/* QTY — dominant area, full card width, big buttons */}
+              <div style={{ padding: "0 8px 8px", borderTop: "1px dashed #e8ede4" }}>
+                <QtyCell lot={lot} walkMode={walkMode} patch={patch} markEmpty={markEmpty} />
+              </div>
+
+              {/* NOTES — full width below qty */}
+              <div style={{ padding: "0 10px 8px", display: "flex", alignItems: "stretch" }}>
+                <AutoTextarea value={lot.notes || ""}
+                  onChange={v => patch(lot, { notes: v })}
+                  placeholder="📝 notes (optional)" />
               </div>
             </div>
           );
@@ -855,9 +845,10 @@ export default function InventoryView({ onBack }) {
         {/* Pinned "+ Add row" footer */}
         <button onClick={() => addLot({ location: filterLocation })}
           style={{
-            width: "100%", padding: "12px", textAlign: "left",
-            background: "#f2f5ef", border: "none", borderTop: "1.5px dashed #c8d8c0",
-            fontSize: 13, fontWeight: 800, color: "#4a7a35", cursor: "pointer", fontFamily: "inherit",
+            width: "100%", padding: "14px", textAlign: "center",
+            background: "#f2f5ef", border: "1.5px dashed #c8d8c0", borderRadius: 10,
+            fontSize: 14, fontWeight: 800, color: "#4a7a35", cursor: "pointer", fontFamily: "inherit",
+            marginBottom: 10,
           }}>
           + Add row
         </button>
@@ -1117,13 +1108,14 @@ export default function InventoryView({ onBack }) {
 function QtyCell({ lot, walkMode, patch, markEmpty }) {
   if (walkMode === "sweep") {
     return (
-      <div style={{ width: "100%", display: "flex", flexDirection: "column", padding: "2px 0" }}>
+      <div style={{ width: "100%", display: "flex", flexDirection: "column", padding: "8px 0", gap: 4 }}>
         <button onClick={() => markEmpty(lot)}
           style={{
             background: (lot.quantity || 0) === 0 ? "#fdecea" : "#d94f3d",
             color: (lot.quantity || 0) === 0 ? "#7a2418" : "#fff",
-            border: "none", borderRadius: 8, padding: "10px 6px",
-            fontSize: 12, fontWeight: 900, cursor: "pointer", fontFamily: "inherit", width: "100%",
+            border: "none", borderRadius: 10, padding: "18px 6px",
+            fontSize: 18, fontWeight: 900, cursor: "pointer", fontFamily: "inherit", width: "100%",
+            minHeight: 60, letterSpacing: 0.5,
           }}>
           {(lot.quantity || 0) === 0 ? "✓ Empty" : "Tap = Empty"}
         </button>
@@ -1133,22 +1125,19 @@ function QtyCell({ lot, walkMode, patch, markEmpty }) {
   }
   // Census mode
   const uncounted = !lot.lastCountedAt && lot.quantity == null;
-  // While unconfirmed AND plan exists, show big tap-friendly buttons. Once
-  // the user commits a value (or there's no plan), drop to a normal numeric
-  // input.
+  // Uncounted + plan: huge ✓ <plan> across the top, then split Type / Empty.
   if (uncounted && Number.isFinite(lot.plannedQty)) {
     return (
-      <div style={{ width: "100%", display: "flex", flexDirection: "column", padding: "3px", gap: 4 }}>
-        {/* ✓ <plan_qty> — primary one-tap confirm. Larger and taller for fat fingers. */}
+      <div style={{ width: "100%", display: "flex", flexDirection: "column", padding: "8px 0", gap: 6 }}>
         <button onClick={() => patch(lot, { quantity: lot.plannedQty })}
           style={{
-            background: "#4a7a35", color: "#fff", border: "none", borderRadius: 8,
-            padding: "14px 6px", fontSize: 18, fontWeight: 900, lineHeight: 1.1,
-            cursor: "pointer", fontFamily: "inherit", minHeight: 48,
+            background: "#4a7a35", color: "#fff", border: "none", borderRadius: 10,
+            padding: "20px 6px", fontSize: 26, fontWeight: 900, lineHeight: 1,
+            cursor: "pointer", fontFamily: "inherit", minHeight: 64, letterSpacing: 0.5,
           }}>
           ✓ {lot.plannedQty}
         </button>
-        <div style={{ display: "flex", gap: 4 }}>
+        <div style={{ display: "flex", gap: 6 }}>
           <button onClick={() => {
               const raw = window.prompt(`Count for ${lot.variety}?`, lot.plannedQty);
               if (raw == null) return;
@@ -1157,34 +1146,34 @@ function QtyCell({ lot, walkMode, patch, markEmpty }) {
             }}
             style={{
               flex: 1, background: "#fff", color: "#1e2d1a", border: "1.5px solid #c8d8c0",
-              borderRadius: 8, padding: "10px 4px", fontSize: 16, fontWeight: 800,
-              cursor: "pointer", fontFamily: "inherit", minHeight: 44,
+              borderRadius: 10, padding: "14px 6px", fontSize: 16, fontWeight: 800,
+              cursor: "pointer", fontFamily: "inherit", minHeight: 52,
             }}>
-            ✏
+            ✏ Type
           </button>
           <button onClick={() => patch(lot, { quantity: 0 })}
             style={{
               flex: 1, background: "#fff", color: "#d94f3d", border: "1.5px solid #d94f3d",
-              borderRadius: 8, padding: "10px 4px", fontSize: 15, fontWeight: 800,
-              cursor: "pointer", fontFamily: "inherit", minHeight: 44,
+              borderRadius: 10, padding: "14px 6px", fontSize: 16, fontWeight: 800,
+              cursor: "pointer", fontFamily: "inherit", minHeight: 52,
             }}>
-            ✕ 0
+            ✕ Empty
           </button>
         </div>
         <PlanVariance lot={lot} />
       </div>
     );
   }
-  // Counted (or no plan) — large numeric input the user can re-edit
+  // Counted (or no plan) — huge numeric input
   return (
-    <div style={{ width: "100%", display: "flex", flexDirection: "column", padding: "3px" }}>
+    <div style={{ width: "100%", display: "flex", flexDirection: "column", padding: "8px 0" }}>
       <input type="number" inputMode="numeric" value={lot.quantity ?? ""}
         onChange={e => patch(lot, { quantity: e.target.value === "" ? null : parseInt(e.target.value, 10) || 0 })}
         placeholder="—"
         style={{
-          ...cellInputBase, fontWeight: 900, textAlign: "right", fontSize: 22,
-          padding: "10px 8px", border: "1.5px solid #c8d8c0", borderRadius: 8,
-          background: "#fff", minHeight: 48,
+          ...cellInputBase, fontWeight: 900, textAlign: "center", fontSize: 32,
+          padding: "16px 8px", border: "1.5px solid #c8d8c0", borderRadius: 10,
+          background: "#fff", minHeight: 64, letterSpacing: 0.5,
         }} />
       {Number.isFinite(lot.plannedQty) && <PlanVariance lot={lot} />}
     </div>
@@ -1197,12 +1186,12 @@ function PlanVariance({ lot }) {
   const isShort = delta < 0 && lot.quantity != null;
   const isExtra = delta > 0;
   return (
-    <div style={{ fontSize: 9, color: "#7a8c74", textAlign: "right", padding: "1px 6px 2px", lineHeight: 1.2 }}>
-      <div>plan {lot.plannedQty}</div>
+    <div style={{ fontSize: 11, color: "#7a8c74", textAlign: "center", padding: "2px 6px 0", lineHeight: 1.3, fontWeight: 700, display: "flex", justifyContent: "center", gap: 10 }}>
+      <span>plan {lot.plannedQty}</span>
       {lot.quantity != null && (isShort || isExtra) && (
-        <div style={{ color: isShort ? "#d94f3d" : "#4a7a35", fontWeight: 800 }}>
+        <span style={{ color: isShort ? "#d94f3d" : "#4a7a35", fontWeight: 900 }}>
           {isShort ? "" : "+"}{delta}
-        </div>
+        </span>
       )}
     </div>
   );
@@ -1281,6 +1270,14 @@ const actionBtn = (bg, color, border = null) => ({
   background: bg, color, border: border ? `1.5px solid ${border}` : "none",
   borderRadius: 6, padding: "6px 7px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit",
   flexShrink: 0,
+});
+
+// Small icon-only action buttons used in the card header (⎘ 📷 🗑). Compact
+// so they don't crowd the Loc · Row label.
+const cardActionBtn = (bg, color, border = null) => ({
+  background: bg, color, border: border ? `1.5px solid ${border}` : "none",
+  borderRadius: 6, padding: "4px 8px", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "inherit",
+  flexShrink: 0, minWidth: 30,
 });
 
 const btnPrimary = {
