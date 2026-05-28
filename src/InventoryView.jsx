@@ -791,15 +791,17 @@ export default function InventoryView({ onBack }) {
                 </div>
               )}
 
-              {/* HEADER — context (Loc · Row) on the left, actions on the right */}
-              <div style={{ display: "flex", alignItems: "center", padding: "6px 4px 6px 10px", gap: 6, borderBottom: "1px solid #f0f4ec", background: "#fafbf7" }}>
+              {/* HEADER — context (Loc · Row) on the left, actions on the right.
+                  Loc and Row are tappable to re-pick, status pill in the middle,
+                  small actions on the right. */}
+              <div style={{ display: "flex", alignItems: "center", padding: "8px 6px 8px 12px", gap: 6, borderBottom: "1px solid #f0f4ec", background: "#fafbf7" }}>
                 <button onClick={() => openLocationPicker(lot)}
-                  style={{ background: "transparent", border: "none", padding: "2px 4px", fontSize: 11, fontWeight: 700, color: lot.location ? "#1e2d1a" : "#bbc8b6", cursor: "pointer", fontFamily: "inherit", wordBreak: "break-word", textAlign: "left", flexShrink: 1, minWidth: 0 }}>
+                  style={{ background: "transparent", border: "none", padding: "2px 4px", fontSize: 13, fontWeight: 700, color: lot.location ? "#1e2d1a" : "#bbc8b6", cursor: "pointer", fontFamily: "inherit", wordBreak: "break-word", textAlign: "left", flexShrink: 1, minWidth: 0 }}>
                   📍 {lot.location || "—"}
                 </button>
-                <span style={{ color: "#c8d8c0", fontSize: 10 }}>·</span>
+                <span style={{ color: "#c8d8c0", fontSize: 12 }}>·</span>
                 <button onClick={() => lot.location ? openRowPicker(lot) : openLocationPicker(lot)}
-                  style={{ background: "transparent", border: "none", padding: "2px 4px", fontSize: 11, fontWeight: 800, color: lot.rowId ? "#4a7a35" : "#bbc8b6", cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}>
+                  style={{ background: "transparent", border: "none", padding: "2px 4px", fontSize: 13, fontWeight: 800, color: lot.rowId ? "#4a7a35" : "#bbc8b6", cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}>
                   {lot.rowId || "—"}
                 </button>
                 <div style={{ flex: 1 }} />
@@ -808,7 +810,7 @@ export default function InventoryView({ onBack }) {
                   style={cardActionBtn("#7fb069", "#1e2d1a")}>⎘</button>
                 <button onClick={() => { setPhotoLot(lot); setPhotoScope("row"); }} title="Photos"
                   style={cardActionBtn("#fff", "#4a90d9", "#4a90d9")}>
-                  📷{photoCount > 0 ? <sup style={{ fontSize: 8, marginLeft: 1 }}>{photoCount}</sup> : ""}
+                  📷{photoCount > 0 ? <sup style={{ fontSize: 9, marginLeft: 1 }}>{photoCount}</sup> : ""}
                 </button>
                 <button onClick={() => { if (window.confirm(`Delete "${lot.variety || "this row"}"?`)) remove(lot.id); }}
                   title="Delete" style={cardActionBtn("transparent", "#d94f3d", "#d94f3d")}>🗑</button>
@@ -818,12 +820,12 @@ export default function InventoryView({ onBack }) {
               <button onClick={() => openPicker(lot)}
                 style={{
                   width: "100%", textAlign: "left", background: "transparent", border: "none",
-                  padding: "10px 12px", cursor: "pointer", fontFamily: "inherit",
+                  padding: "12px 14px", cursor: "pointer", fontFamily: "inherit",
                   color: lot.variety ? "#1e2d1a" : "#bbc8b6",
-                  fontSize: 14, lineHeight: 1.3, wordBreak: "break-word",
+                  fontSize: 17, lineHeight: 1.3, wordBreak: "break-word",
                 }}>
                 {lot.variety
-                  ? <span><span style={{ fontWeight: 900, color: "#4a7a35", fontSize: 15 }}>{lot.potSize || "—"}</span> <span style={{ color: "#7a8c74" }}>·</span> <span style={{ fontWeight: 700 }}>{lot.variety}</span></span>
+                  ? <span><span style={{ fontWeight: 900, color: "#4a7a35", fontSize: 18 }}>{lot.potSize || "—"}</span> <span style={{ color: "#7a8c74" }}>·</span> <span style={{ fontWeight: 700 }}>{lot.variety}</span></span>
                   : "🔍 Tap to pick item…"}
               </button>
 
@@ -1106,16 +1108,17 @@ export default function InventoryView({ onBack }) {
 // commits a value; once committed, edits an input directly. Sweep mode is a
 // single big "Empty" button as before. ─────────────────────────────────────
 function QtyCell({ lot, walkMode, patch, markEmpty }) {
+  // Sweep mode: huge red "Empty" button covering the whole qty area.
   if (walkMode === "sweep") {
     return (
-      <div style={{ width: "100%", display: "flex", flexDirection: "column", padding: "8px 0", gap: 4 }}>
+      <div style={{ width: "100%", display: "flex", flexDirection: "column", padding: "10px 0", gap: 4 }}>
         <button onClick={() => markEmpty(lot)}
           style={{
             background: (lot.quantity || 0) === 0 ? "#fdecea" : "#d94f3d",
             color: (lot.quantity || 0) === 0 ? "#7a2418" : "#fff",
-            border: "none", borderRadius: 10, padding: "18px 6px",
-            fontSize: 18, fontWeight: 900, cursor: "pointer", fontFamily: "inherit", width: "100%",
-            minHeight: 60, letterSpacing: 0.5,
+            border: "none", borderRadius: 10, padding: "22px 6px",
+            fontSize: 22, fontWeight: 900, cursor: "pointer", fontFamily: "inherit", width: "100%",
+            minHeight: 70, letterSpacing: 0.5,
           }}>
           {(lot.quantity || 0) === 0 ? "✓ Empty" : "Tap = Empty"}
         </button>
@@ -1123,58 +1126,49 @@ function QtyCell({ lot, walkMode, patch, markEmpty }) {
       </div>
     );
   }
-  // Census mode
+
+  // Census mode: one huge tappable number + a small ✕ next to it.
+  //   - Uncounted + plan → number shows the plan in green; tap to confirm.
+  //   - Uncounted + no plan → empty input; tap to type.
+  //   - Counted → shows the current count; tap to re-edit.
+  // The ✕ always sets qty = 0.
   const uncounted = !lot.lastCountedAt && lot.quantity == null;
-  // Uncounted + plan: huge ✓ <plan> across the top, then split Type / Empty.
-  if (uncounted && Number.isFinite(lot.plannedQty)) {
-    return (
-      <div style={{ width: "100%", display: "flex", flexDirection: "column", padding: "8px 0", gap: 6 }}>
-        <button onClick={() => patch(lot, { quantity: lot.plannedQty })}
-          style={{
-            background: "#4a7a35", color: "#fff", border: "none", borderRadius: 10,
-            padding: "20px 6px", fontSize: 26, fontWeight: 900, lineHeight: 1,
-            cursor: "pointer", fontFamily: "inherit", minHeight: 64, letterSpacing: 0.5,
-          }}>
-          ✓ {lot.plannedQty}
-        </button>
-        <div style={{ display: "flex", gap: 6 }}>
-          <button onClick={() => {
-              const raw = window.prompt(`Count for ${lot.variety}?`, lot.plannedQty);
-              if (raw == null) return;
-              const n = parseInt(raw, 10);
-              if (Number.isFinite(n)) patch(lot, { quantity: n });
-            }}
-            style={{
-              flex: 1, background: "#fff", color: "#1e2d1a", border: "1.5px solid #c8d8c0",
-              borderRadius: 10, padding: "14px 6px", fontSize: 16, fontWeight: 800,
-              cursor: "pointer", fontFamily: "inherit", minHeight: 52,
-            }}>
-            ✏ Type
-          </button>
-          <button onClick={() => patch(lot, { quantity: 0 })}
-            style={{
-              flex: 1, background: "#fff", color: "#d94f3d", border: "1.5px solid #d94f3d",
-              borderRadius: 10, padding: "14px 6px", fontSize: 16, fontWeight: 800,
-              cursor: "pointer", fontFamily: "inherit", minHeight: 52,
-            }}>
-            ✕ Empty
-          </button>
-        </div>
-        <PlanVariance lot={lot} />
-      </div>
-    );
-  }
-  // Counted (or no plan) — huge numeric input
+  const showsPlan = uncounted && Number.isFinite(lot.plannedQty);
   return (
-    <div style={{ width: "100%", display: "flex", flexDirection: "column", padding: "8px 0" }}>
-      <input type="number" inputMode="numeric" value={lot.quantity ?? ""}
-        onChange={e => patch(lot, { quantity: e.target.value === "" ? null : parseInt(e.target.value, 10) || 0 })}
-        placeholder="—"
-        style={{
-          ...cellInputBase, fontWeight: 900, textAlign: "center", fontSize: 32,
-          padding: "16px 8px", border: "1.5px solid #c8d8c0", borderRadius: 10,
-          background: "#fff", minHeight: 64, letterSpacing: 0.5,
-        }} />
+    <div style={{ width: "100%", display: "flex", flexDirection: "column", padding: "10px 0", gap: 6 }}>
+      <div style={{ display: "flex", alignItems: "stretch", gap: 6 }}>
+        {showsPlan ? (
+          // Big confirm button — tap to set count = plan
+          <button onClick={() => patch(lot, { quantity: lot.plannedQty })}
+            style={{
+              flex: 1, background: "#4a7a35", color: "#fff", border: "none", borderRadius: 10,
+              padding: "22px 6px", fontSize: 34, fontWeight: 900, lineHeight: 1,
+              cursor: "pointer", fontFamily: "inherit", minHeight: 76, letterSpacing: 0.5,
+            }}>
+            ✓ {lot.plannedQty}
+          </button>
+        ) : (
+          // Big editable input — focus on tap to change the number
+          <input type="number" inputMode="numeric" value={lot.quantity ?? ""}
+            onChange={e => patch(lot, { quantity: e.target.value === "" ? null : parseInt(e.target.value, 10) || 0 })}
+            placeholder="—"
+            style={{
+              ...cellInputBase, flex: 1, fontWeight: 900, textAlign: "center",
+              fontSize: 34, padding: "16px 8px", border: "1.5px solid #c8d8c0",
+              borderRadius: 10, background: "#fff", minHeight: 76, letterSpacing: 0.5,
+            }} />
+        )}
+        {/* ✕ — set qty = 0. Small, sits to the right of the number. */}
+        <button onClick={() => patch(lot, { quantity: 0 })}
+          title="Mark empty (0)"
+          style={{
+            background: "#fff", color: "#d94f3d", border: "1.5px solid #d94f3d",
+            borderRadius: 10, padding: "0 14px", fontSize: 22, fontWeight: 900,
+            cursor: "pointer", fontFamily: "inherit", minHeight: 76, flexShrink: 0,
+          }}>
+          ✕
+        </button>
+      </div>
       {Number.isFinite(lot.plannedQty) && <PlanVariance lot={lot} />}
     </div>
   );
@@ -1186,7 +1180,7 @@ function PlanVariance({ lot }) {
   const isShort = delta < 0 && lot.quantity != null;
   const isExtra = delta > 0;
   return (
-    <div style={{ fontSize: 11, color: "#7a8c74", textAlign: "center", padding: "2px 6px 0", lineHeight: 1.3, fontWeight: 700, display: "flex", justifyContent: "center", gap: 10 }}>
+    <div style={{ fontSize: 13, color: "#7a8c74", textAlign: "center", padding: "4px 6px 0", lineHeight: 1.3, fontWeight: 700, display: "flex", justifyContent: "center", gap: 12 }}>
       <span>plan {lot.plannedQty}</span>
       {lot.quantity != null && (isShort || isExtra) && (
         <span style={{ color: isShort ? "#d94f3d" : "#4a7a35", fontWeight: 900 }}>
@@ -1204,7 +1198,7 @@ function StatusPill({ lot }) {
   const ts = lot.lastCountedAt ? new Date(lot.lastCountedAt) : null;
   if (!ts) {
     return (
-      <span style={{ alignSelf: "flex-start", background: "#e8eee5", color: "#7a8c74", borderRadius: 999, padding: "2px 8px", fontSize: 10, fontWeight: 800, letterSpacing: 0.3 }}>
+      <span style={{ alignSelf: "flex-start", background: "#e8eee5", color: "#7a8c74", borderRadius: 999, padding: "3px 10px", fontSize: 12, fontWeight: 800, letterSpacing: 0.3 }}>
         ◯ Uncounted
       </span>
     );
@@ -1212,14 +1206,13 @@ function StatusPill({ lot }) {
   const diffMs = Date.now() - ts.getTime();
   const days = Math.floor(diffMs / 86400000);
   let label, bg, color;
-  if (days === 0)       { label = "Counted today";   bg = "#dff2d2"; color = "#2e5e1a"; }
-  else if (days === 1)  { label = "1 day ago";       bg = "#fff3c4"; color = "#7a5a00"; }
-  else if (days <= 7)   { label = `${days} days ago`; bg = "#fff3c4"; color = "#7a5a00"; }
-  else                  { label = `${days}d ago · stale`; bg = "#fdecea"; color = "#7a2418"; }
-  const history = (lot.countHistory || []).length;
+  if (days === 0)       { label = "Today";          bg = "#dff2d2"; color = "#2e5e1a"; }
+  else if (days === 1)  { label = "Yesterday";      bg = "#fff3c4"; color = "#7a5a00"; }
+  else if (days <= 7)   { label = `${days}d ago`;   bg = "#fff3c4"; color = "#7a5a00"; }
+  else                  { label = `${days}d · stale`; bg = "#fdecea"; color = "#7a2418"; }
   return (
-    <span style={{ alignSelf: "flex-start", background: bg, color, borderRadius: 999, padding: "2px 8px", fontSize: 10, fontWeight: 800, letterSpacing: 0.3 }}>
-      ✓ {label}{history > 1 ? ` · ${history} counts` : ""}
+    <span style={{ alignSelf: "flex-start", background: bg, color, borderRadius: 999, padding: "3px 10px", fontSize: 12, fontWeight: 800, letterSpacing: 0.3 }}>
+      ✓ {label}
     </span>
   );
 }
@@ -1241,12 +1234,12 @@ function AutoTextarea({ value, onChange, placeholder, list }) {
         e.target.style.height = `${e.target.scrollHeight}px`;
       }}
       style={{
-        width: "100%", minHeight: 28,
-        padding: "6px 6px",
+        width: "100%", minHeight: 36,
+        padding: "8px 8px",
         border: "1px solid transparent", background: "transparent",
-        fontSize: 12, fontFamily: "inherit", color: "#1e2d1a",
+        fontSize: 14, fontFamily: "inherit", color: "#1e2d1a",
         resize: "none", outline: "none", boxSizing: "border-box",
-        overflow: "hidden", lineHeight: 1.3, wordBreak: "break-word",
+        overflow: "hidden", lineHeight: 1.35, wordBreak: "break-word",
       }}
     />
   );
