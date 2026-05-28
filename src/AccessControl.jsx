@@ -5,6 +5,18 @@
 import React, { useState, useMemo } from "react";
 import { useFloorCodes2 } from "./supabase";
 
+// Roles that can possibly see the manager hub — kept broad so admins can
+// manage every staff member who lands on a hub view (managers, assistant
+// managers, ops manager Tyler, shipping office staff who also see tasks,
+// and the named worker exceptions like Reese who get manager-like access).
+const ELIGIBLE_ROLES = new Set([
+  "manager",
+  "assistant_manager",
+  "operations_manager",
+  "shipping_manager",
+  "shipping_office",
+]);
+
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
 
 // All five task categories that show as cards on the manager hub
@@ -41,26 +53,29 @@ export function effectiveCategoriesFor(profile) {
 }
 
 export default function AccessControl({ onBack }) {
-  const { rows: floorCodes, upsert } = useFloorCodes2();
+  const { rows: floorCodes, update } = useFloorCodes2();
   const [savingId, setSavingId] = useState(null);
+  const [errMsg, setErrMsg] = useState("");
 
-  // Only manager-tier staff are eligible — workers / drivers don't see tasks
   const eligible = useMemo(() => {
-    const ranks = new Set(["manager", "assistant_manager", "operations_manager"]);
     return (floorCodes || [])
-      .filter(fc => fc.active !== false && ranks.has((fc.role || "").toLowerCase()))
+      .filter(fc => fc.active !== false && ELIGIBLE_ROLES.has((fc.role || "").toLowerCase()))
       .sort((a, b) => (a.workerName || "").localeCompare(b.workerName || ""));
   }, [floorCodes]);
 
   async function toggle(profile, categoryId) {
     setSavingId(profile.id);
+    setErrMsg("");
     try {
       const current = profile.taskCategories || [...defaultCategoriesFor(profile)];
       const set = new Set(current);
       if (set.has(categoryId)) set.delete(categoryId);
       else set.add(categoryId);
       const next = [...set].sort();
-      await upsert({ ...profile, taskCategories: next });
+      await update(profile.id, { taskCategories: next });
+    } catch (e) {
+      console.error("AccessControl toggle failed:", e);
+      setErrMsg(`Save failed: ${e?.message || e}`);
     } finally {
       setSavingId(null);
     }
@@ -68,9 +83,12 @@ export default function AccessControl({ onBack }) {
 
   async function reset(profile) {
     setSavingId(profile.id);
+    setErrMsg("");
     try {
-      // Setting to null restores default behavior
-      await upsert({ ...profile, taskCategories: null });
+      await update(profile.id, { taskCategories: null });
+    } catch (e) {
+      console.error("AccessControl reset failed:", e);
+      setErrMsg(`Reset failed: ${e?.message || e}`);
     } finally {
       setSavingId(null);
     }
@@ -91,6 +109,18 @@ export default function AccessControl({ onBack }) {
         <div style={{ background: "#fff", border: "1.5px solid #e0ead8", borderRadius: 10, padding: "12px 14px", marginBottom: 12, fontSize: 12, color: "#7a8c74" }}>
           Toggle which task categories each manager-tier staff member sees on their hub. Blue rows are using defaults — tap any toggle to override.
         </div>
+
+        {errMsg && (
+          <div style={{ background: "#fdecea", border: "1.5px solid #d94f3d", color: "#7a2418", borderRadius: 10, padding: "10px 12px", marginBottom: 12, fontSize: 12, fontWeight: 700 }}>
+            ⚠ {errMsg}
+          </div>
+        )}
+
+        {eligible.length === 0 && (
+          <div style={{ background: "#fff", border: "1.5px solid #e0ead8", borderRadius: 10, padding: "12px 14px", marginBottom: 12, fontSize: 12, color: "#7a8c74", textAlign: "center" }}>
+            No eligible staff found.
+          </div>
+        )}
 
         {eligible.map(p => {
           const effective = effectiveCategoriesFor(p);
