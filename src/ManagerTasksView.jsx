@@ -7,6 +7,7 @@ import { useAuth } from "./Auth";
 import { BrehobManagerView } from "./BrehobList";
 import { DriverRequestModal, DriverRequestStatusList, useDriverResponsePopup, DriverResponsePopup, DriverScheduleView, DriverRequestsSubPage } from "./DriverRequest";
 import AccessControl, { effectiveCategoriesFor } from "./AccessControl";
+import InventoryView from "./InventoryView";
 import { FacilityPicker, FacilityHistoryView, facilityLabel } from "./Facilities";
 import HouseDetail from "./HouseDetail";
 import { ReceivingWeekSummary, aggregateFallReceivingForWeek } from "./Receiving";
@@ -1071,6 +1072,14 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
                   </div>
                 )}
 
+                {/* Inventory — live count of pots on the pads. Sits next to Receiving so
+                    receiving + inventory are co-located in the daily flow. */}
+                <div className="hub-card" onClick={() => setCurrentView("inventory")} style={{ borderTopColor: "#7d3c98", borderTopWidth: 4 }}>
+                  <div className="hub-card-emoji">📊</div>
+                  <div className="hub-card-title">Inventory</div>
+                  <div className="hub-card-sub">Live pot count by row</div>
+                </div>
+
                 {/* Vacation */}
                 <div className="hub-card" onClick={() => setCurrentView("vacation")} style={{ borderTopColor: "#7fb069", borderTopWidth: 4 }}>
                   <div className="hub-card-emoji">🌴</div>
@@ -1559,6 +1568,10 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
 
       {currentView === "access-control" && canManageAccess && (
         <AccessControl onBack={() => setCurrentView("hub")} />
+      )}
+
+      {currentView === "inventory" && (
+        <InventoryView onBack={() => setCurrentView("hub")} />
       )}
 
       {/* ── TODAY / THIS WEEK (any manager) ────────────────────────────── */}
