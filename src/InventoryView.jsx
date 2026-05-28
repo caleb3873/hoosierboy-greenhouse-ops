@@ -1,6 +1,6 @@
-// Live inventory of pots on the pads. Replacement for the existing Google Sheet.
-// Grain: one row per pad-row of a variety. Mobile-friendly card grid with
-// datalist autocompletes pulled from existing app data so users barely type.
+// Live inventory of pots on the pads. Spreadsheet-style grid (like Google
+// Sheets / Excel): one row per pad-row of a variety, sticky header, cells
+// editable in place, + Add row / Duplicate beneath each lot.
 import React, { useMemo, useState } from "react";
 import { useAuth } from "./Auth";
 import {
@@ -13,7 +13,20 @@ import {
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
 
-const POT_SIZES = ["4.5\"", "6\"", "8\"", "9\"", "10\"", "12\"", "14\"", "HB", "Tray", "Liner"];
+const POT_SIZES = ["", "4.5\"", "6\"", "8\"", "9\"", "10\"", "12\"", "14\"", "HB", "Tray", "Liner"];
+
+// Column widths — sum drives horizontal scroll. Designed for an 8" tablet
+// but works on phones with horizontal scroll.
+const COLS = [
+  { key: "location",   label: "Location",   width: 180 },
+  { key: "rowId",      label: "Row",        width: 110 },
+  { key: "potSize",    label: "Size",       width: 80  },
+  { key: "plantType",  label: "Type",       width: 120 },
+  { key: "variety",    label: "Variety",    width: 200 },
+  { key: "quantity",   label: "Qty",        width: 90  },
+  { key: "notes",      label: "Notes",      width: 200 },
+  { key: "actions",    label: "",           width: 96  },
+];
 
 export default function InventoryView({ onBack }) {
   const { displayName } = useAuth();
@@ -24,11 +37,8 @@ export default function InventoryView({ onBack }) {
   const { rows: varieties } = useVarieties();
 
   const [filterLocation, setFilterLocation] = useState("");
-  const [savingId, setSavingId] = useState(null);
 
   // ── Autocomplete sources ───────────────────────────────────────────────────
-  // Locations: union of fall_program_items.location, houses.name, pads.name.
-  // Sorted, deduped.
   const allLocations = useMemo(() => {
     const set = new Set();
     (planItems || []).forEach(p => p.location && set.add(p.location.trim()));
@@ -37,7 +47,6 @@ export default function InventoryView({ onBack }) {
     return [...set].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   }, [planItems, houses, pads]);
 
-  // Rows-for-a-location: filtered from fall_program_items.row_id
   const rowsForLocation = useMemo(() => {
     const byLoc = new Map();
     (planItems || []).forEach(p => {
@@ -48,14 +57,12 @@ export default function InventoryView({ onBack }) {
     return byLoc;
   }, [planItems]);
 
-  // Plant types: distinct crop_name from variety_library, plus stable extras
   const plantTypes = useMemo(() => {
     const set = new Set(["Mum", "Aster", "Cabbage", "Kale", "Pansy"]);
     (varieties || []).forEach(v => v.cropName && set.add(v.cropName));
     return [...set].sort();
   }, [varieties]);
 
-  // Varieties for a plant type: pulled from variety_library + fall_program_items.variety
   const varietiesForType = useMemo(() => {
     const byType = new Map();
     (varieties || []).forEach(v => {
@@ -63,34 +70,40 @@ export default function InventoryView({ onBack }) {
       if (!byType.has(v.cropName)) byType.set(v.cropName, new Set());
       byType.get(v.cropName).add(v.variety);
     });
-    // Add Fall Program varieties under their inferred type (best-effort: parse "MUM PARADISO WHITE" → type MUM)
     (planItems || []).forEach(p => {
       if (!p.variety) return;
       const tokens = p.variety.split(/\s+/);
-      const type = tokens.find(t => plantTypes.some(pt => pt.toUpperCase() === t.toUpperCase())) || null;
-      if (!type) return;
-      const cap = plantTypes.find(pt => pt.toUpperCase() === type.toUpperCase());
-      if (!byType.has(cap)) byType.set(cap, new Set());
-      byType.get(cap).add(p.variety);
+      const matched = plantTypes.find(pt => tokens.some(t => t.toUpperCase() === pt.toUpperCase()));
+      if (!matched) return;
+      if (!byType.has(matched)) byType.set(matched, new Set());
+      byType.get(matched).add(p.variety);
     });
     return byType;
   }, [varieties, planItems, plantTypes]);
 
-  // ── Filter ─────────────────────────────────────────────────────────────────
+  // ── Filter + sort ──────────────────────────────────────────────────────────
   const visibleLots = useMemo(() => {
-    if (!filterLocation) return lots;
-    return lots.filter(l => (l.location || "").toLowerCase() === filterLocation.toLowerCase());
+    const filtered = filterLocation
+      ? (lots || []).filter(l => (l.location || "").toLowerCase().includes(filterLocation.toLowerCase()))
+      : (lots || []);
+    // Sort: Location alpha, then row natural, so the sheet stays scannable
+    return [...filtered].sort((a, b) =>
+      (a.location || "").localeCompare(b.location || "", undefined, { numeric: true }) ||
+      (a.rowId || "").localeCompare(b.rowId || "", undefined, { numeric: true })
+    );
   }, [lots, filterLocation]);
 
   // ── Actions ────────────────────────────────────────────────────────────────
-  async function addLot(seed = {}) {
+  async function addLot(seed = {}, afterId = null) {
+    // afterId not used for ordering (sort is location-based) but kept for future
+    void afterId;
     await insert({
-      location: seed.location || "",
+      location: seed.location || filterLocation || "",
       rowId: seed.rowId || "",
       potSize: seed.potSize || "",
       plantType: seed.plantType || "",
       variety: seed.variety || "",
-      quantity: 0,
+      quantity: seed.quantity ?? 0,
       notes: "",
       countedAt: new Date().toISOString(),
       countedBy: displayName || "Manager",
@@ -98,16 +111,14 @@ export default function InventoryView({ onBack }) {
   }
 
   async function patch(lot, changes) {
-    setSavingId(lot.id);
-    try {
-      await update(lot.id, { ...changes, countedAt: new Date().toISOString(), countedBy: displayName || lot.countedBy });
-    } finally {
-      setSavingId(null);
-    }
+    await update(lot.id, {
+      ...changes,
+      countedAt: new Date().toISOString(),
+      countedBy: displayName || lot.countedBy,
+    });
   }
 
   function duplicate(lot) {
-    // Try to bump the row_id by one: "BQ1003" → "BQ1004", "Row 3" → "Row 4"
     let nextRow = lot.rowId || "";
     const m = nextRow.match(/(\d+)(?!.*\d)/);
     if (m) {
@@ -123,7 +134,8 @@ export default function InventoryView({ onBack }) {
     });
   }
 
-  // ── Layout ─────────────────────────────────────────────────────────────────
+  const totalWidth = COLS.reduce((s, c) => s + c.width, 0);
+
   return (
     <div style={{ ...FONT, minHeight: "100vh", background: "#f2f5ef", paddingBottom: 80 }}>
       {/* Header */}
@@ -136,115 +148,161 @@ export default function InventoryView({ onBack }) {
         <div style={{ width: 60 }} />
       </div>
 
-      {/* Filter / summary */}
-      <div style={{ padding: 12, background: "#fff", borderBottom: "1.5px solid #e0ead8", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <span style={{ fontSize: 11, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>Filter:</span>
-        <input list="all-locs" value={filterLocation} onChange={e => setFilterLocation(e.target.value)} placeholder="All locations"
-          style={{ flex: 1, minWidth: 0, padding: "6px 10px", borderRadius: 8, border: "1.5px solid #c8d8c0", fontSize: 13, fontFamily: "inherit" }} />
+      {/* Toolbar */}
+      <div style={{ padding: "10px 14px", background: "#fff", borderBottom: "1.5px solid #e0ead8", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <input
+          list="all-locs"
+          value={filterLocation}
+          onChange={e => setFilterLocation(e.target.value)}
+          placeholder="🔍 Filter by location…"
+          style={{ flex: "1 1 200px", minWidth: 0, padding: "8px 10px", borderRadius: 8, border: "1.5px solid #c8d8c0", fontSize: 13, fontFamily: "inherit" }}
+        />
         <datalist id="all-locs">{allLocations.map(l => <option key={l} value={l} />)}</datalist>
-        {filterLocation && <button onClick={() => setFilterLocation("")} style={{ background: "#fff", border: "1.5px solid #c8d8c0", borderRadius: 8, padding: "6px 10px", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Clear</button>}
-        <span style={{ marginLeft: "auto", fontSize: 12, color: "#7a8c74", fontWeight: 700 }}>
+        {filterLocation && (
+          <button onClick={() => setFilterLocation("")} style={btnSecondary}>
+            ✕ Clear
+          </button>
+        )}
+        <span style={{ fontSize: 12, color: "#7a8c74", fontWeight: 700, marginLeft: "auto" }}>
           {visibleLots.length} lot{visibleLots.length !== 1 ? "s" : ""} · {visibleLots.reduce((s, l) => s + (l.quantity || 0), 0).toLocaleString()} pots
         </span>
+        <button onClick={() => addLot({ location: filterLocation })} style={btnPrimary}>
+          + Add row
+        </button>
       </div>
 
-      {/* Lots — one card per inventory_lot */}
-      <div style={{ padding: 12 }}>
-        {visibleLots.length === 0 && (
-          <div style={{ textAlign: "center", padding: 40, color: "#7a8c74" }}>
-            <div style={{ fontSize: 32, marginBottom: 10 }}>📊</div>
-            <div style={{ fontSize: 14, fontWeight: 700 }}>No inventory yet</div>
-            <div style={{ fontSize: 12, marginTop: 4 }}>Tap the + button below to add your first lot.</div>
+      {/* Spreadsheet grid — horizontally scrolls on narrow screens */}
+      <div style={{ overflowX: "auto", background: "#fff", borderBottom: "1.5px solid #e0ead8" }}>
+        <div style={{ minWidth: totalWidth }}>
+          {/* Sticky header */}
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: COLS.map(c => `${c.width}px`).join(" "),
+            background: "#162212", color: "#c8e6b8",
+            position: "sticky", top: 0, zIndex: 5,
+          }}>
+            {COLS.map(c => (
+              <div key={c.key} style={{ padding: "10px 8px", fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.8, borderRight: "1px solid #2a3e22" }}>
+                {c.label}
+              </div>
+            ))}
           </div>
-        )}
 
-        {visibleLots.map(lot => {
-          const rowOptions = rowsForLocation.get(lot.location) || new Set();
-          const varOptions = varietiesForType.get(lot.plantType) || new Set();
-          return (
-            <div key={lot.id} style={{ background: "#fff", border: "1.5px solid #e0ead8", borderRadius: 12, padding: 12, marginBottom: 10 }}>
-              <Field label="Location">
-                <input list={`locs-${lot.id}`} value={lot.location || ""}
-                  onChange={e => patch(lot, { location: e.target.value })}
-                  placeholder="e.g. Bluff Quonset 10" style={inputStyle} />
-                <datalist id={`locs-${lot.id}`}>{allLocations.map(l => <option key={l} value={l} />)}</datalist>
-              </Field>
-              <Field label="Row">
-                <input list={`rows-${lot.id}`} value={lot.rowId || ""}
-                  onChange={e => patch(lot, { rowId: e.target.value })}
-                  placeholder="e.g. BQ1003" style={inputStyle} />
-                <datalist id={`rows-${lot.id}`}>{[...rowOptions].sort().map(r => <option key={r} value={r} />)}</datalist>
-              </Field>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                <Field label="Size">
-                  <select value={lot.potSize || ""} onChange={e => patch(lot, { potSize: e.target.value })} style={inputStyle}>
-                    <option value="">—</option>
-                    {POT_SIZES.map(s => <option key={s} value={s}>{s}</option>)}
+          {/* Body rows */}
+          {visibleLots.length === 0 && (
+            <div style={{ padding: "32px 14px", textAlign: "center", color: "#7a8c74" }}>
+              <div style={{ fontSize: 28, marginBottom: 6 }}>📊</div>
+              <div style={{ fontSize: 13, fontWeight: 700 }}>No inventory rows yet.</div>
+              <div style={{ fontSize: 11, marginTop: 4 }}>Tap "+ Add row" to start the count.</div>
+            </div>
+          )}
+
+          {visibleLots.map((lot, idx) => {
+            const rowOptions = rowsForLocation.get(lot.location) || new Set();
+            const varOptions = varietiesForType.get(lot.plantType) || new Set();
+            const altBg = idx % 2 === 0 ? "#fff" : "#fafbf7";
+            return (
+              <div key={lot.id} style={{
+                display: "grid",
+                gridTemplateColumns: COLS.map(c => `${c.width}px`).join(" "),
+                background: altBg, borderTop: "1px solid #e0ead8",
+              }}>
+                {/* Location */}
+                <Cell>
+                  <input list={`locs-${lot.id}`} value={lot.location || ""}
+                    onChange={e => patch(lot, { location: e.target.value })}
+                    placeholder="Bluff Quonset 10" style={cellInput} />
+                  <datalist id={`locs-${lot.id}`}>{allLocations.map(l => <option key={l} value={l} />)}</datalist>
+                </Cell>
+                {/* Row */}
+                <Cell>
+                  <input list={`rows-${lot.id}`} value={lot.rowId || ""}
+                    onChange={e => patch(lot, { rowId: e.target.value })}
+                    placeholder="BQ1003" style={cellInput} />
+                  <datalist id={`rows-${lot.id}`}>{[...rowOptions].sort().map(r => <option key={r} value={r} />)}</datalist>
+                </Cell>
+                {/* Size */}
+                <Cell>
+                  <select value={lot.potSize || ""} onChange={e => patch(lot, { potSize: e.target.value })} style={cellInput}>
+                    {POT_SIZES.map(s => <option key={s} value={s}>{s || "—"}</option>)}
                   </select>
-                </Field>
-                <Field label="Plant Type">
-                  <select value={lot.plantType || ""} onChange={e => patch(lot, { plantType: e.target.value, variety: "" })} style={inputStyle}>
+                </Cell>
+                {/* Plant Type */}
+                <Cell>
+                  <select value={lot.plantType || ""} onChange={e => patch(lot, { plantType: e.target.value, variety: "" })} style={cellInput}>
                     <option value="">—</option>
                     {plantTypes.map(t => <option key={t} value={t}>{t}</option>)}
                   </select>
-                </Field>
-              </div>
-              <Field label="Variety">
-                <input list={`vars-${lot.id}`} value={lot.variety || ""}
-                  onChange={e => patch(lot, { variety: e.target.value })}
-                  placeholder={lot.plantType ? `Type / pick a ${lot.plantType}` : "Pick plant type first"} style={inputStyle} />
-                <datalist id={`vars-${lot.id}`}>{[...varOptions].sort().map(v => <option key={v} value={v} />)}</datalist>
-              </Field>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 8 }}>
-                <Field label="Quantity">
+                </Cell>
+                {/* Variety */}
+                <Cell>
+                  <input list={`vars-${lot.id}`} value={lot.variety || ""}
+                    onChange={e => patch(lot, { variety: e.target.value })}
+                    placeholder={lot.plantType ? `Type a ${lot.plantType}` : "Pick type first"} style={cellInput} />
+                  <datalist id={`vars-${lot.id}`}>{[...varOptions].sort().map(v => <option key={v} value={v} />)}</datalist>
+                </Cell>
+                {/* Qty */}
+                <Cell>
                   <input type="number" value={lot.quantity ?? 0}
                     onChange={e => patch(lot, { quantity: parseInt(e.target.value, 10) || 0 })}
-                    style={{ ...inputStyle, fontSize: 18, fontWeight: 800, textAlign: "center" }} />
-                </Field>
-                <Field label="Notes">
+                    style={{ ...cellInput, fontWeight: 800, textAlign: "right" }} />
+                </Cell>
+                {/* Notes */}
+                <Cell>
                   <input value={lot.notes || ""}
                     onChange={e => patch(lot, { notes: e.target.value })}
-                    placeholder="optional — showed up small, shrunk, etc." style={inputStyle} />
-                </Field>
+                    placeholder="showed up small, etc." style={cellInput} />
+                </Cell>
+                {/* Actions */}
+                <div style={{ padding: 4, display: "flex", alignItems: "center", gap: 4, borderRight: "1px solid #e8ede4" }}>
+                  <button onClick={() => duplicate(lot)} title="Duplicate row (next row id)"
+                    style={miniBtn("#7fb069", "#1e2d1a")}>⎘</button>
+                  <button onClick={() => { if (window.confirm(`Delete "${lot.variety || "this row"}"?`)) remove(lot.id); }}
+                    title="Delete row" style={miniBtn("transparent", "#d94f3d", "#d94f3d")}>🗑</button>
+                </div>
               </div>
-              <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-                <button onClick={() => duplicate(lot)}
-                  style={{ flex: 1, background: "#7fb069", color: "#1e2d1a", border: "none", borderRadius: 8, padding: "8px 12px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
-                  ➕ Duplicate (next row)
-                </button>
-                <button onClick={() => { if (window.confirm("Delete this lot?")) remove(lot.id); }}
-                  style={{ background: "transparent", border: "1.5px solid #d94f3d", color: "#d94f3d", borderRadius: 8, padding: "8px 12px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
-                  🗑
-                </button>
-              </div>
-              {savingId === lot.id && <div style={{ fontSize: 10, color: "#7a8c74", marginTop: 4, textAlign: "right" }}>saving…</div>}
-            </div>
-          );
-        })}
+            );
+          })}
+
+          {/* "+ Add row" pinned to the bottom of the sheet */}
+          <button onClick={() => addLot({ location: filterLocation })}
+            style={{
+              width: "100%", padding: "12px 10px", textAlign: "left",
+              background: "#f2f5ef", border: "none", borderTop: "1.5px dashed #c8d8c0",
+              fontSize: 13, fontWeight: 800, color: "#4a7a35", cursor: "pointer", fontFamily: "inherit",
+            }}>
+            + Add row
+          </button>
+        </div>
       </div>
 
-      {/* Floating add button */}
-      <button onClick={() => addLot()}
-        style={{
-          position: "fixed", bottom: 20, left: "50%", transform: "translateX(-50%)",
-          width: 70, height: 70, borderRadius: "50%", background: "#7fb069",
-          border: "4px solid #fff", color: "#fff", fontSize: 32, cursor: "pointer",
-          boxShadow: "0 4px 20px rgba(26,42,26,0.3)",
-        }}>+</button>
+      <div style={{ padding: "10px 14px", fontSize: 11, color: "#7a8c74" }}>
+        Tip: pick a Location from the list, then the Row dropdown auto-filters to the rows on that quonset. Tap ⎘ on any row to duplicate it with the next row number — quantity blanks out so you just type the count.
+      </div>
     </div>
   );
 }
 
-const inputStyle = {
-  width: "100%", padding: "8px 10px", borderRadius: 8, border: "1.5px solid #c8d8c0",
-  fontSize: 14, fontFamily: "inherit", boxSizing: "border-box",
+const cellInput = {
+  width: "100%", padding: "8px 8px", border: "1px solid transparent",
+  background: "transparent", fontSize: 13, fontFamily: "inherit",
+  outline: "none", boxSizing: "border-box",
 };
 
-function Field({ label, children }) {
-  return (
-    <div style={{ marginBottom: 8 }}>
-      <div style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", marginBottom: 4, letterSpacing: 0.8 }}>{label}</div>
-      {children}
-    </div>
-  );
-}
+const Cell = ({ children }) => (
+  <div style={{ padding: 0, borderRight: "1px solid #e8ede4", display: "flex", alignItems: "stretch" }}>{children}</div>
+);
+
+const btnPrimary = {
+  background: "#7fb069", color: "#1e2d1a", border: "none", borderRadius: 8,
+  padding: "8px 12px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit",
+};
+const btnSecondary = {
+  background: "#fff", color: "#7a8c74", border: "1.5px solid #c8d8c0", borderRadius: 8,
+  padding: "8px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+};
+const miniBtn = (bg, color, border = null) => ({
+  background: bg, color, border: border ? `1.5px solid ${border}` : "none",
+  borderRadius: 6, padding: "6px 8px", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "inherit",
+  flex: 1, minWidth: 0,
+});
