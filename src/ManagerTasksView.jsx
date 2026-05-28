@@ -1388,32 +1388,54 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
             )}
           </div>
         ) : (
-          [
-            { id: "today",          label: "Today" },
-            { id: "tomorrow",       label: "Tomorrow" },
-            { id: "check_tomorrow", label: "Day After" },
-            { id: "this_week",      label: "This Week" },
-          ].map(section => {
-            const sectionTasks = visibleTasks.filter(t => (t.bucket || "today") === section.id);
-            if (sectionTasks.length === 0) return null;
-            return (
-              <div key={section.id} style={{ marginBottom: 18 }}>
+          (() => {
+            // Group by targetDate. Special-case Today + Overdue on the current week;
+            // future days get a day-of-week + date header. Falls back to a bucket
+            // header for tasks with no targetDate.
+            const todayIso = new Date().toISOString().slice(0, 10);
+            const sections = new Map(); // key → { label, accent, order, tasks[] }
+            const ensure = (key, label, accent, order) => {
+              if (!sections.has(key)) sections.set(key, { label, accent, order, tasks: [] });
+              return sections.get(key);
+            };
+
+            visibleTasks.forEach(t => {
+              const td = t.targetDate;
+              if (isCurrentWeek && td === todayIso) {
+                ensure("today", "Today", "#7fb069", 0).tasks.push(t);
+              } else if (isCurrentWeek && td && td < todayIso && t.status !== "completed") {
+                ensure("overdue", "Overdue", "#d94f3d", 1).tasks.push(t);
+              } else if (td) {
+                const d = new Date(td + "T00:00:00");
+                const label = d.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
+                ensure(`date:${td}`, label, "#7fb069", 2 + d.getTime() / 1e10).tasks.push(t);
+              } else {
+                // Legacy bucket fallback for tasks lacking a targetDate
+                const b = t.bucket || "this_week";
+                const bucketLabel = b === "today" ? "Today" : b === "tomorrow" ? "Tomorrow" : b === "check_tomorrow" ? "Day After" : "This Week";
+                ensure(`bucket:${b}`, bucketLabel, "#7fb069", 9).tasks.push(t);
+              }
+            });
+
+            const ordered = [...sections.entries()].sort((a, b) => a[1].order - b[1].order);
+            return ordered.map(([key, sec]) => (
+              <div key={key} style={{ marginBottom: 18 }}>
                 <div style={{
                   display: "flex", alignItems: "center", gap: 10,
-                  fontSize: 12, fontWeight: 800, color: "#1e2d1a", textTransform: "uppercase",
+                  fontSize: 12, fontWeight: 800, color: key === "overdue" ? "#d94f3d" : "#1e2d1a", textTransform: "uppercase",
                   letterSpacing: 1.2, margin: "6px 4px 10px",
                 }}>
-                  <span>{section.label}</span>
-                  <div style={{ flex: 1, height: 2, background: "#7fb069", borderRadius: 1 }} />
-                  <span style={{ background: "#7fb069", color: "#1e2d1a", borderRadius: 999, padding: "2px 10px", fontSize: 11 }}>{sectionTasks.length}</span>
+                  <span>{sec.label}</span>
+                  <div style={{ flex: 1, height: 2, background: sec.accent, borderRadius: 1 }} />
+                  <span style={{ background: sec.accent, color: key === "overdue" ? "#fff" : "#1e2d1a", borderRadius: 999, padding: "2px 10px", fontSize: 11 }}>{sec.tasks.length}</span>
                 </div>
-                {sectionTasks.map((t, sIdx) => {
+                {sec.tasks.map(t => {
                   const idx = visibleTasks.indexOf(t);
                   return renderTaskCard(t, idx);
                 })}
               </div>
-            );
-          })
+            ));
+          })()
         )}
       </div>
       )}

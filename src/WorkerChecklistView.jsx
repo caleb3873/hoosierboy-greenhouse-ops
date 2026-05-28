@@ -393,19 +393,44 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
           </div>
         )}
 
-        {visible.length > 0 && SECTIONS.map(section => {
-          const sectionTasks = visible.filter(t => (t.bucket || "today") === section.id);
-          if (sectionTasks.length === 0) return null;
+        {visible.length > 0 && (() => {
+          // Group by targetDate. Today + Overdue float to top (Overdue in red),
+          // then one section per upcoming day of the week.
+          const todayIso = new Date().toISOString().slice(0, 10);
+          const sections = new Map();
+          const ensure = (key, label, accent, order) => {
+            if (!sections.has(key)) sections.set(key, { label, accent, order, tasks: [] });
+            return sections.get(key);
+          };
+          visible.forEach(t => {
+            const td = t.targetDate;
+            if (td === todayIso) {
+              ensure("today", t_ui.today, GREEN, 0).tasks.push(t);
+            } else if (td && td < todayIso && t.status !== "completed") {
+              ensure("overdue", "Overdue", RED, 1).tasks.push(t);
+            } else if (td) {
+              const d = new Date(td + "T00:00:00");
+              const label = d.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
+              ensure(`date:${td}`, label, GREEN, 2 + d.getTime() / 1e10).tasks.push(t);
+            } else {
+              const b = t.bucket || "this_week";
+              const label = b === "today" ? t_ui.today : b === "tomorrow" ? t_ui.tomorrow : b === "check_tomorrow" ? t_ui.dayAfter : t_ui.weekly;
+              ensure(`bucket:${b}`, label, GREEN, 9).tasks.push(t);
+            }
+          });
+          const ordered = [...sections.entries()].sort((a, b) => a[1].order - b[1].order);
+          return ordered.map(([key, sec]) => {
+            const sectionTasks = sec.tasks;
           return (
-            <div key={section.id} style={{ marginBottom: 18 }}>
+            <div key={key} style={{ marginBottom: 18 }}>
               <div style={{
                 display: "flex", alignItems: "center", gap: 10,
-                fontSize: 12, fontWeight: 800, color: CREAM, textTransform: "uppercase",
+                fontSize: 12, fontWeight: 800, color: key === "overdue" ? "#ffb3a8" : CREAM, textTransform: "uppercase",
                 letterSpacing: 1.2, margin: "8px 4px 10px",
               }}>
-                <span>{section.label}</span>
-                <div style={{ flex: 1, height: 2, background: GREEN, borderRadius: 1 }} />
-                <span style={{ background: GREEN, color: GREEN_DARK, borderRadius: 999, padding: "2px 10px", fontSize: 11 }}>{sectionTasks.length}</span>
+                <span>{sec.label}</span>
+                <div style={{ flex: 1, height: 2, background: sec.accent, borderRadius: 1 }} />
+                <span style={{ background: sec.accent, color: key === "overdue" ? "#fff" : GREEN_DARK, borderRadius: 999, padding: "2px 10px", fontSize: 11 }}>{sectionTasks.length}</span>
               </div>
               {sectionTasks.map(task => {
                 const completed = task.status === "completed";
@@ -486,7 +511,8 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
               })}
             </div>
           );
-        })}
+          });
+        })()}
       </div>
 
       {/* Floating "suggest task" button */}
