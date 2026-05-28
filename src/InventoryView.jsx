@@ -40,13 +40,14 @@ function typeFromCategory(cat, variety) {
 
 const POT_SIZES = ["", "4.5\"", "6\"", "8\"", "9\"", "10\"", "12\"", "14\"", "HB", "Tray", "Liner", "Combo"];
 
-// Compact column widths designed for phones — total ~720px, sticky Location.
+// Compact column widths designed for phones — total ~640px, sticky Location.
+// Type is dropped: picking an Item from Fall Program implies the type, so
+// there's no value in a separate cell to confirm it.
 const COLS = [
   { key: "location",   label: "Loc",   width: 130, sticky: true },
   { key: "rowId",      label: "Row",   width: 90  },
   { key: "potSize",    label: "Size",  width: 64  },
-  { key: "plantType",  label: "Type",  width: 80  },
-  { key: "variety",    label: "Variety", width: 180 },
+  { key: "variety",    label: "Item",  width: 200 },
   { key: "quantity",   label: "Qty",   width: 76  },
   { key: "notes",      label: "Notes", width: 140 },
   { key: "actions",    label: "",      width: 80  },
@@ -152,17 +153,18 @@ export default function InventoryView({ onBack }) {
     });
   }
 
-  // Picker selection: patches the lot whose Variety cell was tapped with
-  // the chosen Fall Program item — location, row, size, type, variety all
-  // get filled in one go.
+  // Picker selection: patches the lot whose Item cell was tapped with the
+  // chosen Fall Program item. Existing values win — the user walks the pads
+  // and might be counting in a different spot than the plan says, so we
+  // only auto-fill blanks.
   async function applyPlanItemToLot(p) {
     if (!pickerLot) return;
     await patch(pickerLot, {
-      location: p.location || pickerLot.location || "",
-      rowId: p.rowId || pickerLot.rowId || "",
-      potSize: sizeFromCategory(p.category) || pickerLot.potSize || "",
-      plantType: typeFromCategory(p.category, p.variety) || pickerLot.plantType || "",
-      variety: p.variety || "",
+      location:  pickerLot.location  || p.location  || "",
+      rowId:     pickerLot.rowId     || p.rowId     || "",
+      potSize:   pickerLot.potSize   || sizeFromCategory(p.category) || "",
+      plantType: pickerLot.plantType || typeFromCategory(p.category, p.variety) || "",
+      variety:   p.variety || "",
     });
     setPickerLot(null);
     setPickerQuery("");
@@ -290,15 +292,10 @@ export default function InventoryView({ onBack }) {
                     {POT_SIZES.map(s => <option key={s} value={s}>{s || "—"}</option>)}
                   </select>
                 </Cell>
-                {/* Plant Type */}
-                <Cell>
-                  <select value={lot.plantType || ""} onChange={e => patch(lot, { plantType: e.target.value })} style={cellSelect}>
-                    <option value="">—</option>
-                    {plantTypes.map(t => <option key={t} value={t}>{t}</option>)}
-                  </select>
-                </Cell>
-                {/* Variety — tap to open the Fall Program picker. Selecting
-                    an item fills location/row/size/type for this same lot. */}
+                {/* Item — tap to open the Fall Program picker. Selecting an
+                    item fills variety (plus location/row/size on any cells
+                    that are still blank). Type is captured behind the scenes
+                    but no longer takes up a column. */}
                 <Cell>
                   <button onClick={() => { setPickerLot(lot); setPickerQuery(lot.variety || ""); }}
                     style={{
@@ -308,7 +305,7 @@ export default function InventoryView({ onBack }) {
                       fontSize: 12, lineHeight: 1.3, wordBreak: "break-word",
                       minHeight: 28, display: "flex", alignItems: "center",
                     }}>
-                    {lot.variety || "🔍 Tap to pick…"}
+                    {lot.variety || "🔍 Tap to pick item…"}
                   </button>
                 </Cell>
                 {/* Qty */}
@@ -346,7 +343,7 @@ export default function InventoryView({ onBack }) {
       </div>
 
       <div style={{ padding: "8px 14px", fontSize: 10, color: "#7a8c74", lineHeight: 1.4 }}>
-        Tip: tap any Variety cell to open the Fall Program picker — selecting a match auto-fills location, row, size, and type. Just type the qty.
+        Tip: tap any Item cell to open the Fall Program picker. Picking an item also fills size/location/row on any blank cells, so usually only Qty is left to type.
       </div>
 
       {/* Fall Program variety picker modal */}
