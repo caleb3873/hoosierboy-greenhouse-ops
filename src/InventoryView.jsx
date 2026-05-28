@@ -58,7 +58,11 @@ export default function InventoryView({ onBack }) {
   const { rows: planItems } = useFallProgramItems();
 
   const [filterLocation, setFilterLocation] = useState("");
-  const [search, setSearch] = useState("");
+  // Variety picker modal — when a Variety cell is tapped we open a full-screen
+  // modal with a search input + matching fall_program_items. Picking one
+  // patches the whole row.
+  const [pickerLot, setPickerLot] = useState(null);
+  const [pickerQuery, setPickerQuery] = useState("");
 
   // ── Derived dictionaries from Fall Program items ───────────────────────────
   const allLocations = useMemo(() => {
@@ -101,26 +105,26 @@ export default function InventoryView({ onBack }) {
     return m;
   }, [planItems]);
 
-  // ── Item search — top of page. Filters Fall Program items by location +
-  // variety, deduped to one row per (location · rowId · variety) so tapping
-  // a result spawns a pre-filled inventory lot. ───────────────────────────────
-  const searchResults = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return [];
+  // ── Picker matches — Fall Program items matching pickerQuery, deduped to
+  // one row per (location · rowId · variety). Empty query shows top 40 so
+  // the user can scroll if they don't want to type. ──────────────────────────
+  const pickerResults = useMemo(() => {
+    if (!pickerLot) return [];
+    const q = pickerQuery.trim().toLowerCase();
     const seen = new Set();
     const out = [];
     for (const p of planItems || []) {
       if (!p.variety) continue;
       const hay = `${p.variety} ${p.location || ""} ${p.rowId || ""} ${p.category || ""}`.toLowerCase();
-      if (!hay.includes(q)) continue;
+      if (q && !hay.includes(q)) continue;
       const k = `${p.location}||${p.rowId}||${p.variety}`;
       if (seen.has(k)) continue;
       seen.add(k);
       out.push(p);
-      if (out.length >= 20) break;
+      if (out.length >= 80) break;
     }
     return out;
-  }, [planItems, search]);
+  }, [planItems, pickerLot, pickerQuery]);
 
   // ── Visible lots (filter + sort) ───────────────────────────────────────────
   const visibleLots = useMemo(() => {
@@ -148,15 +152,20 @@ export default function InventoryView({ onBack }) {
     });
   }
 
-  function addFromPlanItem(p) {
-    addLot({
-      location: p.location || "",
-      rowId: p.rowId || "",
-      potSize: sizeFromCategory(p.category),
-      plantType: typeFromCategory(p.category, p.variety),
+  // Picker selection: patches the lot whose Variety cell was tapped with
+  // the chosen Fall Program item — location, row, size, type, variety all
+  // get filled in one go.
+  async function applyPlanItemToLot(p) {
+    if (!pickerLot) return;
+    await patch(pickerLot, {
+      location: p.location || pickerLot.location || "",
+      rowId: p.rowId || pickerLot.rowId || "",
+      potSize: sizeFromCategory(p.category) || pickerLot.potSize || "",
+      plantType: typeFromCategory(p.category, p.variety) || pickerLot.plantType || "",
       variety: p.variety || "",
     });
-    setSearch("");
+    setPickerLot(null);
+    setPickerQuery("");
   }
 
   async function patch(lot, changes) {
@@ -197,33 +206,6 @@ export default function InventoryView({ onBack }) {
         </button>
         <div style={{ fontSize: 15, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif" }}>📊 Inventory</div>
         <div style={{ width: 50 }} />
-      </div>
-
-      {/* Item search — primary input. Tapping a result auto-fills a new row */}
-      <div style={{ padding: "10px 12px", background: "#fff", borderBottom: "1.5px solid #e0ead8" }}>
-        <input
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder="🔍 Search Fall Program — variety, location, row…"
-          style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1.5px solid #c8d8c0", fontSize: 14, fontFamily: "inherit", boxSizing: "border-box" }}
-        />
-        {searchResults.length > 0 && (
-          <div style={{ marginTop: 8, background: "#f7faf3", border: "1.5px solid #c8d8c0", borderRadius: 10, maxHeight: 280, overflowY: "auto" }}>
-            {searchResults.map((p, i) => (
-              <button key={`${p.id}-${i}`} onClick={() => addFromPlanItem(p)}
-                style={{
-                  width: "100%", textAlign: "left", background: i % 2 === 0 ? "#fff" : "#f7faf3",
-                  border: "none", borderBottom: i === searchResults.length - 1 ? "none" : "1px solid #e8ede4",
-                  padding: "10px 12px", cursor: "pointer", fontFamily: "inherit",
-                }}>
-                <div style={{ fontSize: 13, fontWeight: 800, color: "#1e2d1a", lineHeight: 1.25 }}>{p.variety}</div>
-                <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2 }}>
-                  📍 {p.location || "—"} · {p.rowId || "—"} · {sizeFromCategory(p.category) || p.category}
-                </div>
-              </button>
-            ))}
-          </div>
-        )}
       </div>
 
       {/* Filter + summary toolbar */}
@@ -315,13 +297,19 @@ export default function InventoryView({ onBack }) {
                     {plantTypes.map(t => <option key={t} value={t}>{t}</option>)}
                   </select>
                 </Cell>
-                {/* Variety */}
+                {/* Variety — tap to open the Fall Program picker. Selecting
+                    an item fills location/row/size/type for this same lot. */}
                 <Cell>
-                  <AutoTextarea
-                    list={`vars-${lot.id}`} value={lot.variety || ""}
-                    onChange={v => patch(lot, { variety: v })}
-                    placeholder="Pick from search above" />
-                  <datalist id={`vars-${lot.id}`}>{[...varOptions].sort().map(v => <option key={v} value={v} />)}</datalist>
+                  <button onClick={() => { setPickerLot(lot); setPickerQuery(lot.variety || ""); }}
+                    style={{
+                      width: "100%", textAlign: "left", background: "transparent",
+                      border: "none", padding: "6px 6px", cursor: "pointer", fontFamily: "inherit",
+                      color: lot.variety ? "#1e2d1a" : "#9aaa90",
+                      fontSize: 12, lineHeight: 1.3, wordBreak: "break-word",
+                      minHeight: 28, display: "flex", alignItems: "center",
+                    }}>
+                    {lot.variety || "🔍 Tap to pick…"}
+                  </button>
                 </Cell>
                 {/* Qty */}
                 <Cell>
@@ -358,8 +346,55 @@ export default function InventoryView({ onBack }) {
       </div>
 
       <div style={{ padding: "8px 14px", fontSize: 10, color: "#7a8c74", lineHeight: 1.4 }}>
-        Tip: type a variety, location, or row in the search at the top — tap any match to drop in a new row pre-filled with location/row/size/type/variety. Just type the qty.
+        Tip: tap any Variety cell to open the Fall Program picker — selecting a match auto-fills location, row, size, and type. Just type the qty.
       </div>
+
+      {/* Fall Program variety picker modal */}
+      {pickerLot && (
+        <div onClick={() => setPickerLot(null)}
+          style={{ position: "fixed", inset: 0, background: "rgba(20,30,18,0.55)", zIndex: 100, display: "flex", alignItems: "stretch", justifyContent: "center" }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{ background: "#fff", width: "100%", maxWidth: 480, marginTop: 0, display: "flex", flexDirection: "column", height: "100%" }}>
+            <div style={{ background: "#1e2d1a", color: "#c8e6b8", padding: "12px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ fontSize: 15, fontWeight: 800 }}>🔍 Pick variety</div>
+              <button onClick={() => setPickerLot(null)}
+                style={{ background: "transparent", border: "1px solid #4a6a3a", borderRadius: 8, color: "#c8e6b8", padding: "6px 10px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                Close
+              </button>
+            </div>
+            <div style={{ padding: 12, borderBottom: "1.5px solid #e0ead8" }}>
+              <input
+                autoFocus
+                value={pickerQuery}
+                onChange={e => setPickerQuery(e.target.value)}
+                placeholder="Search variety, location, row…"
+                style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1.5px solid #c8d8c0", fontSize: 14, fontFamily: "inherit", boxSizing: "border-box" }}
+              />
+            </div>
+            <div style={{ flex: 1, overflowY: "auto" }}>
+              {pickerResults.length === 0 ? (
+                <div style={{ padding: 30, textAlign: "center", color: "#7a8c74", fontSize: 13 }}>
+                  No matches in Fall Program items.
+                </div>
+              ) : (
+                pickerResults.map((p, i) => (
+                  <button key={`${p.id}-${i}`} onClick={() => applyPlanItemToLot(p)}
+                    style={{
+                      width: "100%", textAlign: "left", background: i % 2 === 0 ? "#fff" : "#fafbf7",
+                      border: "none", borderBottom: "1px solid #f0f4ec",
+                      padding: "11px 14px", cursor: "pointer", fontFamily: "inherit",
+                    }}>
+                    <div style={{ fontSize: 13, fontWeight: 800, color: "#1e2d1a", lineHeight: 1.25 }}>{p.variety}</div>
+                    <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2 }}>
+                      📍 {p.location || "—"} · {p.rowId || "—"} · {sizeFromCategory(p.category) || p.category}
+                    </div>
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
