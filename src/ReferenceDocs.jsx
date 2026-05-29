@@ -200,32 +200,119 @@ export default function ReferenceDocs({ onBack }) {
                 <span style={{ background: "#7fb069", color: "#1e2d1a", borderRadius: 999, padding: "2px 10px", fontSize: 11, fontWeight: 800 }}>{items.length}</span>
               </button>
               {open && items.map(d => (
-                <button key={d.id} onClick={() => openDoc(d)} disabled={openingId === d.id}
-                  style={{
-                    display: "block", width: "100%", textAlign: "left",
-                    background: "#fff", border: "1.5px solid #e0ead8", borderRadius: 12,
-                    padding: "12px 14px", marginBottom: 6, marginLeft: 0, cursor: "pointer", fontFamily: "inherit",
-                  }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 14, fontWeight: 800, color: "#1e2d1a", lineHeight: 1.25 }}>{d.title}</div>
-                      {d.description && (
-                        <div style={{ fontSize: 12, color: "#7a8c74", marginTop: 4, lineHeight: 1.4 }}>{d.description}</div>
-                      )}
-                      <div style={{ fontSize: 10, color: "#4a7a35", fontWeight: 800, marginTop: 4, textTransform: "uppercase", letterSpacing: 0.6 }}>
-                        {d.linkUrl ? "🔗 LINK" : "📄 PDF"}
-                        {d.breeder ? ` · ${d.breeder}` : ""}
-                        {d.season ? ` · ${d.season}` : ""}
-                      </div>
-                    </div>
-                    <span style={{ fontSize: 18, color: "#4a90d9" }}>{openingId === d.id ? "…" : "↗"}</span>
-                  </div>
-                </button>
+                <DocCard
+                  key={d.id}
+                  doc={d}
+                  opening={openingId === d.id}
+                  onOpenPdf={() => openDoc(d)}
+                />
               ))}
             </div>
           );
         })}
       </div>
+    </div>
+  );
+}
+
+// Per-doc card. When the doc has transcribed prop_data or finish_data, the
+// card expands inline and shows a tabbed key/value table with a "View
+// original PDF" button at the bottom. Cards without any transcription
+// behave like the old "tap = open PDF" version.
+function DocCard({ doc, opening, onOpenPdf }) {
+  const hasProp = Array.isArray(doc.propData?.fields) && doc.propData.fields.length > 0;
+  const hasFin  = Array.isArray(doc.finishData?.fields) && doc.finishData.fields.length > 0;
+  const hasTranscription = hasProp || hasFin;
+  const [open, setOpen] = useState(false);
+  const [tab, setTab]   = useState(hasProp ? "prop" : "finish");
+
+  function handleHeader() {
+    if (hasTranscription) setOpen(o => !o);
+    else onOpenPdf();
+  }
+  const active = tab === "prop" ? doc.propData : doc.finishData;
+
+  return (
+    <div style={{ background: "#fff", border: "1.5px solid #e0ead8", borderRadius: 12, padding: "12px 14px", marginBottom: 6, fontFamily: "inherit" }}>
+      <button onClick={handleHeader}
+        style={{ display: "block", width: "100%", textAlign: "left", background: "transparent", border: "none", padding: 0, cursor: "pointer", fontFamily: "inherit" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 14, fontWeight: 800, color: "#1e2d1a", lineHeight: 1.25 }}>{doc.title}</div>
+            {doc.description && (
+              <div style={{ fontSize: 12, color: "#7a8c74", marginTop: 4, lineHeight: 1.4 }}>{doc.description}</div>
+            )}
+            <div style={{ fontSize: 10, color: "#4a7a35", fontWeight: 800, marginTop: 4, textTransform: "uppercase", letterSpacing: 0.6 }}>
+              {doc.linkUrl ? "🔗 LINK" : "📄 PDF"}
+              {doc.breeder ? ` · ${doc.breeder}` : ""}
+              {doc.season ? ` · ${doc.season}` : ""}
+              {hasTranscription ? " · 📋 quick view" : ""}
+            </div>
+          </div>
+          <span style={{ fontSize: 18, color: "#4a90d9" }}>
+            {opening ? "…" : hasTranscription ? (open ? "▼" : "▶") : "↗"}
+          </span>
+        </div>
+      </button>
+
+      {open && hasTranscription && (
+        <div style={{ marginTop: 10, borderTop: "1px dashed #e0ead8", paddingTop: 10 }}>
+          {/* Tabs only render when both stages are available */}
+          {hasProp && hasFin && (
+            <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+              {[
+                { id: "prop",   label: "🌱 Propagation" },
+                { id: "finish", label: "🌸 Finishing" },
+              ].map(t => {
+                const isActive = tab === t.id;
+                return (
+                  <button key={t.id} onClick={() => setTab(t.id)}
+                    style={{
+                      flex: 1, padding: "8px 6px", borderRadius: 8,
+                      background: isActive ? "#1e2d1a" : "#f2f5ef",
+                      color: isActive ? "#c8e6b8" : "#7a8c74",
+                      border: `1.5px solid ${isActive ? "#1e2d1a" : "#c8d8c0"}`,
+                      fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit",
+                    }}>
+                    {t.label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Field list */}
+          <div style={{ fontSize: 13, color: "#1e2d1a" }}>
+            {(active?.fields || []).map((f, i) => (
+              <div key={i} style={{
+                display: "grid", gridTemplateColumns: "minmax(110px, 36%) 1fr", gap: 10,
+                padding: "6px 0", borderTop: i === 0 ? "none" : "1px dashed #f0f4ec",
+                alignItems: "baseline",
+              }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: 0.5 }}>
+                  {f.label}
+                </div>
+                <div style={{ fontSize: 13, color: "#1e2d1a", lineHeight: 1.4, whiteSpace: "pre-wrap" }}>
+                  {f.value}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Notes — free-text caveat below the fields */}
+          {active?.notes && (
+            <div style={{ marginTop: 10, padding: "8px 10px", background: "#fffbe8", border: "1px solid #f0e6b8", borderRadius: 8, fontSize: 12, color: "#5a4a00", fontStyle: "italic", lineHeight: 1.45 }}>
+              {active.notes}
+            </div>
+          )}
+
+          {/* Always-available original PDF */}
+          <button onClick={onOpenPdf} disabled={opening}
+            style={{ marginTop: 10, width: "100%", background: "#1e2d1a", color: "#c8e6b8", border: "none", borderRadius: 8, padding: "10px 12px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+            {opening ? "Opening…" : "📄 Open original PDF"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
