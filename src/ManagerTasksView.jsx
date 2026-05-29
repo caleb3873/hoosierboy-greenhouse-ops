@@ -353,18 +353,39 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
 
   const pendingRequests = useMemo(() => tasks.filter(t => t.status === "requested"), [tasks]);
 
-  // Overdue scope: this user's category default + any carryover. Surfaces once per session per user.
+  // Per-user popup scope. Different roles get different popup categories so
+  // people only see what's actually theirs to action:
+  //   Alex / Trish        → Sales only
+  //   Paul / Reese / Amanda / Colin / Zach Stenz → Growing only
+  //   Everyone else       → Production only
+  const popupCategories = useMemo(() => {
+    const n = (displayName || "").toLowerCase();
+    if (n.includes("alex") || n.includes("trish") || n.includes("patricia")) return new Set(["sales"]);
+    if (
+      n.includes("paul") ||
+      n.includes("reese") ||
+      n.includes("amanda") ||
+      n.includes("colin") ||
+      (n.includes("zach") && n.includes("stenz"))
+    ) return new Set(["growing"]);
+    return new Set(["production"]);
+  }, [displayName]);
+
+  // Overdue scope: anything carried-over this week that falls inside this
+  // user's popup categories. Surfaces once per session per user.
   const overdueTasks = useMemo(() =>
     tasks.filter(t =>
       t.status !== "completed" &&
       t.status !== "requested" &&
       t.carriedOver === true &&
       t.year === today.year &&
-      t.weekNumber === today.week
+      t.weekNumber === today.week &&
+      popupCategories.has(t.category || "production")
     ).sort((a, b) => (b.priority || 0) - (a.priority || 0)),
-  [tasks, today]);
+  [tasks, today, popupCategories]);
 
-  // Tasks assigned to me this week, not finished. Pops every login until they're done.
+  // Tasks assigned to me this week, not finished. Same per-user category
+  // scope so e.g. Paul doesn't get pinged with production assignments.
   const assignedToMe = useMemo(() => {
     if (!displayName) return [];
     const firstName = displayName.split(" ")[0];
@@ -374,9 +395,10 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       t.weekNumber === today.week &&
       t.status !== "completed" &&
       t.status !== "rejected" &&
-      t.status !== "requested"
+      t.status !== "requested" &&
+      popupCategories.has(t.category || "production")
     ).sort((a, b) => (b.priority || 0) - (a.priority || 0));
-  }, [tasks, displayName, today]);
+  }, [tasks, displayName, today, popupCategories]);
 
   // Auto-open requests modal on first load if there are any
   useEffect(() => {
