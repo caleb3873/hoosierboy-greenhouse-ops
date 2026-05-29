@@ -1,50 +1,101 @@
-// Grower-facing library of culture guides and reference PDFs. Lists rows
-// from reference_docs, grouped by crop_type. Tapping a card pulls a fresh
-// signed URL from the private 'reference-docs' bucket and opens it in a
-// new tab so the PDF renders in the device's native PDF viewer.
+// Grower-facing library of culture guides and reference docs. Each row in
+// reference_docs points at either a PDF in the 'reference-docs' bucket
+// (file_path) OR an external URL (link_url). Both render in this view.
+//
+// Layout:
+//   Top tab row — All · Spring · Summer · Fall · Winter · Houseplants
+//   Search bar  — matches title / description / breeder / crop
+//   Body        — docs grouped by crop_type inside the active season
+
 import React, { useMemo, useState } from "react";
 import { useReferenceDocs, getSupabase } from "./supabase";
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
 
+const SEASON_ORDER = ["Spring", "Summer", "Fall", "Winter", "Houseplants"];
+// Sort crop_types within a season — most-grown crops at top, others alpha.
+const CROP_ORDER = ["Mum", "Aster", "Pansy", "Kale", "Cabbage", "Sunbeckia", "Helianthus", "Echinacea", "Heliopsis"];
+
 export default function ReferenceDocs({ onBack }) {
   const { rows: docs, loading } = useReferenceDocs();
-  const [openingPath, setOpeningPath] = useState(null);
+  const [season, setSeason] = useState("All");
+  const [search, setSearch] = useState("");
+  const [openingId, setOpeningId] = useState(null);
   const [errMsg, setErrMsg] = useState("");
 
-  const grouped = useMemo(() => {
+  // Seasons present in the data → drives which tabs render
+  const seasonsPresent = useMemo(() => {
+    const set = new Set();
+    (docs || []).forEach(d => d.season && set.add(d.season));
+    const ordered = SEASON_ORDER.filter(s => set.has(s));
+    // Any unknown seasons surface at the end so admins notice
+    [...set].forEach(s => { if (!ordered.includes(s)) ordered.push(s); });
+    return ["All", ...ordered];
+  }, [docs]);
+
+  // Counts per season for the chip badges
+  const seasonCounts = useMemo(() => {
     const m = new Map();
     (docs || []).forEach(d => {
-      const key = d.cropType || "Other";
-      if (!m.has(key)) m.set(key, []);
-      m.get(key).push(d);
+      if (d.season) m.set(d.season, (m.get(d.season) || 0) + 1);
     });
-    // Sort groups so most-used crops show first; everything else is alpha.
-    const order = ["Kale", "Cabbage", "Pansy", "Mum", "Aster"];
+    m.set("All", (docs || []).length);
+    return m;
+  }, [docs]);
+
+  // Filter by season + search; group by crop_type within the season
+  const grouped = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const filtered = (docs || []).filter(d => {
+      if (season !== "All" && d.season !== season) return false;
+      if (q) {
+        const hay = `${d.title || ""} ${d.description || ""} ${d.breeder || ""} ${d.cropType || ""} ${d.season || ""}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+    const m = new Map();
+    filtered.forEach(d => {
+      const k = d.cropType || "Other";
+      if (!m.has(k)) m.set(k, []);
+      m.get(k).push(d);
+    });
+    // Stable within each crop by sort_order then title
+    m.forEach(arr => arr.sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0) || (a.title || "").localeCompare(b.title || "")));
     return [...m.entries()].sort((a, b) => {
-      const ia = order.indexOf(a[0]); const ib = order.indexOf(b[0]);
+      const ia = CROP_ORDER.indexOf(a[0]); const ib = CROP_ORDER.indexOf(b[0]);
       if (ia !== -1 && ib !== -1) return ia - ib;
       if (ia !== -1) return -1;
       if (ib !== -1) return 1;
       return a[0].localeCompare(b[0]);
     });
-  }, [docs]);
+  }, [docs, season, search]);
 
   async function openDoc(doc) {
-    setOpeningPath(doc.filePath);
+    setOpeningId(doc.id);
     setErrMsg("");
     try {
-      const sb = getSupabase();
-      const { data, error } = await sb.storage.from("reference-docs").createSignedUrl(doc.filePath, 3600);
-      if (error) throw error;
-      if (data?.signedUrl) window.open(data.signedUrl, "_blank", "noopener,noreferrer");
-      else throw new Error("No URL returned");
+      if (doc.linkUrl) {
+        window.open(doc.linkUrl, "_blank", "noopener,noreferrer");
+        return;
+      }
+      if (doc.filePath) {
+        const sb = getSupabase();
+        const { data, error } = await sb.storage.from("reference-docs").createSignedUrl(doc.filePath, 3600);
+        if (error) throw error;
+        if (data?.signedUrl) window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+        else throw new Error("No URL returned");
+      } else {
+        throw new Error("Doc has no PDF file or URL");
+      }
     } catch (e) {
-      setErrMsg(`Couldn't open PDF: ${e?.message || e}`);
+      setErrMsg(`Couldn't open: ${e?.message || e}`);
     } finally {
-      setOpeningPath(null);
+      setOpeningId(null);
     }
   }
+
+  const totalShown = grouped.reduce((s, [, items]) => s + items.length, 0);
 
   return (
     <div style={{ ...FONT, minHeight: "100vh", background: "#f2f5ef", paddingBottom: 60 }}>
@@ -57,8 +108,38 @@ export default function ReferenceDocs({ onBack }) {
         <div style={{ width: 70 }} />
       </div>
 
-      <div style={{ padding: "10px 14px 0", fontSize: 12, color: "#7a8c74", lineHeight: 1.4 }}>
-        Tap any guide to open the PDF. Sorted by crop and breeder so finding one is fast.
+      {/* Season tabs */}
+      <div style={{ background: "#fff", borderBottom: "1.5px solid #e0ead8", padding: "8px 10px", display: "flex", gap: 6, overflowX: "auto" }}>
+        {seasonsPresent.map(s => {
+          const active = season === s;
+          const count = seasonCounts.get(s) || 0;
+          return (
+            <button key={s} onClick={() => setSeason(s)}
+              style={{
+                flexShrink: 0, padding: "8px 14px", borderRadius: 999,
+                background: active ? "#1e2d1a" : "#f2f5ef",
+                color: active ? "#c8e6b8" : "#7a8c74",
+                border: `1.5px solid ${active ? "#1e2d1a" : "#c8d8c0"}`,
+                fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit",
+                display: "flex", alignItems: "center", gap: 6,
+              }}>
+              <span>{s}</span>
+              {count > 0 && (
+                <span style={{ background: active ? "#c8e6b8" : "#c8d8c0", color: "#1e2d1a", borderRadius: 999, padding: "1px 7px", fontSize: 10, fontWeight: 800 }}>{count}</span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Search */}
+      <div style={{ background: "#fff", borderBottom: "1.5px solid #e0ead8", padding: "8px 12px" }}>
+        <input
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="🔍 Search title, crop, breeder…"
+          style={{ width: "100%", padding: "9px 12px", borderRadius: 10, border: "1.5px solid #c8d8c0", fontSize: 13, fontFamily: "inherit", boxSizing: "border-box" }}
+        />
       </div>
 
       {errMsg && (
@@ -71,9 +152,9 @@ export default function ReferenceDocs({ onBack }) {
         {loading && (
           <div style={{ textAlign: "center", color: "#7a8c74", padding: 30, fontSize: 13 }}>Loading…</div>
         )}
-        {!loading && grouped.length === 0 && (
+        {!loading && totalShown === 0 && (
           <div style={{ textAlign: "center", color: "#7a8c74", padding: 30, fontSize: 13 }}>
-            No culture guides uploaded yet.
+            {search ? "No docs match that search." : "No docs in this season yet."}
           </div>
         )}
         {grouped.map(([crop, items]) => (
@@ -84,7 +165,7 @@ export default function ReferenceDocs({ onBack }) {
               <span style={{ background: "#7fb069", color: "#1e2d1a", borderRadius: 999, padding: "2px 10px", fontSize: 11 }}>{items.length}</span>
             </div>
             {items.map(d => (
-              <button key={d.id} onClick={() => openDoc(d)} disabled={openingPath === d.filePath}
+              <button key={d.id} onClick={() => openDoc(d)} disabled={openingId === d.id}
                 style={{
                   display: "block", width: "100%", textAlign: "left",
                   background: "#fff", border: "1.5px solid #e0ead8", borderRadius: 12,
@@ -97,10 +178,12 @@ export default function ReferenceDocs({ onBack }) {
                       <div style={{ fontSize: 12, color: "#7a8c74", marginTop: 4, lineHeight: 1.4 }}>{d.description}</div>
                     )}
                     <div style={{ fontSize: 10, color: "#4a7a35", fontWeight: 800, marginTop: 4, textTransform: "uppercase", letterSpacing: 0.6 }}>
-                      📄 PDF{d.breeder ? ` · ${d.breeder}` : ""}
+                      {d.linkUrl ? "🔗 LINK" : "📄 PDF"}
+                      {d.breeder ? ` · ${d.breeder}` : ""}
+                      {d.season ? ` · ${d.season}` : ""}
                     </div>
                   </div>
-                  <span style={{ fontSize: 18, color: "#4a90d9" }}>{openingPath === d.filePath ? "…" : "↗"}</span>
+                  <span style={{ fontSize: 18, color: "#4a90d9" }}>{openingId === d.id ? "…" : "↗"}</span>
                 </div>
               </button>
             ))}
