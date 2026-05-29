@@ -13,8 +13,6 @@ import { useReferenceDocs, getSupabase } from "./supabase";
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
 
 const SEASON_ORDER = ["Spring", "Summer", "Fall", "Winter", "Houseplants"];
-// Sort crop_types within a season — most-grown crops at top, others alpha.
-const CROP_ORDER = ["Mum", "Aster", "Pansy", "Kale", "Cabbage", "Sunbeckia", "Helianthus", "Echinacea", "Heliopsis"];
 
 export default function ReferenceDocs({ onBack }) {
   const { rows: docs, loading } = useReferenceDocs();
@@ -22,6 +20,17 @@ export default function ReferenceDocs({ onBack }) {
   const [search, setSearch] = useState("");
   const [openingId, setOpeningId] = useState(null);
   const [errMsg, setErrMsg] = useState("");
+  // Which crop groups are expanded. Default = all collapsed so a grower can
+  // scroll the crop headers fast and only open what they need.
+  const [expanded, setExpanded] = useState(new Set());
+  function toggle(crop) {
+    setExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(crop)) next.delete(crop);
+      else next.add(crop);
+      return next;
+    });
+  }
 
   // Seasons present in the data → drives which tabs render
   const seasonsPresent = useMemo(() => {
@@ -60,35 +69,51 @@ export default function ReferenceDocs({ onBack }) {
       if (!m.has(k)) m.set(k, []);
       m.get(k).push(d);
     });
-    // Stable within each crop by sort_order then title
-    m.forEach(arr => arr.sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0) || (a.title || "").localeCompare(b.title || "")));
-    return [...m.entries()].sort((a, b) => {
-      const ia = CROP_ORDER.indexOf(a[0]); const ib = CROP_ORDER.indexOf(b[0]);
-      if (ia !== -1 && ib !== -1) return ia - ib;
-      if (ia !== -1) return -1;
-      if (ib !== -1) return 1;
-      return a[0].localeCompare(b[0]);
-    });
+    // Alphabetical within each crop — sort_order ignored so the list always
+    // looks predictable.
+    m.forEach(arr => arr.sort((a, b) => (a.title || "").localeCompare(b.title || "")));
+    // Crop groups also alphabetical.
+    return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]));
   }, [docs, season, search]);
 
   async function openDoc(doc) {
     setOpeningId(doc.id);
     setErrMsg("");
+
+    // External URLs are easy — they're already a URL on click, no await needed
+    if (doc.linkUrl) {
+      window.open(doc.linkUrl, "_blank", "noopener,noreferrer");
+      setOpeningId(null);
+      return;
+    }
+
+    if (!doc.filePath) {
+      setErrMsg("Doc has no PDF file or URL.");
+      setOpeningId(null);
+      return;
+    }
+
+    // PDFs need a signed URL fetched async. If we call window.open() AFTER the
+    // await, mobile browsers block it as non-user-initiated. Workaround: open
+    // a blank tab synchronously on the click, then redirect once the signed
+    // URL resolves. If the blank tab is blocked (PWA / strict iOS), fall back
+    // to navigating the current window — better to leave the app than to do
+    // nothing.
+    const newWindow = window.open("about:blank", "_blank");
     try {
-      if (doc.linkUrl) {
-        window.open(doc.linkUrl, "_blank", "noopener,noreferrer");
-        return;
-      }
-      if (doc.filePath) {
-        const sb = getSupabase();
-        const { data, error } = await sb.storage.from("reference-docs").createSignedUrl(doc.filePath, 3600);
-        if (error) throw error;
-        if (data?.signedUrl) window.open(data.signedUrl, "_blank", "noopener,noreferrer");
-        else throw new Error("No URL returned");
+      const sb = getSupabase();
+      const { data, error } = await sb.storage.from("reference-docs").createSignedUrl(doc.filePath, 3600);
+      if (error) throw error;
+      const url = data?.signedUrl;
+      if (!url) throw new Error("Empty URL");
+      if (newWindow && !newWindow.closed) {
+        newWindow.location.href = url;
       } else {
-        throw new Error("Doc has no PDF file or URL");
+        // Popup got blocked. Fall back to current-tab navigation.
+        window.location.assign(url);
       }
     } catch (e) {
+      if (newWindow && !newWindow.closed) newWindow.close();
       setErrMsg(`Couldn't open: ${e?.message || e}`);
     } finally {
       setOpeningId(null);
@@ -157,38 +182,49 @@ export default function ReferenceDocs({ onBack }) {
             {search ? "No docs match that search." : "No docs in this season yet."}
           </div>
         )}
-        {grouped.map(([crop, items]) => (
-          <div key={crop} style={{ marginBottom: 18 }}>
-            <div style={{ fontSize: 12, fontWeight: 800, color: "#1e2d1a", textTransform: "uppercase", letterSpacing: 1, margin: "6px 4px 8px", display: "flex", alignItems: "center", gap: 10 }}>
-              <span>{crop}</span>
-              <div style={{ flex: 1, height: 2, background: "#7fb069", borderRadius: 1 }} />
-              <span style={{ background: "#7fb069", color: "#1e2d1a", borderRadius: 999, padding: "2px 10px", fontSize: 11 }}>{items.length}</span>
-            </div>
-            {items.map(d => (
-              <button key={d.id} onClick={() => openDoc(d)} disabled={openingId === d.id}
+        {grouped.map(([crop, items]) => {
+          // Search auto-expands groups so results aren't hidden behind closed
+          // headers. Otherwise the user's open/closed choice wins.
+          const open = search.trim() ? true : expanded.has(crop);
+          return (
+            <div key={crop} style={{ marginBottom: 10 }}>
+              <button onClick={() => toggle(crop)}
                 style={{
-                  display: "block", width: "100%", textAlign: "left",
-                  background: "#fff", border: "1.5px solid #e0ead8", borderRadius: 12,
-                  padding: "12px 14px", marginBottom: 8, cursor: "pointer", fontFamily: "inherit",
+                  display: "flex", alignItems: "center", gap: 10, width: "100%",
+                  background: "#fff", border: "1.5px solid #e0ead8", borderRadius: 10,
+                  padding: "10px 12px", cursor: "pointer", fontFamily: "inherit", textAlign: "left",
+                  marginBottom: open ? 6 : 0,
                 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 14, fontWeight: 800, color: "#1e2d1a", lineHeight: 1.25 }}>{d.title}</div>
-                    {d.description && (
-                      <div style={{ fontSize: 12, color: "#7a8c74", marginTop: 4, lineHeight: 1.4 }}>{d.description}</div>
-                    )}
-                    <div style={{ fontSize: 10, color: "#4a7a35", fontWeight: 800, marginTop: 4, textTransform: "uppercase", letterSpacing: 0.6 }}>
-                      {d.linkUrl ? "🔗 LINK" : "📄 PDF"}
-                      {d.breeder ? ` · ${d.breeder}` : ""}
-                      {d.season ? ` · ${d.season}` : ""}
-                    </div>
-                  </div>
-                  <span style={{ fontSize: 18, color: "#4a90d9" }}>{openingId === d.id ? "…" : "↗"}</span>
-                </div>
+                <span style={{ fontSize: 12, color: "#4a7a35", fontWeight: 900, width: 14 }}>{open ? "▼" : "▶"}</span>
+                <span style={{ fontSize: 14, fontWeight: 800, color: "#1e2d1a", textTransform: "uppercase", letterSpacing: 0.8, flex: 1 }}>{crop}</span>
+                <span style={{ background: "#7fb069", color: "#1e2d1a", borderRadius: 999, padding: "2px 10px", fontSize: 11, fontWeight: 800 }}>{items.length}</span>
               </button>
-            ))}
-          </div>
-        ))}
+              {open && items.map(d => (
+                <button key={d.id} onClick={() => openDoc(d)} disabled={openingId === d.id}
+                  style={{
+                    display: "block", width: "100%", textAlign: "left",
+                    background: "#fff", border: "1.5px solid #e0ead8", borderRadius: 12,
+                    padding: "12px 14px", marginBottom: 6, marginLeft: 0, cursor: "pointer", fontFamily: "inherit",
+                  }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 14, fontWeight: 800, color: "#1e2d1a", lineHeight: 1.25 }}>{d.title}</div>
+                      {d.description && (
+                        <div style={{ fontSize: 12, color: "#7a8c74", marginTop: 4, lineHeight: 1.4 }}>{d.description}</div>
+                      )}
+                      <div style={{ fontSize: 10, color: "#4a7a35", fontWeight: 800, marginTop: 4, textTransform: "uppercase", letterSpacing: 0.6 }}>
+                        {d.linkUrl ? "🔗 LINK" : "📄 PDF"}
+                        {d.breeder ? ` · ${d.breeder}` : ""}
+                        {d.season ? ` · ${d.season}` : ""}
+                      </div>
+                    </div>
+                    <span style={{ fontSize: 18, color: "#4a90d9" }}>{openingId === d.id ? "…" : "↗"}</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
