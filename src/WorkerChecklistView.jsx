@@ -7,6 +7,7 @@ import { BrehobWorkerView } from "./BrehobList";
 import { VacationRequestModal, OutThisWeekBanner } from "./Vacation";
 import { AnnouncementBanner, AnnouncementPopup, useAnnouncementPopup } from "./Announcements";
 import InventoryView from "./InventoryView";
+import ReferenceDocs from "./ReferenceDocs";
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
 const GREEN_DARK = "#1e2d1a";
@@ -31,18 +32,23 @@ function formatTime(iso) {
 
 export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenTaskCreator }) {
   const [showInventory, setShowInventory] = useState(false);
+  const [showRefDocs, setShowRefDocs] = useState(false);
   if (showInventory) {
     return <InventoryView onBack={() => setShowInventory(false)} />;
+  }
+  if (showRefDocs) {
+    return <ReferenceDocs onBack={() => setShowRefDocs(false)} />;
   }
   return <WorkerChecklistViewInner
     onSwitchMode={onSwitchMode}
     onBackToApp={onBackToApp}
     onOpenTaskCreator={onOpenTaskCreator}
     onOpenInventory={() => setShowInventory(true)}
+    onOpenRefDocs={() => setShowRefDocs(true)}
   />;
 }
 
-function WorkerChecklistViewInner({ onSwitchMode, onBackToApp, onOpenTaskCreator, onOpenInventory }) {
+function WorkerChecklistViewInner({ onSwitchMode, onBackToApp, onOpenTaskCreator, onOpenInventory, onOpenRefDocs }) {
   const { rows: tasks, upsert, refresh } = useManagerTasks();
   const { rows: brehobItems, update: updateBrehob } = useBrehobItems();
   const { displayName, growerProfile } = useAuth();
@@ -397,6 +403,27 @@ function WorkerChecklistViewInner({ onSwitchMode, onBackToApp, onOpenTaskCreator
               <span>
                 <div style={{ fontSize: 14, fontWeight: 800 }}>Inventory</div>
                 <div style={{ fontSize: 11, opacity: 0.75, marginTop: 2 }}>Locked by default · photos, notes, photos</div>
+              </span>
+            </span>
+            <span style={{ fontSize: 18 }}>→</span>
+          </button>
+        </div>
+      )}
+
+      {/* Culture Guides — grower PDF reference library */}
+      {onOpenRefDocs && (
+        <div style={{ padding: "8px 12px 0" }}>
+          <button onClick={onOpenRefDocs}
+            style={{
+              width: "100%", background: "#162212", color: CREAM, border: `1px solid ${GREEN}66`,
+              borderRadius: 10, padding: "12px 14px", cursor: "pointer", ...FONT,
+              display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+            }}>
+            <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 22 }}>📚</span>
+              <span>
+                <div style={{ fontSize: 14, fontWeight: 800 }}>Culture Guides</div>
+                <div style={{ fontSize: 11, opacity: 0.75, marginTop: 2 }}>Tap any PDF to open · Sakata · Takii · Syngenta</div>
               </span>
             </span>
             <span style={{ fontSize: 18 }}>→</span>

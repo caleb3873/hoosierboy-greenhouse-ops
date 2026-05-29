@@ -8,6 +8,7 @@ import { BrehobManagerView } from "./BrehobList";
 import { DriverRequestModal, DriverRequestStatusList, useDriverResponsePopup, DriverResponsePopup, DriverScheduleView, DriverRequestsSubPage } from "./DriverRequest";
 import AccessControl, { effectiveCategoriesFor } from "./AccessControl";
 import InventoryView from "./InventoryView";
+import ReferenceDocs from "./ReferenceDocs";
 import { FacilityPicker, FacilityHistoryView, facilityLabel } from "./Facilities";
 import HouseDetail from "./HouseDetail";
 import { ReceivingWeekSummary, aggregateFallReceivingForWeek } from "./Receiving";
@@ -1140,6 +1141,13 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
                   <div className="hub-card-sub">Live pot count by row</div>
                 </div>
 
+                {/* Culture Guides — grower-facing PDF library */}
+                <div className="hub-card" onClick={() => setCurrentView("reference-docs")} style={{ borderTopColor: "#a86a10", borderTopWidth: 4 }}>
+                  <div className="hub-card-emoji">📚</div>
+                  <div className="hub-card-title">Culture Guides</div>
+                  <div className="hub-card-sub">Sakata, Takii, Syngenta PDFs</div>
+                </div>
+
                 {/* Vacation */}
                 <div className="hub-card" onClick={() => setCurrentView("vacation")} style={{ borderTopColor: "#7fb069", borderTopWidth: 4 }}>
                   <div className="hub-card-emoji">🌴</div>
@@ -1619,6 +1627,10 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
 
       {currentView === "inventory" && (
         <InventoryView onBack={() => setCurrentView("hub")} />
+      )}
+
+      {currentView === "reference-docs" && (
+        <ReferenceDocs onBack={() => setCurrentView("hub")} />
       )}
 
       {/* ── TODAY / THIS WEEK (any manager) ────────────────────────────── */}
