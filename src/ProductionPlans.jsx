@@ -926,7 +926,28 @@ function CatalogTab({ plan }) {
   const [mergeModal, setMergeModal] = useState(null);  // { sourceRow: ... }
   const [reloadTick, setReloadTick] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [projection, setProjection] = useState(5); // % growth vs 2-yr avg
+  // Projection + avgBase persist per-plan in localStorage so refreshing
+  // doesn't clobber the planning state mid-meeting.
+  const projKey = `hp_catalog_projection_${plan.id}`;
+  const baseKey = `hp_catalog_avgbase_${plan.id}`;
+  const [projection, setProjectionState] = useState(() => {
+    if (typeof window === "undefined") return 5;
+    const saved = window.localStorage.getItem(projKey);
+    return saved != null ? parseFloat(saved) : 5;
+  });
+  const setProjection = (v) => {
+    setProjectionState(v);
+    if (typeof window !== "undefined") window.localStorage.setItem(projKey, String(v));
+  };
+  const [avgBase, setAvgBaseState] = useState(() => {
+    if (typeof window === "undefined") return 2;
+    const saved = window.localStorage.getItem(baseKey);
+    return saved != null ? parseInt(saved) : 2;
+  });
+  const setAvgBase = (v) => {
+    setAvgBaseState(v);
+    if (typeof window !== "undefined") window.localStorage.setItem(baseKey, String(v));
+  };
   const [addModal, setAddModal] = useState(false);
   const [yearDisplay, setYearDisplay] = useState("qty"); // "qty" | "revenue"
   const [hoverRow, setHoverRow] = useState(null);
@@ -942,7 +963,6 @@ function CatalogTab({ plan }) {
   const allYears = [priorYr3, priorYr2, priorYr, currYr]; // chronological
   const [startMonth, endMonth] = planMonthRange(plan);
   const rangeLabel = planRangeLabel(plan);
-  const [avgBase, setAvgBase] = useState(2); // 2 | 3 | 4
 
   function quarterRange(year) {
     // Period values in houseplant_sales_history are stored as YYYY-MM-01, so
@@ -1448,11 +1468,11 @@ function CatalogTab({ plan }) {
         </div>
 
         {/* Only show years that have data (so we don't waste columns on years not loaded yet) */}
-        {showRollup && (() => {
+        {(() => {
           const displayYears = allYears.filter(y => grandRevByYear[y] > 0 || grandQtyByYear[y] > 0);
           return (
             <>
-              {/* Revenue projection summary */}
+              {/* Revenue projection summary — ALWAYS visible (not part of the collapsible) */}
               <div style={{ background: "#f3f5ef", borderRadius: 8, padding: 12, marginBottom: 12, display: "grid", gridTemplateColumns: `repeat(${displayYears.length + 3}, 1fr)`, gap: 12 }}>
                 {displayYears.map(y => (
                   <RevStat key={y} label={`${rangeLabel} '${String(y).slice(-2)}`} value={fmtMoney(grandRevByYear[y])} muted />
@@ -1462,7 +1482,7 @@ function CatalogTab({ plan }) {
                 <RevStat label="🎯 Your target" value={fmtMoney(grandTgtRev)} accent={COLORS.dark} big />
               </div>
 
-              <div style={{ overflowX: "auto" }}>
+              {showRollup && <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                   <thead>
                     <tr style={{ background: "#f3f5ef" }}>
@@ -1515,7 +1535,7 @@ function CatalogTab({ plan }) {
                     </tr>
                   </tbody>
                 </table>
-              </div>
+              </div>}
             </>
           );
         })()}
