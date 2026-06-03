@@ -930,6 +930,7 @@ function CatalogTab({ plan }) {
   const [addModal, setAddModal] = useState(false);
   const [yearDisplay, setYearDisplay] = useState("qty"); // "qty" | "revenue"
   const [hoverRow, setHoverRow] = useState(null);
+  const [showRollup, setShowRollup] = useState(true);
 
   // For "Houseplants H1 2027": current_year = 2026, prior_year = 2025
   // Plus older years for historical context: 2024 (3yr), 2023 (4yr)
@@ -1399,12 +1400,15 @@ function CatalogTab({ plan }) {
       {/* Projection control + size rollup (always visible) */}
       <div style={{ background: COLORS.card, border: `2px solid ${COLORS.light}`, borderRadius: 10, padding: 16 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 12 }}>
-          <div>
-            <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 20, color: COLORS.dark }}>
+          <div onClick={() => setShowRollup(!showRollup)} style={{ cursor: "pointer" }}>
+            <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 20, color: COLORS.dark, display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ color: COLORS.muted, fontSize: 16 }}>{showRollup ? "▾" : "▸"}</span>
               📊 Projection &amp; size rollup
             </div>
             <div style={{ fontSize: 12, color: COLORS.muted, marginTop: 2 }}>
-              Pick the avg base (last 2 / 3 / 4 years), set growth target, then Apply to pre-fill targets. Adjust rows below; totals stay live.
+              {showRollup
+                ? "Pick the avg base (last 2 / 3 / 4 years), set growth target, then Apply to pre-fill targets. Click ▾ to collapse."
+                : "Click ▸ to expand the size rollup table."}
             </div>
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -1444,7 +1448,7 @@ function CatalogTab({ plan }) {
         </div>
 
         {/* Only show years that have data (so we don't waste columns on years not loaded yet) */}
-        {(() => {
+        {showRollup && (() => {
           const displayYears = allYears.filter(y => grandRevByYear[y] > 0 || grandQtyByYear[y] > 0);
           return (
             <>
