@@ -1873,7 +1873,7 @@ function MergeModal({ sourceRow, allRows, onCancel, onConfirm }) {
                 <div style={{ fontSize: 12, color: COLORS.muted }}>{r.pot_size}</div>
                 <div style={{ fontWeight: 600 }}>{r.desc}</div>
                 <div style={{ fontSize: 11, color: COLORS.muted }}>
-                  Q1'25: {r.y_prior_qty || 0} · Q1'26: {r.y_curr_qty || 0}
+                  '25: {r.y_prior_qty || 0} · '26: {r.y_curr_qty || 0}
                 </div>
               </div>
             );
