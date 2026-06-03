@@ -1,9 +1,18 @@
 #!/usr/bin/env node
-// Import houseplant sales history from an xlsx file like "Houseplants 2023.xlsx".
-// Expected columns: DATE | Product Code | Product Description | Qty Sold | Sold $ Value
-// DATE format: "Jan-23", "Feb-23", etc.
+// Import houseplant sales history from xlsx files. Supports BOTH formats:
 //
-// Usage: node scripts/import_houseplant_sales.mjs <path-to-xlsx> [--dry]
+// Format A (aggregated monthly, like "Houseplants 2023.xlsx"):
+//   Columns: DATE | Product Code | Product Description | Qty Sold | Sold $ Value
+//   One row per (month, product). DATE = "Jan-23", "Feb-23", etc.
+//
+// Format B (transactional line items, like "september 2024.xlsx"):
+//   Columns: ProductDesc | CustomerName | Type | DeliveryDate | DateModified |
+//            OrderNo | InvoiceNo | ShipVia | Rep | UOM | Qnty | Pack | TotalQnty | Price
+//   One row per order line. Aggregated by month + product before insert.
+//
+// Usage: node scripts/import_houseplant_sales.mjs <path-or-dir> [--dry]
+//   - If <path-or-dir> is a folder, ALL xlsx files in it are processed.
+//   - If --dry, parses + prints summary but doesn't insert.
 //
 // Reads SUPABASE creds from .env.local in the repo root.
 
@@ -25,10 +34,16 @@ const key = env.REACT_APP_SUPABASE_ANON_KEY;
 if (!url || !key) { console.error("Missing supabase env"); process.exit(1); }
 const sb = createClient(url, key);
 
-const filePath = process.argv[2];
+const argPath = process.argv[2];
 const dry = process.argv.includes("--dry");
-if (!filePath) { console.error("Usage: import_houseplant_sales.mjs <xlsx> [--dry]"); process.exit(1); }
-if (!fs.existsSync(filePath)) { console.error("File not found:", filePath); process.exit(1); }
+if (!argPath) { console.error("Usage: import_houseplant_sales.mjs <path-or-dir> [--dry]"); process.exit(1); }
+if (!fs.existsSync(argPath)) { console.error("Path not found:", argPath); process.exit(1); }
+
+const stat = fs.statSync(argPath);
+const files = stat.isDirectory()
+  ? fs.readdirSync(argPath).filter(f => f.endsWith(".xlsx") && !f.startsWith("~$")).map(f => path.join(argPath, f))
+  : [argPath];
+console.log(`Processing ${files.length} file(s):\n  ${files.map(f => path.basename(f)).join("\n  ")}\n`);
 
 const MONTH = { Jan:"01", Feb:"02", Mar:"03", Apr:"04", May:"05", Jun:"06", Jul:"07", Aug:"08", Sep:"09", Oct:"10", Nov:"11", Dec:"12" };
 
@@ -49,6 +64,13 @@ function parseDate(d) {
   return null;
 }
 
+// Derive a stable synthetic code from description + pot_size when source is missing one.
+// Format: DERIV-{POTBLOB}{TRUNC} (e.g., DERIV-6MONSTERADELI) — deterministic, max 24 chars.
+function deriveCode(desc, pot) {
+  const s = (pot + " " + (desc || "")).toUpperCase().replace(/[^A-Z0-9]/g, "");
+  return ("DERIV" + s).slice(0, 24);
+}
+
 function extractPot(desc) {
   if (!desc) return null;
   const s = String(desc);
@@ -59,56 +81,128 @@ function extractPot(desc) {
   return null;
 }
 
-const wb = xlsx.readFile(filePath);
-const sheet = wb.Sheets[wb.SheetNames[0]];
-const rows = xlsx.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: null });
-
-// Find header row + column indices
-let header = null, headerIdx = -1;
-for (let i = 0; i < Math.min(20, rows.length); i++) {
-  const r = rows[i] || [];
-  const hasDate = r.some(c => /date/i.test(String(c || "")));
-  const hasQty  = r.some(c => /qty/i.test(String(c || "")));
-  if (hasDate && hasQty) { header = r; headerIdx = i; break; }
+// Parse a transactional date like "9/25/2024" or "9/25/24" → "YYYY-MM-01"
+function parseDeliveryDate(d) {
+  if (!d) return null;
+  const m = String(d).trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+  if (!m) return null;
+  const mo = String(parseInt(m[1])).padStart(2, "0");
+  const yr = m[3].length === 2 ? "20" + m[3] : m[3];
+  return `${yr}-${mo}-01`;
 }
-if (!header) { console.error("No header row found"); process.exit(1); }
-const colIdx = {
-  date: header.findIndex(c => /date/i.test(String(c || ""))),
-  code: header.findIndex(c => /product code/i.test(String(c || ""))),
-  desc: header.findIndex(c => /description/i.test(String(c || ""))),
-  qty:  header.findIndex(c => /qty/i.test(String(c || ""))),
-  val:  header.findIndex(c => /value/i.test(String(c || ""))),
-};
-console.log("Header:", header);
-console.log("Column indices:", colIdx);
+
+function parseFileFormatA(rows, fname) {
+  // Find header row: must contain "qty" + "description" (the 2023/Jan-Aug-2024 style)
+  // Header may or may not include "date" — date is always col 0 in this format
+  let header = null, headerIdx = -1;
+  for (let i = 0; i < Math.min(20, rows.length); i++) {
+    const r = rows[i] || [];
+    const hasQty  = r.some(c => /qty/i.test(String(c || "")));
+    const hasDesc = r.some(c => /description/i.test(String(c || "")));
+    if (hasQty && hasDesc) { header = r; headerIdx = i; break; }
+  }
+  if (!header) return null;
+  const colIdx = {
+    code: header.findIndex(c => /product code/i.test(String(c || ""))),
+    desc: header.findIndex(c => /description/i.test(String(c || ""))),
+    qty:  header.findIndex(c => /qty/i.test(String(c || ""))),
+    val:  header.findIndex(c => /value/i.test(String(c || ""))),
+  };
+  const dateIdx = header.findIndex(c => /date/i.test(String(c || "")));
+  // If header has no DATE column, date lives at col 0 (the header is shifted/missing)
+  const dateCol = dateIdx >= 0 ? dateIdx : 0;
+  // Shift other cols by +1 if the header is missing the DATE column
+  if (dateIdx < 0) {
+    colIdx.code = colIdx.code >= 0 ? colIdx.code + 1 : -1;
+    colIdx.desc = colIdx.desc >= 0 ? colIdx.desc + 1 : -1;
+    colIdx.qty  = colIdx.qty  >= 0 ? colIdx.qty  + 1 : -1;
+    colIdx.val  = colIdx.val  >= 0 ? colIdx.val  + 1 : -1;
+  }
+  console.log(`  [Format A] ${fname} cols:`, { date: dateCol, ...colIdx });
+  const recs = [];
+  for (let i = headerIdx + 1; i < rows.length; i++) {
+    const r = rows[i] || [];
+    if (r.every(c => !c)) continue;
+    const dateRaw = r[dateCol];
+    if (!dateRaw || /^date$/i.test(String(dateRaw))) continue;
+    const period = parseDate(dateRaw);
+    if (!period) continue;
+    const code = r[colIdx.code] ? String(r[colIdx.code]).trim() : null;
+    const desc = r[colIdx.desc] ? String(r[colIdx.desc]).trim() : null;
+    if (!code && !desc) continue;
+    const qty = r[colIdx.qty];
+    const val = r[colIdx.val];
+    const qtyNum = qty == null ? 0 : parseFloat(String(qty).replace(/[,\$]/g, ""));
+    const valNum = val == null ? 0 : parseFloat(String(val).replace(/[,\$]/g, ""));
+    if (!isFinite(qtyNum)) continue;
+    recs.push({
+      period,
+      product_code: code,
+      description: desc,
+      pot_size: extractPot(desc),
+      qty_sold: Math.round(qtyNum),
+      sold_value: isFinite(valNum) ? valNum : 0,
+    });
+  }
+  return recs;
+}
+
+function parseFileFormatB(rows, fname) {
+  // Header has ProductDesc + TotalQnty + DeliveryDate + Price
+  let header = null, headerIdx = -1;
+  for (let i = 0; i < Math.min(20, rows.length); i++) {
+    const r = rows[i] || [];
+    const headers = r.map(c => String(c || "").toLowerCase());
+    if (headers.includes("productdesc") && headers.some(c => c.includes("totalqnty"))) {
+      header = r; headerIdx = i; break;
+    }
+  }
+  if (!header) return null;
+  const findCol = (rx) => header.findIndex(c => rx.test(String(c || "")));
+  const colIdx = {
+    desc:  findCol(/^productdesc$/i),
+    deliv: findCol(/deliverydate/i),
+    qty:   findCol(/totalqnty/i),
+    price: findCol(/^price$/i),
+  };
+  console.log(`  [Format B] ${fname} cols:`, colIdx);
+  // Aggregate by (period, ProductDesc) since each line is one order
+  const agg = {};
+  for (let i = headerIdx + 1; i < rows.length; i++) {
+    const r = rows[i] || [];
+    if (r.every(c => !c)) continue;
+    const desc = r[colIdx.desc] ? String(r[colIdx.desc]).trim() : null;
+    if (!desc) continue;
+    const period = parseDeliveryDate(r[colIdx.deliv]);
+    if (!period) continue;
+    const qty = parseFloat(String(r[colIdx.qty] || "0").replace(/[,\$]/g, ""));
+    const val = parseFloat(String(r[colIdx.price] || "0").replace(/[,\$]/g, ""));
+    if (!isFinite(qty)) continue;
+    const key = `${period}__${desc}`;
+    if (!agg[key]) {
+      const pot = extractPot(desc);
+      agg[key] = { period, description: desc, pot_size: pot, product_code: deriveCode(desc, pot), qty_sold: 0, sold_value: 0 };
+    }
+    agg[key].qty_sold += Math.round(qty);
+    agg[key].sold_value += isFinite(val) ? val : 0;
+  }
+  return Object.values(agg);
+}
 
 const records = [];
-const skipped = { noDate: 0, noQty: 0, dupRow: 0 };
-for (let i = headerIdx + 1; i < rows.length; i++) {
-  const r = rows[i] || [];
-  if (r.every(c => !c)) continue;
-  const dateRaw = r[colIdx.date];
-  if (!dateRaw || /^date$/i.test(String(dateRaw))) { skipped.noDate++; continue; }
-  const period = parseDate(dateRaw);
-  if (!period) { skipped.noDate++; continue; }
-  const code = r[colIdx.code] ? String(r[colIdx.code]).trim() : null;
-  const desc = r[colIdx.desc] ? String(r[colIdx.desc]).trim() : null;
-  const qty = r[colIdx.qty];
-  const val = r[colIdx.val];
-  if (!code && !desc) continue;
-  const qtyNum = qty == null ? 0 : parseFloat(String(qty).replace(/[,\$]/g, ""));
-  const valNum = val == null ? 0 : parseFloat(String(val).replace(/[,\$]/g, ""));
-  if (!isFinite(qtyNum)) { skipped.noQty++; continue; }
-  records.push({
-    period,
-    product_code: code,
-    description: desc,
-    pot_size: extractPot(desc),
-    qty_sold: Math.round(qtyNum),
-    sold_value: isFinite(valNum) ? valNum : 0,
-  });
+for (const file of files) {
+  const fname = path.basename(file);
+  const wb = xlsx.readFile(file);
+  const sheet = wb.Sheets[wb.SheetNames[0]];
+  const rows = xlsx.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: null });
+  // Try Format B first (more specific header), fall back to A
+  let recs = parseFileFormatB(rows, fname);
+  if (!recs) recs = parseFileFormatA(rows, fname);
+  if (!recs) { console.warn(`  ⚠ ${fname}: no recognized format, skipping`); continue; }
+  console.log(`  → ${fname}: ${recs.length} rows`);
+  records.push(...recs);
 }
-console.log(`Parsed ${records.length} rows (skipped ${JSON.stringify(skipped)})`);
+console.log(`\nTotal parsed: ${records.length} rows across ${files.length} file(s)`);
 
 if (records.length === 0) process.exit(0);
 
