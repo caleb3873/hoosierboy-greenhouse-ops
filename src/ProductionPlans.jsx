@@ -116,11 +116,12 @@ const PLAN_TABS = [
 
 // Houseplants plans have a different workflow: catalog-driven, not bench-driven
 const HOUSEPLANT_TABS = [
-  { id: "catalog",   label: "🛒 Catalog" },
-  { id: "insights",  label: "📊 Insights" },
-  { id: "history",   label: "📈 Sales History" },
-  { id: "tasks",     label: "✓ Tasks" },
-  { id: "sourcing",  label: "🚚 Sourcing" },
+  { id: "catalog",     label: "🛒 Catalog" },
+  { id: "insights",    label: "📊 Insights" },
+  { id: "presentation",label: "🎬 Presentation" },
+  { id: "history",     label: "📈 Sales History" },
+  { id: "tasks",       label: "✓ Tasks" },
+  { id: "sourcing",    label: "🚚 Sourcing" },
 ];
 
 function tabsForPlan(plan) {
@@ -208,11 +209,12 @@ function PlanDashboard({ plan }) {
       {/* Houseplant plans go straight to their tabs (no scheduled_crops empty state) */}
       {isHouseplant ? (
         <>
-          {tab === "catalog"  && <CatalogTab plan={plan} />}
-          {tab === "insights" && <HpInsightsTab plan={plan} />}
-          {tab === "history"  && <HpHistoryTab plan={plan} />}
-          {tab === "tasks"    && <PlanTasks planId={plan.id} />}
-          {tab === "sourcing" && <HpSourcingTab plan={plan} />}
+          {tab === "catalog"     && <CatalogTab plan={plan} />}
+          {tab === "insights"    && <HpInsightsTab plan={plan} />}
+          {tab === "presentation"&& <HpPresentationTab plan={plan} />}
+          {tab === "history"     && <HpHistoryTab plan={plan} />}
+          {tab === "tasks"       && <PlanTasks planId={plan.id} />}
+          {tab === "sourcing"    && <HpSourcingTab plan={plan} />}
         </>
       ) : (
         <>
@@ -909,6 +911,8 @@ function CatalogTab({ plan }) {
   const [loading, setLoading] = useState(true);
   const [projection, setProjection] = useState(5); // % growth vs 2-yr avg
   const [addModal, setAddModal] = useState(false);
+  const [yearDisplay, setYearDisplay] = useState("qty"); // "qty" | "revenue"
+  const [hoverRow, setHoverRow] = useState(null);
 
   // For "Houseplants Q1 2027": current_year = 2026, prior_year = 2025
   // Plus older years for historical context: 2024 (3yr), 2023 (4yr)
@@ -1554,16 +1558,37 @@ function CatalogTab({ plan }) {
               <tr style={{ background: "#f3f5ef" }}>
                 <SortHdr col="pot_size" label="Pot" />
                 <SortHdr col="desc"     label="Variety" />
-                {displayYears.map(y => (
-                  <th key={y} style={{...th, textAlign: "right"}}>'{String(y).slice(-2)} qty</th>
-                ))}
+                <th colSpan={displayYears.length} style={{...th, textAlign: "center", borderBottom: `1px solid ${COLORS.border}`}}>
+                  <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+                    Year totals
+                    <button onClick={() => setYearDisplay(yearDisplay === "qty" ? "revenue" : "qty")}
+                      style={{
+                        padding: "2px 8px", fontSize: 10, fontWeight: 800,
+                        background: yearDisplay === "qty" ? "#fff" : COLORS.light,
+                        color: yearDisplay === "qty" ? COLORS.text : "#fff",
+                        border: `1px solid ${COLORS.border}`, borderRadius: 10, cursor: "pointer",
+                      }} title="Toggle between unit qty and revenue $">
+                      {yearDisplay === "qty" ? "show $" : "show qty"}
+                    </button>
+                  </span>
+                </th>
                 <th style={{...th, textAlign: "right"}}>{avgBase}yr avg</th>
                 <SortHdr col="yoy_qty"   label="Δ vs avg" align="right" />
                 <th style={{...th, textAlign:"center"}}>signal</th>
+                <th style={{...th, textAlign: "right"}}>'{String(currYr).slice(-2)} $/ea</th>
                 <th style={{...th, textAlign: "right", background: "#e8f0e2"}}>🎯 qty {planYear}</th>
                 <th style={{...th, textAlign: "right", background: "#e8f0e2"}}>🎯 $/ea {planYear}</th>
+                <th style={{...th, textAlign: "right", background: "#e8f0e2"}}>Δ $/ea</th>
                 <th style={{...th, background: "#e8f0e2"}}>Status</th>
                 <th style={th}></th>
+              </tr>
+              <tr style={{ background: "#f3f5ef" }}>
+                <th style={th}></th>
+                <th style={th}></th>
+                {displayYears.map(y => (
+                  <th key={y} style={{...th, textAlign: "right", fontSize: 10}}>'{String(y).slice(-2)}</th>
+                ))}
+                <th colSpan={7} style={th}></th>
               </tr>
             </thead>
             <tbody>
@@ -1582,10 +1607,17 @@ function CatalogTab({ plan }) {
                 const rowAvgQty = baseYrsForRow.reduce((s, y) => s + (r.yearQty?.[y] || 0), 0) / baseYrsForRow.length;
                 const recentQty = r.yearQty?.[currYr] || 0;
                 const rowDelta = rowAvgQty > 0 ? ((recentQty - rowAvgQty) / rowAvgQty * 100) : null;
+                const targetPrice = c?.target_price ? +c.target_price : null;
+                const currPrice = r.curr_price;
+                const priceDiff = currPrice && targetPrice ? (targetPrice - currPrice) : null;
+                const priceDiffPct = currPrice && targetPrice && currPrice > 0 ? ((targetPrice - currPrice) / currPrice * 100) : null;
                 return (
-                  <tr key={i} style={{ borderBottom: `1px solid ${COLORS.border}`, background: c?.status === "locked" ? "#f0f7ec" : r.isNew ? "#fff7e6" : undefined }}>
+                  <tr key={i}
+                    onMouseEnter={() => setHoverRow(i)}
+                    onMouseLeave={() => setHoverRow(null)}
+                    style={{ borderBottom: `1px solid ${COLORS.border}`, background: c?.status === "locked" ? "#f0f7ec" : r.isNew ? "#fff7e6" : undefined, position: "relative" }}>
                     <td style={td}>{r.pot_size}</td>
-                    <td style={td}>
+                    <td style={{...td, position: "relative"}}>
                       {r.isNew && (
                         <span style={{ marginRight: 6, background: COLORS.amber, color: "#fff", padding: "1px 6px", borderRadius: 8, fontSize: 9, fontWeight: 800, letterSpacing: 0.5 }}>
                           🧪 NEW
@@ -1597,24 +1629,39 @@ function CatalogTab({ plan }) {
                           📖 {Object.keys(cultureByGenus[r.genus]).join("+")}
                         </span>
                       )}
+                      {hoverRow === i && (
+                        <RowHoverCard row={r} years={displayYears} />
+                      )}
                     </td>
                     {displayYears.map(y => {
                       const q = r.yearQty?.[y] || 0;
+                      const rev = r.yearRev?.[y] || 0;
                       const isRecent = y === currYr;
+                      const showVal = yearDisplay === "qty" ? (q ? q.toLocaleString() : "—") : (rev ? fmtMoney(rev) : "—");
+                      const hasData = yearDisplay === "qty" ? q > 0 : rev > 0;
                       return (
-                        <td key={y} style={{...td, textAlign: "right", color: q === 0 ? COLORS.muted : isRecent ? COLORS.text : COLORS.muted, fontWeight: isRecent ? 700 : 400}}>
-                          {q ? q.toLocaleString() : "—"}
+                        <td key={y} style={{...td, textAlign: "right", color: !hasData ? COLORS.muted : isRecent ? COLORS.text : COLORS.muted, fontWeight: isRecent ? 700 : 400}}>
+                          {showVal}
                         </td>
                       );
                     })}
                     <td style={{...td, textAlign: "right", fontWeight: 700, color: rowAvgQty > 0 ? COLORS.dark : COLORS.muted}}>
-                      {rowAvgQty > 0 ? Math.round(rowAvgQty).toLocaleString() : "—"}
+                      {yearDisplay === "qty"
+                        ? (rowAvgQty > 0 ? Math.round(rowAvgQty).toLocaleString() : "—")
+                        : (() => {
+                            const avgRev = baseYrsForRow.reduce((s, y) => s + (r.yearRev?.[y] || 0), 0) / baseYrsForRow.length;
+                            return avgRev > 0 ? fmtMoney(avgRev) : "—";
+                          })()
+                      }
                     </td>
                     <td style={{...td, textAlign:"right", color: rowDelta == null ? COLORS.muted : rowDelta > 0 ? COLORS.light : rowDelta < -25 ? COLORS.red : rowDelta < 0 ? COLORS.amber : COLORS.text, fontWeight: rowDelta != null ? 700 : 400}}>
                       {rowDelta != null ? (rowDelta >= 0 ? "+" : "") + rowDelta.toFixed(0) + "%" : "—"}
                     </td>
                     <td style={{...td, textAlign:"center"}}>
                       {signal && <span style={{ background: signalColor + "22", color: signalColor, border: `1px solid ${signalColor}`, padding: "2px 6px", borderRadius: 8, fontSize: 10, fontWeight: 800, whiteSpace: "nowrap" }}>{signal}</span>}
+                    </td>
+                    <td style={{...td, textAlign:"right", color: COLORS.muted, fontWeight: 600}}>
+                      {currPrice ? "$" + currPrice.toFixed(2) : "—"}
                     </td>
                     <td style={{...td, textAlign:"right", background: "#fafdf7"}}>
                       <input type="number" defaultValue={c?.target_qty || ""}
@@ -1627,6 +1674,14 @@ function CatalogTab({ plan }) {
                         onBlur={e => updateCatalogRow(r, { target_price: e.target.value ? parseFloat(e.target.value) : null })}
                         style={{ width: 60, padding: "3px 6px", textAlign: "right", border: `1px solid ${COLORS.border}`, borderRadius: 4, fontSize: 12 }}
                         placeholder={r.curr_price ? r.curr_price.toFixed(2) : "—"} />
+                    </td>
+                    <td style={{...td, textAlign: "right", background: "#fafdf7", color: priceDiff == null ? COLORS.muted : priceDiff > 0 ? COLORS.light : priceDiff < 0 ? COLORS.red : COLORS.text, fontWeight: priceDiff != null ? 700 : 400, whiteSpace: "nowrap"}}>
+                      {priceDiff != null ? (priceDiff >= 0 ? "+" : "") + "$" + priceDiff.toFixed(2) : "—"}
+                      {priceDiffPct != null && Math.abs(priceDiffPct) >= 0.5 && (
+                        <div style={{ fontSize: 9, color: COLORS.muted, fontWeight: 600 }}>
+                          {priceDiffPct >= 0 ? "+" : ""}{priceDiffPct.toFixed(0)}%
+                        </div>
+                      )}
                     </td>
                     <td style={{...td, background: "#fafdf7"}}>
                       <select defaultValue={c?.status || "considered"}
@@ -1686,6 +1741,78 @@ function CatalogTab({ plan }) {
 }
 
 // Modal for selecting merge target
+// Hover card shown over a catalog row — 4-yr pricing + sparkline + revenue trend.
+function RowHoverCard({ row, years }) {
+  const W = 320, H = 80, PADX = 8, PADY = 8;
+  const qtys = years.map(y => row.yearQty?.[y] || 0);
+  const revs = years.map(y => row.yearRev?.[y] || 0);
+  const prices = years.map(y => {
+    const q = row.yearQty?.[y] || 0;
+    const r = row.yearRev?.[y] || 0;
+    return q > 0 ? r / q : 0;
+  });
+  const maxQ = Math.max(1, ...qtys);
+  const maxR = Math.max(1, ...revs);
+  const dx = (W - PADX * 2) / Math.max(1, years.length - 1);
+  const xy = (i, vals, max) => [PADX + i * dx, H - PADY - ((vals[i] || 0) / max) * (H - PADY * 2)];
+
+  return (
+    <div style={{
+      position: "absolute", left: 0, top: "100%", marginTop: 4, zIndex: 50,
+      background: "#fff", border: `1px solid ${COLORS.dark}`, borderRadius: 8,
+      padding: 10, width: 360, fontSize: 11,
+      boxShadow: "0 4px 12px rgba(0,0,0,0.18)", pointerEvents: "none",
+    }}>
+      <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 13, color: COLORS.dark, marginBottom: 6 }}>
+        {row.pot_size} · {row.desc}
+      </div>
+
+      {/* Per-year price table */}
+      <table style={{ width: "100%", fontSize: 10, borderCollapse: "collapse", marginBottom: 8 }}>
+        <thead>
+          <tr style={{ color: COLORS.muted }}>
+            <th style={{textAlign:"left", fontWeight: 700, padding: "2px 0"}}>Year</th>
+            {years.map(y => <th key={y} style={{textAlign:"right", fontWeight: 700, padding: "2px 0"}}>'{String(y).slice(-2)}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style={{color: COLORS.muted}}>Qty</td>
+            {years.map((y, i) => <td key={y} style={{textAlign:"right"}}>{qtys[i] || "—"}</td>)}
+          </tr>
+          <tr>
+            <td style={{color: COLORS.muted}}>$/ea</td>
+            {years.map((y, i) => <td key={y} style={{textAlign:"right", fontWeight: 700}}>{prices[i] > 0 ? "$" + prices[i].toFixed(2) : "—"}</td>)}
+          </tr>
+          <tr>
+            <td style={{color: COLORS.muted}}>Rev</td>
+            {years.map((y, i) => <td key={y} style={{textAlign:"right", color: COLORS.muted}}>{revs[i] > 0 ? fmtMoney(revs[i]) : "—"}</td>)}
+          </tr>
+        </tbody>
+      </table>
+
+      {/* Sparkline: qty in green, revenue in dark line */}
+      <div style={{ fontSize: 10, color: COLORS.muted, marginBottom: 2 }}>Sales trend (qty)</div>
+      <svg width={W} height={H} style={{ display: "block", background: "#fafdf7", borderRadius: 4 }}>
+        <polyline
+          fill="none" stroke={COLORS.light} strokeWidth="2"
+          points={years.map((_, i) => xy(i, qtys, maxQ).join(",")).join(" ")} />
+        {years.map((y, i) => {
+          const [x, ypos] = xy(i, qtys, maxQ);
+          return (
+            <g key={y}>
+              <circle cx={x} cy={ypos} r="3" fill={COLORS.light} />
+              <text x={x} y={H - 1} fontSize="9" textAnchor="middle" fill={COLORS.muted}>
+                '{String(y).slice(-2)}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
 function MergeModal({ sourceRow, allRows, onCancel, onConfirm }) {
   const [q, setQ] = useState("");
   const [selectedKey, setSelectedKey] = useState(null);
@@ -2192,6 +2319,373 @@ function SourcingTable({ items, updateRow, showArrives, showSupplier }) {
 }
 
 // ── Houseplants — Insights tab (YoY visualizations) ────────────────────────
+// ── Houseplants — Presentation tab ──────────────────────────────────────────
+// Slide-by-slide meeting kickoff. Walk through each year's sales:
+//   Slide 1: Year overview (totals, growth vs prior)
+//   Slide 2: Top 10 items that year
+//   Slide 3: Top sizes that year
+//   Slide 4: Q1 only (the quarter we're planning)
+//   Slide 5: Items grown that year NOT in 2026 — the "should we bring back?" list
+// Repeat for each year. Then closing trends slide.
+function HpPresentationTab({ plan }) {
+  const sb = getSupabase();
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [slideIdx, setSlideIdx] = useState(0);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [autoPlay, setAutoPlay] = useState(false);
+
+  function normalizeDesc(d) {
+    return String(d || "")
+      .replace(/^HB \d+(\.\d+)?"\s*/i, "").replace(/^\d+(\.\d+)?"\s*/, "")
+      .replace(/\s*\(Individual\)\s*/gi, "").replace(/\s*\(Case of \d+\)\s*/gi, "")
+      .replace(/\s*\(whole flat \d+\)\s*/gi, "").replace(/\s*\(1\/2 flat \d+\)\s*/gi, "")
+      .replace(/'\s*([^']+?)\s+Plant\s*'/g, "'$1'")
+      .replace(/[‘’‚‛′‵]/g, "'").replace(/[“”„‟″‶]/g, '"')
+      .replace(/\s+/g, " ").trim().toUpperCase();
+  }
+
+  useEffect(() => {
+    if (!sb) return;
+    setLoading(true);
+    (async () => {
+      const all = [];
+      let offset = 0;
+      while (true) {
+        const { data } = await sb.from("houseplant_sales_history")
+          .select("period,description,pot_size,qty_sold,sold_value").range(offset, offset + 999);
+        if (!data?.length) break;
+        all.push(...data);
+        if (data.length < 1000) break;
+        offset += 1000;
+      }
+      setRows(all);
+      setLoading(false);
+    })();
+  }, [sb]);
+
+  // Build slides once data is loaded
+  const slides = useMemo(() => {
+    if (rows.length === 0) return [];
+    // Group by year
+    const years = Array.from(new Set(rows.map(r => (r.period || "").slice(0, 4)).filter(Boolean))).sort();
+    const quarter = parseInt(plan.season?.replace(/[^0-9]/g, "")) || 1;
+    const qStart = (q) => String((q - 1) * 3 + 1).padStart(2, "0");
+    const qEnd   = (q) => String(q * 3).padStart(2, "0");
+
+    // Build set of (pot, normDesc) sold in plan-window of the planYear-1 (i.e., 2026)
+    const recentYear = String(plan.year - 1); // 2026 if plan year=2027
+    const recentKeys = new Set();
+    for (const r of rows) {
+      if ((r.period || "").startsWith(recentYear)) {
+        recentKeys.add(`${r.pot_size}|${normalizeDesc(r.description)}`);
+      }
+    }
+
+    const out = [];
+    out.push({ kind: "intro", title: `${plan.name} — Sales Recap`, sub: `${years.length} years of history · ${years[0]} → ${years[years.length - 1]}` });
+
+    // Trends slide first (so it's the lead-in)
+    const yearTotals = years.map(y => {
+      const rs = rows.filter(r => (r.period || "").startsWith(y));
+      const qty = rs.reduce((s, r) => s + (+r.qty_sold || 0), 0);
+      const rev = rs.reduce((s, r) => s + (+r.sold_value || 0), 0);
+      return { year: y, qty, rev };
+    });
+    out.push({ kind: "trend", title: "Revenue + units by year", data: yearTotals });
+
+    // Per-year set
+    for (const yr of years) {
+      const yrRows = rows.filter(r => (r.period || "").startsWith(yr));
+      const yrQty = yrRows.reduce((s, r) => s + (+r.qty_sold || 0), 0);
+      const yrRev = yrRows.reduce((s, r) => s + (+r.sold_value || 0), 0);
+      const prevTotals = yearTotals.find(t => t.year === String(parseInt(yr) - 1));
+      const growth = prevTotals && prevTotals.rev > 0 ? ((yrRev - prevTotals.rev) / prevTotals.rev * 100) : null;
+      out.push({ kind: "year_overview", year: yr, qty: yrQty, rev: yrRev, growthVsPrior: growth });
+
+      // Top 10 items by revenue (full year)
+      const byItem = {};
+      for (const r of yrRows) {
+        const k = `${r.pot_size}|${normalizeDesc(r.description)}`;
+        if (!byItem[k]) byItem[k] = { desc: r.description, pot_size: r.pot_size, qty: 0, rev: 0 };
+        byItem[k].qty += +r.qty_sold || 0;
+        byItem[k].rev += +r.sold_value || 0;
+      }
+      const top10 = Object.values(byItem).sort((a, b) => b.rev - a.rev).slice(0, 10);
+      out.push({ kind: "top_items", year: yr, scope: "Full year", items: top10 });
+
+      // Top sizes (full year)
+      const bySize = {};
+      for (const r of yrRows) {
+        const k = r.pot_size || "(unknown)";
+        if (!bySize[k]) bySize[k] = { size: k, qty: 0, rev: 0, items: new Set() };
+        bySize[k].qty += +r.qty_sold || 0;
+        bySize[k].rev += +r.sold_value || 0;
+        bySize[k].items.add(`${r.pot_size}|${normalizeDesc(r.description)}`);
+      }
+      const topSizes = Object.values(bySize)
+        .map(s => ({ ...s, items: s.items.size }))
+        .sort((a, b) => b.rev - a.rev)
+        .slice(0, 8);
+      out.push({ kind: "top_sizes", year: yr, sizes: topSizes });
+
+      // Q1 (or whatever quarter the plan covers) for that year
+      const q1Rows = yrRows.filter(r => {
+        const mo = (r.period || "").slice(5, 7);
+        return mo >= qStart(quarter) && mo <= qEnd(quarter);
+      });
+      const q1Qty = q1Rows.reduce((s, r) => s + (+r.qty_sold || 0), 0);
+      const q1Rev = q1Rows.reduce((s, r) => s + (+r.sold_value || 0), 0);
+      const byItemQ1 = {};
+      for (const r of q1Rows) {
+        const k = `${r.pot_size}|${normalizeDesc(r.description)}`;
+        if (!byItemQ1[k]) byItemQ1[k] = { desc: r.description, pot_size: r.pot_size, qty: 0, rev: 0 };
+        byItemQ1[k].qty += +r.qty_sold || 0;
+        byItemQ1[k].rev += +r.sold_value || 0;
+      }
+      const top10Q1 = Object.values(byItemQ1).sort((a, b) => b.rev - a.rev).slice(0, 10);
+      out.push({ kind: "quarter_view", year: yr, quarter, qty: q1Qty, rev: q1Rev, items: top10Q1 });
+
+      // "Sold that year, NOT in recent year (2026)" — the bring-back candidates
+      // Skip this slide for the recentYear itself (would always be empty)
+      if (yr !== recentYear) {
+        const droppedFromYear = Object.values(byItem)
+          .filter(it => {
+            const key = `${it.pot_size}|${normalizeDesc(it.desc)}`;
+            return !recentKeys.has(key);
+          })
+          .sort((a, b) => b.rev - a.rev)
+          .slice(0, 12);
+        if (droppedFromYear.length > 0) {
+          out.push({ kind: "dropped", year: yr, recentYear, items: droppedFromYear });
+        }
+      }
+    }
+    out.push({ kind: "closing", title: "Discussion", subtitle: "What stays, what comes back, what's new?" });
+    return out;
+  }, [rows, plan]);
+
+  // Auto-play timer
+  useEffect(() => {
+    if (!autoPlay) return;
+    const t = setTimeout(() => setSlideIdx(i => Math.min(slides.length - 1, i + 1)), 8000);
+    return () => clearTimeout(t);
+  }, [autoPlay, slideIdx, slides.length]);
+
+  // Keyboard navigation
+  useEffect(() => {
+    function onKey(e) {
+      if (e.key === "ArrowRight" || e.key === " ") setSlideIdx(i => Math.min(slides.length - 1, i + 1));
+      else if (e.key === "ArrowLeft") setSlideIdx(i => Math.max(0, i - 1));
+      else if (e.key === "Escape" && fullscreen) setFullscreen(false);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [slides.length, fullscreen]);
+
+  if (loading) return <div style={{ padding: 20, color: COLORS.muted }}>Loading presentation…</div>;
+  if (slides.length === 0) return <div style={{ padding: 20, color: COLORS.muted }}>No sales data available.</div>;
+
+  const slide = slides[slideIdx];
+  const containerStyle = fullscreen
+    ? { position: "fixed", inset: 0, zIndex: 200, background: COLORS.dark, display: "flex", flexDirection: "column" }
+    : { background: COLORS.dark, borderRadius: 10, padding: 0, display: "flex", flexDirection: "column", minHeight: 600 };
+
+  return (
+    <div style={containerStyle}>
+      {/* Header bar */}
+      <div style={{ padding: "12px 20px", borderBottom: "1px solid rgba(255,255,255,0.15)", color: "#c8e6b8", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ fontSize: 13, fontWeight: 700, opacity: 0.7 }}>
+          Slide {slideIdx + 1} / {slides.length} · {plan.name}
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => setAutoPlay(!autoPlay)}
+            style={{ padding: "5px 12px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.3)", background: autoPlay ? COLORS.light : "transparent", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 11 }}>
+            {autoPlay ? "⏸ Pause auto" : "▶ Auto-play"}
+          </button>
+          <button onClick={() => setFullscreen(!fullscreen)}
+            style={{ padding: "5px 12px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.3)", background: "transparent", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 11 }}>
+            {fullscreen ? "✕ Exit fullscreen" : "⛶ Fullscreen"}
+          </button>
+        </div>
+      </div>
+
+      {/* Slide body */}
+      <div style={{ flex: 1, padding: fullscreen ? "60px 80px" : "40px 40px", overflowY: "auto" }}>
+        <SlideContent slide={slide} />
+      </div>
+
+      {/* Navigation footer */}
+      <div style={{ padding: "12px 20px", borderTop: "1px solid rgba(255,255,255,0.15)", display: "flex", justifyContent: "space-between", alignItems: "center", color: "#c8e6b8" }}>
+        <button onClick={() => setSlideIdx(i => Math.max(0, i - 1))} disabled={slideIdx === 0}
+          style={{ padding: "8px 16px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.3)", background: "transparent", color: slideIdx === 0 ? "rgba(255,255,255,0.3)" : "#fff", cursor: slideIdx === 0 ? "default" : "pointer", fontWeight: 700, fontSize: 13 }}>
+          ← Previous
+        </button>
+        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+          {slides.map((_, i) => (
+            <div key={i} onClick={() => setSlideIdx(i)}
+              style={{ width: i === slideIdx ? 24 : 8, height: 6, borderRadius: 3, background: i === slideIdx ? "#7fb069" : "rgba(255,255,255,0.3)", cursor: "pointer", transition: "width 0.2s" }} />
+          ))}
+        </div>
+        <button onClick={() => setSlideIdx(i => Math.min(slides.length - 1, i + 1))} disabled={slideIdx === slides.length - 1}
+          style={{ padding: "8px 16px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.3)", background: "transparent", color: slideIdx === slides.length - 1 ? "rgba(255,255,255,0.3)" : "#fff", cursor: slideIdx === slides.length - 1 ? "default" : "pointer", fontWeight: 700, fontSize: 13 }}>
+          Next →
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function SlideContent({ slide }) {
+  if (slide.kind === "intro") {
+    return (
+      <div style={{ color: "#fff", textAlign: "center", paddingTop: 80 }}>
+        <div style={{ fontSize: 60, marginBottom: 24 }}>🪴</div>
+        <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 64, color: "#c8e6b8", marginBottom: 12, lineHeight: 1.1 }}>{slide.title}</div>
+        <div style={{ fontSize: 22, color: "#7fb069", marginTop: 20 }}>{slide.sub}</div>
+        <div style={{ fontSize: 15, color: "rgba(200, 230, 184, 0.6)", marginTop: 50 }}>Press → or Space to advance · ← to go back · F for fullscreen</div>
+      </div>
+    );
+  }
+  if (slide.kind === "closing") {
+    return (
+      <div style={{ color: "#fff", textAlign: "center", paddingTop: 100 }}>
+        <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 72, color: "#c8e6b8", marginBottom: 24 }}>{slide.title}</div>
+        <div style={{ fontSize: 28, color: "#7fb069" }}>{slide.subtitle}</div>
+      </div>
+    );
+  }
+  if (slide.kind === "trend") {
+    const max = Math.max(...slide.data.map(d => d.rev));
+    return (
+      <div style={{ color: "#fff" }}>
+        <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 42, color: "#c8e6b8", marginBottom: 30 }}>{slide.title}</div>
+        <div style={{ display: "flex", gap: 16, alignItems: "flex-end", justifyContent: "center", minHeight: 260 }}>
+          {slide.data.map(d => (
+            <div key={d.year} style={{ flex: 1, maxWidth: 140, textAlign: "center" }}>
+              <div style={{ fontSize: 13, color: "#7fb069", marginBottom: 4 }}>{fmtMoney(d.rev)}</div>
+              <div style={{ background: "#7fb069", height: (d.rev / max) * 220, borderRadius: "6px 6px 0 0", margin: "0 auto", maxWidth: 90 }} />
+              <div style={{ fontSize: 18, fontWeight: 800, marginTop: 8 }}>{d.year}</div>
+              <div style={{ fontSize: 12, color: "rgba(200, 230, 184, 0.7)", marginTop: 2 }}>{d.qty.toLocaleString()} units</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+  if (slide.kind === "year_overview") {
+    return (
+      <div style={{ color: "#fff" }}>
+        <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 88, color: "#c8e6b8", marginBottom: 20, textAlign: "center" }}>{slide.year}</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 30, marginTop: 60 }}>
+          <BigStat label="Revenue" value={fmtMoney(slide.rev)} />
+          <BigStat label="Units sold" value={slide.qty.toLocaleString()} />
+          <BigStat label="Vs prior year" value={slide.growthVsPrior != null ? `${slide.growthVsPrior >= 0 ? "+" : ""}${slide.growthVsPrior.toFixed(1)}%` : "—"}
+            color={slide.growthVsPrior == null ? "#7fb069" : slide.growthVsPrior > 0 ? "#7fb069" : "#e89a3a"} />
+        </div>
+      </div>
+    );
+  }
+  if (slide.kind === "top_items") {
+    return (
+      <div style={{ color: "#fff" }}>
+        <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 42, color: "#c8e6b8", marginBottom: 6 }}>{slide.year} — Top 10 by revenue</div>
+        <div style={{ fontSize: 15, color: "rgba(200, 230, 184, 0.7)", marginBottom: 20 }}>{slide.scope}</div>
+        <table style={{ width: "100%", fontSize: 15, color: "#fff" }}>
+          <tbody>
+            {slide.items.map((i, idx) => (
+              <tr key={idx} style={{ borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
+                <td style={{ padding: "8px 0", width: 30, color: "#7fb069", fontWeight: 800 }}>{idx + 1}.</td>
+                <td style={{ padding: "8px 0", width: 60, color: "rgba(200, 230, 184, 0.7)" }}>{i.pot_size}</td>
+                <td style={{ padding: "8px 0" }}>{i.desc}</td>
+                <td style={{ padding: "8px 0", textAlign: "right", color: "#c8e6b8" }}>{i.qty.toLocaleString()}</td>
+                <td style={{ padding: "8px 0", textAlign: "right", fontWeight: 800, color: "#fff" }}>{fmtMoney(i.rev)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+  if (slide.kind === "top_sizes") {
+    const max = Math.max(...slide.sizes.map(s => s.rev));
+    return (
+      <div style={{ color: "#fff" }}>
+        <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 42, color: "#c8e6b8", marginBottom: 24 }}>{slide.year} — Top sizes</div>
+        <div style={{ display: "grid", gap: 10 }}>
+          {slide.sizes.map(s => (
+            <div key={s.size} style={{ display: "grid", gridTemplateColumns: "80px 1fr 130px 100px", alignItems: "center", gap: 12 }}>
+              <div style={{ fontSize: 22, fontWeight: 800, color: "#c8e6b8" }}>{s.size}</div>
+              <div style={{ height: 28, background: "rgba(127, 176, 105, 0.2)", borderRadius: 4, overflow: "hidden" }}>
+                <div style={{ height: "100%", width: `${(s.rev / max) * 100}%`, background: "#7fb069" }} />
+              </div>
+              <div style={{ textAlign: "right", fontWeight: 800, fontSize: 16 }}>{fmtMoney(s.rev)}</div>
+              <div style={{ textAlign: "right", color: "rgba(200, 230, 184, 0.7)", fontSize: 13 }}>{s.qty.toLocaleString()} units · {s.items} SKUs</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+  if (slide.kind === "quarter_view") {
+    return (
+      <div style={{ color: "#fff" }}>
+        <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 42, color: "#c8e6b8", marginBottom: 6 }}>{slide.year} — Q{slide.quarter} only</div>
+        <div style={{ fontSize: 16, color: "rgba(200, 230, 184, 0.7)", marginBottom: 20 }}>
+          {fmtMoney(slide.rev)} · {slide.qty.toLocaleString()} units
+        </div>
+        <table style={{ width: "100%", fontSize: 14, color: "#fff" }}>
+          <tbody>
+            {slide.items.map((i, idx) => (
+              <tr key={idx} style={{ borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
+                <td style={{ padding: "6px 0", width: 28, color: "#7fb069", fontWeight: 800 }}>{idx + 1}.</td>
+                <td style={{ padding: "6px 0", width: 60, color: "rgba(200, 230, 184, 0.7)" }}>{i.pot_size}</td>
+                <td style={{ padding: "6px 0" }}>{i.desc}</td>
+                <td style={{ padding: "6px 0", textAlign: "right", color: "#c8e6b8" }}>{i.qty.toLocaleString()}</td>
+                <td style={{ padding: "6px 0", textAlign: "right", fontWeight: 800 }}>{fmtMoney(i.rev)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+  if (slide.kind === "dropped") {
+    return (
+      <div style={{ color: "#fff" }}>
+        <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 36, color: "#e89a3a", marginBottom: 6 }}>
+          ⚠ {slide.year} → dropped before {slide.recentYear}
+        </div>
+        <div style={{ fontSize: 15, color: "rgba(200, 230, 184, 0.8)", marginBottom: 20 }}>
+          Items sold in {slide.year} we didn't carry in {slide.recentYear}. Worth re-evaluating.
+        </div>
+        <table style={{ width: "100%", fontSize: 14, color: "#fff" }}>
+          <tbody>
+            {slide.items.map((i, idx) => (
+              <tr key={idx} style={{ borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
+                <td style={{ padding: "6px 0", width: 60, color: "rgba(200, 230, 184, 0.7)" }}>{i.pot_size}</td>
+                <td style={{ padding: "6px 0" }}>{i.desc}</td>
+                <td style={{ padding: "6px 0", textAlign: "right", color: "#c8e6b8" }}>{i.qty.toLocaleString()}</td>
+                <td style={{ padding: "6px 0", textAlign: "right", fontWeight: 800 }}>{fmtMoney(i.rev)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+  return null;
+}
+
+function BigStat({ label, value, color }) {
+  return (
+    <div style={{ textAlign: "center" }}>
+      <div style={{ fontSize: 14, color: "rgba(200, 230, 184, 0.7)", textTransform: "uppercase", letterSpacing: 1, fontWeight: 700, marginBottom: 10 }}>{label}</div>
+      <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 56, color: color || "#c8e6b8", fontWeight: 700 }}>{value}</div>
+    </div>
+  );
+}
+
 function HpInsightsTab({ plan }) {
   const sb = getSupabase();
   const [rows, setRows]       = useState([]);
