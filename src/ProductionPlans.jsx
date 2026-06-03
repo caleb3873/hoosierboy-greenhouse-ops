@@ -904,10 +904,11 @@ function CatalogTab({ plan }) {
   const [filterSize, setFilterSize] = useState("all");
   const [search, setSearch] = useState("");
   const [viewMode, setViewMode] = useState("all");
-  const [showStats, setShowStats] = useState(false);
   const [mergeModal, setMergeModal] = useState(null);  // { sourceRow: ... }
   const [reloadTick, setReloadTick] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [projection, setProjection] = useState(5); // % growth vs 2-yr avg
+  const [addModal, setAddModal] = useState(false);
 
   // For "Houseplants Q1 2027": current_year = 2026, prior_year = 2025
   const quarter = parseInt(plan.season?.replace(/[^0-9]/g, "")) || 1;
@@ -1013,6 +1014,24 @@ function CatalogTab({ plan }) {
           two_yr_avg: Math.round(((r.y_curr_qty || 0) + (r.y_prior_qty || 0)) / 2),
         };
       }).filter(r => r.y_curr_qty + r.y_prior_qty > 0);
+
+      // Inject "new trial" catalog rows (items that have no sales history but were
+      // added manually via Add Variety). Identified by notes starting with [NEW TRIAL]
+      // OR by the absence of any matching row in arr.
+      const seenKeys = new Set(arr.map(r => `${r.pot_size}|${normalizeDesc(r.desc)}`));
+      for (const c of (cat || [])) {
+        const key = `${c.pot_size}|${normalizeDesc(c.description)}`;
+        if (seenKeys.has(key)) continue;
+        arr.push({
+          desc: c.description,
+          pot_size: c.pot_size,
+          normalized: normalizeDesc(c.description),
+          genus: (normalizeDesc(c.description).split(/\s+/)[0] || "").toUpperCase(),
+          y_curr_qty: 0, y_curr_rev: 0, y_prior_qty: 0, y_prior_rev: 0,
+          prior_price: null, curr_price: null, yoy_qty: null, yoy_price: null, two_yr_avg: 0,
+          isNew: true,
+        });
+      }
       setRows(arr);
 
       // Look up culture data by genus (lightweight, lazy)
@@ -1051,6 +1070,66 @@ function CatalogTab({ plan }) {
     if (!confirm("Remove all manual merges? Sales rows go back to their original (potentially duplicated) keys.")) return;
     await sb.from("houseplant_merge_aliases").delete().gte("created_at", "1900-01-01");
     setReloadTick(t => t + 1);
+  }
+
+  // Apply current projection to every historical row that doesn't have a saved target_qty.
+  // Rule: target_qty = round((qty_prior + qty_curr) / 2 × (1 + projection/100))
+  //       target_price = curr_price (fallback prior_price)
+  async function applyProjection() {
+    const ops = [];
+    for (const r of rows) {
+      const existing = catalog.find(c => normalizeDesc(c.description) === r.normalized && c.pot_size === r.pot_size);
+      if (existing && (existing.target_qty != null || existing.status === "locked")) continue; // don't overwrite manual or locked
+      const avgQty = ((r.y_prior_qty || 0) + (r.y_curr_qty || 0)) / 2;
+      if (avgQty <= 0) continue;
+      const targetQty = Math.round(avgQty * (1 + projection / 100));
+      const targetPrice = r.curr_price || r.prior_price || null;
+      ops.push({ row: r, updates: { target_qty: targetQty, target_price: targetPrice } });
+    }
+    if (ops.length === 0) {
+      alert("No items to apply — all historical items already have a target or are locked.");
+      return;
+    }
+    if (!confirm(`Apply +${projection}% projection to ${ops.length} historical items? Locked + already-set items are untouched.`)) return;
+    for (const op of ops) await updateCatalogRow(op.row, op.updates);
+  }
+
+  async function clearProjections() {
+    const ops = catalog.filter(c => c.status !== "locked" && c.target_qty != null);
+    if (ops.length === 0) return;
+    if (!confirm(`Clear target qty/price from ${ops.length} unlocked items?`)) return;
+    for (const c of ops) {
+      await sb.from("houseplant_catalog").update({ target_qty: null, target_price: null, updated_at: new Date().toISOString() }).eq("id", c.id);
+    }
+    setCatalog(catalog.map(c => c.status === "locked" ? c : { ...c, target_qty: null, target_price: null }));
+  }
+
+  async function addNewVariety(form) {
+    const { data: ins } = await sb.from("houseplant_catalog").insert({
+      plan_id: plan.id,
+      description: form.description,
+      pot_size: form.pot_size,
+      target_qty: form.target_qty || null,
+      target_price: form.target_price || null,
+      acquisition_type: form.acquisition_type || null,
+      supplier: form.supplier || null,
+      notes: form.notes ? `[NEW TRIAL] ${form.notes}` : "[NEW TRIAL]",
+      status: "considered",
+    }).select("*").single();
+    if (ins) {
+      setCatalog([...catalog, ins]);
+      // Also add a synthetic row to the local rows list so it renders in the table
+      setRows(prev => [...prev, {
+        desc: form.description,
+        pot_size: form.pot_size,
+        normalized: form.description.toUpperCase(),
+        genus: (form.description.split(/\s+/)[0] || "").toUpperCase(),
+        y_curr_qty: 0, y_curr_rev: 0, y_prior_qty: 0, y_prior_rev: 0,
+        prior_price: null, curr_price: null, yoy_qty: null, yoy_price: null, two_yr_avg: 0,
+        isNew: true,
+      }]);
+    }
+    setAddModal(false);
   }
 
   async function updateCatalogRow(row, updates) {
@@ -1155,12 +1234,37 @@ function CatalogTab({ plan }) {
     sizeStats[k].rev_26 += r.y_curr_rev;
     if (r.curr_price) sizeStats[k].prices.push(r.curr_price);
   }
-  const sizeStatsArr = Object.values(sizeStats).map(s => ({
-    ...s,
-    avg_price: s.prices.length ? s.prices.reduce((a,b) => a+b, 0) / s.prices.length : 0,
-    min_price: s.prices.length ? Math.min(...s.prices) : 0,
-    max_price: s.prices.length ? Math.max(...s.prices) : 0,
-  })).sort((a, b) => b.rev_26 - a.rev_26);
+  // Roll up saved catalog target qty/rev per size
+  const targetBySize = {};
+  for (const c of catalog) {
+    const k = c.pot_size || "(unknown)";
+    if (!targetBySize[k]) targetBySize[k] = { qty: 0, rev: 0 };
+    targetBySize[k].qty += (+c.target_qty || 0);
+    targetBySize[k].rev += (+c.target_qty || 0) * (+c.target_price || 0);
+  }
+  const sizeStatsArr = Object.values(sizeStats).map(s => {
+    const avg_qty = ((s.qty_25 || 0) + (s.qty_26 || 0)) / 2;
+    const avg_rev = ((s.rev_25 || 0) + (s.rev_26 || 0)) / 2;
+    const target_qty = targetBySize[s.size]?.qty || 0;
+    const target_rev = targetBySize[s.size]?.rev || 0;
+    const projected_qty = Math.round(avg_qty * (1 + projection / 100));
+    const projected_rev = avg_rev * (1 + projection / 100);
+    const delta_pct = avg_qty > 0 && target_qty > 0 ? ((target_qty - avg_qty) / avg_qty * 100) : null;
+    return {
+      ...s,
+      avg_price: s.prices.length ? s.prices.reduce((a,b) => a+b, 0) / s.prices.length : 0,
+      min_price: s.prices.length ? Math.min(...s.prices) : 0,
+      max_price: s.prices.length ? Math.max(...s.prices) : 0,
+      avg_qty, avg_rev, target_qty, target_rev, projected_qty, projected_rev, delta_pct,
+    };
+  }).sort((a, b) => b.rev_26 - a.rev_26);
+
+  const grandAvgQty   = sizeStatsArr.reduce((s, x) => s + x.avg_qty,       0);
+  const grandTgtQty   = sizeStatsArr.reduce((s, x) => s + x.target_qty,    0);
+  const grandProjQty  = sizeStatsArr.reduce((s, x) => s + x.projected_qty, 0);
+  const grandTgtRev   = sizeStatsArr.reduce((s, x) => s + x.target_rev,    0);
+  const grandProjRev  = sizeStatsArr.reduce((s, x) => s + x.projected_rev, 0);
+  const grandPctOfProj = grandProjQty > 0 ? (grandTgtQty / grandProjQty * 100) : 0;
 
   // Counts for view-mode chips
   const counts = {
@@ -1190,53 +1294,83 @@ function CatalogTab({ plan }) {
         <Stat label="Target rev"    value={fmtMoney(totalTargetRev)} dark big />
       </div>
 
-      {/* Catalog Summary panel (collapsible) */}
-      <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 16 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }} onClick={() => setShowStats(!showStats)}>
-          <div style={{ fontSize: 13, color: COLORS.muted, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700 }}>
-            📊 Catalog summary · pot size × pricing analytics
+      {/* Projection control + size rollup (always visible) */}
+      <div style={{ background: COLORS.card, border: `2px solid ${COLORS.light}`, borderRadius: 10, padding: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 12 }}>
+          <div>
+            <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 20, color: COLORS.dark }}>
+              📊 Projection &amp; size rollup
+            </div>
+            <div style={{ fontSize: 12, color: COLORS.muted, marginTop: 2 }}>
+              Set your growth target vs. the 2-yr sales avg, then click Apply to pre-fill targets. Adjust individual rows below; totals stay live.
+            </div>
           </div>
-          <span style={{ color: COLORS.muted, fontSize: 14 }}>{showStats ? "▾" : "▸"}</span>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: COLORS.text }}>Projection</span>
+              <input type="number" value={projection} step="1"
+                onChange={e => setProjection(parseFloat(e.target.value) || 0)}
+                style={{ width: 60, padding: "6px 8px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 14, fontWeight: 700, textAlign: "right" }} />
+              <span style={{ fontSize: 13, fontWeight: 700, color: COLORS.text }}>%</span>
+            </div>
+            <button onClick={applyProjection}
+              style={{ padding: "8px 14px", borderRadius: 6, border: "none", background: COLORS.light, color: "#fff", fontWeight: 700, cursor: "pointer", fontSize: 12 }}>
+              Apply to unset items
+            </button>
+            <button onClick={clearProjections}
+              style={{ padding: "8px 14px", borderRadius: 6, border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.text, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>
+              Clear targets
+            </button>
+            <button onClick={() => setAddModal(true)}
+              style={{ padding: "8px 14px", borderRadius: 6, border: "none", background: COLORS.dark, color: "#fff", fontWeight: 700, cursor: "pointer", fontSize: 12 }}>
+              + Add variety
+            </button>
+          </div>
         </div>
-        {showStats && (
-          <div style={{ marginTop: 14 }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-              <thead>
-                <tr style={{ background: "#f3f5ef" }}>
-                  <th style={th}>Pot</th>
-                  <th style={{...th, textAlign:"right"}}># Items</th>
-                  <th style={{...th, textAlign:"right"}}>Q{quarter} {priorYr} qty</th>
-                  <th style={{...th, textAlign:"right"}}>Q{quarter} {currYr} qty</th>
-                  <th style={{...th, textAlign:"right"}}>Q{quarter} {priorYr} $</th>
-                  <th style={{...th, textAlign:"right"}}>Q{quarter} {currYr} $</th>
-                  <th style={{...th, textAlign:"right"}}>YoY rev</th>
-                  <th style={{...th, textAlign:"right"}}>Avg price</th>
-                  <th style={{...th, textAlign:"right"}}>Price range</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sizeStatsArr.map(s => {
-                  const yoy = s.rev_25 > 0 ? ((s.rev_26 - s.rev_25) / s.rev_25 * 100) : null;
-                  return (
-                    <tr key={s.size} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
-                      <td style={td}><strong>{s.size}</strong></td>
-                      <td style={{...td, textAlign:"right"}}>{s.items}</td>
-                      <td style={{...td, textAlign:"right", color: COLORS.muted}}>{s.qty_25.toLocaleString()}</td>
-                      <td style={{...td, textAlign:"right"}}>{s.qty_26.toLocaleString()}</td>
-                      <td style={{...td, textAlign:"right", color: COLORS.muted}}>{fmtMoney(s.rev_25)}</td>
-                      <td style={{...td, textAlign:"right", fontWeight: 700}}>{fmtMoney(s.rev_26)}</td>
-                      <td style={{...td, textAlign:"right", color: yoy > 0 ? COLORS.light : yoy < 0 ? COLORS.red : COLORS.muted, fontWeight: 700}}>
-                        {yoy != null ? (yoy >= 0 ? "+" : "") + yoy.toFixed(0) + "%" : "—"}
-                      </td>
-                      <td style={{...td, textAlign:"right"}}>${s.avg_price.toFixed(2)}</td>
-                      <td style={{...td, textAlign:"right", color: COLORS.muted}}>${s.min_price.toFixed(2)} – ${s.max_price.toFixed(2)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <thead>
+            <tr style={{ background: "#f3f5ef" }}>
+              <th style={th}>Pot</th>
+              <th style={{...th, textAlign:"right"}}># items</th>
+              <th style={{...th, textAlign:"right"}}>Q{quarter} '{String(priorYr).slice(-2)}</th>
+              <th style={{...th, textAlign:"right"}}>Q{quarter} '{String(currYr).slice(-2)}</th>
+              <th style={{...th, textAlign:"right"}}>2-yr avg</th>
+              <th style={{...th, textAlign:"right", background: "#eaf3df"}}>Projected ({projection >= 0 ? "+" : ""}{projection}%)</th>
+              <th style={{...th, textAlign:"right", background: "#fafdf7"}}>🎯 Target</th>
+              <th style={{...th, textAlign:"right"}}>Δ vs avg</th>
+              <th style={{...th, textAlign:"right"}}>$ Target rev</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sizeStatsArr.map(s => (
+              <tr key={s.size} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
+                <td style={td}><strong>{s.size}</strong></td>
+                <td style={{...td, textAlign:"right"}}>{s.items}</td>
+                <td style={{...td, textAlign:"right", color: COLORS.muted}}>{s.qty_25.toLocaleString()}</td>
+                <td style={{...td, textAlign:"right", color: COLORS.muted}}>{s.qty_26.toLocaleString()}</td>
+                <td style={{...td, textAlign:"right"}}>{Math.round(s.avg_qty).toLocaleString()}</td>
+                <td style={{...td, textAlign:"right", background: "#eaf3df", fontWeight: 700, color: COLORS.dark}}>{s.projected_qty.toLocaleString()}</td>
+                <td style={{...td, textAlign:"right", background: "#fafdf7", fontWeight: 800, color: COLORS.light}}>{s.target_qty.toLocaleString() || "—"}</td>
+                <td style={{...td, textAlign:"right", color: s.delta_pct == null ? COLORS.muted : s.delta_pct > 0 ? COLORS.light : s.delta_pct < -5 ? COLORS.red : COLORS.text, fontWeight: 700}}>
+                  {s.delta_pct != null ? (s.delta_pct >= 0 ? "+" : "") + s.delta_pct.toFixed(0) + "%" : "—"}
+                </td>
+                <td style={{...td, textAlign:"right", color: COLORS.muted}}>{fmtMoney(s.target_rev)}</td>
+              </tr>
+            ))}
+            <tr style={{ background: COLORS.dark, color: "#fff" }}>
+              <td style={{...td, color: "#fff", fontWeight: 800}}>TOTAL</td>
+              <td style={{...td, color: "#fff", textAlign:"right", fontWeight: 800}}>{sizeStatsArr.reduce((s,x)=>s+x.items,0)}</td>
+              <td style={{...td, color: "#c8e6b8", textAlign:"right"}}>{sizeStatsArr.reduce((s,x)=>s+x.qty_25,0).toLocaleString()}</td>
+              <td style={{...td, color: "#c8e6b8", textAlign:"right"}}>{sizeStatsArr.reduce((s,x)=>s+x.qty_26,0).toLocaleString()}</td>
+              <td style={{...td, color: "#fff", textAlign:"right", fontWeight: 800}}>{Math.round(grandAvgQty).toLocaleString()}</td>
+              <td style={{...td, color: "#fff", textAlign:"right", fontWeight: 800, background: "rgba(127,176,105,0.3)"}}>{grandProjQty.toLocaleString()}</td>
+              <td style={{...td, color: "#fff", textAlign:"right", fontWeight: 800}}>{grandTgtQty.toLocaleString()} <span style={{ fontSize: 10, fontWeight: 600, color: "#c8e6b8" }}>({grandPctOfProj.toFixed(0)}% of projection)</span></td>
+              <td style={td}></td>
+              <td style={{...td, color: "#fff", textAlign:"right", fontWeight: 800}}>{fmtMoney(grandTgtRev)}</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
 
       <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 16 }}>
@@ -1326,9 +1460,14 @@ function CatalogTab({ plan }) {
                   else if (Math.abs(r.yoy_qty) < 10 && Math.abs(r.yoy_price) < 5) { signal = "= STABLE"; signalColor = COLORS.muted; }
                 }
                 return (
-                  <tr key={i} style={{ borderBottom: `1px solid ${COLORS.border}`, background: c?.status === "locked" ? "#f0f7ec" : undefined }}>
+                  <tr key={i} style={{ borderBottom: `1px solid ${COLORS.border}`, background: c?.status === "locked" ? "#f0f7ec" : r.isNew ? "#fff7e6" : undefined }}>
                     <td style={td}>{r.pot_size}</td>
                     <td style={td}>
+                      {r.isNew && (
+                        <span style={{ marginRight: 6, background: COLORS.amber, color: "#fff", padding: "1px 6px", borderRadius: 8, fontSize: 9, fontWeight: 800, letterSpacing: 0.5 }}>
+                          🧪 NEW
+                        </span>
+                      )}
                       {r.desc}
                       {cultureByGenus[r.genus] && (
                         <span style={{ marginLeft: 6, fontSize: 10, color: COLORS.light, fontWeight: 700 }} title={`Culture data: ${Object.entries(cultureByGenus[r.genus]).map(([b,n]) => `${b} (${n})`).join(", ")}`}>
@@ -1425,6 +1564,13 @@ function CatalogTab({ plan }) {
           onCancel={() => setMergeModal(null)}
           onConfirm={target => saveMerge(mergeModal.source, target)} />
       )}
+
+      {/* Add Variety modal */}
+      {addModal && (
+        <AddVarietyModal sizes={sizes}
+          onCancel={() => setAddModal(false)}
+          onSave={addNewVariety} />
+      )}
     </div>
   );
 }
@@ -1488,6 +1634,107 @@ function MergeModal({ sourceRow, allRows, onCancel, onConfirm }) {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Modal for adding a brand-new variety to the catalog (no sales history)
+function AddVarietyModal({ sizes, onCancel, onSave }) {
+  const [form, setForm] = useState({
+    description: "",
+    pot_size: sizes[0] || "",
+    target_qty: "",
+    target_price: "",
+    acquisition_type: "",
+    supplier: "",
+    notes: "",
+  });
+  const valid = form.description.trim().length > 0 && form.pot_size.trim().length > 0;
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }} onClick={onCancel}>
+      <div onClick={e => e.stopPropagation()}
+        style={{ background: "#fff", borderRadius: 10, padding: 20, maxWidth: 540, width: "92%", maxHeight: "90vh", overflowY: "auto" }}>
+        <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 22, color: COLORS.dark, marginBottom: 4 }}>
+          🧪 Add a new variety
+        </div>
+        <div style={{ fontSize: 12, color: COLORS.muted, marginBottom: 16 }}>
+          Use this for trial items with no sales history (e.g., a new Banana variety). Shows up as a NEW row in the catalog and flows through Sourcing normally.
+        </div>
+
+        <div style={{ display: "grid", gap: 10 }}>
+          <FormField label="Variety description">
+            <input value={form.description} onChange={e => setForm({ ...form, description: e.target.value })}
+              placeholder="e.g., Musa 'Truly Tiny' Banana" autoFocus
+              style={{ width: "100%", padding: "8px 10px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 14 }} />
+          </FormField>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <FormField label="Pot size">
+              <input value={form.pot_size} onChange={e => setForm({ ...form, pot_size: e.target.value })}
+                placeholder='6"' list="size-list"
+                style={{ width: "100%", padding: "8px 10px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 14 }} />
+              <datalist id="size-list">{sizes.map(s => <option key={s} value={s} />)}</datalist>
+            </FormField>
+            <FormField label="Acquisition">
+              <select value={form.acquisition_type} onChange={e => setForm({ ...form, acquisition_type: e.target.value })}
+                style={{ width: "100%", padding: "8px 10px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 14 }}>
+                <option value="">— pick —</option>
+                <option value="finished">🛒 Finished</option>
+                <option value="liner">🌱 Liner</option>
+                <option value="propagate">🌿 Propagate</option>
+                <option value="partner">🤝 Partner</option>
+              </select>
+            </FormField>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <FormField label="Target qty">
+              <input type="number" value={form.target_qty} onChange={e => setForm({ ...form, target_qty: e.target.value ? parseInt(e.target.value) : "" })}
+                placeholder="50"
+                style={{ width: "100%", padding: "8px 10px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 14 }} />
+            </FormField>
+            <FormField label="Target $/ea">
+              <input type="number" step="0.01" value={form.target_price} onChange={e => setForm({ ...form, target_price: e.target.value ? parseFloat(e.target.value) : "" })}
+                placeholder="18.99"
+                style={{ width: "100%", padding: "8px 10px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 14 }} />
+            </FormField>
+          </div>
+
+          <FormField label="Supplier (optional)">
+            <input value={form.supplier} onChange={e => setForm({ ...form, supplier: e.target.value })}
+              placeholder="e.g., Costa Farms"
+              style={{ width: "100%", padding: "8px 10px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 14 }} />
+          </FormField>
+
+          <FormField label="Notes / rationale">
+            <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })}
+              placeholder="Why try this variety? Customer request, gap in lineup, seasonal trial, etc."
+              rows={3}
+              style={{ width: "100%", padding: "8px 10px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 13, resize: "vertical", fontFamily: "inherit" }} />
+          </FormField>
+        </div>
+
+        <div style={{ marginTop: 18, display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <button onClick={onCancel}
+            style={{ padding: "8px 16px", border: `1px solid ${COLORS.border}`, borderRadius: 6, background: "#fff", cursor: "pointer", fontWeight: 600 }}>
+            Cancel
+          </button>
+          <button disabled={!valid} onClick={() => onSave(form)}
+            style={{ padding: "8px 16px", border: "none", borderRadius: 6, background: valid ? COLORS.dark : "#ccc", color: "#fff", fontWeight: 700, cursor: valid ? "pointer" : "not-allowed" }}>
+            Add to catalog
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FormField({ label, children }) {
+  return (
+    <div>
+      <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 4 }}>{label}</div>
+      {children}
     </div>
   );
 }
