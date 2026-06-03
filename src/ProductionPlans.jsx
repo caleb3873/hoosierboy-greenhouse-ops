@@ -1262,6 +1262,9 @@ function CatalogTab({ plan }) {
   const grandAvgQty   = sizeStatsArr.reduce((s, x) => s + x.avg_qty,       0);
   const grandTgtQty   = sizeStatsArr.reduce((s, x) => s + x.target_qty,    0);
   const grandProjQty  = sizeStatsArr.reduce((s, x) => s + x.projected_qty, 0);
+  const grandRev25    = sizeStatsArr.reduce((s, x) => s + (x.rev_25 || 0), 0);
+  const grandRev26    = sizeStatsArr.reduce((s, x) => s + (x.rev_26 || 0), 0);
+  const grandAvgRev   = (grandRev25 + grandRev26) / 2;
   const grandTgtRev   = sizeStatsArr.reduce((s, x) => s + x.target_rev,    0);
   const grandProjRev  = sizeStatsArr.reduce((s, x) => s + x.projected_rev, 0);
   const grandPctOfProj = grandProjQty > 0 ? (grandTgtQty / grandProjQty * 100) : 0;
@@ -1328,36 +1331,53 @@ function CatalogTab({ plan }) {
           </div>
         </div>
 
+        {/* Revenue projection summary */}
+        <div style={{ background: "#f3f5ef", borderRadius: 8, padding: 12, marginBottom: 12, display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12 }}>
+          <RevStat label={`Q${quarter} '${String(priorYr).slice(-2)} actual`} value={fmtMoney(grandRev25)} muted />
+          <RevStat label={`Q${quarter} '${String(currYr).slice(-2)} actual`} value={fmtMoney(grandRev26)} muted />
+          <RevStat label="2-yr avg" value={fmtMoney(grandAvgRev)} />
+          <RevStat label={`${projection >= 0 ? "+" : ""}${projection}% projected ${planYear}`} value={fmtMoney(grandProjRev)} accent={COLORS.light} />
+          <RevStat label="🎯 Your target" value={fmtMoney(grandTgtRev)} accent={COLORS.dark} big />
+        </div>
+
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
           <thead>
             <tr style={{ background: "#f3f5ef" }}>
               <th style={th}>Pot</th>
               <th style={{...th, textAlign:"right"}}># items</th>
-              <th style={{...th, textAlign:"right"}}>Q{quarter} '{String(priorYr).slice(-2)}</th>
-              <th style={{...th, textAlign:"right"}}>Q{quarter} '{String(currYr).slice(-2)}</th>
-              <th style={{...th, textAlign:"right"}}>2-yr avg</th>
-              <th style={{...th, textAlign:"right", background: "#eaf3df"}}>Projected ({projection >= 0 ? "+" : ""}{projection}%)</th>
-              <th style={{...th, textAlign:"right", background: "#fafdf7"}}>🎯 Target</th>
+              <th style={{...th, textAlign:"right"}}>Q{quarter} '{String(priorYr).slice(-2)} qty</th>
+              <th style={{...th, textAlign:"right"}}>Q{quarter} '{String(currYr).slice(-2)} qty</th>
+              <th style={{...th, textAlign:"right"}}>2-yr avg qty</th>
+              <th style={{...th, textAlign:"right", background: "#eaf3df"}}>Projected qty ({projection >= 0 ? "+" : ""}{projection}%)</th>
+              <th style={{...th, textAlign:"right", background: "#fafdf7"}}>🎯 Target qty</th>
               <th style={{...th, textAlign:"right"}}>Δ vs avg</th>
-              <th style={{...th, textAlign:"right"}}>$ Target rev</th>
+              <th style={{...th, textAlign:"right"}}>2-yr avg $</th>
+              <th style={{...th, textAlign:"right", background: "#eaf3df"}}>Projected $</th>
+              <th style={{...th, textAlign:"right", background: "#fafdf7"}}>🎯 Target $</th>
             </tr>
           </thead>
           <tbody>
-            {sizeStatsArr.map(s => (
-              <tr key={s.size} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
-                <td style={td}><strong>{s.size}</strong></td>
-                <td style={{...td, textAlign:"right"}}>{s.items}</td>
-                <td style={{...td, textAlign:"right", color: COLORS.muted}}>{s.qty_25.toLocaleString()}</td>
-                <td style={{...td, textAlign:"right", color: COLORS.muted}}>{s.qty_26.toLocaleString()}</td>
-                <td style={{...td, textAlign:"right"}}>{Math.round(s.avg_qty).toLocaleString()}</td>
-                <td style={{...td, textAlign:"right", background: "#eaf3df", fontWeight: 700, color: COLORS.dark}}>{s.projected_qty.toLocaleString()}</td>
-                <td style={{...td, textAlign:"right", background: "#fafdf7", fontWeight: 800, color: COLORS.light}}>{s.target_qty.toLocaleString() || "—"}</td>
-                <td style={{...td, textAlign:"right", color: s.delta_pct == null ? COLORS.muted : s.delta_pct > 0 ? COLORS.light : s.delta_pct < -5 ? COLORS.red : COLORS.text, fontWeight: 700}}>
-                  {s.delta_pct != null ? (s.delta_pct >= 0 ? "+" : "") + s.delta_pct.toFixed(0) + "%" : "—"}
-                </td>
-                <td style={{...td, textAlign:"right", color: COLORS.muted}}>{fmtMoney(s.target_rev)}</td>
-              </tr>
-            ))}
+            {sizeStatsArr.map(s => {
+              const avgRevSize = ((s.rev_25 || 0) + (s.rev_26 || 0)) / 2;
+              const projRevSize = avgRevSize * (1 + projection / 100);
+              return (
+                <tr key={s.size} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
+                  <td style={td}><strong>{s.size}</strong></td>
+                  <td style={{...td, textAlign:"right"}}>{s.items}</td>
+                  <td style={{...td, textAlign:"right", color: COLORS.muted}}>{s.qty_25.toLocaleString()}</td>
+                  <td style={{...td, textAlign:"right", color: COLORS.muted}}>{s.qty_26.toLocaleString()}</td>
+                  <td style={{...td, textAlign:"right"}}>{Math.round(s.avg_qty).toLocaleString()}</td>
+                  <td style={{...td, textAlign:"right", background: "#eaf3df", fontWeight: 700, color: COLORS.dark}}>{s.projected_qty.toLocaleString()}</td>
+                  <td style={{...td, textAlign:"right", background: "#fafdf7", fontWeight: 800, color: COLORS.light}}>{s.target_qty.toLocaleString() || "—"}</td>
+                  <td style={{...td, textAlign:"right", color: s.delta_pct == null ? COLORS.muted : s.delta_pct > 0 ? COLORS.light : s.delta_pct < -5 ? COLORS.red : COLORS.text, fontWeight: 700}}>
+                    {s.delta_pct != null ? (s.delta_pct >= 0 ? "+" : "") + s.delta_pct.toFixed(0) + "%" : "—"}
+                  </td>
+                  <td style={{...td, textAlign:"right", color: COLORS.muted}}>{fmtMoney(avgRevSize)}</td>
+                  <td style={{...td, textAlign:"right", background: "#eaf3df", fontWeight: 700, color: COLORS.dark}}>{fmtMoney(projRevSize)}</td>
+                  <td style={{...td, textAlign:"right", background: "#fafdf7", fontWeight: 800, color: COLORS.light}}>{fmtMoney(s.target_rev)}</td>
+                </tr>
+              );
+            })}
             <tr style={{ background: COLORS.dark, color: "#fff" }}>
               <td style={{...td, color: "#fff", fontWeight: 800}}>TOTAL</td>
               <td style={{...td, color: "#fff", textAlign:"right", fontWeight: 800}}>{sizeStatsArr.reduce((s,x)=>s+x.items,0)}</td>
@@ -1365,8 +1385,10 @@ function CatalogTab({ plan }) {
               <td style={{...td, color: "#c8e6b8", textAlign:"right"}}>{sizeStatsArr.reduce((s,x)=>s+x.qty_26,0).toLocaleString()}</td>
               <td style={{...td, color: "#fff", textAlign:"right", fontWeight: 800}}>{Math.round(grandAvgQty).toLocaleString()}</td>
               <td style={{...td, color: "#fff", textAlign:"right", fontWeight: 800, background: "rgba(127,176,105,0.3)"}}>{grandProjQty.toLocaleString()}</td>
-              <td style={{...td, color: "#fff", textAlign:"right", fontWeight: 800}}>{grandTgtQty.toLocaleString()} <span style={{ fontSize: 10, fontWeight: 600, color: "#c8e6b8" }}>({grandPctOfProj.toFixed(0)}% of projection)</span></td>
+              <td style={{...td, color: "#fff", textAlign:"right", fontWeight: 800}}>{grandTgtQty.toLocaleString()} <span style={{ fontSize: 10, fontWeight: 600, color: "#c8e6b8" }}>({grandPctOfProj.toFixed(0)}%)</span></td>
               <td style={td}></td>
+              <td style={{...td, color: "#c8e6b8", textAlign:"right"}}>{fmtMoney(grandAvgRev)}</td>
+              <td style={{...td, color: "#fff", textAlign:"right", fontWeight: 800, background: "rgba(127,176,105,0.3)"}}>{fmtMoney(grandProjRev)}</td>
               <td style={{...td, color: "#fff", textAlign:"right", fontWeight: 800}}>{fmtMoney(grandTgtRev)}</td>
             </tr>
           </tbody>
@@ -1441,8 +1463,6 @@ function CatalogTab({ plan }) {
                 <th style={{...th, textAlign:"center"}}>signal</th>
                 <th style={{...th, textAlign: "right", background: "#e8f0e2"}}>🎯 qty {planYear}</th>
                 <th style={{...th, textAlign: "right", background: "#e8f0e2"}}>🎯 $/ea {planYear}</th>
-                <th style={{...th, background: "#e8f0e2"}}>Acquisition</th>
-                <th style={{...th, background: "#e8f0e2"}}>Arrives</th>
                 <th style={{...th, background: "#e8f0e2"}}>Status</th>
                 <th style={th}></th>
               </tr>
@@ -1499,26 +1519,6 @@ function CatalogTab({ plan }) {
                         onBlur={e => updateCatalogRow(r, { target_price: e.target.value ? parseFloat(e.target.value) : null })}
                         style={{ width: 60, padding: "3px 6px", textAlign: "right", border: `1px solid ${COLORS.border}`, borderRadius: 4, fontSize: 12 }}
                         placeholder={r.curr_price ? r.curr_price.toFixed(2) : "—"} />
-                    </td>
-                    <td style={{...td, background: "#fafdf7"}}>
-                      <select defaultValue={c?.acquisition_type || ""}
-                        onChange={e => updateCatalogRow(r, { acquisition_type: e.target.value || null })}
-                        style={{ padding: "3px 6px", border: `1px solid ${COLORS.border}`, borderRadius: 4, fontSize: 11,
-                          background: ACQ_COLOR[c?.acquisition_type] ? ACQ_COLOR[c?.acquisition_type] + "22" : "#fff",
-                          color: ACQ_COLOR[c?.acquisition_type] || COLORS.text,
-                          fontWeight: c?.acquisition_type ? 700 : 400,
-                        }}>
-                        <option value="">—</option>
-                        <option value="finished">🛒 Finished</option>
-                        <option value="liner">🌱 Liner</option>
-                        <option value="propagate">🌿 Propagate</option>
-                        <option value="partner">🤝 Partner</option>
-                      </select>
-                    </td>
-                    <td style={{...td, background: "#fafdf7"}}>
-                      <input type="date" defaultValue={c?.arrival_date_target || ""}
-                        onBlur={e => updateCatalogRow(r, { arrival_date_target: e.target.value || null })}
-                        style={{ width: 130, padding: "3px 4px", border: `1px solid ${COLORS.border}`, borderRadius: 4, fontSize: 11 }} />
                     </td>
                     <td style={{...td, background: "#fafdf7"}}>
                       <select defaultValue={c?.status || "considered"}
@@ -1739,6 +1739,15 @@ function FormField({ label, children }) {
   );
 }
 
+function RevStat({ label, value, muted, accent, big }) {
+  return (
+    <div style={{ textAlign: "left" }}>
+      <div style={{ fontSize: 10, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: big ? 22 : 18, fontWeight: 800, color: accent || (muted ? COLORS.muted : COLORS.text), fontFamily: "'DM Serif Display', serif" }}>{value}</div>
+    </div>
+  );
+}
+
 // ── Houseplants — Sales History tab ─────────────────────────────────────────
 function HpHistoryTab({ plan }) {
   const sb = getSupabase();
@@ -1797,12 +1806,34 @@ function HpSourcingTab({ plan }) {
     sb.from("houseplant_catalog").select("*").eq("plan_id", plan.id).then(({ data }) => setRows(data || []));
   }, [sb, plan.id]);
 
+  // Persist a field change and update local state
+  async function updateRow(id, updates) {
+    // Smart default: if setting acquisition to finished and no arrival yet, suggest a Thursday
+    const row = rows.find(r => r.id === id);
+    if (updates.acquisition_type === "finished" && row && !row.arrival_date_target && !updates.arrival_date_target) {
+      const quarter = parseInt(plan.season?.replace(/[^0-9]/g, "")) || 1;
+      const startMonth = (quarter - 1) * 3 + 1;
+      const qStart = new Date(`${plan.year}-${String(startMonth).padStart(2, "0")}-01`);
+      const dow = qStart.getDay();
+      const daysToMon = dow === 0 ? 1 : dow === 1 ? 0 : 8 - dow;
+      qStart.setDate(qStart.getDate() + daysToMon - 4);
+      updates.arrival_date_target = qStart.toISOString().slice(0, 10);
+    }
+    await sb.from("houseplant_catalog").update({ ...updates, updated_at: new Date().toISOString() }).eq("id", id);
+    setRows(prev => prev.map(r => r.id === id ? { ...r, ...updates } : r));
+    // Auto-task generation when finished + arrival both set
+    const updated = { ...(row || {}), ...updates };
+    if (updated.acquisition_type === "finished" && updated.arrival_date_target) {
+      await ensureFinishedReceivingTasks(sb, plan, updated);
+    }
+  }
+
   // Bucket by acquisition_type with fallback for un-tagged items
   const finishedItems  = rows.filter(r => r.acquisition_type === "finished");
-  const linerItems     = rows.filter(r => r.acquisition_type === "liner" || (!r.acquisition_type && r.status === "locked"));
+  const linerItems     = rows.filter(r => r.acquisition_type === "liner");
   const propagateItems = rows.filter(r => r.acquisition_type === "propagate");
   const partnerItems   = rows.filter(r => r.acquisition_type === "partner");
-  const untagged       = rows.filter(r => !r.acquisition_type && r.status !== "locked");
+  const untagged       = rows.filter(r => !r.acquisition_type && r.status !== "cancelled");
 
   function makeBrokerRequest(mode) {
     const quarter = parseInt(plan.season?.replace(/[^0-9]/g, "")) || 1;
@@ -1908,28 +1939,38 @@ function HpSourcingTab({ plan }) {
         )}
       </div>
 
-      {/* 🛒 Finished Buy List — manager's primary table, sorted by arrival */}
+      {/* 🏷️ Untagged — must be classified first */}
+      {untagged.length > 0 && (
+        <div style={{ background: "#fff7e6", border: `2px solid ${COLORS.amber}`, borderRadius: 10, padding: 16 }}>
+          <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 18, color: COLORS.amber, marginBottom: 4 }}>
+            🏷️ Classify these · {untagged.length} item(s) need an acquisition type
+          </div>
+          <div style={{ fontSize: 11, color: COLORS.muted, marginBottom: 12 }}>
+            Pick how each item comes in. Once tagged, they move to the matching panel below.
+          </div>
+          <SourcingTable
+            items={untagged}
+            updateRow={updateRow}
+            showArrives={false}
+            showSupplier={true}
+          />
+        </div>
+      )}
+
+      {/* 🛒 Finished Buy List — sorted by arrival */}
       {finishedItems.length > 0 && (
         <div style={{ background: COLORS.card, border: `2px solid ${ACQ_COLOR.finished}`, borderRadius: 10, padding: 16 }}>
           <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 18, color: ACQ_COLOR.finished, marginBottom: 4 }}>
             🛒 Finished Buy List · {finishedItems.length} item(s)
           </div>
           <div style={{ fontSize: 11, color: COLORS.muted, marginBottom: 12 }}>
-            Sale-ready material. Arrives Thursday, quarantined + treated through weekend, on retail benches Monday. Receive / Treat / Move-to-retail tasks auto-generate on the Tasks tab.
+            Sale-ready material. Arrives Thursday, quarantined + treated through weekend, on retail benches Monday. Receive / Treat / Move-to-retail tasks auto-generate.
           </div>
-          <SimpleTable
-            cols={["Arrives", "Pot", "Variety", "Target qty", "Target $/ea", "Target rev", "Supplier", "Status"]}
-            aligns={["L", "L", "L", "R", "R", "R", "L", "L"]}
-            rows={[...finishedItems]
-              .sort((a, b) => (a.arrival_date_target || "9999").localeCompare(b.arrival_date_target || "9999"))
-              .map(i => [
-                i.arrival_date_target || <span style={{ color: COLORS.red }}>⚠ set date</span>,
-                i.pot_size, i.description,
-                (+i.target_qty || 0).toLocaleString() || "—",
-                i.target_price ? "$" + (+i.target_price).toFixed(2) : "—",
-                i.target_qty && i.target_price ? fmtMoney(i.target_qty * i.target_price) : "—",
-                i.supplier || "—", i.status,
-              ])}
+          <SourcingTable
+            items={[...finishedItems].sort((a, b) => (a.arrival_date_target || "9999").localeCompare(b.arrival_date_target || "9999"))}
+            updateRow={updateRow}
+            showArrives={true}
+            showSupplier={true}
           />
         </div>
       )}
@@ -1943,17 +1984,7 @@ function HpSourcingTab({ plan }) {
           <div style={{ fontSize: 11, color: COLORS.muted, marginBottom: 12 }}>
             Young plants we'll finish in-house. Order 8–10 weeks before sale start.
           </div>
-          <SimpleTable
-            cols={["Pot", "Variety", "Target qty", "Target $/ea", "Target rev", "Supplier", "Status"]}
-            aligns={["L", "L", "R", "R", "R", "L", "L"]}
-            rows={linerItems.map(i => [
-              i.pot_size, i.description,
-              (+i.target_qty || 0).toLocaleString() || "—",
-              i.target_price ? "$" + (+i.target_price).toFixed(2) : "—",
-              i.target_qty && i.target_price ? fmtMoney(i.target_qty * i.target_price) : "—",
-              i.supplier || "—", i.status,
-            ])}
-          />
+          <SourcingTable items={linerItems} updateRow={updateRow} showArrives={false} showSupplier={true} />
         </div>
       )}
 
@@ -1966,16 +1997,7 @@ function HpSourcingTab({ plan }) {
           <div style={{ fontSize: 11, color: COLORS.muted, marginBottom: 12 }}>
             Items we propagate from cuttings/seed. No broker required.
           </div>
-          <SimpleTable
-            cols={["Pot", "Variety", "Target qty", "Target $/ea", "Notes"]}
-            aligns={["L", "L", "R", "R", "L"]}
-            rows={propagateItems.map(i => [
-              i.pot_size, i.description,
-              (+i.target_qty || 0).toLocaleString() || "—",
-              i.target_price ? "$" + (+i.target_price).toFixed(2) : "—",
-              i.notes || "—",
-            ])}
-          />
+          <SourcingTable items={propagateItems} updateRow={updateRow} showArrives={false} showSupplier={false} />
         </div>
       )}
 
@@ -1985,25 +2007,76 @@ function HpSourcingTab({ plan }) {
           <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 18, color: ACQ_COLOR.partner, marginBottom: 12 }}>
             🤝 Partner · {partnerItems.length} item(s)
           </div>
-          <SimpleTable
-            cols={["Pot", "Variety", "Target qty", "Supplier", "Status"]}
-            aligns={["L", "L", "R", "L", "L"]}
-            rows={partnerItems.map(i => [i.pot_size, i.description, (+i.target_qty || 0).toLocaleString() || "—", i.supplier || "—", i.status])}
-          />
+          <SourcingTable items={partnerItems} updateRow={updateRow} showArrives={false} showSupplier={true} />
         </div>
       )}
+    </div>
+  );
+}
 
-      {/* Untagged items warning */}
-      {untagged.length > 0 && (
-        <div style={{ background: "#fff7e6", border: `1px solid ${COLORS.amber}`, borderRadius: 10, padding: 16 }}>
-          <div style={{ fontWeight: 700, color: COLORS.amber, marginBottom: 6, fontSize: 14 }}>
-            ⚠ {untagged.length} item(s) untagged — go to 🛒 Catalog and set acquisition type
-          </div>
-          <div style={{ fontSize: 11, color: COLORS.muted }}>
-            Items without an acquisition type don't appear in any sourcing list above and won't generate broker requests or receive tasks.
-          </div>
-        </div>
-      )}
+// Editable sourcing table — acquisition / arrival / supplier inline
+function SourcingTable({ items, updateRow, showArrives, showSupplier }) {
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+        <thead>
+          <tr style={{ background: "#f3f5ef" }}>
+            <th style={th}>Pot</th>
+            <th style={th}>Variety</th>
+            <th style={{...th, textAlign: "right"}}>Target qty</th>
+            <th style={{...th, textAlign: "right"}}>Target $/ea</th>
+            <th style={{...th, textAlign: "right"}}>Target rev</th>
+            <th style={th}>Acquisition</th>
+            {showArrives && <th style={th}>Arrives</th>}
+            {showSupplier && <th style={th}>Supplier</th>}
+            <th style={th}>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map(i => (
+            <tr key={i.id} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
+              <td style={td}>{i.pot_size}</td>
+              <td style={td}>{i.description}</td>
+              <td style={{...td, textAlign: "right"}}>{(+i.target_qty || 0).toLocaleString() || "—"}</td>
+              <td style={{...td, textAlign: "right"}}>{i.target_price ? "$" + (+i.target_price).toFixed(2) : "—"}</td>
+              <td style={{...td, textAlign: "right", fontWeight: 700}}>{i.target_qty && i.target_price ? fmtMoney(i.target_qty * i.target_price) : "—"}</td>
+              <td style={{...td, background: "#fafdf7"}}>
+                <select value={i.acquisition_type || ""}
+                  onChange={e => updateRow(i.id, { acquisition_type: e.target.value || null })}
+                  style={{ padding: "4px 6px", border: `1px solid ${COLORS.border}`, borderRadius: 4, fontSize: 11,
+                    background: ACQ_COLOR[i.acquisition_type] ? ACQ_COLOR[i.acquisition_type] + "22" : "#fff",
+                    color: ACQ_COLOR[i.acquisition_type] || COLORS.text,
+                    fontWeight: i.acquisition_type ? 700 : 400,
+                  }}>
+                  <option value="">— pick —</option>
+                  <option value="finished">🛒 Finished</option>
+                  <option value="liner">🌱 Liner</option>
+                  <option value="propagate">🌿 Propagate</option>
+                  <option value="partner">🤝 Partner</option>
+                </select>
+              </td>
+              {showArrives && (
+                <td style={{...td, background: "#fafdf7"}}>
+                  {i.acquisition_type === "finished" ? (
+                    <input type="date" value={i.arrival_date_target || ""}
+                      onChange={e => updateRow(i.id, { arrival_date_target: e.target.value || null })}
+                      style={{ width: 130, padding: "3px 4px", border: `1px solid ${COLORS.border}`, borderRadius: 4, fontSize: 11 }} />
+                  ) : <span style={{ color: COLORS.muted }}>—</span>}
+                </td>
+              )}
+              {showSupplier && (
+                <td style={{...td, background: "#fafdf7"}}>
+                  <input type="text" value={i.supplier || ""}
+                    onChange={e => updateRow(i.id, { supplier: e.target.value || null })}
+                    placeholder="—"
+                    style={{ width: 120, padding: "3px 6px", border: `1px solid ${COLORS.border}`, borderRadius: 4, fontSize: 11 }} />
+                </td>
+              )}
+              <td style={td}>{i.status}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
