@@ -2091,11 +2091,14 @@ function HpSourcingTab({ plan }) {
   }
 
   // Bucket by acquisition_type with fallback for un-tagged items
-  const finishedItems  = rows.filter(r => r.acquisition_type === "finished");
-  const linerItems     = rows.filter(r => r.acquisition_type === "liner");
-  const propagateItems = rows.filter(r => r.acquisition_type === "propagate");
-  const partnerItems   = rows.filter(r => r.acquisition_type === "partner");
-  const untagged       = rows.filter(r => !r.acquisition_type && r.status !== "cancelled");
+  // Sourcing only shows items the user has explicitly committed to (locked).
+  // 'considered' and 'cancelled' items don't flow into the sourcing pipeline.
+  const lockedRows     = rows.filter(r => r.status === "locked");
+  const finishedItems  = lockedRows.filter(r => r.acquisition_type === "finished");
+  const linerItems     = lockedRows.filter(r => r.acquisition_type === "liner");
+  const propagateItems = lockedRows.filter(r => r.acquisition_type === "propagate");
+  const partnerItems   = lockedRows.filter(r => r.acquisition_type === "partner");
+  const untagged       = lockedRows.filter(r => !r.acquisition_type);
 
   function makeBrokerRequest(mode) {
     const planYear = plan.year;
@@ -2152,11 +2155,11 @@ function HpSourcingTab({ plan }) {
     setReq(body);
   }
 
-  if (rows.length === 0) {
+  if (lockedRows.length === 0) {
     return (
       <div style={{ background: COLORS.card, border: `1px dashed ${COLORS.border}`, borderRadius: 10, padding: 40, textAlign: "center", color: COLORS.muted }}>
-        Tag items with an acquisition type in the 🛒 Catalog tab first.<br />
-        Sourcing splits by Finished / Liner / Propagate / Partner once items are tagged.
+        No locked items yet. Lock items in the 🛒 Catalog tab first.<br />
+        Sourcing only shows items you've committed to (status = locked) — splits by Finished / Liner / Propagate / Partner once you tag each with an acquisition type.
       </div>
     );
   }
