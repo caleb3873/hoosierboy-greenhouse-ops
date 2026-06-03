@@ -911,12 +911,17 @@ function CatalogTab({ plan }) {
   const [addModal, setAddModal] = useState(false);
 
   // For "Houseplants Q1 2027": current_year = 2026, prior_year = 2025
+  // Plus older years for historical context: 2024 (3yr), 2023 (4yr)
   const quarter = parseInt(plan.season?.replace(/[^0-9]/g, "")) || 1;
   const planYear = plan.year;
   const currYr = planYear - 1;
   const priorYr = planYear - 2;
+  const priorYr2 = planYear - 3; // 3-yr base
+  const priorYr3 = planYear - 4; // 4-yr base
+  const allYears = [priorYr3, priorYr2, priorYr, currYr]; // chronological
   const startMonth = (quarter - 1) * 3 + 1;
   const endMonth = quarter * 3;
+  const [avgBase, setAvgBase] = useState(2); // 2 | 3 | 4
 
   function quarterRange(year) {
     return {
@@ -977,9 +982,10 @@ function CatalogTab({ plan }) {
         aliasMap[aliasKey] = { key: canKey, desc: a.canonical_desc, pot_size: a.canonical_pot_size };
       }
 
-      // Aggregate by (normalized desc, pot_size) — apply aliases first
-      const curr = quarterRange(currYr);
-      const prior = quarterRange(priorYr);
+      // Aggregate by (normalized desc, pot_size) — apply aliases first.
+      // Capture qty + rev per year for ALL available years (2023, 2024, 2025, 2026).
+      const ranges = {};
+      for (const yr of allYears) ranges[yr] = quarterRange(yr);
       const byKey = {};
       for (const r of all) {
         let rawKey = `${r.pot_size || "?"}|${normalizeDesc(r.description)}`;
@@ -988,32 +994,44 @@ function CatalogTab({ plan }) {
           rawKey = aliasMap[rawKey].key;
           useDesc = aliasMap[rawKey] ? aliasMap[rawKey].desc : aliasMap[rawKey]?.desc || useDesc;
           usePot  = aliasMap[`${r.pot_size || "?"}|${normalizeDesc(r.description)}`]?.pot_size || usePot;
-          // Re-resolve to get the canonical desc/pot (avoid lookup-after-overwrite bug)
           const a = (aliasData || []).find(x => normalizeDesc(x.alias_desc) === normalizeDesc(r.description) && x.alias_pot_size === r.pot_size);
           if (a) { useDesc = a.canonical_desc; usePot = a.canonical_pot_size; }
         }
-        if (!byKey[rawKey]) byKey[rawKey] = {
-          desc: useDesc, pot_size: usePot,
-          y_curr_qty: 0, y_curr_rev: 0, y_prior_qty: 0, y_prior_rev: 0,
-        };
+        if (!byKey[rawKey]) {
+          const yq = {}, yr_ = {};
+          for (const yr of allYears) { yq[yr] = 0; yr_[yr] = 0; }
+          byKey[rawKey] = { desc: useDesc, pot_size: usePot, yearQty: yq, yearRev: yr_ };
+        }
         const qty = +r.qty_sold || 0, rev = +r.sold_value || 0;
-        if (r.period >= curr.start && r.period <= curr.end) { byKey[rawKey].y_curr_qty += qty; byKey[rawKey].y_curr_rev += rev; }
-        if (r.period >= prior.start && r.period <= prior.end) { byKey[rawKey].y_prior_qty += qty; byKey[rawKey].y_prior_rev += rev; }
+        for (const yr of allYears) {
+          const rng = ranges[yr];
+          if (r.period >= rng.start && r.period <= rng.end) {
+            byKey[rawKey].yearQty[yr] += qty;
+            byKey[rawKey].yearRev[yr] += rev;
+            break;
+          }
+        }
       }
       const arr = Object.values(byKey).map(r => {
-        const priorPrice = r.y_prior_qty > 0 ? r.y_prior_rev / r.y_prior_qty : null;
-        const currPrice  = r.y_curr_qty  > 0 ? r.y_curr_rev  / r.y_curr_qty  : null;
+        // Back-compat: keep y_curr_/y_prior_ for existing UI
+        const y_curr_qty   = r.yearQty[currYr]  || 0;
+        const y_curr_rev   = r.yearRev[currYr]  || 0;
+        const y_prior_qty  = r.yearQty[priorYr] || 0;
+        const y_prior_rev  = r.yearRev[priorYr] || 0;
+        const priorPrice = y_prior_qty > 0 ? y_prior_rev / y_prior_qty : null;
+        const currPrice  = y_curr_qty  > 0 ? y_curr_rev  / y_curr_qty  : null;
         return {
           ...r,
+          y_curr_qty, y_curr_rev, y_prior_qty, y_prior_rev,
           normalized: normalizeDesc(r.desc),
           genus: (normalizeDesc(r.desc).split(/\s+/)[0] || "").toUpperCase(),
           prior_price: priorPrice,
           curr_price:  currPrice,
-          yoy_qty: r.y_prior_qty > 0 && r.y_curr_qty > 0 ? ((r.y_curr_qty - r.y_prior_qty) / r.y_prior_qty * 100) : null,
+          yoy_qty: y_prior_qty > 0 && y_curr_qty > 0 ? ((y_curr_qty - y_prior_qty) / y_prior_qty * 100) : null,
           yoy_price: priorPrice && currPrice ? ((currPrice - priorPrice) / priorPrice * 100) : null,
-          two_yr_avg: Math.round(((r.y_curr_qty || 0) + (r.y_prior_qty || 0)) / 2),
+          two_yr_avg: Math.round((y_curr_qty + y_prior_qty) / 2),
         };
-      }).filter(r => r.y_curr_qty + r.y_prior_qty > 0);
+      }).filter(r => Object.values(r.yearQty).reduce((a, b) => a + b, 0) > 0);
 
       // Inject "new trial" catalog rows (items that have no sales history but were
       // added manually via Add Variety). Identified by notes starting with [NEW TRIAL]
@@ -1072,15 +1090,38 @@ function CatalogTab({ plan }) {
     setReloadTick(t => t + 1);
   }
 
+  // Get the most-recent N years for the avg base
+  function baseYears() {
+    return allYears.slice(-avgBase); // last N years (chronological → most recent N)
+  }
+
+  // Compute the projection-base avg qty for a row
+  function avgQtyFor(r) {
+    const yrs = baseYears();
+    let total = 0, hadAny = 0;
+    for (const y of yrs) {
+      const q = (r.yearQty?.[y] || 0);
+      total += q;
+      if (q > 0) hadAny++;
+    }
+    return hadAny > 0 ? total / yrs.length : 0;
+  }
+  function avgRevFor(r) {
+    const yrs = baseYears();
+    let total = 0;
+    for (const y of yrs) total += (r.yearRev?.[y] || 0);
+    return total / yrs.length;
+  }
+
   // Apply current projection to every historical row that doesn't have a saved target_qty.
-  // Rule: target_qty = round((qty_prior + qty_curr) / 2 × (1 + projection/100))
+  // Rule: target_qty = round(N-yr avg × (1 + projection/100))
   //       target_price = curr_price (fallback prior_price)
   async function applyProjection() {
     const ops = [];
     for (const r of rows) {
       const existing = catalog.find(c => normalizeDesc(c.description) === r.normalized && c.pot_size === r.pot_size);
-      if (existing && (existing.target_qty != null || existing.status === "locked")) continue; // don't overwrite manual or locked
-      const avgQty = ((r.y_prior_qty || 0) + (r.y_curr_qty || 0)) / 2;
+      if (existing && (existing.target_qty != null || existing.status === "locked")) continue;
+      const avgQty = avgQtyFor(r);
       if (avgQty <= 0) continue;
       const targetQty = Math.round(avgQty * (1 + projection / 100));
       const targetPrice = r.curr_price || r.prior_price || null;
@@ -1090,7 +1131,7 @@ function CatalogTab({ plan }) {
       alert("No items to apply — all historical items already have a target or are locked.");
       return;
     }
-    if (!confirm(`Apply +${projection}% projection to ${ops.length} historical items? Locked + already-set items are untouched.`)) return;
+    if (!confirm(`Apply +${projection}% projection (${avgBase}-yr avg base) to ${ops.length} historical items?`)) return;
     for (const op of ops) await updateCatalogRow(op.row, op.updates);
   }
 
@@ -1184,12 +1225,21 @@ function CatalogTab({ plan }) {
     return total * stability * growth;
   }
 
+  // "Skipped" filter: sold in older years (2023 + 2024) but ZERO in most recent 2 (2025 + 2026).
+  // These are items we used to grow but have dropped — worth investigating.
+  function isSkipped(r) {
+    const older = (r.yearQty?.[priorYr3] || 0) + (r.yearQty?.[priorYr2] || 0);
+    const recent = (r.yearQty?.[priorYr] || 0) + (r.yearQty?.[currYr] || 0);
+    return older > 25 && recent === 0;
+  }
+
   // Apply view mode filtering / sorting
   let viewRows = [...rows];
   if (viewMode === "top26")        viewRows.sort((a, b) => b.y_curr_qty - a.y_curr_qty);
   else if (viewMode === "top25")   viewRows.sort((a, b) => b.y_prior_qty - a.y_prior_qty);
   else if (viewMode === "new")     viewRows = viewRows.filter(r => !r.y_prior_qty && r.y_curr_qty > 0).sort((a,b) => b.y_curr_qty - a.y_curr_qty);
   else if (viewMode === "missing") viewRows = viewRows.filter(r => r.y_prior_qty > 0 && !r.y_curr_qty).sort((a,b) => b.y_prior_qty - a.y_prior_qty);
+  else if (viewMode === "skipped") viewRows = viewRows.filter(isSkipped).sort((a,b) => ((b.yearQty?.[priorYr3]||0)+(b.yearQty?.[priorYr2]||0)) - ((a.yearQty?.[priorYr3]||0)+(a.yearQty?.[priorYr2]||0)));
   else if (viewMode === "growers") viewRows = viewRows.filter(r => r.yoy_qty != null && r.yoy_qty > 25 && r.y_prior_qty > 50).sort((a,b) => b.yoy_qty - a.yoy_qty);
   else if (viewMode === "decliners") viewRows = viewRows.filter(r => r.yoy_qty != null && r.yoy_qty < -25 && r.y_prior_qty > 100).sort((a,b) => a.yoy_qty - b.yoy_qty);
   else if (viewMode === "recommended") viewRows.sort((a, b) => scoreItem(b) - scoreItem(a));
@@ -1222,16 +1272,20 @@ function CatalogTab({ plan }) {
     </th>
   );
 
-  // Catalog summary stats (computed over all rows for the size split panel)
+  // Catalog summary stats — per pot size, capture qty + rev for EVERY available year
   const sizeStats = {};
   for (const r of rows) {
     const k = r.pot_size || "(unknown)";
-    if (!sizeStats[k]) sizeStats[k] = { size: k, items: 0, qty_25: 0, rev_25: 0, qty_26: 0, rev_26: 0, prices: [] };
+    if (!sizeStats[k]) {
+      const yQ = {}, yR = {};
+      for (const y of allYears) { yQ[y] = 0; yR[y] = 0; }
+      sizeStats[k] = { size: k, items: 0, yearQty: yQ, yearRev: yR, prices: [] };
+    }
     sizeStats[k].items += 1;
-    sizeStats[k].qty_25 += r.y_prior_qty;
-    sizeStats[k].rev_25 += r.y_prior_rev;
-    sizeStats[k].qty_26 += r.y_curr_qty;
-    sizeStats[k].rev_26 += r.y_curr_rev;
+    for (const y of allYears) {
+      sizeStats[k].yearQty[y] += (r.yearQty?.[y] || 0);
+      sizeStats[k].yearRev[y] += (r.yearRev?.[y] || 0);
+    }
     if (r.curr_price) sizeStats[k].prices.push(r.curr_price);
   }
   // Roll up saved catalog target qty/rev per size
@@ -1242,9 +1296,16 @@ function CatalogTab({ plan }) {
     targetBySize[k].qty += (+c.target_qty || 0);
     targetBySize[k].rev += (+c.target_qty || 0) * (+c.target_price || 0);
   }
+  const baseYrs = allYears.slice(-avgBase);
   const sizeStatsArr = Object.values(sizeStats).map(s => {
-    const avg_qty = ((s.qty_25 || 0) + (s.qty_26 || 0)) / 2;
-    const avg_rev = ((s.rev_25 || 0) + (s.rev_26 || 0)) / 2;
+    // back-compat fields for any remaining references
+    const qty_25 = s.yearQty[priorYr] || 0;
+    const qty_26 = s.yearQty[currYr]  || 0;
+    const rev_25 = s.yearRev[priorYr] || 0;
+    const rev_26 = s.yearRev[currYr]  || 0;
+    // avg uses chosen base
+    const avg_qty = baseYrs.reduce((sum, y) => sum + (s.yearQty[y] || 0), 0) / baseYrs.length;
+    const avg_rev = baseYrs.reduce((sum, y) => sum + (s.yearRev[y] || 0), 0) / baseYrs.length;
     const target_qty = targetBySize[s.size]?.qty || 0;
     const target_rev = targetBySize[s.size]?.rev || 0;
     const projected_qty = Math.round(avg_qty * (1 + projection / 100));
@@ -1252,6 +1313,7 @@ function CatalogTab({ plan }) {
     const delta_pct = avg_qty > 0 && target_qty > 0 ? ((target_qty - avg_qty) / avg_qty * 100) : null;
     return {
       ...s,
+      qty_25, qty_26, rev_25, rev_26,
       avg_price: s.prices.length ? s.prices.reduce((a,b) => a+b, 0) / s.prices.length : 0,
       min_price: s.prices.length ? Math.min(...s.prices) : 0,
       max_price: s.prices.length ? Math.max(...s.prices) : 0,
@@ -1264,7 +1326,13 @@ function CatalogTab({ plan }) {
   const grandProjQty  = sizeStatsArr.reduce((s, x) => s + x.projected_qty, 0);
   const grandRev25    = sizeStatsArr.reduce((s, x) => s + (x.rev_25 || 0), 0);
   const grandRev26    = sizeStatsArr.reduce((s, x) => s + (x.rev_26 || 0), 0);
-  const grandAvgRev   = (grandRev25 + grandRev26) / 2;
+  // avg revenue rolled up across the chosen avg base
+  const grandAvgRev   = sizeStatsArr.reduce((s, x) => s + (x.avg_rev || 0), 0);
+  // per-year totals across all years
+  const grandRevByYear = {};
+  for (const y of allYears) grandRevByYear[y] = sizeStatsArr.reduce((s, x) => s + (x.yearRev?.[y] || 0), 0);
+  const grandQtyByYear = {};
+  for (const y of allYears) grandQtyByYear[y] = sizeStatsArr.reduce((s, x) => s + (x.yearQty?.[y] || 0), 0);
   const grandTgtRev   = sizeStatsArr.reduce((s, x) => s + x.target_rev,    0);
   const grandProjRev  = sizeStatsArr.reduce((s, x) => s + x.projected_rev, 0);
   const grandPctOfProj = grandProjQty > 0 ? (grandTgtQty / grandProjQty * 100) : 0;
@@ -1276,6 +1344,7 @@ function CatalogTab({ plan }) {
     top25:       rows.filter(r => r.y_prior_qty > 0).length,
     new:         rows.filter(r => !r.y_prior_qty && r.y_curr_qty > 0).length,
     missing:     rows.filter(r => r.y_prior_qty > 0 && !r.y_curr_qty).length,
+    skipped:     rows.filter(isSkipped).length,
     growers:     rows.filter(r => r.yoy_qty != null && r.yoy_qty > 25 && r.y_prior_qty > 50).length,
     decliners:   rows.filter(r => r.yoy_qty != null && r.yoy_qty < -25 && r.y_prior_qty > 100).length,
     recommended: rows.length,
@@ -1305,10 +1374,23 @@ function CatalogTab({ plan }) {
               📊 Projection &amp; size rollup
             </div>
             <div style={{ fontSize: 12, color: COLORS.muted, marginTop: 2 }}>
-              Set your growth target vs. the 2-yr sales avg, then click Apply to pre-fill targets. Adjust individual rows below; totals stay live.
+              Pick the avg base (last 2 / 3 / 4 years), set growth target, then Apply to pre-fill targets. Adjust rows below; totals stay live.
             </div>
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase", letterSpacing: 0.3 }}>Avg base:</span>
+              {[2, 3, 4].map(n => (
+                <button key={n} onClick={() => setAvgBase(n)}
+                  style={{
+                    padding: "5px 10px", fontSize: 12, fontWeight: 700,
+                    background: avgBase === n ? COLORS.dark : "#f3f5ef",
+                    color:      avgBase === n ? "#fff" : COLORS.text,
+                    border: `1px solid ${avgBase === n ? COLORS.dark : COLORS.border}`,
+                    borderRadius: 14, cursor: "pointer",
+                  }}>{n}yr</button>
+              ))}
+            </div>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <span style={{ fontSize: 13, fontWeight: 700, color: COLORS.text }}>Projection</span>
               <input type="number" value={projection} step="1"
@@ -1331,68 +1413,78 @@ function CatalogTab({ plan }) {
           </div>
         </div>
 
-        {/* Revenue projection summary */}
-        <div style={{ background: "#f3f5ef", borderRadius: 8, padding: 12, marginBottom: 12, display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12 }}>
-          <RevStat label={`Q${quarter} '${String(priorYr).slice(-2)} actual`} value={fmtMoney(grandRev25)} muted />
-          <RevStat label={`Q${quarter} '${String(currYr).slice(-2)} actual`} value={fmtMoney(grandRev26)} muted />
-          <RevStat label="2-yr avg" value={fmtMoney(grandAvgRev)} />
-          <RevStat label={`${projection >= 0 ? "+" : ""}${projection}% projected ${planYear}`} value={fmtMoney(grandProjRev)} accent={COLORS.light} />
-          <RevStat label="🎯 Your target" value={fmtMoney(grandTgtRev)} accent={COLORS.dark} big />
-        </div>
+        {/* Only show years that have data (so we don't waste columns on years not loaded yet) */}
+        {(() => {
+          const displayYears = allYears.filter(y => grandRevByYear[y] > 0 || grandQtyByYear[y] > 0);
+          return (
+            <>
+              {/* Revenue projection summary */}
+              <div style={{ background: "#f3f5ef", borderRadius: 8, padding: 12, marginBottom: 12, display: "grid", gridTemplateColumns: `repeat(${displayYears.length + 3}, 1fr)`, gap: 12 }}>
+                {displayYears.map(y => (
+                  <RevStat key={y} label={`Q${quarter} '${String(y).slice(-2)}`} value={fmtMoney(grandRevByYear[y])} muted />
+                ))}
+                <RevStat label={`${avgBase}-yr avg`} value={fmtMoney(grandAvgRev)} />
+                <RevStat label={`${projection >= 0 ? "+" : ""}${projection}% projected ${planYear}`} value={fmtMoney(grandProjRev)} accent={COLORS.light} />
+                <RevStat label="🎯 Your target" value={fmtMoney(grandTgtRev)} accent={COLORS.dark} big />
+              </div>
 
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-          <thead>
-            <tr style={{ background: "#f3f5ef" }}>
-              <th style={th}>Pot</th>
-              <th style={{...th, textAlign:"right"}}># items</th>
-              <th style={{...th, textAlign:"right"}}>Q{quarter} '{String(priorYr).slice(-2)} qty</th>
-              <th style={{...th, textAlign:"right"}}>Q{quarter} '{String(currYr).slice(-2)} qty</th>
-              <th style={{...th, textAlign:"right"}}>2-yr avg qty</th>
-              <th style={{...th, textAlign:"right", background: "#eaf3df"}}>Projected qty ({projection >= 0 ? "+" : ""}{projection}%)</th>
-              <th style={{...th, textAlign:"right", background: "#fafdf7"}}>🎯 Target qty</th>
-              <th style={{...th, textAlign:"right"}}>Δ vs avg</th>
-              <th style={{...th, textAlign:"right"}}>2-yr avg $</th>
-              <th style={{...th, textAlign:"right", background: "#eaf3df"}}>Projected $</th>
-              <th style={{...th, textAlign:"right", background: "#fafdf7"}}>🎯 Target $</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sizeStatsArr.map(s => {
-              const avgRevSize = ((s.rev_25 || 0) + (s.rev_26 || 0)) / 2;
-              const projRevSize = avgRevSize * (1 + projection / 100);
-              return (
-                <tr key={s.size} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
-                  <td style={td}><strong>{s.size}</strong></td>
-                  <td style={{...td, textAlign:"right"}}>{s.items}</td>
-                  <td style={{...td, textAlign:"right", color: COLORS.muted}}>{s.qty_25.toLocaleString()}</td>
-                  <td style={{...td, textAlign:"right", color: COLORS.muted}}>{s.qty_26.toLocaleString()}</td>
-                  <td style={{...td, textAlign:"right"}}>{Math.round(s.avg_qty).toLocaleString()}</td>
-                  <td style={{...td, textAlign:"right", background: "#eaf3df", fontWeight: 700, color: COLORS.dark}}>{s.projected_qty.toLocaleString()}</td>
-                  <td style={{...td, textAlign:"right", background: "#fafdf7", fontWeight: 800, color: COLORS.light}}>{s.target_qty.toLocaleString() || "—"}</td>
-                  <td style={{...td, textAlign:"right", color: s.delta_pct == null ? COLORS.muted : s.delta_pct > 0 ? COLORS.light : s.delta_pct < -5 ? COLORS.red : COLORS.text, fontWeight: 700}}>
-                    {s.delta_pct != null ? (s.delta_pct >= 0 ? "+" : "") + s.delta_pct.toFixed(0) + "%" : "—"}
-                  </td>
-                  <td style={{...td, textAlign:"right", color: COLORS.muted}}>{fmtMoney(avgRevSize)}</td>
-                  <td style={{...td, textAlign:"right", background: "#eaf3df", fontWeight: 700, color: COLORS.dark}}>{fmtMoney(projRevSize)}</td>
-                  <td style={{...td, textAlign:"right", background: "#fafdf7", fontWeight: 800, color: COLORS.light}}>{fmtMoney(s.target_rev)}</td>
-                </tr>
-              );
-            })}
-            <tr style={{ background: COLORS.dark, color: "#fff" }}>
-              <td style={{...td, color: "#fff", fontWeight: 800}}>TOTAL</td>
-              <td style={{...td, color: "#fff", textAlign:"right", fontWeight: 800}}>{sizeStatsArr.reduce((s,x)=>s+x.items,0)}</td>
-              <td style={{...td, color: "#c8e6b8", textAlign:"right"}}>{sizeStatsArr.reduce((s,x)=>s+x.qty_25,0).toLocaleString()}</td>
-              <td style={{...td, color: "#c8e6b8", textAlign:"right"}}>{sizeStatsArr.reduce((s,x)=>s+x.qty_26,0).toLocaleString()}</td>
-              <td style={{...td, color: "#fff", textAlign:"right", fontWeight: 800}}>{Math.round(grandAvgQty).toLocaleString()}</td>
-              <td style={{...td, color: "#fff", textAlign:"right", fontWeight: 800, background: "rgba(127,176,105,0.3)"}}>{grandProjQty.toLocaleString()}</td>
-              <td style={{...td, color: "#fff", textAlign:"right", fontWeight: 800}}>{grandTgtQty.toLocaleString()} <span style={{ fontSize: 10, fontWeight: 600, color: "#c8e6b8" }}>({grandPctOfProj.toFixed(0)}%)</span></td>
-              <td style={td}></td>
-              <td style={{...td, color: "#c8e6b8", textAlign:"right"}}>{fmtMoney(grandAvgRev)}</td>
-              <td style={{...td, color: "#fff", textAlign:"right", fontWeight: 800, background: "rgba(127,176,105,0.3)"}}>{fmtMoney(grandProjRev)}</td>
-              <td style={{...td, color: "#fff", textAlign:"right", fontWeight: 800}}>{fmtMoney(grandTgtRev)}</td>
-            </tr>
-          </tbody>
-        </table>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ background: "#f3f5ef" }}>
+                      <th style={th}>Pot</th>
+                      <th style={{...th, textAlign:"right"}}>#</th>
+                      {displayYears.map(y => (
+                        <th key={y} style={{...th, textAlign:"right"}}>'{String(y).slice(-2)} qty</th>
+                      ))}
+                      <th style={{...th, textAlign:"right"}}>{avgBase}yr avg qty</th>
+                      <th style={{...th, textAlign:"right", background: "#eaf3df"}}>Proj qty ({projection >= 0 ? "+" : ""}{projection}%)</th>
+                      <th style={{...th, textAlign:"right", background: "#fafdf7"}}>🎯 Target qty</th>
+                      <th style={{...th, textAlign:"right"}}>Δ vs avg</th>
+                      <th style={{...th, textAlign:"right"}}>{avgBase}yr avg $</th>
+                      <th style={{...th, textAlign:"right", background: "#eaf3df"}}>Proj $</th>
+                      <th style={{...th, textAlign:"right", background: "#fafdf7"}}>🎯 Target $</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sizeStatsArr.map(s => (
+                      <tr key={s.size} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
+                        <td style={td}><strong>{s.size}</strong></td>
+                        <td style={{...td, textAlign:"right"}}>{s.items}</td>
+                        {displayYears.map(y => (
+                          <td key={y} style={{...td, textAlign:"right", color: COLORS.muted}}>{(s.yearQty[y] || 0).toLocaleString()}</td>
+                        ))}
+                        <td style={{...td, textAlign:"right"}}>{Math.round(s.avg_qty).toLocaleString()}</td>
+                        <td style={{...td, textAlign:"right", background: "#eaf3df", fontWeight: 700, color: COLORS.dark}}>{s.projected_qty.toLocaleString()}</td>
+                        <td style={{...td, textAlign:"right", background: "#fafdf7", fontWeight: 800, color: COLORS.light}}>{s.target_qty.toLocaleString() || "—"}</td>
+                        <td style={{...td, textAlign:"right", color: s.delta_pct == null ? COLORS.muted : s.delta_pct > 0 ? COLORS.light : s.delta_pct < -5 ? COLORS.red : COLORS.text, fontWeight: 700}}>
+                          {s.delta_pct != null ? (s.delta_pct >= 0 ? "+" : "") + s.delta_pct.toFixed(0) + "%" : "—"}
+                        </td>
+                        <td style={{...td, textAlign:"right", color: COLORS.muted}}>{fmtMoney(s.avg_rev)}</td>
+                        <td style={{...td, textAlign:"right", background: "#eaf3df", fontWeight: 700, color: COLORS.dark}}>{fmtMoney(s.projected_rev)}</td>
+                        <td style={{...td, textAlign:"right", background: "#fafdf7", fontWeight: 800, color: COLORS.light}}>{fmtMoney(s.target_rev)}</td>
+                      </tr>
+                    ))}
+                    <tr style={{ background: COLORS.dark, color: "#fff" }}>
+                      <td style={{...td, color: "#fff", fontWeight: 800}}>TOTAL</td>
+                      <td style={{...td, color: "#fff", textAlign:"right", fontWeight: 800}}>{sizeStatsArr.reduce((s,x)=>s+x.items,0)}</td>
+                      {displayYears.map(y => (
+                        <td key={y} style={{...td, color: "#c8e6b8", textAlign:"right"}}>{grandQtyByYear[y].toLocaleString()}</td>
+                      ))}
+                      <td style={{...td, color: "#fff", textAlign:"right", fontWeight: 800}}>{Math.round(grandAvgQty).toLocaleString()}</td>
+                      <td style={{...td, color: "#fff", textAlign:"right", fontWeight: 800, background: "rgba(127,176,105,0.3)"}}>{grandProjQty.toLocaleString()}</td>
+                      <td style={{...td, color: "#fff", textAlign:"right", fontWeight: 800}}>{grandTgtQty.toLocaleString()} <span style={{ fontSize: 10, fontWeight: 600, color: "#c8e6b8" }}>({grandPctOfProj.toFixed(0)}%)</span></td>
+                      <td style={td}></td>
+                      <td style={{...td, color: "#c8e6b8", textAlign:"right"}}>{fmtMoney(grandAvgRev)}</td>
+                      <td style={{...td, color: "#fff", textAlign:"right", fontWeight: 800, background: "rgba(127,176,105,0.3)"}}>{fmtMoney(grandProjRev)}</td>
+                      <td style={{...td, color: "#fff", textAlign:"right", fontWeight: 800}}>{fmtMoney(grandTgtRev)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </>
+          );
+        })()}
       </div>
 
       <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 16 }}>
@@ -1407,6 +1499,7 @@ function CatalogTab({ plan }) {
             { id: "decliners",   label: "📉 Decliners" },
             { id: "new",         label: `🆕 New in ${currYr}` },
             { id: "missing",     label: `❌ Missing in ${currYr}` },
+            { id: "skipped",     label: `🕳️ Skipped (sold '${String(priorYr3).slice(-2)}/'${String(priorYr2).slice(-2)}, dropped '${String(priorYr).slice(-2)}/'${String(currYr).slice(-2)})` },
           ].map(v => (
             <button key={v.id} onClick={() => pickView(v.id)}
               style={{
@@ -1434,6 +1527,7 @@ function CatalogTab({ plan }) {
               {viewMode === "decliners" && `Items with >25% YoY decline (had >100 units in ${priorYr}) — investigate supply or relevance.`}
               {viewMode === "new" && `Sold in ${currYr} but no ${priorYr} sales — recent additions.`}
               {viewMode === "missing" && `Sold in ${priorYr} but no ${currYr} sales — gaps to investigate.`}
+              {viewMode === "skipped" && `Sold >25 units in ${priorYr3} or ${priorYr2} but ZERO in ${priorYr} + ${currYr}. Items we used to grow and dropped — worth knowing why before re-introducing.`}
               {viewMode === "all" && "Type targets and they save automatically. Lock when ready."}
             </div>
           </div>
