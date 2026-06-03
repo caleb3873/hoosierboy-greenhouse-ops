@@ -28,6 +28,7 @@ import SoilCalculator      from "./SoilCalculator";
 import HouseplantAvailability from "./HouseplantAvailability";
 import OwnerDashboard       from "./OwnerDashboard";
 import FallProgram          from "./FallProgram";
+import ProductionPlans      from "./ProductionPlans";
 import ShippingCustomers    from "./shipping/ShippingCustomers";
 import ShippingDrivers      from "./shipping/ShippingDrivers";
 import ShippingTrucks       from "./shipping/ShippingTrucks";
@@ -61,6 +62,7 @@ const NAV_GROUPS = [
   {
     id: "production", label: "Production", icon: "🌱",
     items: [
+      { id: "plans",     label: "📊 Plans" },
       { id: "preseason", label: "Preseason" },
       { id: "crops",     label: "Crop Planning" },
       { id: "fall",      label: "Fall Program" },
@@ -257,6 +259,7 @@ function PlannerShell() {
         {page === "deadlines"  && <SeasonDeadlines />}
         {page === "soil"       && <SoilCalculator />}
         {page === "fall"       && <FallProgram />}
+        {page === "plans"      && <ProductionPlans />}
         {page === "houseplants" && <HouseplantAvailability />}
         {page === "ship-command"   && <ShippingCommand />}
         {page === "ship-routes"    && <ShippingRoutes />}

@@ -360,3 +360,66 @@ export async function updatePassword(newPassword) {
   if (!sb) return { error: { message: "No connection" } };
   return sb.auth.updateUser({ password: newPassword });
 }
+
+// ── CULTURE GUIDES (cross-project: xshthovyxaemnkkbiljf) ──────────────────────
+// Read-only client pointed at the breeder culture corpus. 3,174+ rows across
+// Ball/Selecta/Danziger/Darwin/Dümmen. Powers ReferenceDocs + variety_library
+// enrichment + the bench compatibility checker.
+const CULTURE_URL  = process.env.REACT_APP_SUPABASE_CULTURE_URL || "";
+const CULTURE_KEY  = process.env.REACT_APP_SUPABASE_CULTURE_ANON_KEY || "";
+let _culture = null;
+export function getCultureClient() {
+  if (!_culture && CULTURE_URL && CULTURE_KEY) {
+    _culture = createClient(CULTURE_URL, CULTURE_KEY);
+  }
+  return _culture;
+}
+
+// Filtered fetch from culture_guides_public. Server-side pagination — never
+// pulls the whole 3k corpus into memory.
+//   useCultureGuides({ breeder, crop, series, search, limit, offset })
+export function useCultureGuides(filters = {}) {
+  const { breeder, crop, series, search, limit = 200, offset = 0 } = filters;
+  const [rows, setRows]       = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError]     = useState(null);
+  const [total, setTotal]     = useState(null);
+  const cc = getCultureClient();
+
+  useEffect(() => {
+    if (!cc) { setLoading(false); setError("Culture client not configured"); return; }
+    let cancelled = false;
+    setLoading(true);
+    (async () => {
+      let q = cc.from("culture_guides_public")
+        .select("id,breeder_name,crop_name,series_name,series_variety,category,culture_details,finish_time_matrix,propagation_details,propagation_weeks,requires_heat,created_at", { count: "exact" })
+        .order("breeder_name", { ascending: true })
+        .order("crop_name",    { ascending: true })
+        .order("series_name",  { ascending: true })
+        .range(offset, offset + limit - 1);
+      if (breeder) q = q.eq("breeder_name", breeder);
+      if (crop)    q = q.ilike("crop_name",  `%${crop}%`);
+      if (series)  q = q.ilike("series_name", `%${series}%`);
+      if (search)  q = q.or(`crop_name.ilike.%${search}%,series_name.ilike.%${search}%,series_variety.ilike.%${search}%`);
+      const { data, error: err, count } = await q;
+      if (cancelled) return;
+      if (err) { setError(err.message); setLoading(false); return; }
+      // Culture rows are read-only; preserve their original key shape (snake_case at top,
+      // but PascalCase / mixed inside culture_details JSONB). Don't run toCamel().
+      setRows(data || []);
+      setTotal(count);
+      setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [cc, breeder, crop, series, search, limit, offset]);
+
+  return { rows, loading, error, total };
+}
+
+// One-shot fetch by id for the variety detail drawer.
+export async function fetchCultureGuide(id) {
+  const cc = getCultureClient();
+  if (!cc) return { error: "Culture client not configured" };
+  const { data, error } = await cc.from("culture_guides_public").select("*").eq("id", id).single();
+  return { data, error };
+}
