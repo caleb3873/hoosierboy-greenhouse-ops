@@ -74,10 +74,20 @@ function deriveCode(desc, pot) {
 function extractPot(desc) {
   if (!desc) return null;
   const s = String(desc);
+  // HB N" prefix (hanging baskets)
   const hb = s.match(/^HB \d+(\.\d+)?"\s*/i);
   if (hb) return hb[0].trim();
+  // Standard N" prefix
   const m = s.match(/^\d+(\.\d+)?"\s*/);
   if (m) return m[0].trim();
+  // "Pot N"" or "Pot NG" prefix
+  const pot = s.match(/^Pot (\d+(?:\.\d+)?(?:"|G))/i);
+  if (pot) return pot[1];
+  // "Pot N''" (doubled single-quotes that some exports use instead of ")
+  const pot2 = s.match(/^Pot (\d+(?:\.\d+)?)''/);
+  if (pot2) return pot2[1] + '"';
+  // Tillandsia / air plants — no traditional pot size
+  if (/^(Tillandsia|Assorted Tillandsia)/i.test(s)) return "Air";
   return null;
 }
 
