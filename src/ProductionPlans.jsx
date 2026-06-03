@@ -835,6 +835,8 @@ function CatalogTab({ plan }) {
   const [sortDir, setSortDir] = useState("desc");
   const [filterSize, setFilterSize] = useState("all");
   const [search, setSearch] = useState("");
+  const [viewMode, setViewMode] = useState("all");
+  const [showStats, setShowStats] = useState(false);
   const [loading, setLoading] = useState(true);
 
   // For "Houseplants Q1 2027": current_year = 2026, prior_year = 2025
@@ -944,12 +946,35 @@ function CatalogTab({ plan }) {
   if (loading) return <div style={{ padding: 20, color: COLORS.muted }}>Loading catalog…</div>;
 
   const sizes = Array.from(new Set(rows.map(r => r.pot_size).filter(Boolean))).sort();
-  const filtered = rows.filter(r => {
+
+  // Score each row for the "Recommendations" view mode
+  function scoreItem(r) {
+    const total = (r.y_prior_qty || 0) + (r.y_curr_qty || 0);
+    const stability = (r.y_prior_qty > 50 && r.y_curr_qty > 50) ? 1.5 :
+                      (r.y_prior_qty > 0 && r.y_curr_qty > 0) ? 1.2 :
+                      0.85;  // single-year items get penalized
+    const growth = r.yoy_qty != null ? Math.max(0.5, Math.min(2.0, 1 + r.yoy_qty / 200)) : 1.0;
+    return total * stability * growth;
+  }
+
+  // Apply view mode filtering / sorting
+  let viewRows = [...rows];
+  if (viewMode === "top26")        viewRows.sort((a, b) => b.y_curr_qty - a.y_curr_qty);
+  else if (viewMode === "top25")   viewRows.sort((a, b) => b.y_prior_qty - a.y_prior_qty);
+  else if (viewMode === "new")     viewRows = viewRows.filter(r => !r.y_prior_qty && r.y_curr_qty > 0).sort((a,b) => b.y_curr_qty - a.y_curr_qty);
+  else if (viewMode === "missing") viewRows = viewRows.filter(r => r.y_prior_qty > 0 && !r.y_curr_qty).sort((a,b) => b.y_prior_qty - a.y_prior_qty);
+  else if (viewMode === "growers") viewRows = viewRows.filter(r => r.yoy_qty != null && r.yoy_qty > 25 && r.y_prior_qty > 50).sort((a,b) => b.yoy_qty - a.yoy_qty);
+  else if (viewMode === "decliners") viewRows = viewRows.filter(r => r.yoy_qty != null && r.yoy_qty < -25 && r.y_prior_qty > 100).sort((a,b) => a.yoy_qty - b.yoy_qty);
+  else if (viewMode === "recommended") viewRows.sort((a, b) => scoreItem(b) - scoreItem(a));
+
+  const filtered = viewRows.filter(r => {
     if (filterSize !== "all" && r.pot_size !== filterSize) return false;
     if (search && !r.desc.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
   });
-  const sorted = [...filtered].sort((a, b) => {
+
+  // Custom sort overrides view-mode default when user clicks a column header
+  const sorted = sortCol === "_viewmode" ? filtered : [...filtered].sort((a, b) => {
     const av = a[sortCol] || 0, bv = b[sortCol] || 0;
     if (typeof av === "string") return sortDir === "asc" ? av.localeCompare(bv) : bv.localeCompare(av);
     return sortDir === "asc" ? (av - bv) : (bv - av);
@@ -959,11 +984,47 @@ function CatalogTab({ plan }) {
     if (c === sortCol) setSortDir(d => d === "asc" ? "desc" : "asc");
     else { setSortCol(c); setSortDir("desc"); }
   }
+  function pickView(v) {
+    setViewMode(v);
+    setSortCol("_viewmode");  // let view mode drive the order
+  }
+
   const SortHdr = ({ col, label, align }) => (
     <th style={{...th, textAlign: align || "left", cursor: "pointer"}} onClick={() => clickSort(col)}>
       {label} {sortCol === col ? (sortDir === "asc" ? "↑" : "↓") : ""}
     </th>
   );
+
+  // Catalog summary stats (computed over all rows for the size split panel)
+  const sizeStats = {};
+  for (const r of rows) {
+    const k = r.pot_size || "(unknown)";
+    if (!sizeStats[k]) sizeStats[k] = { size: k, items: 0, qty_25: 0, rev_25: 0, qty_26: 0, rev_26: 0, prices: [] };
+    sizeStats[k].items += 1;
+    sizeStats[k].qty_25 += r.y_prior_qty;
+    sizeStats[k].rev_25 += r.y_prior_rev;
+    sizeStats[k].qty_26 += r.y_curr_qty;
+    sizeStats[k].rev_26 += r.y_curr_rev;
+    if (r.curr_price) sizeStats[k].prices.push(r.curr_price);
+  }
+  const sizeStatsArr = Object.values(sizeStats).map(s => ({
+    ...s,
+    avg_price: s.prices.length ? s.prices.reduce((a,b) => a+b, 0) / s.prices.length : 0,
+    min_price: s.prices.length ? Math.min(...s.prices) : 0,
+    max_price: s.prices.length ? Math.max(...s.prices) : 0,
+  })).sort((a, b) => b.rev_26 - a.rev_26);
+
+  // Counts for view-mode chips
+  const counts = {
+    all:         rows.length,
+    top26:       rows.filter(r => r.y_curr_qty > 0).length,
+    top25:       rows.filter(r => r.y_prior_qty > 0).length,
+    new:         rows.filter(r => !r.y_prior_qty && r.y_curr_qty > 0).length,
+    missing:     rows.filter(r => r.y_prior_qty > 0 && !r.y_curr_qty).length,
+    growers:     rows.filter(r => r.yoy_qty != null && r.yoy_qty > 25 && r.y_prior_qty > 50).length,
+    decliners:   rows.filter(r => r.yoy_qty != null && r.yoy_qty < -25 && r.y_prior_qty > 100).length,
+    recommended: rows.length,
+  };
 
   // Rollups
   const lockedCount = catalog.filter(c => c.status === "locked").length;
@@ -981,14 +1042,95 @@ function CatalogTab({ plan }) {
         <Stat label="Target rev"    value={fmtMoney(totalTargetRev)} dark big />
       </div>
 
+      {/* Catalog Summary panel (collapsible) */}
       <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }} onClick={() => setShowStats(!showStats)}>
+          <div style={{ fontSize: 13, color: COLORS.muted, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700 }}>
+            📊 Catalog summary · pot size × pricing analytics
+          </div>
+          <span style={{ color: COLORS.muted, fontSize: 14 }}>{showStats ? "▾" : "▸"}</span>
+        </div>
+        {showStats && (
+          <div style={{ marginTop: 14 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead>
+                <tr style={{ background: "#f3f5ef" }}>
+                  <th style={th}>Pot</th>
+                  <th style={{...th, textAlign:"right"}}># Items</th>
+                  <th style={{...th, textAlign:"right"}}>Q{quarter} {priorYr} qty</th>
+                  <th style={{...th, textAlign:"right"}}>Q{quarter} {currYr} qty</th>
+                  <th style={{...th, textAlign:"right"}}>Q{quarter} {priorYr} $</th>
+                  <th style={{...th, textAlign:"right"}}>Q{quarter} {currYr} $</th>
+                  <th style={{...th, textAlign:"right"}}>YoY rev</th>
+                  <th style={{...th, textAlign:"right"}}>Avg price</th>
+                  <th style={{...th, textAlign:"right"}}>Price range</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sizeStatsArr.map(s => {
+                  const yoy = s.rev_25 > 0 ? ((s.rev_26 - s.rev_25) / s.rev_25 * 100) : null;
+                  return (
+                    <tr key={s.size} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
+                      <td style={td}><strong>{s.size}</strong></td>
+                      <td style={{...td, textAlign:"right"}}>{s.items}</td>
+                      <td style={{...td, textAlign:"right", color: COLORS.muted}}>{s.qty_25.toLocaleString()}</td>
+                      <td style={{...td, textAlign:"right"}}>{s.qty_26.toLocaleString()}</td>
+                      <td style={{...td, textAlign:"right", color: COLORS.muted}}>{fmtMoney(s.rev_25)}</td>
+                      <td style={{...td, textAlign:"right", fontWeight: 700}}>{fmtMoney(s.rev_26)}</td>
+                      <td style={{...td, textAlign:"right", color: yoy > 0 ? COLORS.light : yoy < 0 ? COLORS.red : COLORS.muted, fontWeight: 700}}>
+                        {yoy != null ? (yoy >= 0 ? "+" : "") + yoy.toFixed(0) + "%" : "—"}
+                      </td>
+                      <td style={{...td, textAlign:"right"}}>${s.avg_price.toFixed(2)}</td>
+                      <td style={{...td, textAlign:"right", color: COLORS.muted}}>${s.min_price.toFixed(2)} – ${s.max_price.toFixed(2)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 16 }}>
+        {/* View mode chips */}
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
+          {[
+            { id: "all",         label: "All" },
+            { id: "recommended", label: "💡 Recommended" },
+            { id: "top26",       label: `🔥 Top ${currYr}` },
+            { id: "top25",       label: `📜 Top ${priorYr}` },
+            { id: "growers",     label: "📈 Growers" },
+            { id: "decliners",   label: "📉 Decliners" },
+            { id: "new",         label: `🆕 New in ${currYr}` },
+            { id: "missing",     label: `❌ Missing in ${currYr}` },
+          ].map(v => (
+            <button key={v.id} onClick={() => pickView(v.id)}
+              style={{
+                padding: "5px 11px", fontSize: 12, fontWeight: 700,
+                background: viewMode === v.id ? COLORS.dark : "#f3f5ef",
+                color: viewMode === v.id ? "#fff" : COLORS.text,
+                border: `1px solid ${viewMode === v.id ? COLORS.dark : COLORS.border}`,
+                borderRadius: 14, cursor: "pointer",
+              }}>
+              {v.label} <span style={{ opacity: 0.6, fontSize: 10 }}>({counts[v.id]})</span>
+            </button>
+          ))}
+        </div>
+
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12, alignItems: "center" }}>
           <div>
             <div style={{ fontSize: 13, color: COLORS.muted, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700 }}>
-              Catalog · pick varieties + targets for Q{quarter} {planYear}
+              Catalog · {filtered.length} of {rows.length} items {viewMode !== "all" ? `(${viewMode} view)` : ""}
             </div>
             <div style={{ fontSize: 11, color: COLORS.muted, marginTop: 2 }}>
-              Side-by-side Q{quarter} {priorYr} + Q{quarter} {currYr} actuals. Type a target qty for Q{quarter} {planYear} and it saves automatically. Lock when ready.
+              {viewMode === "recommended" && `Scored by 2-yr volume × stability × YoY growth. Top picks for Q${quarter} ${planYear} planning.`}
+              {viewMode === "top26" && `Best sellers in Q${quarter} ${currYr} — most-recent year.`}
+              {viewMode === "top25" && `Best sellers in Q${quarter} ${priorYr} — baseline year.`}
+              {viewMode === "growers" && `Items with >25% YoY growth (had >50 units in ${priorYr}).`}
+              {viewMode === "decliners" && `Items with >25% YoY decline (had >100 units in ${priorYr}) — investigate supply or relevance.`}
+              {viewMode === "new" && `Sold in ${currYr} but no ${priorYr} sales — recent additions.`}
+              {viewMode === "missing" && `Sold in ${priorYr} but no ${currYr} sales — gaps to investigate.`}
+              {viewMode === "all" && "Type targets and they save automatically. Lock when ready."}
             </div>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
