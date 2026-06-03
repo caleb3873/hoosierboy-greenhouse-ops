@@ -85,6 +85,20 @@ export default function ProductionPlans() {
 }
 
 // ── Plan Dashboard ──────────────────────────────────────────────────────────
+// Acquisition type colors (used in Catalog + Sourcing badges)
+const ACQ_COLOR = {
+  finished:  "#1976d2",  // blue — buy ready-to-sell
+  liner:     "#7fb069",  // green — grow from a liner we receive
+  propagate: "#5e35b1",  // purple — propagate in-house
+  partner:   "#fb8c00",  // orange — outsourced
+};
+const ACQ_LABEL = {
+  finished:  "🛒 Finished",
+  liner:     "🌱 Liner",
+  propagate: "🌿 Propagate",
+  partner:   "🤝 Partner",
+};
+
 // Tabbed shell. Same tabs for every plan; each tab is a focused panel.
 // Default tabs (poinsettia / mum / spring / other production plans)
 const PLAN_TABS = [
@@ -103,6 +117,7 @@ const PLAN_TABS = [
 // Houseplants plans have a different workflow: catalog-driven, not bench-driven
 const HOUSEPLANT_TABS = [
   { id: "catalog",   label: "🛒 Catalog" },
+  { id: "insights",  label: "📊 Insights" },
   { id: "history",   label: "📈 Sales History" },
   { id: "tasks",     label: "✓ Tasks" },
   { id: "sourcing",  label: "🚚 Sourcing" },
@@ -194,6 +209,7 @@ function PlanDashboard({ plan }) {
       {isHouseplant ? (
         <>
           {tab === "catalog"  && <CatalogTab plan={plan} />}
+          {tab === "insights" && <HpInsightsTab plan={plan} />}
           {tab === "history"  && <HpHistoryTab plan={plan} />}
           {tab === "tasks"    && <PlanTasks planId={plan.id} />}
           {tab === "sourcing" && <HpSourcingTab plan={plan} />}
@@ -822,6 +838,51 @@ function SimpleTable({ cols, aligns, rows, totalRow }) {
   );
 }
 
+// Auto-create receive + quarantine tasks for a finished-buy item.
+// Idempotent: skips creating tasks that already exist for that variety + date.
+async function ensureFinishedReceivingTasks(sb, plan, catalogRow) {
+  if (!catalogRow.arrival_date_target) return;
+  const variety = `${catalogRow.pot_size} ${catalogRow.description}`;
+  const arrival = catalogRow.arrival_date_target;
+  const quarantineDate = new Date(arrival);
+  quarantineDate.setDate(quarantineDate.getDate() + 1);
+  const qStr = quarantineDate.toISOString().slice(0, 10);
+
+  const yr = new Date(arrival).getFullYear();
+  const wkNum = (d => { const t = new Date(d); t.setHours(0,0,0,0); const dn = (t.getDay()+6)%7; t.setDate(t.getDate()-dn+3); const f = new Date(t.getFullYear(),0,4); return 1 + Math.round(((t-f)/86400000 - 3 + (f.getDay()+6)%7)/7); })(arrival);
+
+  const tasks = [
+    {
+      target_date: arrival,
+      title: `Receive + unload ${variety}`,
+      description: `Finished material arriving for ${plan.name}. Qty target: ${catalogRow.target_qty || "TBD"}. Unload and stage for quarantine — do NOT mix with in-house grown crops yet.`,
+    },
+    {
+      target_date: qStr,
+      title: `Quarantine + treat ${variety}`,
+      description: `Day 2 of receiving. Inspect for whitefly / thrips / scale / mites / fungus gnats. Treat preventatively before moving to retail benches alongside in-house grown material.`,
+    },
+  ];
+
+  for (const t of tasks) {
+    const { data: existing } = await sb.from("manager_tasks")
+      .select("id").eq("plan_id", plan.id).eq("target_date", t.target_date).eq("title", t.title).limit(1);
+    if (existing && existing.length > 0) continue;
+    await sb.from("manager_tasks").insert({
+      plan_id: plan.id,
+      category: "production",
+      title: t.title,
+      description: t.description,
+      target_date: t.target_date,
+      priority: 3,
+      status: "pending",
+      week_number: wkNum,
+      year: yr,
+      created_by: "auto:finished-receiving",
+    });
+  }
+}
+
 // ── Houseplants — Catalog tab ───────────────────────────────────────────────
 // Browse historical Q1 sales (or whatever quarter the plan covers), set targets,
 // pick source (buy/grow/partner), lock the catalog.
@@ -988,16 +1049,34 @@ function CatalogTab({ plan }) {
 
   async function updateCatalogRow(row, updates) {
     const existing = catalog.find(c => normalizeDesc(c.description) === row.normalized && c.pot_size === row.pot_size);
+
+    // Smart default: when switching to 'finished' for the first time, suggest
+    // an arrival date = 1 week before quarter start.
+    if (updates.acquisition_type === "finished" && !existing?.arrival_date_target && !updates.arrival_date_target) {
+      const qStart = new Date(`${planYear}-${String(startMonth).padStart(2, "0")}-01`);
+      qStart.setDate(qStart.getDate() - 7);
+      updates.arrival_date_target = qStart.toISOString().slice(0, 10);
+    }
+
+    let saved;
     if (existing) {
-      await sb.from("houseplant_catalog").update({ ...updates, updated_at: new Date().toISOString() }).eq("id", existing.id);
-      setCatalog(catalog.map(c => c.id === existing.id ? { ...c, ...updates } : c));
+      const { data: upd } = await sb.from("houseplant_catalog")
+        .update({ ...updates, updated_at: new Date().toISOString() })
+        .eq("id", existing.id).select("*").single();
+      saved = upd || { ...existing, ...updates };
+      setCatalog(catalog.map(c => c.id === existing.id ? saved : c));
     } else {
       const { data: ins } = await sb.from("houseplant_catalog").insert({
         plan_id: plan.id, description: row.desc, pot_size: row.pot_size,
         prior_yr_qty: row.y_prior_qty, prior_yr_revenue: row.y_prior_rev,
         two_yr_avg_qty: row.two_yr_avg, ...updates,
       }).select("*").single();
-      if (ins) setCatalog([...catalog, ins]);
+      if (ins) { saved = ins; setCatalog([...catalog, ins]); }
+    }
+
+    // Auto-generate quarantine + receive tasks when finished + arrival is set
+    if (saved?.acquisition_type === "finished" && saved.arrival_date_target) {
+      await ensureFinishedReceivingTasks(sb, plan, saved);
     }
   }
 
@@ -1217,7 +1296,8 @@ function CatalogTab({ plan }) {
                 <th style={{...th, textAlign:"center"}}>signal</th>
                 <th style={{...th, textAlign: "right", background: "#e8f0e2"}}>🎯 qty {planYear}</th>
                 <th style={{...th, textAlign: "right", background: "#e8f0e2"}}>🎯 $/ea {planYear}</th>
-                <th style={{...th, background: "#e8f0e2"}}>Source</th>
+                <th style={{...th, background: "#e8f0e2"}}>Acquisition</th>
+                <th style={{...th, background: "#e8f0e2"}}>Arrives</th>
                 <th style={{...th, background: "#e8f0e2"}}>Status</th>
                 <th style={th}></th>
               </tr>
@@ -1271,14 +1351,24 @@ function CatalogTab({ plan }) {
                         placeholder={r.curr_price ? r.curr_price.toFixed(2) : "—"} />
                     </td>
                     <td style={{...td, background: "#fafdf7"}}>
-                      <select defaultValue={c?.source || ""}
-                        onChange={e => updateCatalogRow(r, { source: e.target.value || null })}
-                        style={{ padding: "3px 6px", border: `1px solid ${COLORS.border}`, borderRadius: 4, fontSize: 11 }}>
+                      <select defaultValue={c?.acquisition_type || ""}
+                        onChange={e => updateCatalogRow(r, { acquisition_type: e.target.value || null })}
+                        style={{ padding: "3px 6px", border: `1px solid ${COLORS.border}`, borderRadius: 4, fontSize: 11,
+                          background: ACQ_COLOR[c?.acquisition_type] ? ACQ_COLOR[c?.acquisition_type] + "22" : "#fff",
+                          color: ACQ_COLOR[c?.acquisition_type] || COLORS.text,
+                          fontWeight: c?.acquisition_type ? 700 : 400,
+                        }}>
                         <option value="">—</option>
-                        <option value="buy">Buy</option>
-                        <option value="grow">Grow in-house</option>
-                        <option value="partner">Partner</option>
+                        <option value="finished">🛒 Finished</option>
+                        <option value="liner">🌱 Liner</option>
+                        <option value="propagate">🌿 Propagate</option>
+                        <option value="partner">🤝 Partner</option>
                       </select>
+                    </td>
+                    <td style={{...td, background: "#fafdf7"}}>
+                      <input type="date" defaultValue={c?.arrival_date_target || ""}
+                        onBlur={e => updateCatalogRow(r, { arrival_date_target: e.target.value || null })}
+                        style={{ width: 130, padding: "3px 4px", border: `1px solid ${COLORS.border}`, borderRadius: 4, fontSize: 11 }} />
                     </td>
                     <td style={{...td, background: "#fafdf7"}}>
                       <select defaultValue={c?.status || "considered"}
@@ -1436,32 +1526,34 @@ function HpHistoryTab({ plan }) {
 }
 
 // ── Houseplants — Sourcing tab ──────────────────────────────────────────────
-// Groups catalog by source. Includes "Generate broker request" that outputs
-// a copy/paste-ready inquiry for brokers.
+// Groups catalog by acquisition_type: finished (sale-ready, arrives ~1 wk before
+// sale) / liner (we grow it out) / propagate (in-house from cuttings/seed) / partner.
 function HpSourcingTab({ plan }) {
   const sb = getSupabase();
   const [rows, setRows]   = useState([]);
   const [request, setReq] = useState(null);
+  const [reqMode, setReqMode] = useState("liner"); // "liner" or "finished"
 
   useEffect(() => {
     if (!sb) return;
     sb.from("houseplant_catalog").select("*").eq("plan_id", plan.id).then(({ data }) => setRows(data || []));
   }, [sb, plan.id]);
 
-  const buyItems = rows.filter(r => r.source === "buy" || (!r.source && r.status === "locked"));
-  const growItems = rows.filter(r => r.source === "grow");
-  const partnerItems = rows.filter(r => r.source === "partner");
+  // Bucket by acquisition_type with fallback for un-tagged items
+  const finishedItems  = rows.filter(r => r.acquisition_type === "finished");
+  const linerItems     = rows.filter(r => r.acquisition_type === "liner" || (!r.acquisition_type && r.status === "locked"));
+  const propagateItems = rows.filter(r => r.acquisition_type === "propagate");
+  const partnerItems   = rows.filter(r => r.acquisition_type === "partner");
+  const untagged       = rows.filter(r => !r.acquisition_type && r.status !== "locked");
 
-  function makeBrokerRequest() {
+  function makeBrokerRequest(mode) {
     const quarter = parseInt(plan.season?.replace(/[^0-9]/g, "")) || 1;
     const planYear = plan.year;
     const startMonth = ["Jan", "Apr", "Jul", "Oct"][quarter - 1];
     const endMonth = ["Mar", "Jun", "Sep", "Dec"][quarter - 1];
-    // Suggested arrival: ~8 weeks before quarter start (rough for foliage)
-    const arrivalStart = ["Nov", "Feb", "May", "Aug"][quarter - 1] + " " + (quarter === 1 ? planYear - 1 : planYear);
-    const arrivalEnd   = startMonth + " " + planYear;
 
-    const items = buyItems.filter(r => r.target_qty > 0 && r.status !== "cancelled");
+    const isFinished = mode === "finished";
+    const items = (isFinished ? finishedItems : linerItems).filter(r => r.target_qty > 0 && r.status !== "cancelled");
     const bySize = {};
     for (const i of items) {
       const k = i.pot_size || "—";
@@ -1469,74 +1561,134 @@ function HpSourcingTab({ plan }) {
       bySize[k].push(i);
     }
 
-    let body = `INQUIRY · ${plan.name}\nFrom: Schlegel Greenhouse · 705 Sprague Rd, Indianapolis IN 46217\nContact: Paul Schlegel — (317) 784-6038 — pgs@schlegelgreenhouse.com\n\n`;
+    let body = `INQUIRY · ${plan.name} · ${isFinished ? "FINISHED MATERIAL" : "LINERS (young plants for finishing)"}\n`;
+    body += `From: Schlegel Greenhouse · 705 Sprague Rd, Indianapolis IN 46217\n`;
+    body += `Contact: Paul Schlegel — (317) 784-6038 — pgs@schlegelgreenhouse.com\n\n`;
     body += `Sale window: ${startMonth} 1 – ${endMonth} 30, ${planYear}\n`;
-    body += `Requested arrival window: ${arrivalStart} – ${arrivalEnd} (8–10 weeks before sale start)\n\n`;
-    body += `Schlegel houseplant program: ~$210K Q${quarter} revenue base, growing. We commit early, prefer reliable supply over best price, and value advance notice on substitutions.\n\n`;
-    body += `Quantities below are TARGETS — we are flexible on:\n  • Sub-cultivars (e.g., any Pothos variant if Marble Queen short)\n  • Pot size (one size up or down acceptable)\n  • Arrival date by ±2 weeks\n\n`;
-    body += `═══════════════════════════════════════════════════════════\n`;
-    body += `REQUEST LIST\n`;
-    body += `═══════════════════════════════════════════════════════════\n`;
+    if (isFinished) {
+      body += `Requested arrival: 1 week PRIOR to each sale week. Material will be quarantined + treated before joining in-house crops.\n`;
+      body += `(Per-variety arrival dates listed inline below.)\n\n`;
+      body += `Schlegel houseplant program: ~$210K Q${quarter} revenue base, growing. Looking for sale-ready FINISHED material on a tight delivery window.\n\n`;
+      body += `Substitution flexibility on cultivars, pot size ±1 step, arrival date ±5 days.\n\n`;
+    } else {
+      const arrivalStart = ["Nov", "Feb", "May", "Aug"][quarter - 1] + " " + (quarter === 1 ? planYear - 1 : planYear);
+      const arrivalEnd   = startMonth + " " + planYear;
+      body += `Requested liner arrival window: ${arrivalStart} – ${arrivalEnd} (8–10 weeks before sale start for finishing)\n\n`;
+      body += `Schlegel houseplant program: ~$210K Q${quarter} revenue base, growing. We commit early on liners, prefer reliable supply over best price, value advance notice on substitutions.\n\n`;
+      body += `Substitution flexibility on cultivars, pot size ±1 step, arrival date ±2 weeks.\n\n`;
+    }
+    body += `═══════════════════════════════════════════════════════════\nREQUEST LIST\n═══════════════════════════════════════════════════════════\n`;
     for (const [size, list] of Object.entries(bySize).sort()) {
       body += `\n── ${size} POT ──\n`;
-      for (const i of list.sort((a, b) => (b.target_qty || 0) - (a.target_qty || 0))) {
+      const sorted = isFinished
+        ? list.sort((a, b) => (a.arrival_date_target || "9999").localeCompare(b.arrival_date_target || "9999"))
+        : list.sort((a, b) => (b.target_qty || 0) - (a.target_qty || 0));
+      for (const i of sorted) {
         body += `  ${String(i.target_qty || "?").padStart(5)} · ${i.description}`;
         if (i.target_price) body += ` · target $${(+i.target_price).toFixed(2)}/ea`;
+        if (isFinished && i.arrival_date_target) body += `  [arrive by ${i.arrival_date_target}]`;
         if (i.supplier) body += `  [preferred: ${i.supplier}]`;
         body += `\n`;
       }
     }
     body += `\n═══════════════════════════════════════════════════════════\n`;
     body += `Please confirm: availability + pricing + earliest ship date by variety.\n`;
-    body += `Substitution suggestions welcome — flag anything you can't supply at all so we can re-source.\n`;
-    body += `\nThanks,\nPaul\n`;
+    body += `Flag anything you can't supply so we can re-source.\n\nThanks,\nPaul\n`;
     setReq(body);
   }
 
   if (rows.length === 0) {
     return (
       <div style={{ background: COLORS.card, border: `1px dashed ${COLORS.border}`, borderRadius: 10, padding: 40, textAlign: "center", color: COLORS.muted }}>
-        Lock items in the 🛒 Catalog tab first. Source assignments appear here grouped by buy / grow / partner.
+        Tag items with an acquisition type in the 🛒 Catalog tab first.<br />
+        Sourcing splits by Finished / Liner / Propagate / Partner once items are tagged.
       </div>
     );
   }
 
+  const finishedTotalRev = finishedItems.reduce((s, i) => s + (+i.target_qty || 0) * (+i.target_price || 0), 0);
+  const linerTotalRev    = linerItems.reduce((s, i) => s + (+i.target_qty || 0) * (+i.target_price || 0), 0);
+
   return (
     <div style={{ display: "grid", gap: 16 }}>
+      {/* Banner */}
+      <div style={{ background: COLORS.dark, color: "#fff", borderRadius: 10, padding: 16, display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+        <Stat label="🛒 Finished items"  value={`${finishedItems.length} · ${fmtMoney(finishedTotalRev)}`} dark />
+        <Stat label="🌱 Liner items"     value={`${linerItems.length} · ${fmtMoney(linerTotalRev)}`}      dark />
+        <Stat label="🌿 Propagate items" value={propagateItems.length}                                    dark />
+        <Stat label="Untagged"            value={untagged.length}                                          dark />
+      </div>
+
       {/* Generate broker request */}
       <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 16 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 12 }}>
           <div>
-            <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 18, color: COLORS.dark }}>📤 Broker request</div>
+            <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 18, color: COLORS.dark }}>📤 Broker request generator</div>
             <div style={{ fontSize: 12, color: COLORS.muted, marginTop: 2 }}>
-              Generate a copy/paste-ready inquiry email for brokers covering the BUY items below.
+              Generate copy/paste-ready inquiries. Finished + Liner requests are written differently (timing + framing).
             </div>
           </div>
-          <button onClick={makeBrokerRequest}
-            style={{ padding: "10px 18px", borderRadius: 6, border: "none", background: COLORS.dark, color: "#fff", fontWeight: 700, cursor: "pointer", fontSize: 13 }}>
-            Generate request
-          </button>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button onClick={() => { setReqMode("finished"); makeBrokerRequest("finished"); }}
+              style={{ padding: "10px 14px", borderRadius: 6, border: "none", background: ACQ_COLOR.finished, color: "#fff", fontWeight: 700, cursor: "pointer", fontSize: 12 }}>
+              🛒 Finished ({finishedItems.length})
+            </button>
+            <button onClick={() => { setReqMode("liner"); makeBrokerRequest("liner"); }}
+              style={{ padding: "10px 14px", borderRadius: 6, border: "none", background: ACQ_COLOR.liner, color: "#fff", fontWeight: 700, cursor: "pointer", fontSize: 12 }}>
+              🌱 Liner ({linerItems.length})
+            </button>
+          </div>
         </div>
         {request && (
-          <textarea readOnly value={request}
-            style={{ width: "100%", minHeight: 320, padding: 12, border: `1px solid ${COLORS.border}`, borderRadius: 6, fontFamily: "monospace", fontSize: 12, lineHeight: 1.5, background: "#fafafa" }} />
+          <>
+            <div style={{ fontSize: 11, color: COLORS.muted, marginBottom: 6 }}>
+              Showing: <strong>{reqMode === "finished" ? "🛒 Finished" : "🌱 Liner"}</strong> request
+            </div>
+            <textarea readOnly value={request}
+              style={{ width: "100%", minHeight: 320, padding: 12, border: `1px solid ${COLORS.border}`, borderRadius: 6, fontFamily: "monospace", fontSize: 12, lineHeight: 1.5, background: "#fafafa" }} />
+          </>
         )}
       </div>
 
-      {/* By source */}
-      {[
-        { key: "buy",     label: "🛒 BUY", items: buyItems },
-        { key: "grow",    label: "🌱 GROW in-house", items: growItems },
-        { key: "partner", label: "🤝 PARTNER", items: partnerItems },
-      ].filter(g => g.items.length > 0).map(g => (
-        <div key={g.key} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 16 }}>
-          <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 18, color: COLORS.dark, marginBottom: 8 }}>
-            {g.label} · {g.items.length} item(s) · {g.items.reduce((s, i) => s + (+i.target_qty || 0), 0).toLocaleString()} units
+      {/* 🛒 Finished Buy List — manager's primary table, sorted by arrival */}
+      {finishedItems.length > 0 && (
+        <div style={{ background: COLORS.card, border: `2px solid ${ACQ_COLOR.finished}`, borderRadius: 10, padding: 16 }}>
+          <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 18, color: ACQ_COLOR.finished, marginBottom: 4 }}>
+            🛒 Finished Buy List · {finishedItems.length} item(s)
+          </div>
+          <div style={{ fontSize: 11, color: COLORS.muted, marginBottom: 12 }}>
+            Sale-ready material. Arrives 1 week before sale week, quarantined + treated, then to retail. Tasks auto-generate on the Tasks tab.
+          </div>
+          <SimpleTable
+            cols={["Arrives", "Pot", "Variety", "Target qty", "Target $/ea", "Target rev", "Supplier", "Status"]}
+            aligns={["L", "L", "L", "R", "R", "R", "L", "L"]}
+            rows={[...finishedItems]
+              .sort((a, b) => (a.arrival_date_target || "9999").localeCompare(b.arrival_date_target || "9999"))
+              .map(i => [
+                i.arrival_date_target || <span style={{ color: COLORS.red }}>⚠ set date</span>,
+                i.pot_size, i.description,
+                (+i.target_qty || 0).toLocaleString() || "—",
+                i.target_price ? "$" + (+i.target_price).toFixed(2) : "—",
+                i.target_qty && i.target_price ? fmtMoney(i.target_qty * i.target_price) : "—",
+                i.supplier || "—", i.status,
+              ])}
+          />
+        </div>
+      )}
+
+      {/* 🌱 Liner Buy List */}
+      {linerItems.length > 0 && (
+        <div style={{ background: COLORS.card, border: `2px solid ${ACQ_COLOR.liner}`, borderRadius: 10, padding: 16 }}>
+          <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 18, color: ACQ_COLOR.liner, marginBottom: 4 }}>
+            🌱 Liner Buy List · {linerItems.length} item(s)
+          </div>
+          <div style={{ fontSize: 11, color: COLORS.muted, marginBottom: 12 }}>
+            Young plants we'll finish in-house. Order 8–10 weeks before sale start.
           </div>
           <SimpleTable
             cols={["Pot", "Variety", "Target qty", "Target $/ea", "Target rev", "Supplier", "Status"]}
             aligns={["L", "L", "R", "R", "R", "L", "L"]}
-            rows={g.items.map(i => [
+            rows={linerItems.map(i => [
               i.pot_size, i.description,
               (+i.target_qty || 0).toLocaleString() || "—",
               i.target_price ? "$" + (+i.target_price).toFixed(2) : "—",
@@ -1544,6 +1696,511 @@ function HpSourcingTab({ plan }) {
               i.supplier || "—", i.status,
             ])}
           />
+        </div>
+      )}
+
+      {/* 🌿 Propagate (in-house) */}
+      {propagateItems.length > 0 && (
+        <div style={{ background: COLORS.card, border: `2px solid ${ACQ_COLOR.propagate}`, borderRadius: 10, padding: 16 }}>
+          <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 18, color: ACQ_COLOR.propagate, marginBottom: 4 }}>
+            🌿 Propagate In-House · {propagateItems.length} item(s)
+          </div>
+          <div style={{ fontSize: 11, color: COLORS.muted, marginBottom: 12 }}>
+            Items we propagate from cuttings/seed. No broker required.
+          </div>
+          <SimpleTable
+            cols={["Pot", "Variety", "Target qty", "Target $/ea", "Notes"]}
+            aligns={["L", "L", "R", "R", "L"]}
+            rows={propagateItems.map(i => [
+              i.pot_size, i.description,
+              (+i.target_qty || 0).toLocaleString() || "—",
+              i.target_price ? "$" + (+i.target_price).toFixed(2) : "—",
+              i.notes || "—",
+            ])}
+          />
+        </div>
+      )}
+
+      {/* 🤝 Partner */}
+      {partnerItems.length > 0 && (
+        <div style={{ background: COLORS.card, border: `2px solid ${ACQ_COLOR.partner}`, borderRadius: 10, padding: 16 }}>
+          <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 18, color: ACQ_COLOR.partner, marginBottom: 12 }}>
+            🤝 Partner · {partnerItems.length} item(s)
+          </div>
+          <SimpleTable
+            cols={["Pot", "Variety", "Target qty", "Supplier", "Status"]}
+            aligns={["L", "L", "R", "L", "L"]}
+            rows={partnerItems.map(i => [i.pot_size, i.description, (+i.target_qty || 0).toLocaleString() || "—", i.supplier || "—", i.status])}
+          />
+        </div>
+      )}
+
+      {/* Untagged items warning */}
+      {untagged.length > 0 && (
+        <div style={{ background: "#fff7e6", border: `1px solid ${COLORS.amber}`, borderRadius: 10, padding: 16 }}>
+          <div style={{ fontWeight: 700, color: COLORS.amber, marginBottom: 6, fontSize: 14 }}>
+            ⚠ {untagged.length} item(s) untagged — go to 🛒 Catalog and set acquisition type
+          </div>
+          <div style={{ fontSize: 11, color: COLORS.muted }}>
+            Items without an acquisition type don't appear in any sourcing list above and won't generate broker requests or receive tasks.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Houseplants — Insights tab (YoY visualizations) ────────────────────────
+function HpInsightsTab({ plan }) {
+  const sb = getSupabase();
+  const [rows, setRows]       = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [chart, setChart]     = useState("size");     // "size" | "variety" | "monthly" | "genus"
+  const [metric, setMetric]   = useState("revenue");  // "revenue" | "qty"
+  const [filterSize, setFilterSize]   = useState("all");
+  const [filterGenus, setFilterGenus] = useState("all");
+  const [topN, setTopN]       = useState(20);
+  const [aliases, setAliases] = useState([]);
+
+  function normalizeDesc(d) {
+    return String(d || "")
+      .replace(/^HB \d+(\.\d+)?"\s*/i, "")
+      .replace(/^\d+(\.\d+)?"\s*/, "")
+      .replace(/\s*\(Individual\)\s*/gi, "")
+      .replace(/\s*\(Case of \d+\)\s*/gi, "")
+      .replace(/\s*\(whole flat \d+\)\s*/gi, "")
+      .replace(/\s*\(1\/2 flat \d+\)\s*/gi, "")
+      .replace(/'\s*([^']+?)\s+Plant\s*'/g, "'$1'")
+      .replace(/[‘’‚‛′‵]/g, "'")
+      .replace(/[“”„‟″‶]/g, '"')
+      .replace(/\s+/g, " ").trim().toUpperCase();
+  }
+
+  useEffect(() => {
+    if (!sb) return;
+    setLoading(true);
+    (async () => {
+      const all = [];
+      let offset = 0;
+      while (true) {
+        const { data } = await sb.from("houseplant_sales_history")
+          .select("period,description,pot_size,qty_sold,sold_value").range(offset, offset + 999);
+        if (!data?.length) break;
+        all.push(...data);
+        if (data.length < 1000) break;
+        offset += 1000;
+      }
+      const { data: aliasData } = await sb.from("houseplant_merge_aliases").select("*");
+      setAliases(aliasData || []);
+      setRows(all);
+      setLoading(false);
+    })();
+  }, [sb, plan.id]);
+
+  if (loading) return <div style={{ padding: 20, color: COLORS.muted }}>Loading insights…</div>;
+  if (rows.length === 0) return <div style={{ padding: 20, color: COLORS.muted }}>No sales history.</div>;
+
+  // Build alias map
+  const aliasMap = {};
+  for (const a of aliases) {
+    aliasMap[`${a.alias_pot_size}|${normalizeDesc(a.alias_desc)}`] = { desc: a.canonical_desc, pot_size: a.canonical_pot_size };
+  }
+
+  // Resolve each row through alias + normalize, and tag year
+  const resolved = rows.map(r => {
+    const key = `${r.pot_size}|${normalizeDesc(r.description)}`;
+    const al = aliasMap[key];
+    const desc = al?.desc || r.description;
+    const pot_size = al?.pot_size || r.pot_size;
+    const year = (r.period || "").slice(0, 4);
+    return {
+      year, desc, pot_size,
+      norm: normalizeDesc(desc),
+      genus: (normalizeDesc(desc).split(/\s+/)[0] || "").toUpperCase(),
+      qty: +r.qty_sold || 0, rev: +r.sold_value || 0,
+      period: r.period,
+    };
+  });
+
+  // Apply filters
+  const filtered = resolved.filter(r => {
+    if (filterSize !== "all" && r.pot_size !== filterSize) return false;
+    if (filterGenus !== "all" && r.genus !== filterGenus) return false;
+    return true;
+  });
+
+  const sizes = Array.from(new Set(resolved.map(r => r.pot_size).filter(Boolean))).sort();
+  const generaList = Array.from(new Set(resolved.map(r => r.genus).filter(Boolean))).sort();
+
+  // Year list (for x-axis comparisons)
+  const years = Array.from(new Set(filtered.map(r => r.year).filter(Boolean))).sort();
+
+  return (
+    <div style={{ display: "grid", gap: 16 }}>
+      {/* Toolbar */}
+      <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 14, display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
+        <div style={{ fontSize: 12, color: COLORS.muted, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700 }}>Chart</div>
+        {[
+          { id: "size",    label: "📦 By pot size" },
+          { id: "variety", label: "🪴 By variety (top N)" },
+          { id: "genus",   label: "🌿 By genus" },
+          { id: "monthly", label: "📅 Monthly trend" },
+        ].map(c => (
+          <button key={c.id} onClick={() => setChart(c.id)}
+            style={{
+              padding: "6px 12px", fontSize: 12, fontWeight: 700,
+              background: chart === c.id ? COLORS.dark : "#f3f5ef",
+              color: chart === c.id ? "#fff" : COLORS.text,
+              border: `1px solid ${chart === c.id ? COLORS.dark : COLORS.border}`,
+              borderRadius: 14, cursor: "pointer",
+            }}>{c.label}</button>
+        ))}
+
+        <div style={{ width: 1, height: 24, background: COLORS.border }} />
+
+        <div style={{ fontSize: 12, color: COLORS.muted, fontWeight: 700 }}>Metric</div>
+        {[
+          { id: "revenue", label: "$ Revenue" },
+          { id: "qty",     label: "# Units" },
+        ].map(m => (
+          <button key={m.id} onClick={() => setMetric(m.id)}
+            style={{
+              padding: "6px 12px", fontSize: 12, fontWeight: 700,
+              background: metric === m.id ? COLORS.light : "#f3f5ef",
+              color: metric === m.id ? "#fff" : COLORS.text,
+              border: `1px solid ${metric === m.id ? COLORS.light : COLORS.border}`,
+              borderRadius: 14, cursor: "pointer",
+            }}>{m.label}</button>
+        ))}
+
+        <div style={{ width: 1, height: 24, background: COLORS.border }} />
+
+        <select value={filterSize} onChange={e => setFilterSize(e.target.value)}
+          style={{ padding: "6px 8px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 12 }}>
+          <option value="all">All sizes</option>
+          {sizes.map(s => <option key={s} value={s}>{s}</option>)}
+        </select>
+
+        <select value={filterGenus} onChange={e => setFilterGenus(e.target.value)}
+          style={{ padding: "6px 8px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 12 }}>
+          <option value="all">All genera</option>
+          {generaList.map(g => <option key={g} value={g}>{g}</option>)}
+        </select>
+
+        {chart === "variety" && (
+          <select value={topN} onChange={e => setTopN(parseInt(e.target.value))}
+            style={{ padding: "6px 8px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 12 }}>
+            <option value={10}>Top 10</option>
+            <option value={20}>Top 20</option>
+            <option value={30}>Top 30</option>
+            <option value={50}>Top 50</option>
+          </select>
+        )}
+      </div>
+
+      {/* Render chart */}
+      {chart === "size" && (
+        <SizeYoyChart filtered={filtered} years={years} metric={metric} />
+      )}
+      {chart === "variety" && (
+        <VarietyYoyChart filtered={filtered} years={years} metric={metric} topN={topN} />
+      )}
+      {chart === "genus" && (
+        <GenusYoyChart filtered={filtered} years={years} metric={metric} />
+      )}
+      {chart === "monthly" && (
+        <MonthlyTrendChart filtered={filtered} metric={metric} />
+      )}
+    </div>
+  );
+}
+
+// Color per year — cycles through these
+const YEAR_COLORS = ["#7fb069", "#1e2d1a", "#e89a3a", "#1976d2", "#5e35b1", "#d94f3d"];
+
+function SizeYoyChart({ filtered, years, metric }) {
+  // Aggregate by (pot_size, year)
+  const agg = {};
+  for (const r of filtered) {
+    if (!agg[r.pot_size]) agg[r.pot_size] = {};
+    if (!agg[r.pot_size][r.year]) agg[r.pot_size][r.year] = { qty: 0, rev: 0 };
+    agg[r.pot_size][r.year].qty += r.qty;
+    agg[r.pot_size][r.year].rev += r.rev;
+  }
+  // Sort sizes by total of most recent year metric desc
+  const latestYr = years[years.length - 1];
+  const sizes = Object.keys(agg).filter(Boolean).sort((a, b) => (agg[b][latestYr]?.[metric === "revenue" ? "rev" : "qty"] || 0) - (agg[a][latestYr]?.[metric === "revenue" ? "rev" : "qty"] || 0));
+
+  return (
+    <ChartCard title={`Pot size — ${metric === "revenue" ? "revenue" : "units"} by year`} subtitle={`Compare across ${years.join(" / ")}. Click metric or filter above to slice.`}>
+      <GroupedBarChart
+        categories={sizes}
+        series={years.map((y, i) => ({
+          name: y,
+          color: YEAR_COLORS[i % YEAR_COLORS.length],
+          data: sizes.map(s => agg[s][y]?.[metric === "revenue" ? "rev" : "qty"] || 0),
+        }))}
+        metric={metric}
+      />
+    </ChartCard>
+  );
+}
+
+function GenusYoyChart({ filtered, years, metric }) {
+  const agg = {};
+  for (const r of filtered) {
+    if (!agg[r.genus]) agg[r.genus] = {};
+    if (!agg[r.genus][r.year]) agg[r.genus][r.year] = { qty: 0, rev: 0 };
+    agg[r.genus][r.year].qty += r.qty;
+    agg[r.genus][r.year].rev += r.rev;
+  }
+  const latestYr = years[years.length - 1];
+  const genera = Object.keys(agg).filter(Boolean)
+    .sort((a, b) => (agg[b][latestYr]?.[metric === "revenue" ? "rev" : "qty"] || 0) - (agg[a][latestYr]?.[metric === "revenue" ? "rev" : "qty"] || 0))
+    .slice(0, 20);
+  return (
+    <ChartCard title={`Genus — ${metric === "revenue" ? "revenue" : "units"} by year`} subtitle={`Top 20 genera. Filter to a single size above to see size-specific.`}>
+      <GroupedBarChart
+        categories={genera}
+        series={years.map((y, i) => ({
+          name: y,
+          color: YEAR_COLORS[i % YEAR_COLORS.length],
+          data: genera.map(g => agg[g][y]?.[metric === "revenue" ? "rev" : "qty"] || 0),
+        }))}
+        metric={metric}
+      />
+    </ChartCard>
+  );
+}
+
+function VarietyYoyChart({ filtered, years, metric, topN }) {
+  // Aggregate by (norm desc, pot_size, year)
+  const agg = {};
+  const labelMap = {};
+  for (const r of filtered) {
+    const key = `${r.pot_size}|${r.norm}`;
+    if (!agg[key]) agg[key] = {};
+    if (!labelMap[key]) labelMap[key] = `${r.pot_size} · ${r.desc.length > 32 ? r.desc.slice(0, 30) + "…" : r.desc}`;
+    if (!agg[key][r.year]) agg[key][r.year] = { qty: 0, rev: 0 };
+    agg[key][r.year].qty += r.qty;
+    agg[key][r.year].rev += r.rev;
+  }
+  const latestYr = years[years.length - 1];
+  const sortKey = metric === "revenue" ? "rev" : "qty";
+  const ordered = Object.keys(agg).sort((a, b) => (agg[b][latestYr]?.[sortKey] || 0) - (agg[a][latestYr]?.[sortKey] || 0)).slice(0, topN);
+  const labels = ordered.map(k => labelMap[k]);
+
+  return (
+    <ChartCard title={`Top ${topN} varieties — ${metric === "revenue" ? "revenue" : "units"} by year`} subtitle="Sorted by most recent year. Negative YoY items show smaller right bar.">
+      <GroupedBarChart
+        categories={labels}
+        series={years.map((y, i) => ({
+          name: y, color: YEAR_COLORS[i % YEAR_COLORS.length],
+          data: ordered.map(k => agg[k][y]?.[sortKey] || 0),
+        }))}
+        metric={metric}
+        horizontal
+      />
+    </ChartCard>
+  );
+}
+
+function MonthlyTrendChart({ filtered, metric }) {
+  // x = month-of-year (1-12), series = year
+  const agg = {};
+  for (const r of filtered) {
+    if (!r.period) continue;
+    const yr = r.period.slice(0, 4);
+    const mo = parseInt(r.period.slice(5, 7));
+    if (!agg[yr]) agg[yr] = {};
+    if (!agg[yr][mo]) agg[yr][mo] = { qty: 0, rev: 0 };
+    agg[yr][mo].qty += r.qty;
+    agg[yr][mo].rev += r.rev;
+  }
+  const years = Object.keys(agg).sort();
+  const months = Array.from({ length: 12 }, (_, i) => i + 1);
+  const monthLabels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const series = years.map((y, i) => ({
+    name: y, color: YEAR_COLORS[i % YEAR_COLORS.length],
+    data: months.map(m => agg[y][m]?.[metric === "revenue" ? "rev" : "qty"] || 0),
+  }));
+  return (
+    <ChartCard title={`Monthly trend — ${metric === "revenue" ? "revenue" : "units"} by year`} subtitle="Same months overlaid across years to spot seasonal patterns.">
+      <LineChart categories={monthLabels} series={series} metric={metric} />
+    </ChartCard>
+  );
+}
+
+function ChartCard({ title, subtitle, children }) {
+  return (
+    <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 16 }}>
+      <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 18, color: COLORS.dark }}>{title}</div>
+      {subtitle && <div style={{ fontSize: 11, color: COLORS.muted, marginTop: 2, marginBottom: 12 }}>{subtitle}</div>}
+      {children}
+    </div>
+  );
+}
+
+function fmtAxisVal(v, metric) {
+  if (metric === "revenue") {
+    if (v >= 1000000) return "$" + (v / 1e6).toFixed(1) + "M";
+    if (v >= 1000) return "$" + (v / 1000).toFixed(0) + "k";
+    return "$" + Math.round(v);
+  }
+  if (v >= 1000) return (v / 1000).toFixed(1) + "k";
+  return Math.round(v).toLocaleString();
+}
+
+function GroupedBarChart({ categories, series, metric, horizontal }) {
+  if (categories.length === 0) return <div style={{ color: COLORS.muted, fontSize: 12 }}>No data for these filters.</div>;
+  // Compute max across all series
+  let max = 0;
+  for (const s of series) for (const v of s.data) if (v > max) max = v;
+  if (max === 0) max = 1;
+
+  const barHeight = horizontal ? Math.max(18, Math.min(28, 320 / Math.max(categories.length, 1))) : 0;
+  const seriesCount = series.length;
+
+  if (horizontal) {
+    // Horizontal: label column + bars to the right
+    const chartWidth = 600;
+    const labelWidth = 220;
+    const barAreaWidth = chartWidth - labelWidth - 80;
+    const height = categories.length * (barHeight * seriesCount + 8) + 30;
+    return (
+      <div style={{ overflowX: "auto" }}>
+        <svg width={chartWidth} height={height} style={{ display: "block" }}>
+          {categories.map((cat, i) => {
+            const groupY = 10 + i * (barHeight * seriesCount + 8);
+            return (
+              <g key={i}>
+                <text x={labelWidth - 6} y={groupY + (barHeight * seriesCount) / 2 + 4} fontSize="11" textAnchor="end" fill={COLORS.text}>
+                  {cat}
+                </text>
+                {series.map((s, si) => {
+                  const v = s.data[i] || 0;
+                  const w = (v / max) * barAreaWidth;
+                  return (
+                    <g key={si}>
+                      <rect x={labelWidth} y={groupY + si * barHeight} width={Math.max(0, w)} height={barHeight - 2} fill={s.color} />
+                      <text x={labelWidth + w + 4} y={groupY + si * barHeight + barHeight - 5} fontSize="10" fill={COLORS.muted}>
+                        {fmtAxisVal(v, metric)}
+                      </text>
+                    </g>
+                  );
+                })}
+              </g>
+            );
+          })}
+        </svg>
+        <ChartLegend series={series} />
+      </div>
+    );
+  }
+
+  // Vertical bars: groups across X
+  const chartWidth = Math.max(600, categories.length * (seriesCount * 18 + 24));
+  const chartHeight = 300;
+  const padL = 60, padR = 20, padT = 20, padB = 60;
+  const plotW = chartWidth - padL - padR;
+  const plotH = chartHeight - padT - padB;
+  const groupWidth = plotW / categories.length;
+  const barWidth = (groupWidth * 0.7) / seriesCount;
+
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <svg width={chartWidth} height={chartHeight} style={{ display: "block" }}>
+        {/* Y axis grid */}
+        {[0, 0.25, 0.5, 0.75, 1].map(p => {
+          const y = padT + plotH * (1 - p);
+          return (
+            <g key={p}>
+              <line x1={padL} y1={y} x2={chartWidth - padR} y2={y} stroke="#eee" />
+              <text x={padL - 6} y={y + 4} fontSize="10" textAnchor="end" fill={COLORS.muted}>
+                {fmtAxisVal(max * p, metric)}
+              </text>
+            </g>
+          );
+        })}
+        {categories.map((cat, i) => {
+          const groupX = padL + i * groupWidth + groupWidth * 0.15;
+          return (
+            <g key={i}>
+              {series.map((s, si) => {
+                const v = s.data[i] || 0;
+                const h = (v / max) * plotH;
+                const x = groupX + si * barWidth;
+                const y = padT + plotH - h;
+                return <rect key={si} x={x} y={y} width={barWidth - 2} height={Math.max(0, h)} fill={s.color} />;
+              })}
+              <text x={padL + i * groupWidth + groupWidth / 2} y={chartHeight - padB + 16} fontSize="10" textAnchor="middle" fill={COLORS.text} transform={`rotate(-25, ${padL + i * groupWidth + groupWidth / 2}, ${chartHeight - padB + 16})`}>
+                {cat}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+      <ChartLegend series={series} />
+    </div>
+  );
+}
+
+function LineChart({ categories, series, metric }) {
+  if (categories.length === 0) return <div style={{ color: COLORS.muted, fontSize: 12 }}>No data.</div>;
+  let max = 0;
+  for (const s of series) for (const v of s.data) if (v > max) max = v;
+  if (max === 0) max = 1;
+  const chartWidth = 720, chartHeight = 320;
+  const padL = 60, padR = 20, padT = 20, padB = 40;
+  const plotW = chartWidth - padL - padR;
+  const plotH = chartHeight - padT - padB;
+  const stepX = plotW / (categories.length - 1 || 1);
+
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <svg width={chartWidth} height={chartHeight} style={{ display: "block" }}>
+        {[0, 0.25, 0.5, 0.75, 1].map(p => {
+          const y = padT + plotH * (1 - p);
+          return (
+            <g key={p}>
+              <line x1={padL} y1={y} x2={chartWidth - padR} y2={y} stroke="#eee" />
+              <text x={padL - 6} y={y + 4} fontSize="10" textAnchor="end" fill={COLORS.muted}>{fmtAxisVal(max * p, metric)}</text>
+            </g>
+          );
+        })}
+        {categories.map((c, i) => (
+          <text key={i} x={padL + i * stepX} y={chartHeight - padB + 16} fontSize="10" textAnchor="middle" fill={COLORS.text}>{c}</text>
+        ))}
+        {series.map((s, si) => {
+          const points = s.data.map((v, i) => {
+            const x = padL + i * stepX;
+            const y = padT + plotH - (v / max) * plotH;
+            return `${x},${y}`;
+          }).join(" ");
+          return (
+            <g key={si}>
+              <polyline fill="none" stroke={s.color} strokeWidth="2" points={points} />
+              {s.data.map((v, i) => {
+                const x = padL + i * stepX;
+                const y = padT + plotH - (v / max) * plotH;
+                return <circle key={i} cx={x} cy={y} r="3" fill={s.color} />;
+              })}
+            </g>
+          );
+        })}
+      </svg>
+      <ChartLegend series={series} />
+    </div>
+  );
+}
+
+function ChartLegend({ series }) {
+  return (
+    <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginTop: 10, justifyContent: "center" }}>
+      {series.map((s, i) => (
+        <div key={i} style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 12 }}>
+          <span style={{ width: 12, height: 12, background: s.color, display: "inline-block", borderRadius: 2 }} />
+          <span style={{ color: COLORS.text, fontWeight: 600 }}>{s.name}</span>
         </div>
       ))}
     </div>
