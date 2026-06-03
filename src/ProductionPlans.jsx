@@ -86,6 +86,23 @@ export default function ProductionPlans() {
 
 // ── Plan Dashboard ──────────────────────────────────────────────────────────
 // Acquisition type colors (used in Catalog + Sourcing badges)
+// Return the [startMonth, endMonth] range for a plan.
+// Honors month_start/month_end on the plan record when set (houseplant H1/H2 plans
+// use Jan-May / Jun-Dec instead of quarters). Falls back to Q1-Q4 math otherwise.
+function planMonthRange(plan) {
+  if (plan?.month_start && plan?.month_end) return [plan.month_start, plan.month_end];
+  const q = parseInt(plan?.season?.replace(/[^0-9]/g, "")) || 1;
+  return [(q - 1) * 3 + 1, q * 3];
+}
+// Short label for the plan window (e.g., "Jan–May", "Q1")
+function planRangeLabel(plan) {
+  if (plan?.month_start && plan?.month_end) {
+    const M = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    return `${M[plan.month_start - 1]}–${M[plan.month_end - 1]}`;
+  }
+  return plan?.season || "—";
+}
+
 const ACQ_COLOR = {
   finished:  "#1976d2",  // blue — buy ready-to-sell
   liner:     "#7fb069",  // green — grow from a liner we receive
@@ -914,23 +931,26 @@ function CatalogTab({ plan }) {
   const [yearDisplay, setYearDisplay] = useState("qty"); // "qty" | "revenue"
   const [hoverRow, setHoverRow] = useState(null);
 
-  // For "Houseplants Q1 2027": current_year = 2026, prior_year = 2025
+  // For "Houseplants H1 2027": current_year = 2026, prior_year = 2025
   // Plus older years for historical context: 2024 (3yr), 2023 (4yr)
-  const quarter = parseInt(plan.season?.replace(/[^0-9]/g, "")) || 1;
   const planYear = plan.year;
   const currYr = planYear - 1;
   const priorYr = planYear - 2;
   const priorYr2 = planYear - 3; // 3-yr base
   const priorYr3 = planYear - 4; // 4-yr base
   const allYears = [priorYr3, priorYr2, priorYr, currYr]; // chronological
-  const startMonth = (quarter - 1) * 3 + 1;
-  const endMonth = quarter * 3;
+  const [startMonth, endMonth] = planMonthRange(plan);
+  const rangeLabel = planRangeLabel(plan);
   const [avgBase, setAvgBase] = useState(2); // 2 | 3 | 4
 
   function quarterRange(year) {
+    // Period values in houseplant_sales_history are stored as YYYY-MM-01, so
+    // using -01 of the month AFTER end gives us an exclusive upper bound.
+    const nextMonth = endMonth === 12 ? 1 : endMonth + 1;
+    const nextYear  = endMonth === 12 ? year + 1 : year;
     return {
       start: `${year}-${String(startMonth).padStart(2, "0")}-01`,
-      end:   `${year}-${String(endMonth).padStart(2, "0")}-28`,
+      end:   `${nextYear}-${String(nextMonth).padStart(2, "0")}-01`,
     };
   }
 
@@ -1009,7 +1029,7 @@ function CatalogTab({ plan }) {
         const qty = +r.qty_sold || 0, rev = +r.sold_value || 0;
         for (const yr of allYears) {
           const rng = ranges[yr];
-          if (r.period >= rng.start && r.period <= rng.end) {
+          if (r.period >= rng.start && r.period < rng.end) {
             byKey[rawKey].yearQty[yr] += qty;
             byKey[rawKey].yearRev[yr] += rev;
             break;
@@ -1364,7 +1384,7 @@ function CatalogTab({ plan }) {
       {/* Header */}
       <div style={{ background: COLORS.dark, color: "#fff", borderRadius: 10, padding: 16, display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12 }}>
         <Stat label="Plan"          value={plan.name} dark />
-        <Stat label="Historical Q"  value={`Q${quarter} ${priorYr} + Q${quarter} ${currYr}`} dark />
+        <Stat label="Historical window"  value={`${rangeLabel} ${priorYr} + ${rangeLabel} ${currYr}`} dark />
         <Stat label="Catalog items" value={catalog.length} dark />
         <Stat label="Locked"        value={lockedCount} dark />
         <Stat label="Target rev"    value={fmtMoney(totalTargetRev)} dark big />
@@ -1425,7 +1445,7 @@ function CatalogTab({ plan }) {
               {/* Revenue projection summary */}
               <div style={{ background: "#f3f5ef", borderRadius: 8, padding: 12, marginBottom: 12, display: "grid", gridTemplateColumns: `repeat(${displayYears.length + 3}, 1fr)`, gap: 12 }}>
                 {displayYears.map(y => (
-                  <RevStat key={y} label={`Q${quarter} '${String(y).slice(-2)}`} value={fmtMoney(grandRevByYear[y])} muted />
+                  <RevStat key={y} label={`${rangeLabel} '${String(y).slice(-2)}`} value={fmtMoney(grandRevByYear[y])} muted />
                 ))}
                 <RevStat label={`${avgBase}-yr avg`} value={fmtMoney(grandAvgRev)} />
                 <RevStat label={`${projection >= 0 ? "+" : ""}${projection}% projected ${planYear}`} value={fmtMoney(grandProjRev)} accent={COLORS.light} />
@@ -1524,9 +1544,9 @@ function CatalogTab({ plan }) {
               Catalog · {filtered.length} of {rows.length} items {viewMode !== "all" ? `(${viewMode} view)` : ""}
             </div>
             <div style={{ fontSize: 11, color: COLORS.muted, marginTop: 2 }}>
-              {viewMode === "recommended" && `Scored by 2-yr volume × stability × YoY growth. Top picks for Q${quarter} ${planYear} planning.`}
-              {viewMode === "top26" && `Best sellers in Q${quarter} ${currYr} — most-recent year.`}
-              {viewMode === "top25" && `Best sellers in Q${quarter} ${priorYr} — baseline year.`}
+              {viewMode === "recommended" && `Scored by 2-yr volume × stability × YoY growth. Top picks for ${rangeLabel} ${planYear} planning.`}
+              {viewMode === "top26" && `Best sellers in ${rangeLabel} ${currYr} — most-recent year.`}
+              {viewMode === "top25" && `Best sellers in ${rangeLabel} ${priorYr} — baseline year.`}
               {viewMode === "growers" && `Items with >25% YoY growth (had >50 units in ${priorYr}).`}
               {viewMode === "decliners" && `Items with >25% YoY decline (had >100 units in ${priorYr}) — investigate supply or relevance.`}
               {viewMode === "new" && `Sold in ${currYr} but no ${priorYr} sales — recent additions.`}
@@ -2048,8 +2068,7 @@ function HpSourcingTab({ plan }) {
     // Smart default: if setting acquisition to finished and no arrival yet, suggest a Thursday
     const row = rows.find(r => r.id === id);
     if (updates.acquisition_type === "finished" && row && !row.arrival_date_target && !updates.arrival_date_target) {
-      const quarter = parseInt(plan.season?.replace(/[^0-9]/g, "")) || 1;
-      const startMonth = (quarter - 1) * 3 + 1;
+      const [startMonth] = planMonthRange(plan);
       const qStart = new Date(`${plan.year}-${String(startMonth).padStart(2, "0")}-01`);
       const dow = qStart.getDay();
       const daysToMon = dow === 0 ? 1 : dow === 1 ? 0 : 8 - dow;
@@ -2073,10 +2092,12 @@ function HpSourcingTab({ plan }) {
   const untagged       = rows.filter(r => !r.acquisition_type && r.status !== "cancelled");
 
   function makeBrokerRequest(mode) {
-    const quarter = parseInt(plan.season?.replace(/[^0-9]/g, "")) || 1;
     const planYear = plan.year;
-    const startMonth = ["Jan", "Apr", "Jul", "Oct"][quarter - 1];
-    const endMonth = ["Mar", "Jun", "Sep", "Dec"][quarter - 1];
+    const [startMo, endMo] = planMonthRange(plan);
+    const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    const startMonth = MONTHS[startMo - 1];
+    const endMonth   = MONTHS[endMo - 1];
+    const rangeStr   = `${startMonth}–${endMonth}`;
 
     const isFinished = mode === "finished";
     const items = (isFinished ? finishedItems : linerItems).filter(r => r.target_qty > 0 && r.status !== "cancelled");
@@ -2094,13 +2115,15 @@ function HpSourcingTab({ plan }) {
     if (isFinished) {
       body += `Requested arrival: THURSDAY 4 days before each sale week (we quarantine + treat Thu–Sun, sell Monday).\n`;
       body += `(Per-variety arrival Thursdays listed inline below.)\n\n`;
-      body += `Schlegel houseplant program: ~$210K Q${quarter} revenue base, growing. Looking for sale-ready FINISHED material on a tight Thursday delivery window.\n\n`;
+      body += `Schlegel houseplant program: ~$210K ${rangeStr} revenue base, growing. Looking for sale-ready FINISHED material on a tight Thursday delivery window.\n\n`;
       body += `Substitution flexibility on cultivars, pot size ±1 step, arrival date ±5 days. Hard requirement on Thursday delivery (or earlier in the week).\n\n`;
     } else {
-      const arrivalStart = ["Nov", "Feb", "May", "Aug"][quarter - 1] + " " + (quarter === 1 ? planYear - 1 : planYear);
-      const arrivalEnd   = startMonth + " " + planYear;
-      body += `Requested liner arrival window: ${arrivalStart} – ${arrivalEnd} (8–10 weeks before sale start for finishing)\n\n`;
-      body += `Schlegel houseplant program: ~$210K Q${quarter} revenue base, growing. We commit early on liners, prefer reliable supply over best price, value advance notice on substitutions.\n\n`;
+      // Liner arrival ~8-10 weeks before sale start
+      const linerStartMo = ((startMo - 3 + 12) % 12) || 12;
+      const linerArrivalStart = MONTHS[linerStartMo - 1] + " " + (linerStartMo > startMo ? planYear - 1 : planYear);
+      const linerArrivalEnd = MONTHS[startMo - 1] + " " + planYear;
+      body += `Requested liner arrival window: ${linerArrivalStart} – ${linerArrivalEnd} (8–10 weeks before sale start for finishing)\n\n`;
+      body += `Schlegel houseplant program: ~$210K ${rangeStr} revenue base, growing. We commit early on liners, prefer reliable supply over best price, value advance notice on substitutions.\n\n`;
       body += `Substitution flexibility on cultivars, pot size ±1 step, arrival date ±2 weeks.\n\n`;
     }
     body += `═══════════════════════════════════════════════════════════\nREQUEST LIST\n═══════════════════════════════════════════════════════════\n`;
@@ -2369,9 +2392,10 @@ function HpPresentationTab({ plan }) {
     if (rows.length === 0) return [];
     // Group by year
     const years = Array.from(new Set(rows.map(r => (r.period || "").slice(0, 4)).filter(Boolean))).sort();
-    const quarter = parseInt(plan.season?.replace(/[^0-9]/g, "")) || 1;
-    const qStart = (q) => String((q - 1) * 3 + 1).padStart(2, "0");
-    const qEnd   = (q) => String(q * 3).padStart(2, "0");
+    const [winStart, winEnd] = planMonthRange(plan);
+    const winLabel = planRangeLabel(plan);
+    const moStart = String(winStart).padStart(2, "0");
+    const moEnd   = String(winEnd).padStart(2, "0");
 
     // Build set of (pot, normDesc) sold in plan-window of the planYear-1 (i.e., 2026)
     const recentYear = String(plan.year - 1); // 2026 if plan year=2027
@@ -2432,7 +2456,7 @@ function HpPresentationTab({ plan }) {
       // Q1 (or whatever quarter the plan covers) for that year
       const q1Rows = yrRows.filter(r => {
         const mo = (r.period || "").slice(5, 7);
-        return mo >= qStart(quarter) && mo <= qEnd(quarter);
+        return mo >= moStart && mo <= moEnd;
       });
       const q1Qty = q1Rows.reduce((s, r) => s + (+r.qty_sold || 0), 0);
       const q1Rev = q1Rows.reduce((s, r) => s + (+r.sold_value || 0), 0);
@@ -2444,7 +2468,7 @@ function HpPresentationTab({ plan }) {
         byItemQ1[k].rev += +r.sold_value || 0;
       }
       const top10Q1 = Object.values(byItemQ1).sort((a, b) => b.rev - a.rev).slice(0, 10);
-      out.push({ kind: "quarter_view", year: yr, quarter, qty: q1Qty, rev: q1Rev, items: top10Q1 });
+      out.push({ kind: "quarter_view", year: yr, windowLabel: winLabel, qty: q1Qty, rev: q1Rev, items: top10Q1 });
 
       // "Sold that year, NOT in recent year (2026)" — the bring-back candidates
       // Skip this slide for the recentYear itself (would always be empty)
@@ -2630,7 +2654,7 @@ function SlideContent({ slide }) {
   if (slide.kind === "quarter_view") {
     return (
       <div style={{ color: "#fff" }}>
-        <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 42, color: "#c8e6b8", marginBottom: 6 }}>{slide.year} — Q{slide.quarter} only</div>
+        <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 42, color: "#c8e6b8", marginBottom: 6 }}>{slide.year} — {slide.windowLabel || `Q${slide.quarter}`} only</div>
         <div style={{ fontSize: 16, color: "rgba(200, 230, 184, 0.7)", marginBottom: 20 }}>
           {fmtMoney(slide.rev)} · {slide.qty.toLocaleString()} units
         </div>
