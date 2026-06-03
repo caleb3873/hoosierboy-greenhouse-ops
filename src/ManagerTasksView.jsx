@@ -1276,6 +1276,10 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
         <button onClick={() => changeWeek(1)} style={{ background: "none", border: "none", color: "#c8e6b8", fontSize: 18, cursor: "pointer", padding: 6 }}>&rarr;</button>
       </div>
 
+      {/* Upcoming from plans preview — counts of plan-bound tasks in the next 8 weeks */}
+      <UpcomingPlanPreview tasks={tasks} selectedWeek={selectedWeek} onJump={(w, y) => setSelectedWeek({ week: w, year: y })} />
+
+
       {/* Announcements */}
       <AnnouncementBanner />
 
@@ -3033,6 +3037,45 @@ function TaskDetail({ task, onBack, onSave }) {
           style={{ width: "100%", marginTop: 16, padding: "16px 0", borderRadius: 12, border: "none", background: "#1e2d1a", color: "#c8e6b8", fontSize: 16, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
           Save Changes
         </button>
+      </div>
+    </div>
+  );
+}
+
+
+function UpcomingPlanPreview({ tasks, selectedWeek, onJump }) {
+  // Show next 8 weeks of plan-bound tasks (skipping the currently-viewed week)
+  const buckets = {};
+  for (const t of (tasks || [])) {
+    if (!t.planId) continue;
+    if (t.status === "completed") continue;
+    const wkKey = `${t.year}-${t.weekNumber}`;
+    if (!buckets[wkKey]) buckets[wkKey] = { week: t.weekNumber, year: t.year, n: 0 };
+    buckets[wkKey].n += 1;
+  }
+  // Filter to weeks in the future relative to selected week (+ next 8 calendar weeks)
+  const cur = selectedWeek.year * 100 + selectedWeek.week;
+  const sorted = Object.values(buckets)
+    .filter(b => (b.year * 100 + b.week) > cur)
+    .sort((a, b) => (a.year * 100 + a.week) - (b.year * 100 + b.week))
+    .slice(0, 8);
+  if (sorted.length === 0) return null;
+  return (
+    <div style={{ background: "#fff8e6", borderBottom: "1px solid #f0d99e", padding: "10px 16px" }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: "#8a6d1c", textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 6 }}>
+        📋 Coming up from plans · tap to jump
+      </div>
+      <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 4 }}>
+        {sorted.map(b => (
+          <button key={`${b.year}-${b.week}`} onClick={() => onJump(b.week, b.year)}
+            style={{
+              flex: "0 0 auto", padding: "6px 10px", borderRadius: 14,
+              background: "#fff", border: "1px solid #f0d99e", color: "#8a6d1c", fontWeight: 700, fontSize: 12,
+              cursor: "pointer", whiteSpace: "nowrap",
+            }}>
+            Wk {b.week} · <strong style={{ color: "#1e2d1a" }}>{b.n}</strong>
+          </button>
+        ))}
       </div>
     </div>
   );
