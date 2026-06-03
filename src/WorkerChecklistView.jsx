@@ -521,6 +521,21 @@ function WorkerChecklistViewInner({ onSwitchMode, onBackToApp, onOpenTaskCreator
                       {task.targetDate && (
                         <div style={{ fontSize: 11, color: "#9cb894", marginTop: 4, fontWeight: 700 }}>📅 {formatTargetDate(task.targetDate)}</div>
                       )}
+                      {task.location && (
+                        <div style={{ fontSize: 12, color: "#e89a3a", marginTop: 4, fontWeight: 800 }}>📍 {task.location}</div>
+                      )}
+                      {Array.isArray(task.benchNumbers) && task.benchNumbers.length > 0 && (
+                        <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 3 }}>
+                          {task.benchNumbers.slice(0, 12).map(b => (
+                            <span key={b} style={{ background: "#1e2d1a", border: "1px solid #4a6a3a", color: "#c8e6b8", fontSize: 11, fontFamily: "monospace", padding: "2px 6px", borderRadius: 4, fontWeight: 800 }}>
+                              {b}
+                            </span>
+                          ))}
+                          {task.benchNumbers.length > 12 && (
+                            <span style={{ fontSize: 11, color: "#9cb894", alignSelf: "center" }}>+{task.benchNumbers.length - 12} more</span>
+                          )}
+                        </div>
+                      )}
                       {task.description && (
                         <div style={{ fontSize: 13, color: "#9cb894", marginTop: 4 }}>{tr(task, "description")}</div>
                       )}

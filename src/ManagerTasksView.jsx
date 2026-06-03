@@ -852,6 +852,21 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
               )}
             </div>
             {t.targetDate && <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2, fontWeight: 600 }}>📅 {formatTargetDate(t.targetDate)}</div>}
+            {t.location && (
+              <div style={{ fontSize: 12, color: "#4a7a35", marginTop: 2, fontWeight: 800 }}>📍 {t.location}</div>
+            )}
+            {Array.isArray(t.benchNumbers) && t.benchNumbers.length > 0 && (
+              <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 3 }}>
+                {t.benchNumbers.slice(0, 12).map(b => (
+                  <span key={b} style={{ background: "#1e2d1a", color: "#c8e6b8", fontSize: 10, fontFamily: "monospace", padding: "2px 6px", borderRadius: 3, fontWeight: 800 }}>
+                    {b}
+                  </span>
+                ))}
+                {t.benchNumbers.length > 12 && (
+                  <span style={{ fontSize: 10, color: "#7a8c74", alignSelf: "center" }}>+{t.benchNumbers.length - 12} more</span>
+                )}
+              </div>
+            )}
             {t.description && (
               <div style={{ fontSize: 12, color: "#7a8c74", marginTop: 4, whiteSpace: "pre-wrap" }}>
                 {/* If the location bar already shows the quonset list, suppress the LOCATION line in the body so it doesn't double up */}
@@ -2737,7 +2752,11 @@ export function TaskViewer({ task, onBack, onAppend, readOnly = true }) {
             <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", marginBottom: 4 }}>Details</div>
             <div style={{ fontSize: 14, color: "#1e2d1a", marginBottom: 12, whiteSpace: "pre-wrap" }}>{task.description}</div>
           </>}
-          {task.houseId && <>
+          {task.location && <>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", marginBottom: 4 }}>Location</div>
+            <div style={{ fontSize: 16, color: "#1e2d1a", marginBottom: 12, fontWeight: 800 }}>📍 {task.location}</div>
+          </>}
+          {task.houseId && !task.location && <>
             <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", marginBottom: 4 }}>House</div>
             <div style={{ fontSize: 14, color: "#1e2d1a", marginBottom: 12 }}>{task.houseId}</div>
           </>}

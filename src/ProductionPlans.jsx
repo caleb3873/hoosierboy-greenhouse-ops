@@ -3224,6 +3224,7 @@ function PlanTasks({ planId }) {
   const [loading, setLoading]   = useState(true);
   const [filter, setFilter]     = useState("all");      // all | growing | sales | maintenance
   const [statusFilter, setStat] = useState("upcoming"); // upcoming | all | done
+  const [groupBy, setGroupBy]   = useState("location_week"); // none | location | week | location_week
 
   useEffect(() => {
     if (!sb) return;
@@ -3246,6 +3247,40 @@ function PlanTasks({ planId }) {
     return true;
   });
 
+  // Extract a plant-week from the title (e.g., "(wk30)" or "(wk30 planting)")
+  function extractPlantWeek(t) {
+    const m = (t.title || "").match(/\(wk(\d+)/);
+    if (m) return parseInt(m[1]);
+    return t.week_number || null;
+  }
+
+  // Group tasks based on groupBy
+  function groupTasks(list) {
+    if (groupBy === "none") return [{ key: "all", label: null, tasks: list }];
+    const groups = {};
+    for (const t of list) {
+      let key, label;
+      if (groupBy === "location") {
+        key = t.location || "(no location)";
+        label = `📍 ${key}`;
+      } else if (groupBy === "week") {
+        const wk = extractPlantWeek(t);
+        key = wk != null ? `wk${wk}` : "(no plant week)";
+        label = wk != null ? `📅 Plant week ${wk}` : "(no plant week)";
+      } else { // location_week
+        const wk = extractPlantWeek(t);
+        const loc = t.location || "(no location)";
+        key = `${loc}__${wk || "?"}`;
+        label = wk != null ? `📍 ${loc} · 📅 wk${wk}` : `📍 ${loc}`;
+      }
+      if (!groups[key]) groups[key] = { key, label, tasks: [], firstDate: t.target_date };
+      groups[key].tasks.push(t);
+      if (t.target_date < groups[key].firstDate) groups[key].firstDate = t.target_date;
+    }
+    return Object.values(groups).sort((a, b) => (a.firstDate || "").localeCompare(b.firstDate || ""));
+  }
+  const grouped = groupTasks(filtered);
+
   // Stats
   const totalThisPlan  = tasks.length;
   const upcomingCount  = tasks.filter(t => t.target_date >= today && t.status !== "completed").length;
@@ -3266,7 +3301,7 @@ function PlanTasks({ planId }) {
       </div>
 
       {/* Filter chips */}
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12, alignItems: "center" }}>
         <FilterChip active={statusFilter==="upcoming"} onClick={() => setStat("upcoming")}>Upcoming</FilterChip>
         <FilterChip active={statusFilter==="all"}      onClick={() => setStat("all")}>All</FilterChip>
         <FilterChip active={statusFilter==="done"}     onClick={() => setStat("done")}>Done</FilterChip>
@@ -3275,6 +3310,12 @@ function PlanTasks({ planId }) {
         {categories.map(c => (
           <FilterChip key={c} active={filter===c} onClick={() => setFilter(c)}>{c}</FilterChip>
         ))}
+        <span style={{ borderLeft: `1px solid ${COLORS.border}`, margin: "0 6px" }} />
+        <span style={{ fontSize: 11, color: COLORS.muted, fontWeight: 700, textTransform: "uppercase" }}>Group:</span>
+        <FilterChip active={groupBy==="location_week"} onClick={() => setGroupBy("location_week")}>📍+📅</FilterChip>
+        <FilterChip active={groupBy==="location"}      onClick={() => setGroupBy("location")}>📍 Location</FilterChip>
+        <FilterChip active={groupBy==="week"}          onClick={() => setGroupBy("week")}>📅 Week</FilterChip>
+        <FilterChip active={groupBy==="none"}          onClick={() => setGroupBy("none")}>None</FilterChip>
       </div>
 
       {filtered.length === 0 ? (
@@ -3282,8 +3323,52 @@ function PlanTasks({ planId }) {
           No tasks match the current filter.
         </div>
       ) : (
-        <div style={{ maxHeight: 480, overflowY: "auto" }}>
-          {filtered.map(t => <TaskRow key={t.id} task={t} />)}
+        <div style={{ maxHeight: 640, overflowY: "auto" }}>
+          {grouped.map(g => <TaskGroup key={g.key} group={g} />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Collapsible group of tasks. Header shows location + plant-week summary + bench codes from all tasks in group.
+function TaskGroup({ group }) {
+  const [open, setOpen] = useState(true);
+  if (!group.label) {
+    return group.tasks.map(t => <TaskRow key={t.id} task={t} />);
+  }
+  // Aggregate bench codes across all tasks in the group (de-duplicated)
+  const benchSet = new Set();
+  for (const t of group.tasks) {
+    if (Array.isArray(t.bench_numbers)) for (const b of t.bench_numbers) benchSet.add(b);
+  }
+  const benches = Array.from(benchSet).sort();
+  const dates = group.tasks.map(t => t.target_date).sort();
+  const dateRange = dates.length > 0 ? (dates[0] === dates[dates.length - 1] ? dates[0] : `${dates[0]} → ${dates[dates.length - 1]}`) : "";
+
+  return (
+    <div style={{ borderBottom: `2px solid ${COLORS.border}`, marginBottom: 12 }}>
+      <div onClick={() => setOpen(!open)}
+        style={{ cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center",
+          background: "#eaf3df", padding: "8px 12px", borderRadius: 6 }}>
+        <div>
+          <div style={{ fontWeight: 800, fontSize: 13, color: COLORS.dark }}>
+            {group.label} <span style={{ color: COLORS.muted, fontWeight: 600, fontSize: 12 }}>· {group.tasks.length} task{group.tasks.length === 1 ? "" : "s"}</span>
+          </div>
+          {benches.length > 0 && (
+            <div style={{ marginTop: 4, fontSize: 10, color: COLORS.dark, fontFamily: "monospace" }}>
+              <strong>{benches.length} bench{benches.length === 1 ? "" : "es"}:</strong> {benches.slice(0, 12).join(", ")}{benches.length > 12 ? `, +${benches.length - 12} more` : ""}
+            </div>
+          )}
+        </div>
+        <div style={{ fontSize: 11, color: COLORS.muted, textAlign: "right" }}>
+          {dateRange}
+          <div style={{ fontSize: 14, color: COLORS.muted }}>{open ? "▾" : "▸"}</div>
+        </div>
+      </div>
+      {open && (
+        <div style={{ marginTop: 4 }}>
+          {group.tasks.map(t => <TaskRow key={t.id} task={t} />)}
         </div>
       )}
     </div>
@@ -3339,9 +3424,21 @@ function TaskRow({ task }) {
             {task.location && <>📍 {task.location} · </>}
             {task.assigned_to && <>👤 {task.assigned_to} · </>}
             {task.bench_numbers && Array.isArray(task.bench_numbers) && task.bench_numbers.length > 0 && (
-              <>{task.bench_numbers.length} bench(es)</>
+              <>{task.bench_numbers.length} bench{task.bench_numbers.length === 1 ? "" : "es"}</>
             )}
           </div>
+          {task.bench_numbers && Array.isArray(task.bench_numbers) && task.bench_numbers.length > 0 && (
+            <div style={{ marginTop: 4, display: "flex", flexWrap: "wrap", gap: 3 }}>
+              {task.bench_numbers.slice(0, 16).map(b => (
+                <span key={b} style={{ background: "#fff", border: `1px solid ${COLORS.border}`, color: COLORS.dark, fontSize: 10, fontFamily: "monospace", padding: "1px 5px", borderRadius: 3, fontWeight: 700 }}>
+                  {b}
+                </span>
+              ))}
+              {task.bench_numbers.length > 16 && (
+                <span style={{ fontSize: 10, color: COLORS.muted, alignSelf: "center" }}>+{task.bench_numbers.length - 16} more</span>
+              )}
+            </div>
+          )}
         </div>
         <div style={{ fontSize: 12, color: dateColor, fontWeight: 600, textAlign: "right", minWidth: 100 }}>
           {task.target_date}
