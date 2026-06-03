@@ -830,6 +830,7 @@ function CatalogTab({ plan }) {
   const cc = getCultureClient();
   const [rows, setRows] = useState([]);
   const [catalog, setCatalog] = useState([]);
+  const [aliases, setAliases] = useState([]);
   const [cultureByGenus, setCultureByGenus] = useState({});
   const [sortCol, setSortCol] = useState("y_curr_rev");
   const [sortDir, setSortDir] = useState("desc");
@@ -837,6 +838,8 @@ function CatalogTab({ plan }) {
   const [search, setSearch] = useState("");
   const [viewMode, setViewMode] = useState("all");
   const [showStats, setShowStats] = useState(false);
+  const [mergeModal, setMergeModal] = useState(null);  // { sourceRow: ... }
+  const [reloadTick, setReloadTick] = useState(0);
   const [loading, setLoading] = useState(true);
 
   // For "Houseplants Q1 2027": current_year = 2026, prior_year = 2025
@@ -854,8 +857,26 @@ function CatalogTab({ plan }) {
     };
   }
 
+  // Aggressive normalization to catch the "system changeover" duplicates
   function normalizeDesc(d) {
-    return String(d || "").replace(/^\d+(\.\d+)?"\s*/, "").replace(/^HB \d+(\.\d+)?"\s*/i, "").replace(/\s+/g, " ").trim().toUpperCase();
+    return String(d || "")
+      // strip leading size: '4.5"', '3"', 'HB 6"', etc.
+      .replace(/^HB \d+(\.\d+)?"\s*/i, "")
+      .replace(/^\d+(\.\d+)?"\s*/, "")
+      // strip packaging suffixes
+      .replace(/\s*\(Individual\)\s*/gi, "")
+      .replace(/\s*\(Case of \d+\)\s*/gi, "")
+      .replace(/\s*\(whole flat \d+\)\s*/gi, "")
+      .replace(/\s*\(1\/2 flat \d+\)\s*/gi, "")
+      // strip redundant 'Plant' suffix INSIDE quotes ('Swiss Cheese Plant' → 'Swiss Cheese')
+      .replace(/'\s*([^']+?)\s+Plant\s*'/g, "'$1'")
+      // normalize all quote styles to plain '
+      .replace(/[‘’‚‛′‵]/g, "'")
+      .replace(/[“”„‟″‶]/g, '"')
+      // collapse whitespace + case
+      .replace(/\s+/g, " ")
+      .trim()
+      .toUpperCase();
   }
 
   useEffect(() => {
@@ -878,19 +899,38 @@ function CatalogTab({ plan }) {
       const { data: cat } = await sb.from("houseplant_catalog").select("*").eq("plan_id", plan.id);
       setCatalog(cat || []);
 
-      // Aggregate by (normalized desc, pot_size)
+      // Pull manual merge aliases — these override normalization for known dupes
+      const { data: aliasData } = await sb.from("houseplant_merge_aliases").select("*");
+      setAliases(aliasData || []);
+      const aliasMap = {};
+      for (const a of (aliasData || [])) {
+        const aliasKey = `${a.alias_pot_size}|${normalizeDesc(a.alias_desc)}`;
+        const canKey   = `${a.canonical_pot_size}|${normalizeDesc(a.canonical_desc)}`;
+        aliasMap[aliasKey] = { key: canKey, desc: a.canonical_desc, pot_size: a.canonical_pot_size };
+      }
+
+      // Aggregate by (normalized desc, pot_size) — apply aliases first
       const curr = quarterRange(currYr);
       const prior = quarterRange(priorYr);
       const byKey = {};
       for (const r of all) {
-        const key = `${r.pot_size || "?"}|${normalizeDesc(r.description)}`;
-        if (!byKey[key]) byKey[key] = {
-          desc: r.description, pot_size: r.pot_size,
+        let rawKey = `${r.pot_size || "?"}|${normalizeDesc(r.description)}`;
+        let useDesc = r.description, usePot = r.pot_size;
+        if (aliasMap[rawKey]) {
+          rawKey = aliasMap[rawKey].key;
+          useDesc = aliasMap[rawKey] ? aliasMap[rawKey].desc : aliasMap[rawKey]?.desc || useDesc;
+          usePot  = aliasMap[`${r.pot_size || "?"}|${normalizeDesc(r.description)}`]?.pot_size || usePot;
+          // Re-resolve to get the canonical desc/pot (avoid lookup-after-overwrite bug)
+          const a = (aliasData || []).find(x => normalizeDesc(x.alias_desc) === normalizeDesc(r.description) && x.alias_pot_size === r.pot_size);
+          if (a) { useDesc = a.canonical_desc; usePot = a.canonical_pot_size; }
+        }
+        if (!byKey[rawKey]) byKey[rawKey] = {
+          desc: useDesc, pot_size: usePot,
           y_curr_qty: 0, y_curr_rev: 0, y_prior_qty: 0, y_prior_rev: 0,
         };
         const qty = +r.qty_sold || 0, rev = +r.sold_value || 0;
-        if (r.period >= curr.start && r.period <= curr.end) { byKey[key].y_curr_qty += qty; byKey[key].y_curr_rev += rev; }
-        if (r.period >= prior.start && r.period <= prior.end) { byKey[key].y_prior_qty += qty; byKey[key].y_prior_rev += rev; }
+        if (r.period >= curr.start && r.period <= curr.end) { byKey[rawKey].y_curr_qty += qty; byKey[rawKey].y_curr_rev += rev; }
+        if (r.period >= prior.start && r.period <= prior.end) { byKey[rawKey].y_prior_qty += qty; byKey[rawKey].y_prior_rev += rev; }
       }
       const arr = Object.values(byKey).map(r => {
         const priorPrice = r.y_prior_qty > 0 ? r.y_prior_rev / r.y_prior_qty : null;
@@ -926,7 +966,25 @@ function CatalogTab({ plan }) {
       }
       setLoading(false);
     })();
-  }, [sb, cc, plan.id, plan.year, plan.season]);
+  }, [sb, cc, plan.id, plan.year, plan.season, reloadTick]);
+
+  async function saveMerge(sourceRow, targetRow) {
+    if (!sourceRow || !targetRow) return;
+    await sb.from("houseplant_merge_aliases").upsert({
+      canonical_desc: targetRow.desc,
+      canonical_pot_size: targetRow.pot_size,
+      alias_desc: sourceRow.desc,
+      alias_pot_size: sourceRow.pot_size,
+      notes: "Manual merge from Catalog UI",
+    }, { onConflict: "alias_desc,alias_pot_size" });
+    setMergeModal(null);
+    setReloadTick(t => t + 1);
+  }
+  async function unmergeAll() {
+    if (!confirm("Remove all manual merges? Sales rows go back to their original (potentially duplicated) keys.")) return;
+    await sb.from("houseplant_merge_aliases").delete().gte("created_at", "1900-01-01");
+    setReloadTick(t => t + 1);
+  }
 
   async function updateCatalogRow(row, updates) {
     const existing = catalog.find(c => normalizeDesc(c.description) === row.normalized && c.pot_size === row.pot_size);
@@ -1161,6 +1219,7 @@ function CatalogTab({ plan }) {
                 <th style={{...th, textAlign: "right", background: "#e8f0e2"}}>🎯 $/ea {planYear}</th>
                 <th style={{...th, background: "#e8f0e2"}}>Source</th>
                 <th style={{...th, background: "#e8f0e2"}}>Status</th>
+                <th style={th}></th>
               </tr>
             </thead>
             <tbody>
@@ -1230,6 +1289,13 @@ function CatalogTab({ plan }) {
                         <option value="cancelled">cancelled</option>
                       </select>
                     </td>
+                    <td style={td}>
+                      <button title="Merge this item into another"
+                        onClick={() => setMergeModal({ source: r })}
+                        style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 14, color: COLORS.muted }}>
+                        🔗
+                      </button>
+                    </td>
                   </tr>
                 );
               })}
@@ -1241,6 +1307,85 @@ function CatalogTab({ plan }) {
             Showing top 200 of {sorted.length} matches. Use filter/search to narrow.
           </div>
         )}
+
+        {aliases.length > 0 && (
+          <div style={{ marginTop: 14, fontSize: 11, color: COLORS.muted, padding: 8, background: "#f3f5ef", borderRadius: 4 }}>
+            🔗 <strong>{aliases.length} manual merge(s) active.</strong>{" "}
+            <button onClick={unmergeAll} style={{ background: "transparent", border: "none", color: COLORS.red, cursor: "pointer", textDecoration: "underline", fontSize: 11 }}>
+              clear all
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Merge modal */}
+      {mergeModal && (
+        <MergeModal sourceRow={mergeModal.source} allRows={rows}
+          onCancel={() => setMergeModal(null)}
+          onConfirm={target => saveMerge(mergeModal.source, target)} />
+      )}
+    </div>
+  );
+}
+
+// Modal for selecting merge target
+function MergeModal({ sourceRow, allRows, onCancel, onConfirm }) {
+  const [q, setQ] = useState("");
+  const [selectedKey, setSelectedKey] = useState(null);
+  // Suggest matches: same pot size first + similar genus
+  const srcGenus = (sourceRow.normalized.split(/\s+/)[0] || "").toUpperCase();
+  const candidates = allRows
+    .filter(r => r.normalized !== sourceRow.normalized || r.pot_size !== sourceRow.pot_size)
+    .map(r => ({ ...r, _score: ((r.normalized.toUpperCase().split(/\s+/)[0] || "") === srcGenus ? 100 : 0) + (r.pot_size === sourceRow.pot_size ? 50 : 0) }))
+    .sort((a, b) => b._score - a._score);
+  const filtered = q ? candidates.filter(r => r.desc.toLowerCase().includes(q.toLowerCase())) : candidates;
+  const selected = filtered.find(r => `${r.pot_size}|${r.normalized}` === selectedKey);
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }} onClick={onCancel}>
+      <div onClick={e => e.stopPropagation()}
+        style={{ background: "#fff", borderRadius: 10, padding: 20, maxWidth: 700, width: "92%", maxHeight: "80vh", overflowY: "auto" }}>
+        <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 20, color: COLORS.dark, marginBottom: 6 }}>
+          Merge this item into another
+        </div>
+        <div style={{ background: "#fff3e0", border: `1px solid ${COLORS.amber}`, padding: 10, borderRadius: 6, fontSize: 12, marginBottom: 12 }}>
+          Combining: <strong>{sourceRow.pot_size}</strong> · {sourceRow.desc}<br />
+          The sales from this item will roll up under the canonical item you pick. The original sales rows stay intact — this is a display-only alias.
+        </div>
+
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search target item…" autoFocus
+          style={{ width: "100%", padding: "8px 10px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 13, marginBottom: 10 }} />
+
+        <div style={{ maxHeight: 380, overflowY: "auto", border: `1px solid ${COLORS.border}`, borderRadius: 6 }}>
+          {filtered.slice(0, 50).map((r, i) => {
+            const key = `${r.pot_size}|${r.normalized}`;
+            const isSel = selectedKey === key;
+            return (
+              <div key={i} onClick={() => setSelectedKey(key)}
+                style={{
+                  padding: 10, borderBottom: `1px solid ${COLORS.border}`, cursor: "pointer",
+                  background: isSel ? "#dcedc8" : i % 2 ? "#fafafa" : "#fff",
+                }}>
+                <div style={{ fontSize: 12, color: COLORS.muted }}>{r.pot_size}</div>
+                <div style={{ fontWeight: 600 }}>{r.desc}</div>
+                <div style={{ fontSize: 11, color: COLORS.muted }}>
+                  Q1'25: {r.y_prior_qty || 0} · Q1'26: {r.y_curr_qty || 0}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div style={{ marginTop: 16, display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <button onClick={onCancel}
+            style={{ padding: "8px 16px", border: `1px solid ${COLORS.border}`, borderRadius: 6, background: "#fff", cursor: "pointer" }}>
+            Cancel
+          </button>
+          <button disabled={!selected} onClick={() => onConfirm(selected)}
+            style={{ padding: "8px 16px", border: "none", borderRadius: 6, background: selected ? COLORS.dark : "#ccc", color: "#fff", fontWeight: 700, cursor: selected ? "pointer" : "not-allowed" }}>
+            Merge into selected
+          </button>
+        </div>
       </div>
     </div>
   );
