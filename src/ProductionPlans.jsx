@@ -1290,11 +1290,17 @@ function CatalogTab({ plan }) {
     setSortCol("_viewmode");  // let view mode drive the order
   }
 
-  const SortHdr = ({ col, label, align }) => (
-    <th style={{...th, textAlign: align || "left", cursor: "pointer"}} onClick={() => clickSort(col)}>
+  const SortHdr = ({ col, label, align, sticky }) => (
+    <th style={{...th, textAlign: align || "left", cursor: "pointer",
+        ...(sticky ? { position: "sticky", top: sticky === 2 ? 32 : 0, zIndex: 10, background: "#f3f5ef" } : {})
+    }} onClick={() => clickSort(col)}>
       {label} {sortCol === col ? (sortDir === "asc" ? "↑" : "↓") : ""}
     </th>
   );
+
+  // Sticky style helpers for the two-row catalog header
+  const stickyRow1 = { position: "sticky", top: 0,  zIndex: 10, background: "#f3f5ef" };
+  const stickyRow2 = { position: "sticky", top: 32, zIndex: 10, background: "#f3f5ef" };
 
   // Catalog summary stats — per pot size, capture qty + rev for EVERY available year
   const sizeStats = {};
@@ -1566,7 +1572,7 @@ function CatalogTab({ plan }) {
           </div>
         </div>
 
-        <div style={{ overflowX: "auto" }}>
+        <div style={{ overflowX: "auto", overflowY: "auto", maxHeight: "calc(100vh - 240px)", position: "relative" }}>
           {(() => {
             const displayYears = allYears.filter(y =>
               rows.some(r => (r.yearQty?.[y] || 0) > 0)
@@ -1576,9 +1582,9 @@ function CatalogTab({ plan }) {
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
             <thead>
               <tr style={{ background: "#f3f5ef" }}>
-                <SortHdr col="pot_size" label="Pot" />
-                <SortHdr col="desc"     label="Variety" />
-                <th colSpan={displayYears.length} style={{...th, textAlign: "center", borderBottom: `1px solid ${COLORS.border}`}}>
+                <SortHdr col="pot_size" label="Pot" sticky={1} />
+                <SortHdr col="desc"     label="Variety" sticky={1} />
+                <th colSpan={displayYears.length} style={{...th, ...stickyRow1, textAlign: "center", borderBottom: `1px solid ${COLORS.border}`}}>
                   <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
                     Year totals
                     <button onClick={() => setYearDisplay(yearDisplay === "qty" ? "revenue" : "qty")}
@@ -1592,23 +1598,23 @@ function CatalogTab({ plan }) {
                     </button>
                   </span>
                 </th>
-                <th style={{...th, textAlign: "right"}}>{avgBase}yr avg</th>
-                <SortHdr col="yoy_qty"   label="Δ vs avg" align="right" />
-                <th style={{...th, textAlign:"center"}}>signal</th>
-                <th style={{...th, textAlign: "right"}}>'{String(currYr).slice(-2)} $/ea</th>
-                <th style={{...th, textAlign: "right", background: "#e8f0e2"}}>🎯 qty {planYear}</th>
-                <th style={{...th, textAlign: "right", background: "#e8f0e2"}}>🎯 $/ea {planYear}</th>
-                <th style={{...th, textAlign: "right", background: "#e8f0e2"}}>Δ $/ea</th>
-                <th style={{...th, background: "#e8f0e2"}}>Status</th>
-                <th style={th}></th>
+                <th style={{...th, ...stickyRow1, textAlign: "right"}}>{avgBase}yr avg</th>
+                <SortHdr col="yoy_qty"   label="Δ vs avg" align="right" sticky={1} />
+                <th style={{...th, ...stickyRow1, textAlign:"center"}}>signal</th>
+                <th style={{...th, ...stickyRow1, textAlign: "right"}}>'{String(currYr).slice(-2)} $/ea</th>
+                <th style={{...th, ...stickyRow1, textAlign: "right", background: "#e8f0e2"}}>🎯 qty {planYear}</th>
+                <th style={{...th, ...stickyRow1, textAlign: "right", background: "#e8f0e2"}}>🎯 $/ea {planYear}</th>
+                <th style={{...th, ...stickyRow1, textAlign: "right", background: "#e8f0e2"}}>Δ $/ea</th>
+                <th style={{...th, ...stickyRow1, background: "#e8f0e2"}}>Status</th>
+                <th style={{...th, ...stickyRow1}}></th>
               </tr>
               <tr style={{ background: "#f3f5ef" }}>
-                <th style={th}></th>
-                <th style={th}></th>
+                <th style={{...th, ...stickyRow2}}></th>
+                <th style={{...th, ...stickyRow2}}></th>
                 {displayYears.map(y => (
-                  <th key={y} style={{...th, textAlign: "right", fontSize: 10}}>'{String(y).slice(-2)}</th>
+                  <th key={y} style={{...th, ...stickyRow2, textAlign: "right", fontSize: 10}}>'{String(y).slice(-2)}</th>
                 ))}
-                <th colSpan={7} style={th}></th>
+                <th colSpan={7} style={{...th, ...stickyRow2}}></th>
               </tr>
             </thead>
             <tbody>
