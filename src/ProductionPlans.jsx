@@ -844,23 +844,29 @@ async function ensureFinishedReceivingTasks(sb, plan, catalogRow) {
   if (!catalogRow.arrival_date_target) return;
   const variety = `${catalogRow.pot_size} ${catalogRow.description}`;
   const arrival = catalogRow.arrival_date_target;
-  const quarantineDate = new Date(arrival);
-  quarantineDate.setDate(quarantineDate.getDate() + 1);
-  const qStr = quarantineDate.toISOString().slice(0, 10);
+  const addDays = (n) => {
+    const d = new Date(arrival);
+    d.setDate(d.getDate() + n);
+    return d.toISOString().slice(0, 10);
+  };
+  const wkOf = (d) => { const t = new Date(d); t.setHours(0,0,0,0); const dn = (t.getDay()+6)%7; t.setDate(t.getDate()-dn+3); const f = new Date(t.getFullYear(),0,4); return 1 + Math.round(((t-f)/86400000 - 3 + (f.getDay()+6)%7)/7); };
 
-  const yr = new Date(arrival).getFullYear();
-  const wkNum = (d => { const t = new Date(d); t.setHours(0,0,0,0); const dn = (t.getDay()+6)%7; t.setDate(t.getDate()-dn+3); const f = new Date(t.getFullYear(),0,4); return 1 + Math.round(((t-f)/86400000 - 3 + (f.getDay()+6)%7)/7); })(arrival);
-
+  // Thu (arrival) → Fri (treat) → Mon (move to retail)  → 4 days total
   const tasks = [
     {
       target_date: arrival,
       title: `Receive + unload ${variety}`,
-      description: `Finished material arriving for ${plan.name}. Qty target: ${catalogRow.target_qty || "TBD"}. Unload and stage for quarantine — do NOT mix with in-house grown crops yet.`,
+      description: `Finished material arriving (Thursday) for ${plan.name}. Qty target: ${catalogRow.target_qty || "TBD"}. Unload and stage in quarantine zone — keep separate from in-house grown crops.`,
     },
     {
-      target_date: qStr,
+      target_date: addDays(1),
       title: `Quarantine + treat ${variety}`,
-      description: `Day 2 of receiving. Inspect for whitefly / thrips / scale / mites / fungus gnats. Treat preventatively before moving to retail benches alongside in-house grown material.`,
+      description: `Day 2 (Friday) of receiving. Inspect for whitefly / thrips / scale / mites / fungus gnats. Apply preventative treatment. Hold over weekend.`,
+    },
+    {
+      target_date: addDays(4),
+      title: `Move ${variety} to retail`,
+      description: `Day 5 (Monday) — quarantine clear. Move to retail benches and begin selling. Final visual pest check before placement.`,
     },
   ];
 
@@ -876,8 +882,8 @@ async function ensureFinishedReceivingTasks(sb, plan, catalogRow) {
       target_date: t.target_date,
       priority: 3,
       status: "pending",
-      week_number: wkNum,
-      year: yr,
+      week_number: wkOf(t.target_date),
+      year: new Date(t.target_date).getFullYear(),
       created_by: "auto:finished-receiving",
     });
   }
@@ -1051,10 +1057,15 @@ function CatalogTab({ plan }) {
     const existing = catalog.find(c => normalizeDesc(c.description) === row.normalized && c.pot_size === row.pot_size);
 
     // Smart default: when switching to 'finished' for the first time, suggest
-    // an arrival date = 1 week before quarter start.
+    // the THURSDAY before the first Monday of the quarter (Thu→Mon receiving cycle).
     if (updates.acquisition_type === "finished" && !existing?.arrival_date_target && !updates.arrival_date_target) {
       const qStart = new Date(`${planYear}-${String(startMonth).padStart(2, "0")}-01`);
-      qStart.setDate(qStart.getDate() - 7);
+      // Find the Monday on/after the quarter start
+      const dow = qStart.getDay(); // 0=Sun..6=Sat
+      const daysToMon = dow === 0 ? 1 : dow === 1 ? 0 : 8 - dow;
+      qStart.setDate(qStart.getDate() + daysToMon);
+      // Back up 4 days → previous Thursday
+      qStart.setDate(qStart.getDate() - 4);
       updates.arrival_date_target = qStart.toISOString().slice(0, 10);
     }
 
@@ -1566,10 +1577,10 @@ function HpSourcingTab({ plan }) {
     body += `Contact: Paul Schlegel — (317) 784-6038 — pgs@schlegelgreenhouse.com\n\n`;
     body += `Sale window: ${startMonth} 1 – ${endMonth} 30, ${planYear}\n`;
     if (isFinished) {
-      body += `Requested arrival: 1 week PRIOR to each sale week. Material will be quarantined + treated before joining in-house crops.\n`;
-      body += `(Per-variety arrival dates listed inline below.)\n\n`;
-      body += `Schlegel houseplant program: ~$210K Q${quarter} revenue base, growing. Looking for sale-ready FINISHED material on a tight delivery window.\n\n`;
-      body += `Substitution flexibility on cultivars, pot size ±1 step, arrival date ±5 days.\n\n`;
+      body += `Requested arrival: THURSDAY 4 days before each sale week (we quarantine + treat Thu–Sun, sell Monday).\n`;
+      body += `(Per-variety arrival Thursdays listed inline below.)\n\n`;
+      body += `Schlegel houseplant program: ~$210K Q${quarter} revenue base, growing. Looking for sale-ready FINISHED material on a tight Thursday delivery window.\n\n`;
+      body += `Substitution flexibility on cultivars, pot size ±1 step, arrival date ±5 days. Hard requirement on Thursday delivery (or earlier in the week).\n\n`;
     } else {
       const arrivalStart = ["Nov", "Feb", "May", "Aug"][quarter - 1] + " " + (quarter === 1 ? planYear - 1 : planYear);
       const arrivalEnd   = startMonth + " " + planYear;
@@ -1657,7 +1668,7 @@ function HpSourcingTab({ plan }) {
             🛒 Finished Buy List · {finishedItems.length} item(s)
           </div>
           <div style={{ fontSize: 11, color: COLORS.muted, marginBottom: 12 }}>
-            Sale-ready material. Arrives 1 week before sale week, quarantined + treated, then to retail. Tasks auto-generate on the Tasks tab.
+            Sale-ready material. Arrives Thursday, quarantined + treated through weekend, on retail benches Monday. Receive / Treat / Move-to-retail tasks auto-generate on the Tasks tab.
           </div>
           <SimpleTable
             cols={["Arrives", "Pot", "Variety", "Target qty", "Target $/ea", "Target rev", "Supplier", "Status"]}
