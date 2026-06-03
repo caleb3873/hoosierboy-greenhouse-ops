@@ -1543,17 +1543,22 @@ function CatalogTab({ plan }) {
         </div>
 
         <div style={{ overflowX: "auto" }}>
+          {(() => {
+            const displayYears = allYears.filter(y =>
+              rows.some(r => (r.yearQty?.[y] || 0) > 0)
+            );
+            const baseYrsForRow = allYears.slice(-avgBase);
+            return (
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
             <thead>
               <tr style={{ background: "#f3f5ef" }}>
                 <SortHdr col="pot_size" label="Pot" />
                 <SortHdr col="desc"     label="Variety" />
-                <SortHdr col="y_prior_qty" label={`'${String(priorYr).slice(-2)} qty`} align="right" />
-                <SortHdr col="prior_price" label={`'${String(priorYr).slice(-2)} $/ea`} align="right" />
-                <SortHdr col="y_curr_qty"  label={`'${String(currYr).slice(-2)} qty`}  align="right" />
-                <SortHdr col="curr_price"  label={`'${String(currYr).slice(-2)} $/ea`} align="right" />
-                <SortHdr col="yoy_qty"   label="qty Δ" align="right" />
-                <SortHdr col="yoy_price" label="price Δ" align="right" />
+                {displayYears.map(y => (
+                  <th key={y} style={{...th, textAlign: "right"}}>'{String(y).slice(-2)} qty</th>
+                ))}
+                <th style={{...th, textAlign: "right"}}>{avgBase}yr avg</th>
+                <SortHdr col="yoy_qty"   label="Δ vs avg" align="right" />
                 <th style={{...th, textAlign:"center"}}>signal</th>
                 <th style={{...th, textAlign: "right", background: "#e8f0e2"}}>🎯 qty {planYear}</th>
                 <th style={{...th, textAlign: "right", background: "#e8f0e2"}}>🎯 $/ea {planYear}</th>
@@ -1564,7 +1569,7 @@ function CatalogTab({ plan }) {
             <tbody>
               {sorted.slice(0, 200).map((r, i) => {
                 const c = catalog.find(x => normalizeDesc(x.description) === r.normalized && x.pot_size === r.pot_size);
-                // Pricing signal: combine qty + price moves
+                // Pricing signal: combine qty + price moves (still uses prior/curr)
                 let signal = null, signalColor = COLORS.muted;
                 if (r.yoy_qty != null && r.yoy_price != null) {
                   if (r.yoy_qty > 10 && Math.abs(r.yoy_price) < 5) { signal = "↑ RAISE"; signalColor = COLORS.light; }
@@ -1573,6 +1578,10 @@ function CatalogTab({ plan }) {
                   else if (r.yoy_qty < -10 && r.yoy_price < -5)    { signal = "⚠ FALLING"; signalColor = COLORS.amber; }
                   else if (Math.abs(r.yoy_qty) < 10 && Math.abs(r.yoy_price) < 5) { signal = "= STABLE"; signalColor = COLORS.muted; }
                 }
+                // Compute the avg-base value + delta for this row
+                const rowAvgQty = baseYrsForRow.reduce((s, y) => s + (r.yearQty?.[y] || 0), 0) / baseYrsForRow.length;
+                const recentQty = r.yearQty?.[currYr] || 0;
+                const rowDelta = rowAvgQty > 0 ? ((recentQty - rowAvgQty) / rowAvgQty * 100) : null;
                 return (
                   <tr key={i} style={{ borderBottom: `1px solid ${COLORS.border}`, background: c?.status === "locked" ? "#f0f7ec" : r.isNew ? "#fff7e6" : undefined }}>
                     <td style={td}>{r.pot_size}</td>
@@ -1589,15 +1598,20 @@ function CatalogTab({ plan }) {
                         </span>
                       )}
                     </td>
-                    <td style={{...td, textAlign:"right", color: COLORS.muted}}>{r.y_prior_qty || "—"}</td>
-                    <td style={{...td, textAlign:"right", color: COLORS.muted}}>{r.prior_price ? "$" + r.prior_price.toFixed(2) : "—"}</td>
-                    <td style={{...td, textAlign:"right"}}>{r.y_curr_qty || "—"}</td>
-                    <td style={{...td, textAlign:"right"}}>{r.curr_price ? "$" + r.curr_price.toFixed(2) : "—"}</td>
-                    <td style={{...td, textAlign:"right", color: r.yoy_qty > 0 ? COLORS.light : r.yoy_qty < 0 ? COLORS.red : COLORS.muted, fontWeight: r.yoy_qty != null ? 700 : 400}}>
-                      {r.yoy_qty != null ? (r.yoy_qty >= 0 ? "+" : "") + r.yoy_qty.toFixed(0) + "%" : "—"}
+                    {displayYears.map(y => {
+                      const q = r.yearQty?.[y] || 0;
+                      const isRecent = y === currYr;
+                      return (
+                        <td key={y} style={{...td, textAlign: "right", color: q === 0 ? COLORS.muted : isRecent ? COLORS.text : COLORS.muted, fontWeight: isRecent ? 700 : 400}}>
+                          {q ? q.toLocaleString() : "—"}
+                        </td>
+                      );
+                    })}
+                    <td style={{...td, textAlign: "right", fontWeight: 700, color: rowAvgQty > 0 ? COLORS.dark : COLORS.muted}}>
+                      {rowAvgQty > 0 ? Math.round(rowAvgQty).toLocaleString() : "—"}
                     </td>
-                    <td style={{...td, textAlign:"right", color: r.yoy_price > 0 ? COLORS.light : r.yoy_price < 0 ? COLORS.red : COLORS.muted, fontWeight: r.yoy_price != null ? 700 : 400}}>
-                      {r.yoy_price != null ? (r.yoy_price >= 0 ? "+" : "") + r.yoy_price.toFixed(0) + "%" : "—"}
+                    <td style={{...td, textAlign:"right", color: rowDelta == null ? COLORS.muted : rowDelta > 0 ? COLORS.light : rowDelta < -25 ? COLORS.red : rowDelta < 0 ? COLORS.amber : COLORS.text, fontWeight: rowDelta != null ? 700 : 400}}>
+                      {rowDelta != null ? (rowDelta >= 0 ? "+" : "") + rowDelta.toFixed(0) + "%" : "—"}
                     </td>
                     <td style={{...td, textAlign:"center"}}>
                       {signal && <span style={{ background: signalColor + "22", color: signalColor, border: `1px solid ${signalColor}`, padding: "2px 6px", borderRadius: 8, fontSize: 10, fontWeight: 800, whiteSpace: "nowrap" }}>{signal}</span>}
@@ -1635,6 +1649,8 @@ function CatalogTab({ plan }) {
               })}
             </tbody>
           </table>
+            );
+          })()}
         </div>
         {sorted.length > 200 && (
           <div style={{ marginTop: 10, fontSize: 11, color: COLORS.muted, textAlign: "center" }}>
