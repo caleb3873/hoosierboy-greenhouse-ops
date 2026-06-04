@@ -1006,7 +1006,7 @@ function CatalogTab({ plan }) {
     setProjLockedBy(null);
     await persistProjection({ projection_locked_at: null, projection_locked_by: null });
   }
-  const [addModal, setAddModal] = useState(false);
+  const [detailItem, setDetailItem] = useState(null); // { catalogRow, fallback, history } for the item detail modal
   const [yearDisplay, setYearDisplay] = useState("qty"); // "qty" | "revenue"
   const [hoverRow, setHoverRow] = useState(null);
   const [showRollup, setShowRollup] = useState(false);
@@ -1272,34 +1272,6 @@ function CatalogTab({ plan }) {
       await sb.from("houseplant_catalog").update({ target_qty: null, target_price: null, updated_at: new Date().toISOString() }).eq("id", c.id);
     }
     setCatalog(catalog.map(c => c.status === "locked" ? c : { ...c, target_qty: null, target_price: null }));
-  }
-
-  async function addNewVariety(form) {
-    const { data: ins } = await sb.from("houseplant_catalog").insert({
-      plan_id: plan.id,
-      description: form.description,
-      pot_size: form.pot_size,
-      target_qty: form.target_qty || null,
-      target_price: form.target_price || null,
-      acquisition_type: form.acquisition_type || null,
-      supplier: form.supplier || null,
-      notes: form.notes ? `[NEW TRIAL] ${form.notes}` : "[NEW TRIAL]",
-      status: "considered",
-    }).select("*").single();
-    if (ins) {
-      setCatalog([...catalog, ins]);
-      // Also add a synthetic row to the local rows list so it renders in the table
-      setRows(prev => [...prev, {
-        desc: form.description,
-        pot_size: form.pot_size,
-        normalized: form.description.toUpperCase(),
-        genus: (form.description.split(/\s+/)[0] || "").toUpperCase(),
-        y_curr_qty: 0, y_curr_rev: 0, y_prior_qty: 0, y_prior_rev: 0,
-        prior_price: null, curr_price: null, yoy_qty: null, yoy_price: null, two_yr_avg: 0,
-        isNew: true,
-      }]);
-    }
-    setAddModal(false);
   }
 
   async function updateCatalogRow(row, updates) {
@@ -1582,9 +1554,9 @@ function CatalogTab({ plan }) {
               style={{ padding: "8px 14px", borderRadius: 6, border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.text, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>
               Clear targets
             </button>
-            <button onClick={() => setAddModal(true)}
+            <button onClick={() => setDetailItem({ catalogRow: null, fallback: { description: "", pot_size: "" }, history: null })}
               style={{ padding: "8px 14px", borderRadius: 6, border: "none", background: COLORS.dark, color: "#fff", fontWeight: 700, cursor: "pointer", fontSize: 12 }}>
-              + Add variety
+              + Create new item
             </button>
             <button onClick={removeEmptyItems} title="Delete catalog items with no sales history, no target qty, and not locked"
               style={{ padding: "8px 14px", borderRadius: 6, border: `1px solid ${COLORS.red}`, background: "#fff", color: COLORS.red, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>
@@ -1790,6 +1762,11 @@ function CatalogTab({ plan }) {
             </thead>
             <tbody>
               {sorted.slice(0, 200).map((r, i) => {
+                // Stable identity per item — used for the row key AND the input keys.
+                // Using the array index here was the bug behind "numbers staying on
+                // the wrong row": uncontrolled inputs kept their DOM value at a fixed
+                // index while sorting/filtering shifted which item sat there.
+                const rowKey = `${r.pot_size}|${r.normalized}`;
                 const c = catalog.find(x => normalizeDesc(x.description) === r.normalized && x.pot_size === r.pot_size);
                 // Pricing signal: combine qty + price moves (still uses prior/curr)
                 let signal = null, signalColor = COLORS.muted;
@@ -1809,7 +1786,7 @@ function CatalogTab({ plan }) {
                 const priceDiff = currPrice && targetPrice ? (targetPrice - currPrice) : null;
                 const priceDiffPct = currPrice && targetPrice && currPrice > 0 ? ((targetPrice - currPrice) / currPrice * 100) : null;
                 return (
-                  <tr key={i}
+                  <tr key={rowKey}
                     style={{ borderBottom: `1px solid ${COLORS.border}`, background: r.isNew ? "#fff7e6" : priceShade(currPrice ?? targetPrice), borderLeft: c?.status === "locked" ? `3px solid ${COLORS.light}` : "3px solid transparent", position: "relative" }}>
                     <td style={td}>{r.pot_size}</td>
                     <td style={{...td, position: "relative"}}>
@@ -1818,7 +1795,11 @@ function CatalogTab({ plan }) {
                           🧪 NEW
                         </span>
                       )}
-                      {r.desc}
+                      <span onClick={() => setDetailItem({ catalogRow: c || null, fallback: { description: r.desc, pot_size: r.pot_size }, history: r })}
+                        title="Open item details + notes"
+                        style={{ cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted", textUnderlineOffset: 2 }}>
+                        {r.desc}
+                      </span>
                       {cultureByGenus[r.genus] && (
                         <span style={{ marginLeft: 6, fontSize: 10, color: COLORS.light, fontWeight: 700 }} title={`Culture data: ${Object.entries(cultureByGenus[r.genus]).map(([b,n]) => `${b} (${n})`).join(", ")}`}>
                           📖 {Object.keys(cultureByGenus[r.genus]).join("+")}
@@ -1850,11 +1831,11 @@ function CatalogTab({ plan }) {
                       {rowDelta != null ? (rowDelta >= 0 ? "+" : "") + rowDelta.toFixed(0) + "%" : "—"}
                     </td>
                     <td style={{...td, textAlign:"center", cursor: "help"}}
-                      onMouseEnter={e => setHoverRow({ i, x: e.clientX, y: e.clientY })}
-                      onMouseMove={e => setHoverRow(h => h && h.i === i ? { i, x: e.clientX, y: e.clientY } : h)}
+                      onMouseEnter={e => setHoverRow({ key: rowKey, x: e.clientX, y: e.clientY })}
+                      onMouseMove={e => setHoverRow(h => h && h.key === rowKey ? { key: rowKey, x: e.clientX, y: e.clientY } : h)}
                       onMouseLeave={() => setHoverRow(null)}>
                       {signal && <span style={{ background: signalColor + "22", color: signalColor, border: `1px solid ${signalColor}`, padding: "2px 6px", borderRadius: 8, fontSize: 10, fontWeight: 800, whiteSpace: "nowrap" }}>{signal}</span>}
-                      {hoverRow?.i === i && (
+                      {hoverRow?.key === rowKey && (
                         <RowHoverCard row={r} years={displayYears} anchorX={hoverRow.x} anchorY={hoverRow.y} />
                       )}
                     </td>
@@ -1862,13 +1843,13 @@ function CatalogTab({ plan }) {
                       {currPrice ? "$" + currPrice.toFixed(2) : "—"}
                     </td>
                     <td style={{...td, textAlign:"right", background: "#fafdf7"}}>
-                      <input type="number" defaultValue={c?.target_qty || ""}
+                      <input key={`tq-${rowKey}`} type="number" defaultValue={c?.target_qty || ""}
                         onBlur={e => updateCatalogRow(r, { target_qty: e.target.value ? parseInt(e.target.value) : null })}
                         style={{ width: 60, padding: "3px 6px", textAlign: "right", border: `1px solid ${COLORS.border}`, borderRadius: 4, fontSize: 12 }}
                         placeholder="—" />
                     </td>
                     <td style={{...td, textAlign:"right", background: "#fafdf7"}}>
-                      <input type="number" step="0.01" defaultValue={c?.target_price || ""}
+                      <input key={`tp-${rowKey}`} type="number" step="0.01" defaultValue={c?.target_price || ""}
                         onBlur={e => updateCatalogRow(r, { target_price: e.target.value ? parseFloat(e.target.value) : null })}
                         style={{ width: 60, padding: "3px 6px", textAlign: "right", border: `1px solid ${COLORS.border}`, borderRadius: 4, fontSize: 12 }}
                         placeholder={r.curr_price ? r.curr_price.toFixed(2) : "—"} />
@@ -1882,7 +1863,7 @@ function CatalogTab({ plan }) {
                       )}
                     </td>
                     <td style={{...td, background: "#fafdf7"}}>
-                      <select defaultValue={c?.status || "considered"}
+                      <select key={`st-${rowKey}`} defaultValue={c?.status || "considered"}
                         onChange={e => updateCatalogRow(r, { status: e.target.value })}
                         style={{ padding: "3px 6px", border: `1px solid ${COLORS.border}`, borderRadius: 4, fontSize: 11 }}>
                         <option value="considered">considered</option>
@@ -1928,11 +1909,13 @@ function CatalogTab({ plan }) {
           onConfirm={target => saveMerge(mergeModal.source, target)} />
       )}
 
-      {/* Add Variety modal */}
-      {addModal && (
-        <AddVarietyModal sizes={sizes}
-          onCancel={() => setAddModal(false)}
-          onSave={addNewVariety} />
+      {/* Item detail / create / duplicate modal */}
+      {detailItem && (
+        <ItemDetailModal sb={sb} plan={plan} sizes={sizes}
+          catalogRow={detailItem.catalogRow} fallback={detailItem.fallback}
+          history={detailItem.history} years={allYears}
+          onClose={() => setDetailItem(null)}
+          onChange={() => setReloadTick(t => t + 1)} />
       )}
     </div>
   );
@@ -2080,47 +2063,134 @@ function MergeModal({ sourceRow, allRows, onCancel, onConfirm }) {
   );
 }
 
-// Modal for adding a brand-new variety to the catalog (no sales history)
-function AddVarietyModal({ sizes, onCancel, onSave }) {
+function FormField({ label, children }) {
+  return (
+    <div>
+      <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 4 }}>{label}</div>
+      {children}
+    </div>
+  );
+}
+
+const modalInp = { width: "100%", padding: "8px 10px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 14, boxSizing: "border-box" };
+
+// Shared item detail / editor modal — opened by clicking an item in Catalog or
+// Sourcing. Edits the underlying houseplant_catalog row (creating one on save if
+// the item only exists in sales history). Holds free-form notes + supplier
+// preferences, and can duplicate the item: every planning field copies to a new
+// "(copy)" item you then rename — nothing plant-specific (sales history) carries
+// over because history is keyed by name. All writes call onChange() so the parent
+// reloads. See sizeRank()/bySizeThenDesc for the ordering these items sort into.
+function ItemDetailModal({ sb, plan, sizes = [], catalogRow, fallback, history, years = [], onClose, onChange }) {
+  const seed = catalogRow || {};
+  const [curId, setCurId] = useState(catalogRow?.id || null);
+  const [showHistory, setShowHistory] = useState(true);
+  const [busy, setBusy] = useState(false);
   const [form, setForm] = useState({
-    description: "",
-    pot_size: sizes[0] || "",
-    target_qty: "",
-    target_price: "",
-    acquisition_type: "",
-    supplier: "",
-    notes: "",
+    description: seed.description ?? fallback?.description ?? "",
+    pot_size: seed.pot_size ?? fallback?.pot_size ?? "",
+    acquisition_type: seed.acquisition_type ?? "",
+    supplier: seed.supplier ?? "",
+    target_qty: seed.target_qty ?? "",
+    target_price: seed.target_price ?? "",
+    status: seed.status ?? "considered",
+    arrival_date_target: seed.arrival_date_target ?? "",
+    notes: seed.notes ?? "",
+    source_notes: seed.source_notes ?? "",
   });
-  const valid = form.description.trim().length > 0 && form.pot_size.trim().length > 0;
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const valid = form.description.trim() && form.pot_size.trim();
+
+  function payload() {
+    return {
+      description: form.description.trim(),
+      pot_size: form.pot_size.trim(),
+      acquisition_type: form.acquisition_type || null,
+      supplier: form.supplier || null,
+      target_qty: form.target_qty === "" || form.target_qty == null ? null : parseInt(form.target_qty),
+      target_price: form.target_price === "" || form.target_price == null ? null : parseFloat(form.target_price),
+      status: form.status,
+      arrival_date_target: form.arrival_date_target || null,
+      notes: form.notes || null,
+      source_notes: form.source_notes || null,
+    };
+  }
+
+  async function save() {
+    if (!valid || busy) return;
+    setBusy(true);
+    if (curId) {
+      await sb.from("houseplant_catalog").update({ ...payload(), updated_at: new Date().toISOString() }).eq("id", curId);
+    } else {
+      await sb.from("houseplant_catalog").insert({ plan_id: plan.id, ...payload() });
+    }
+    setBusy(false);
+    onChange?.();
+    onClose();
+  }
+
+  // Duplicate = re-enter create mode with every field copied and the name
+  // suffixed " (copy)". Nothing is written until Save, so the original is
+  // untouched and a cancelled duplicate leaves no orphan row.
+  function duplicate() {
+    setCurId(null);
+    setShowHistory(false);
+    setForm(f => ({ ...f, description: `${f.description.trim()} (copy)` }));
+  }
+
+  async function del() {
+    if (!curId || busy) return;
+    if (!window.confirm(`Delete "${form.description}" from the catalog? This removes its target, notes, and sourcing settings.`)) return;
+    setBusy(true);
+    await sb.from("houseplant_catalog").delete().eq("id", curId);
+    setBusy(false);
+    onChange?.();
+    onClose();
+  }
+
+  const targetRev = (parseFloat(form.target_qty) || 0) * (parseFloat(form.target_price) || 0);
+  const creating = !curId;
+  const title = creating ? "🆕 Create new item" : "📝 Item details";
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }} onClick={onCancel}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200 }} onClick={onClose}>
       <div onClick={e => e.stopPropagation()}
-        style={{ background: "#fff", borderRadius: 10, padding: 20, maxWidth: 540, width: "92%", maxHeight: "90vh", overflowY: "auto" }}>
-        <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 22, color: COLORS.dark, marginBottom: 4 }}>
-          🧪 Add a new variety
-        </div>
+        style={{ background: "#fff", borderRadius: 10, padding: 20, maxWidth: 620, width: "94%", maxHeight: "92vh", overflowY: "auto" }}>
+        <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 22, color: COLORS.dark, marginBottom: 2 }}>{title}</div>
         <div style={{ fontSize: 12, color: COLORS.muted, marginBottom: 16 }}>
-          Use this for trial items with no sales history (e.g., a new Banana variety). Shows up as a NEW row in the catalog and flows through Sourcing normally.
+          {creating
+            ? "Set a target qty and lock it to flow this item into projections + sourcing."
+            : "Edit plant info, notes, and supplier preferences. Duplicate to spin up a similar item with the same settings."}
         </div>
+
+        {/* Sales-history strip (existing items only) */}
+        {showHistory && history && years.length > 0 && (
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
+            {years.map(y => {
+              const q = history.yearQty?.[y] || 0;
+              const rev = history.yearRev?.[y] || 0;
+              return (
+                <div key={y} style={{ flex: "1 1 60px", background: "#f3f5ef", borderRadius: 6, padding: "6px 8px", textAlign: "center" }}>
+                  <div style={{ fontSize: 10, color: COLORS.muted, fontWeight: 700 }}>'{String(y).slice(-2)}</div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: q ? COLORS.dark : COLORS.muted }}>{q ? q.toLocaleString() : "—"}</div>
+                  <div style={{ fontSize: 9, color: COLORS.muted }}>{rev ? fmtMoney(rev) : ""}</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         <div style={{ display: "grid", gap: 10 }}>
           <FormField label="Variety description">
-            <input value={form.description} onChange={e => setForm({ ...form, description: e.target.value })}
-              placeholder="e.g., Musa 'Truly Tiny' Banana" autoFocus
-              style={{ width: "100%", padding: "8px 10px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 14 }} />
+            <input value={form.description} onChange={e => set("description", e.target.value)} autoFocus style={modalInp} />
           </FormField>
-
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             <FormField label="Pot size">
-              <input value={form.pot_size} onChange={e => setForm({ ...form, pot_size: e.target.value })}
-                placeholder='6"' list="size-list"
-                style={{ width: "100%", padding: "8px 10px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 14 }} />
-              <datalist id="size-list">{sizes.map(s => <option key={s} value={s} />)}</datalist>
+              <input value={form.pot_size} onChange={e => set("pot_size", e.target.value)} list="item-size-list" style={modalInp} />
+              <datalist id="item-size-list">{sizes.map(s => <option key={s} value={s} />)}</datalist>
             </FormField>
             <FormField label="Acquisition">
-              <select value={form.acquisition_type} onChange={e => setForm({ ...form, acquisition_type: e.target.value })}
-                style={{ width: "100%", padding: "8px 10px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 14 }}>
+              <select value={form.acquisition_type} onChange={e => set("acquisition_type", e.target.value)} style={modalInp}>
                 <option value="">— pick —</option>
                 <option value="finished">🛒 Finished</option>
                 <option value="liner">🌱 Liner</option>
@@ -2129,54 +2199,73 @@ function AddVarietyModal({ sizes, onCancel, onSave }) {
               </select>
             </FormField>
           </div>
-
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
             <FormField label="Target qty">
-              <input type="number" value={form.target_qty} onChange={e => setForm({ ...form, target_qty: e.target.value ? parseInt(e.target.value) : "" })}
-                placeholder="50"
-                style={{ width: "100%", padding: "8px 10px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 14 }} />
+              <input type="number" value={form.target_qty} onChange={e => set("target_qty", e.target.value)} style={modalInp} />
             </FormField>
             <FormField label="Target $/ea">
-              <input type="number" step="0.01" value={form.target_price} onChange={e => setForm({ ...form, target_price: e.target.value ? parseFloat(e.target.value) : "" })}
-                placeholder="18.99"
-                style={{ width: "100%", padding: "8px 10px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 14 }} />
+              <input type="number" step="0.01" value={form.target_price} onChange={e => set("target_price", e.target.value)} style={modalInp} />
+            </FormField>
+            <FormField label="Target rev">
+              <div style={{ ...modalInp, background: "#f3f5ef", fontWeight: 800, color: COLORS.dark }}>{targetRev ? fmtMoney(targetRev) : "—"}</div>
             </FormField>
           </div>
-
-          <FormField label="Supplier (optional)">
-            <input value={form.supplier} onChange={e => setForm({ ...form, supplier: e.target.value })}
-              placeholder="e.g., Costa Farms"
-              style={{ width: "100%", padding: "8px 10px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 14 }} />
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <FormField label="Status">
+              <select value={form.status} onChange={e => set("status", e.target.value)} style={modalInp}>
+                <option value="considered">considered</option>
+                <option value="locked">locked</option>
+                <option value="cancelled">cancelled</option>
+              </select>
+            </FormField>
+            <FormField label="Supplier preference">
+              <input value={form.supplier} onChange={e => set("supplier", e.target.value)} placeholder="e.g., Costa Farms" style={modalInp} />
+            </FormField>
+          </div>
+          {form.acquisition_type === "finished" && (
+            <FormField label="Target arrival (Thursday)">
+              <input type="date" value={form.arrival_date_target} onChange={e => set("arrival_date_target", e.target.value)} style={modalInp} />
+            </FormField>
+          )}
+          <FormField label="Notes">
+            <textarea value={form.notes} onChange={e => set("notes", e.target.value)} rows={3}
+              placeholder="Care notes, sales rationale, customer requests…"
+              style={{ ...modalInp, resize: "vertical", fontFamily: "inherit" }} />
           </FormField>
-
-          <FormField label="Notes / rationale">
-            <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })}
-              placeholder="Why try this variety? Customer request, gap in lineup, seasonal trial, etc."
-              rows={3}
-              style={{ width: "100%", padding: "8px 10px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 13, resize: "vertical", fontFamily: "inherit" }} />
+          <FormField label="Sourcing / supplier notes">
+            <textarea value={form.source_notes} onChange={e => set("source_notes", e.target.value)} rows={2}
+              placeholder="Preferred broker, substitution rules, lead times…"
+              style={{ ...modalInp, resize: "vertical", fontFamily: "inherit" }} />
           </FormField>
         </div>
 
-        <div style={{ marginTop: 18, display: "flex", justifyContent: "flex-end", gap: 8 }}>
-          <button onClick={onCancel}
-            style={{ padding: "8px 16px", border: `1px solid ${COLORS.border}`, borderRadius: 6, background: "#fff", cursor: "pointer", fontWeight: 600 }}>
-            Cancel
-          </button>
-          <button disabled={!valid} onClick={() => onSave(form)}
-            style={{ padding: "8px 16px", border: "none", borderRadius: 6, background: valid ? COLORS.dark : "#ccc", color: "#fff", fontWeight: 700, cursor: valid ? "pointer" : "not-allowed" }}>
-            Add to catalog
-          </button>
+        <div style={{ marginTop: 18, display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 8 }}>
+            {!creating && (
+              <button onClick={duplicate} disabled={busy}
+                style={{ padding: "8px 16px", border: `1px solid ${COLORS.light}`, borderRadius: 6, background: "#fff", color: COLORS.light, fontWeight: 700, cursor: "pointer" }}>
+                ⧉ Duplicate
+              </button>
+            )}
+            {!creating && (
+              <button onClick={del} disabled={busy}
+                style={{ padding: "8px 16px", border: `1px solid ${COLORS.red}`, borderRadius: 6, background: "#fff", color: COLORS.red, fontWeight: 700, cursor: "pointer" }}>
+                🗑 Delete
+              </button>
+            )}
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={onClose} disabled={busy}
+              style={{ padding: "8px 16px", border: `1px solid ${COLORS.border}`, borderRadius: 6, background: "#fff", cursor: "pointer", fontWeight: 600 }}>
+              Cancel
+            </button>
+            <button onClick={save} disabled={!valid || busy}
+              style={{ padding: "8px 16px", border: "none", borderRadius: 6, background: valid && !busy ? COLORS.dark : "#ccc", color: "#fff", fontWeight: 700, cursor: valid && !busy ? "pointer" : "not-allowed" }}>
+              {busy ? "Saving…" : creating ? "Create item" : "Save"}
+            </button>
+          </div>
         </div>
       </div>
-    </div>
-  );
-}
-
-function FormField({ label, children }) {
-  return (
-    <div>
-      <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 4 }}>{label}</div>
-      {children}
     </div>
   );
 }
@@ -2243,11 +2332,16 @@ function HpSourcingTab({ plan }) {
   const [request, setReq] = useState(null);
   const [reqMode, setReqMode] = useState("liner"); // "liner" or "finished"
   const [editMode, setEditMode] = useState(false);
+  const [detailItem, setDetailItem] = useState(null); // houseplant_catalog row opened in the detail modal
+  const [tick, setTick] = useState(0);
 
   useEffect(() => {
     if (!sb) return;
     sb.from("houseplant_catalog").select("*").eq("plan_id", plan.id).then(({ data }) => setRows(data || []));
-  }, [sb, plan.id]);
+  }, [sb, plan.id, tick]);
+
+  // Sizes present, ordered for the detail modal's size picker
+  const sizes = Array.from(new Set(rows.map(r => r.pot_size).filter(Boolean))).sort((a, b) => sizeRank(a) - sizeRank(b));
 
   // Persist a field change and update local state
   async function updateRow(id, updates) {
@@ -2410,6 +2504,7 @@ function HpSourcingTab({ plan }) {
             showArrives={false}
             showSupplier={true}
             editMode={editMode}
+            onOpen={setDetailItem}
           />
         </div>
       )}
@@ -2429,6 +2524,7 @@ function HpSourcingTab({ plan }) {
             showArrives={true}
             showSupplier={true}
             editMode={editMode}
+            onOpen={setDetailItem}
           />
         </div>
       )}
@@ -2442,7 +2538,7 @@ function HpSourcingTab({ plan }) {
           <div style={{ fontSize: 11, color: COLORS.muted, marginBottom: 12 }}>
             Young plants we'll finish in-house. Order 8–10 weeks before sale start.
           </div>
-          <SourcingTable items={[...linerItems].sort(bySizeThenDesc)} updateRow={updateRow} showArrives={false} showSupplier={true} editMode={editMode} />
+          <SourcingTable items={[...linerItems].sort(bySizeThenDesc)} updateRow={updateRow} showArrives={false} showSupplier={true} editMode={editMode} onOpen={setDetailItem} />
         </div>
       )}
 
@@ -2455,7 +2551,7 @@ function HpSourcingTab({ plan }) {
           <div style={{ fontSize: 11, color: COLORS.muted, marginBottom: 12 }}>
             Items we propagate from cuttings/seed. No broker required.
           </div>
-          <SourcingTable items={[...propagateItems].sort(bySizeThenDesc)} updateRow={updateRow} showArrives={false} showSupplier={false} editMode={editMode} />
+          <SourcingTable items={[...propagateItems].sort(bySizeThenDesc)} updateRow={updateRow} showArrives={false} showSupplier={false} editMode={editMode} onOpen={setDetailItem} />
         </div>
       )}
 
@@ -2465,15 +2561,23 @@ function HpSourcingTab({ plan }) {
           <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 18, color: ACQ_COLOR.partner, marginBottom: 12 }}>
             🤝 Partner · {partnerItems.length} item(s)
           </div>
-          <SourcingTable items={[...partnerItems].sort(bySizeThenDesc)} updateRow={updateRow} showArrives={false} showSupplier={true} editMode={editMode} />
+          <SourcingTable items={[...partnerItems].sort(bySizeThenDesc)} updateRow={updateRow} showArrives={false} showSupplier={true} editMode={editMode} onOpen={setDetailItem} />
         </div>
+      )}
+
+      {/* Item detail / edit / duplicate modal — same one used in the Catalog */}
+      {detailItem && (
+        <ItemDetailModal sb={sb} plan={plan} sizes={sizes}
+          catalogRow={detailItem} fallback={{ description: detailItem.description, pot_size: detailItem.pot_size }}
+          onClose={() => setDetailItem(null)}
+          onChange={() => setTick(t => t + 1)} />
       )}
     </div>
   );
 }
 
 // Editable sourcing table — acquisition / arrival / supplier inline
-function SourcingTable({ items, updateRow, showArrives, showSupplier, editMode }) {
+function SourcingTable({ items, updateRow, showArrives, showSupplier, editMode, onOpen }) {
   return (
     <div style={{ overflowX: "auto" }}>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -2494,7 +2598,10 @@ function SourcingTable({ items, updateRow, showArrives, showSupplier, editMode }
           {items.map(i => (
             <tr key={i.id} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
               <td style={td}>{i.pot_size}</td>
-              <td style={td}>{i.description}</td>
+              <td style={{...td, cursor: onOpen ? "pointer" : "default", textDecoration: onOpen ? "underline" : "none", textDecorationStyle: "dotted", textUnderlineOffset: 2}}
+                onClick={() => onOpen?.(i)} title={onOpen ? "Open item details + notes" : undefined}>
+                {i.description}
+              </td>
               <td style={{...td, textAlign: "right", background: editMode ? "#fafdf7" : undefined}}>
                 {editMode ? (
                   <input type="number" defaultValue={i.target_qty || ""}
