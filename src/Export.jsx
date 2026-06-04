@@ -3,7 +3,7 @@ import {
   useCropRuns, useContainers, useHouses, usePads,
   useVarieties, useSoilMixes, useInputProducts,
   useSpacingProfiles, useBrokerCatalogs, useFlags,
-  useManualTasks, useOrderMeta, useReceiving
+  useManualTasks, useOrderMeta
 } from "./supabase";
 
 // ── HELPERS ───────────────────────────────────────────────────────────────────

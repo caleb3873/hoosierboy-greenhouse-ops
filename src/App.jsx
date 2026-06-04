@@ -5,8 +5,6 @@ import { CROP_STATUS } from "./shared";
 
 // Module imports — each is a self-contained page
 import PlannerHome      from "./PlannerHome";
-import CropPlanning     from "./CropPlanning";
-import YoungPlantOrders from "./YoungPlantOrders";
 import SpaceManagement  from "./SpaceManagement";
 import Libraries        from "./Libraries";
 import OperatorView     from "./OperatorView";
@@ -14,7 +12,6 @@ import ManagerTasksView from "./ManagerTasksView";
 import InventoryReport from "./InventoryReport";
 import WorkerChecklistView from "./WorkerChecklistView";
 import GrowerView      from "./GrowerView";
-import Preseason        from "./Preseason";
 import { PlannerReceiving } from "./Receiving";
 import Meetings            from "./Meetings";
 import TradeShow           from "./TradeShow";
@@ -23,7 +20,6 @@ import GrowerManagement   from "./GrowerManagement";
 import WateringPlan        from "./WateringPlan";
 import SprayLog            from "./SprayLog";
 import ComboDesigner       from "./ComboDesigner";
-import SeasonDeadlines     from "./SeasonDeadlines";
 import SoilCalculator      from "./SoilCalculator";
 import HouseplantAvailability from "./HouseplantAvailability";
 import OwnerDashboard       from "./OwnerDashboard";
@@ -63,12 +59,8 @@ const NAV_GROUPS = [
     id: "production", label: "Production", icon: "🌱",
     items: [
       { id: "plans",     label: "📊 Plans" },
-      { id: "preseason", label: "Preseason" },
-      { id: "crops",     label: "Crop Planning" },
       { id: "fall",      label: "Fall Program" },
-      { id: "orders",    label: "Orders" },
       { id: "receiving", label: "Receiving" },
-      { id: "deadlines", label: "Deadlines" },
       { id: "soil",      label: "Soil Calculator" },
     ],
   },
@@ -255,9 +247,6 @@ function PlannerShell() {
         {page === "inventory-report" && <InventoryReport />}
         {page === "vacation" && <VacationCalendar />}
         {page === "hiring" && isOwner && <HeadGrowerHiring />}
-        {page === "preseason"  && <Preseason      onNavigate={setPage} onCreateCropRun={() => setPage("crops")} />}
-        {page === "crops"      && <CropPlanning   />}
-        {page === "orders"     && <YoungPlantOrders />}
         {page === "receiving"  && <PlannerReceiving />}
         {page === "space"      && <SpaceManagement />}
         {page === "library"    && <Libraries      />}
@@ -265,7 +254,6 @@ function PlannerShell() {
         {page === "tradeshow"  && <TradeShow       />}
         {page === "export"     && <Export          />}
         {page === "combos"     && <ComboDesigner   />}
-        {page === "deadlines"  && <SeasonDeadlines />}
         {page === "soil"       && <SoilCalculator />}
         {page === "fall"       && <FallProgram />}
         {page === "plans"      && <ProductionPlans />}

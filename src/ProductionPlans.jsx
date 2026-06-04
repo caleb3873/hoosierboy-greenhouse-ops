@@ -36,6 +36,32 @@ const fmtPct   = (n) => n == null ? "—" : Number(n).toFixed(1) + "%";
 // Format a stored 10-digit phone string as (xxx) xxx-xxxx; pass through anything else.
 const fmtPhone = (p) => { const d = String(p || "").replace(/\D/g, ""); return d.length === 10 ? `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}` : (p || ""); };
 
+// Aggressive houseplant description normalization — strips size/pot prefixes and
+// packaging suffixes, normalizes quotes, uppercases. Single module-level copy used
+// across the Catalog, Presentation, and History tabs (was duplicated 3×).
+function normalizeDesc(d) {
+  return String(d || "")
+    // strip leading "Pot N\"" or "Pot NG" or "Pot N''" prefix
+    .replace(/^Pot \d+(\.\d+)?(?:"|G|'')\s*/i, "")
+    // strip leading size: '4.5"', '3"', 'HB 6"', etc.
+    .replace(/^HB \d+(\.\d+)?"\s*/i, "")
+    .replace(/^\d+(\.\d+)?"\s*/, "")
+    // strip packaging suffixes
+    .replace(/\s*\(Individual\)\s*/gi, "")
+    .replace(/\s*\(Case of \d+\)\s*/gi, "")
+    .replace(/\s*\(whole flat \d+\)\s*/gi, "")
+    .replace(/\s*\(1\/2 flat \d+\)\s*/gi, "")
+    // strip redundant 'Plant' suffix INSIDE quotes ('Swiss Cheese Plant' → 'Swiss Cheese')
+    .replace(/'\s*([^']+?)\s+Plant\s*'/g, "'$1'")
+    // normalize all quote styles to plain '
+    .replace(/[‘’‚‛′‵]/g, "'")
+    .replace(/[“”„‟″‶]/g, '"')
+    // collapse whitespace + case
+    .replace(/\s+/g, " ")
+    .trim()
+    .toUpperCase();
+}
+
 export default function ProductionPlans() {
   const sb = getSupabase();
   const { isHouseplantPlanner } = useAuth();
@@ -1036,29 +1062,6 @@ function CatalogTab({ plan }) {
   }
 
   // Aggressive normalization to catch the "system changeover" duplicates
-  function normalizeDesc(d) {
-    return String(d || "")
-      // strip leading "Pot N\"" or "Pot NG" or "Pot N''" prefix
-      .replace(/^Pot \d+(\.\d+)?(?:"|G|'')\s*/i, "")
-      // strip leading size: '4.5"', '3"', 'HB 6"', etc.
-      .replace(/^HB \d+(\.\d+)?"\s*/i, "")
-      .replace(/^\d+(\.\d+)?"\s*/, "")
-      // strip packaging suffixes
-      .replace(/\s*\(Individual\)\s*/gi, "")
-      .replace(/\s*\(Case of \d+\)\s*/gi, "")
-      .replace(/\s*\(whole flat \d+\)\s*/gi, "")
-      .replace(/\s*\(1\/2 flat \d+\)\s*/gi, "")
-      // strip redundant 'Plant' suffix INSIDE quotes ('Swiss Cheese Plant' → 'Swiss Cheese')
-      .replace(/'\s*([^']+?)\s+Plant\s*'/g, "'$1'")
-      // normalize all quote styles to plain '
-      .replace(/[‘’‚‛′‵]/g, "'")
-      .replace(/[“”„‟″‶]/g, '"')
-      // collapse whitespace + case
-      .replace(/\s+/g, " ")
-      .trim()
-      .toUpperCase();
-  }
-
   useEffect(() => {
     if (!sb) return;
     setLoading(true);
@@ -2708,16 +2711,6 @@ function HpPresentationTab({ plan }) {
   const [fullscreen, setFullscreen] = useState(false);
   const [autoPlay, setAutoPlay] = useState(false);
 
-  function normalizeDesc(d) {
-    return String(d || "")
-      .replace(/^HB \d+(\.\d+)?"\s*/i, "").replace(/^\d+(\.\d+)?"\s*/, "")
-      .replace(/\s*\(Individual\)\s*/gi, "").replace(/\s*\(Case of \d+\)\s*/gi, "")
-      .replace(/\s*\(whole flat \d+\)\s*/gi, "").replace(/\s*\(1\/2 flat \d+\)\s*/gi, "")
-      .replace(/'\s*([^']+?)\s+Plant\s*'/g, "'$1'")
-      .replace(/[‘’‚‛′‵]/g, "'").replace(/[“”„‟″‶]/g, '"')
-      .replace(/\s+/g, " ").trim().toUpperCase();
-  }
-
   useEffect(() => {
     if (!sb) return;
     setLoading(true);
@@ -3070,20 +3063,6 @@ function HpInsightsTab({ plan }) {
   const [filterGenus, setFilterGenus] = useState("all");
   const [topN, setTopN]       = useState(20);
   const [aliases, setAliases] = useState([]);
-
-  function normalizeDesc(d) {
-    return String(d || "")
-      .replace(/^HB \d+(\.\d+)?"\s*/i, "")
-      .replace(/^\d+(\.\d+)?"\s*/, "")
-      .replace(/\s*\(Individual\)\s*/gi, "")
-      .replace(/\s*\(Case of \d+\)\s*/gi, "")
-      .replace(/\s*\(whole flat \d+\)\s*/gi, "")
-      .replace(/\s*\(1\/2 flat \d+\)\s*/gi, "")
-      .replace(/'\s*([^']+?)\s+Plant\s*'/g, "'$1'")
-      .replace(/[‘’‚‛′‵]/g, "'")
-      .replace(/[“”„‟″‶]/g, '"')
-      .replace(/\s+/g, " ").trim().toUpperCase();
-  }
 
   useEffect(() => {
     if (!sb) return;

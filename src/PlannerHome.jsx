@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef } from "react";
-import SeasonDeadlineWidget from "./SeasonDeadlineWidget";
 import { getUnviewedPhotoCount, getRecentPhotos, getSessionsWithPhotos } from "./TradeShow";
 import { computeSchedule, getCurrentWeek, getCropRunCalendarEvents, makeGCalUrl, CROP_STATUS, formatWeekDate } from "./shared";
 import { useCropRuns, useMaintenanceRequests } from "./supabase";
@@ -82,13 +81,13 @@ export default function PlannerHome({ onNavigate }) {
       {readyCount > 0 && (
         <div style={{ background: "#e8f8e8", border: "1.5px solid #7fb069", borderRadius: 12, padding: "12px 18px", marginBottom: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span style={{ fontSize: 14, color: "#1e5a1e", fontWeight: 700 }}>{readyCount} crop{readyCount !== 1 ? "s" : ""} ready to ship</span>
-          <button onClick={() => onNavigate("crops")} style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 8, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>View</button>
+          <button onClick={() => onNavigate("plans")} style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 8, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>View</button>
         </div>
       )}
       {noSourcing > 0 && (
         <div style={{ background: "#fff8e8", border: "1.5px solid #f0d080", borderRadius: 12, padding: "12px 18px", marginBottom: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span style={{ fontSize: 14, color: "#7a5a10", fontWeight: 700 }}>{noSourcing} run{noSourcing !== 1 ? "s" : ""} missing sourcing info</span>
-          <button onClick={() => onNavigate("crops")} style={{ background: "#e0a820", color: "#fff", border: "none", borderRadius: 8, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Fix</button>
+          <button onClick={() => onNavigate("plans")} style={{ background: "#e0a820", color: "#fff", border: "none", borderRadius: 8, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Fix</button>
         </div>
       )}
 
@@ -99,19 +98,19 @@ export default function PlannerHome({ onNavigate }) {
             <ActivityBadge
               icon="📋" count={unconfirmedRuns.length}
               label={`${unconfirmedRuns.length} order${unconfirmedRuns.length !== 1 ? "s" : ""} awaiting confirmation`}
-              color="#e07b39" onClick={() => onNavigate("orders")} />
+              color="#e07b39" onClick={() => onNavigate("plans")} />
           )}
           {criticalMaint.length > 0 && (
             <ActivityBadge
               icon="🔴" count={criticalMaint.length}
               label={`${criticalMaint.length} critical repair${criticalMaint.length !== 1 ? "s" : ""}`}
-              color="#c03030" onClick={() => onNavigate("crops")} />
+              color="#c03030" onClick={() => onNavigate("plans")} />
           )}
           {openMaintenance.length > 0 && criticalMaint.length === 0 && (
             <ActivityBadge
               icon="🔧" count={openMaintenance.length}
               label={`${openMaintenance.length} open repair${openMaintenance.length !== 1 ? "s" : ""}`}
-              color="#7a8c74" onClick={() => onNavigate("crops")} />
+              color="#7a8c74" onClick={() => onNavigate("plans")} />
           )}
           {unviewedPhotos > 0 && (
             <ActivityBadge
@@ -122,16 +121,11 @@ export default function PlannerHome({ onNavigate }) {
         </div>
       )}
 
-      {/* ── SEASON DEADLINE WIDGET ── */}
-      <div style={{ marginBottom: 16 }}>
-        <SeasonDeadlineWidget onNavigate={onNavigate} />
-      </div>
-
       {/* ── STATUS TILES ── */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 12, marginBottom: 28 }}>
         {CROP_STATUS.filter(s => s.id !== "shipped").map(s => (
           <div key={s.id} style={{ background: "#fff", borderRadius: 12, border: "1.5px solid #e0ead8", padding: "14px 16px", cursor: "pointer" }}
-            onClick={() => onNavigate("crops")}>
+            onClick={() => onNavigate("plans")}>
             <div style={{ fontSize: 24, fontWeight: 800, color: s.color }}>{byStatus[s.id] || 0}</div>
             <div style={{ fontSize: 11, color: "#7a8c74", fontWeight: 700, textTransform: "uppercase", letterSpacing: .6, marginTop: 2 }}>{s.label}</div>
           </div>
@@ -342,7 +336,7 @@ function UnconfirmedOrdersWidget({ runs, unconfirmedRuns, onNavigate }) {
             );
           })}
           <div style={{ padding: "8px 18px", borderTop: "1px solid #f5f0ee", textAlign: "right" }}>
-            <button onClick={() => onNavigate("orders")}
+            <button onClick={() => onNavigate("plans")}
               style={{ background: "none", border: "1px solid #e07b39", borderRadius: 7, padding: "5px 12px", fontSize: 11, fontWeight: 700, color: "#e07b39", cursor: "pointer", fontFamily: "inherit" }}>
               View All Orders →
             </button>

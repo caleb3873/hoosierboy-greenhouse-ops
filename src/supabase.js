@@ -248,7 +248,8 @@ export function getBrokerSubCode(cropRunCode, broker, allBrokers) {
 }
 export const useComboTags = () => useTable("combo_tags", { orderBy: "name", localKey: "gh_tags_v1" });
 export const useOrderMeta = () => useTable("order_meta", { orderBy: "created_at", localKey: "gh_order_meta_v1" });
-export const useReceiving = () => useTable("receiving_records", { orderBy: "week_key", localKey: "gh_receiving_v1" });
+// Removed: useReceiving (receiving_records table) — superseded by useReceivingLines /
+// useReceivingOrders below; the old table was empty and only a dead Export import used it.
 export const useBrokerProfiles   = () => useTable("broker_profiles",   { orderBy: "name", localKey: "gh_broker_profiles_v1" });
 export const useSupplierProfiles = () => useTable("supplier_profiles", { orderBy: "name", localKey: "gh_supplier_profiles_v1" });
 export const useBreederProfiles  = () => useTable("breeder_profiles",  { orderBy: "name", localKey: "gh_breeder_profiles_v1" });
