@@ -33,6 +33,8 @@ function profitColor(profitPerSqFt) {
 
 const fmtMoney = (n) => n == null ? "—" : "$" + Number(n).toLocaleString(undefined, { maximumFractionDigits: 0 });
 const fmtPct   = (n) => n == null ? "—" : Number(n).toFixed(1) + "%";
+// Format a stored 10-digit phone string as (xxx) xxx-xxxx; pass through anything else.
+const fmtPhone = (p) => { const d = String(p || "").replace(/\D/g, ""); return d.length === 10 ? `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}` : (p || ""); };
 
 export default function ProductionPlans() {
   const sb = getSupabase();
@@ -2101,6 +2103,15 @@ function ItemDetailModal({ sb, plan, sizes = [], catalogRow, fallback, history, 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const valid = form.description.trim() && form.pot_size.trim();
 
+  // Brokers come from the canonical broker_profiles table (same source the
+  // receiving-claim emailer uses) — no hardcoded list to drift out of sync.
+  const [brokers, setBrokers] = useState([]);
+  useEffect(() => {
+    if (!sb) return;
+    sb.from("broker_profiles").select("name,rep_name,rep_email,rep_phone").order("name")
+      .then(({ data }) => setBrokers(data || []));
+  }, [sb]);
+
   function payload() {
     return {
       description: form.description.trim(),
@@ -2150,13 +2161,16 @@ function ItemDetailModal({ sb, plan, sizes = [], catalogRow, fallback, history, 
 
   const targetRev = (parseFloat(form.target_qty) || 0) * (parseFloat(form.target_price) || 0);
   const creating = !curId;
-  const title = creating ? "🆕 Create new item" : "📝 Item details";
+  // Title is the live variety name — updates as you type the description below.
+  const title = form.description.trim() || "New item";
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200 }} onClick={onClose}>
       <div onClick={e => e.stopPropagation()}
         style={{ background: "#fff", borderRadius: 10, padding: 20, maxWidth: 620, width: "94%", maxHeight: "92vh", overflowY: "auto" }}>
-        <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 22, color: COLORS.dark, marginBottom: 2 }}>{title}</div>
+        <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 22, color: COLORS.dark, marginBottom: 2 }}>
+          {form.pot_size ? <span style={{ color: COLORS.muted, fontSize: 16 }}>{form.pot_size} · </span> : null}{title}
+        </div>
         <div style={{ fontSize: 12, color: COLORS.muted, marginBottom: 16 }}>
           {creating
             ? "Set a target qty and lock it to flow this item into projections + sourcing."
@@ -2218,8 +2232,21 @@ function ItemDetailModal({ sb, plan, sizes = [], catalogRow, fallback, history, 
                 <option value="cancelled">cancelled</option>
               </select>
             </FormField>
-            <FormField label="Supplier preference">
-              <input value={form.supplier} onChange={e => set("supplier", e.target.value)} placeholder="e.g., Costa Farms" style={modalInp} />
+            <FormField label="Broker">
+              <select value={form.supplier || ""} onChange={e => set("supplier", e.target.value)} style={modalInp}>
+                <option value="">— none —</option>
+                {brokers.map(b => <option key={b.name} value={b.name}>{b.name}{b.rep_name ? ` — ${b.rep_name}` : ""}</option>)}
+                {/* Preserve any legacy free-text supplier not in the broker list */}
+                {form.supplier && !brokers.some(b => b.name === form.supplier) && (
+                  <option value={form.supplier}>{form.supplier}</option>
+                )}
+              </select>
+              {(() => {
+                const b = brokers.find(x => x.name === form.supplier);
+                if (!b) return null;
+                const bits = [b.rep_email, fmtPhone(b.rep_phone)].filter(Boolean).join(" · ");
+                return bits ? <div style={{ fontSize: 11, color: COLORS.muted, marginTop: 4 }}>{bits}</div> : null;
+              })()}
             </FormField>
           </div>
           {form.acquisition_type === "finished" && (
