@@ -1349,15 +1349,16 @@ function CatalogTab({ plan }) {
 
   const SortHdr = ({ col, label, align, sticky }) => (
     <th style={{...th, textAlign: align || "left", cursor: "pointer",
-        ...(sticky ? { position: "sticky", top: sticky === 2 ? 32 : 0, zIndex: 10, background: "#f3f5ef" } : {})
+        ...(sticky ? { position: "sticky", top: sticky === 2 ? 78 : 46, zIndex: 10, background: "#f3f5ef" } : {})
     }} onClick={() => clickSort(col)}>
       {label} {sortCol === col ? (sortDir === "asc" ? "↑" : "↓") : ""}
     </th>
   );
 
-  // Sticky style helpers for the two-row catalog header
-  const stickyRow1 = { position: "sticky", top: 0,  zIndex: 10, background: "#f3f5ef" };
-  const stickyRow2 = { position: "sticky", top: 32, zIndex: 10, background: "#f3f5ef" };
+  // Sticky style helpers for the two-row catalog header. Plan tabs above are
+  // sticky at top: 0 with ~46px height, so the table header rows start below them.
+  const stickyRow1 = { position: "sticky", top: 46, zIndex: 10, background: "#f3f5ef" };
+  const stickyRow2 = { position: "sticky", top: 78, zIndex: 10, background: "#f3f5ef" };
 
   // Catalog summary stats — per pot size, capture qty + rev for EVERY available year
   const sizeStats = {};
@@ -1649,7 +1650,7 @@ function CatalogTab({ plan }) {
           </div>
         </div>
 
-        <div style={{ overflowX: "auto", overflowY: "auto", maxHeight: "calc(100vh - 240px)", position: "relative" }}>
+        <div style={{ overflowX: "auto" }}>
           {(() => {
             const displayYears = allYears.filter(y =>
               rows.some(r => (r.yearQty?.[y] || 0) > 0)
