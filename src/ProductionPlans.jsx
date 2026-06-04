@@ -216,8 +216,15 @@ function PlanDashboard({ plan }) {
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
-      {/* Tab bar */}
-      <div style={{ display: "flex", gap: 4, flexWrap: "wrap", borderBottom: `2px solid ${COLORS.border}`, paddingBottom: 0 }}>
+      {/* Tab bar — sticky so it stays visible while the user scrolls the catalog */}
+      <div style={{
+        display: "flex", gap: 4, flexWrap: "wrap",
+        borderBottom: `2px solid ${COLORS.border}`,
+        paddingBottom: 0,
+        position: "sticky", top: 0, zIndex: 50,
+        background: "#f2f5ef",
+        marginTop: -4, paddingTop: 4,
+      }}>
         {tabsForPlan(plan).map(t => (
           <button key={t.id} onClick={() => setTab(t.id)}
             style={{
@@ -976,7 +983,7 @@ function CatalogTab({ plan }) {
   const [addModal, setAddModal] = useState(false);
   const [yearDisplay, setYearDisplay] = useState("qty"); // "qty" | "revenue"
   const [hoverRow, setHoverRow] = useState(null);
-  const [showRollup, setShowRollup] = useState(true);
+  const [showRollup, setShowRollup] = useState(false);
 
   // For "Houseplants H1 2027": current_year = 2026, prior_year = 2025
   // Plus older years for historical context: 2024 (3yr), 2023 (4yr)
@@ -2133,6 +2140,7 @@ function HpSourcingTab({ plan }) {
   const [rows, setRows]   = useState([]);
   const [request, setReq] = useState(null);
   const [reqMode, setReqMode] = useState("liner"); // "liner" or "finished"
+  const [editMode, setEditMode] = useState(false);
 
   useEffect(() => {
     if (!sb) return;
@@ -2239,12 +2247,19 @@ function HpSourcingTab({ plan }) {
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
-      {/* Banner */}
-      <div style={{ background: COLORS.dark, color: "#fff", borderRadius: 10, padding: 16, display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+      {/* Banner + edit-mode toggle */}
+      <div style={{ background: COLORS.dark, color: "#fff", borderRadius: 10, padding: 16, display: "grid", gridTemplateColumns: "repeat(4, 1fr) auto", gap: 12, alignItems: "center" }}>
         <Stat label="🛒 Finished items"  value={`${finishedItems.length} · ${fmtMoney(finishedTotalRev)}`} dark />
         <Stat label="🌱 Liner items"     value={`${linerItems.length} · ${fmtMoney(linerTotalRev)}`}      dark />
         <Stat label="🌿 Propagate items" value={propagateItems.length}                                    dark />
         <Stat label="Untagged"            value={untagged.length}                                          dark />
+        <button onClick={() => setEditMode(!editMode)}
+          style={{
+            padding: "10px 16px", borderRadius: 6, border: "none", fontWeight: 800, fontSize: 12, cursor: "pointer",
+            background: editMode ? COLORS.amber : COLORS.light, color: "#fff", whiteSpace: "nowrap",
+          }}>
+          {editMode ? "🔒 Lock edits" : "✏️ Edit mode"}
+        </button>
       </div>
 
       {/* Generate broker request */}
@@ -2292,6 +2307,7 @@ function HpSourcingTab({ plan }) {
             updateRow={updateRow}
             showArrives={false}
             showSupplier={true}
+            editMode={editMode}
           />
         </div>
       )}
@@ -2310,6 +2326,7 @@ function HpSourcingTab({ plan }) {
             updateRow={updateRow}
             showArrives={true}
             showSupplier={true}
+            editMode={editMode}
           />
         </div>
       )}
@@ -2323,7 +2340,7 @@ function HpSourcingTab({ plan }) {
           <div style={{ fontSize: 11, color: COLORS.muted, marginBottom: 12 }}>
             Young plants we'll finish in-house. Order 8–10 weeks before sale start.
           </div>
-          <SourcingTable items={linerItems} updateRow={updateRow} showArrives={false} showSupplier={true} />
+          <SourcingTable items={linerItems} updateRow={updateRow} showArrives={false} showSupplier={true} editMode={editMode} />
         </div>
       )}
 
@@ -2336,7 +2353,7 @@ function HpSourcingTab({ plan }) {
           <div style={{ fontSize: 11, color: COLORS.muted, marginBottom: 12 }}>
             Items we propagate from cuttings/seed. No broker required.
           </div>
-          <SourcingTable items={propagateItems} updateRow={updateRow} showArrives={false} showSupplier={false} />
+          <SourcingTable items={propagateItems} updateRow={updateRow} showArrives={false} showSupplier={false} editMode={editMode} />
         </div>
       )}
 
@@ -2346,7 +2363,7 @@ function HpSourcingTab({ plan }) {
           <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 18, color: ACQ_COLOR.partner, marginBottom: 12 }}>
             🤝 Partner · {partnerItems.length} item(s)
           </div>
-          <SourcingTable items={partnerItems} updateRow={updateRow} showArrives={false} showSupplier={true} />
+          <SourcingTable items={partnerItems} updateRow={updateRow} showArrives={false} showSupplier={true} editMode={editMode} />
         </div>
       )}
     </div>
@@ -2354,7 +2371,7 @@ function HpSourcingTab({ plan }) {
 }
 
 // Editable sourcing table — acquisition / arrival / supplier inline
-function SourcingTable({ items, updateRow, showArrives, showSupplier }) {
+function SourcingTable({ items, updateRow, showArrives, showSupplier, editMode }) {
   return (
     <div style={{ overflowX: "auto" }}>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -2376,39 +2393,57 @@ function SourcingTable({ items, updateRow, showArrives, showSupplier }) {
             <tr key={i.id} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
               <td style={td}>{i.pot_size}</td>
               <td style={td}>{i.description}</td>
-              <td style={{...td, textAlign: "right"}}>{(+i.target_qty || 0).toLocaleString() || "—"}</td>
-              <td style={{...td, textAlign: "right"}}>{i.target_price ? "$" + (+i.target_price).toFixed(2) : "—"}</td>
+              <td style={{...td, textAlign: "right", background: editMode ? "#fafdf7" : undefined}}>
+                {editMode ? (
+                  <input type="number" defaultValue={i.target_qty || ""}
+                    onBlur={e => updateRow(i.id, { target_qty: e.target.value ? parseInt(e.target.value) : null })}
+                    style={{ width: 70, padding: "3px 6px", textAlign: "right", border: `1px solid ${COLORS.border}`, borderRadius: 4, fontSize: 12 }} />
+                ) : ((+i.target_qty || 0).toLocaleString() || "—")}
+              </td>
+              <td style={{...td, textAlign: "right", background: editMode ? "#fafdf7" : undefined}}>
+                {editMode ? (
+                  <input type="number" step="0.01" defaultValue={i.target_price || ""}
+                    onBlur={e => updateRow(i.id, { target_price: e.target.value ? parseFloat(e.target.value) : null })}
+                    style={{ width: 70, padding: "3px 6px", textAlign: "right", border: `1px solid ${COLORS.border}`, borderRadius: 4, fontSize: 12 }} />
+                ) : (i.target_price ? "$" + (+i.target_price).toFixed(2) : "—")}
+              </td>
               <td style={{...td, textAlign: "right", fontWeight: 700}}>{i.target_qty && i.target_price ? fmtMoney(i.target_qty * i.target_price) : "—"}</td>
-              <td style={{...td, background: "#fafdf7"}}>
-                <select value={i.acquisition_type || ""}
-                  onChange={e => updateRow(i.id, { acquisition_type: e.target.value || null })}
-                  style={{ padding: "4px 6px", border: `1px solid ${COLORS.border}`, borderRadius: 4, fontSize: 11,
-                    background: ACQ_COLOR[i.acquisition_type] ? ACQ_COLOR[i.acquisition_type] + "22" : "#fff",
-                    color: ACQ_COLOR[i.acquisition_type] || COLORS.text,
-                    fontWeight: i.acquisition_type ? 700 : 400,
-                  }}>
-                  <option value="">— pick —</option>
-                  <option value="finished">🛒 Finished</option>
-                  <option value="liner">🌱 Liner</option>
-                  <option value="propagate">🌿 Propagate</option>
-                  <option value="partner">🤝 Partner</option>
-                </select>
+              <td style={{...td, background: editMode ? "#fafdf7" : undefined}}>
+                {editMode ? (
+                  <select value={i.acquisition_type || ""}
+                    onChange={e => updateRow(i.id, { acquisition_type: e.target.value || null })}
+                    style={{ padding: "4px 6px", border: `1px solid ${COLORS.border}`, borderRadius: 4, fontSize: 11,
+                      background: ACQ_COLOR[i.acquisition_type] ? ACQ_COLOR[i.acquisition_type] + "22" : "#fff",
+                      color: ACQ_COLOR[i.acquisition_type] || COLORS.text,
+                      fontWeight: i.acquisition_type ? 700 : 400,
+                    }}>
+                    <option value="">— pick —</option>
+                    <option value="finished">🛒 Finished</option>
+                    <option value="liner">🌱 Liner</option>
+                    <option value="propagate">🌿 Propagate</option>
+                    <option value="partner">🤝 Partner</option>
+                  </select>
+                ) : (i.acquisition_type ? (
+                  <span style={{ color: ACQ_COLOR[i.acquisition_type], fontWeight: 700, fontSize: 11 }}>{ACQ_LABEL[i.acquisition_type]}</span>
+                ) : <span style={{ color: COLORS.muted }}>—</span>)}
               </td>
               {showArrives && (
-                <td style={{...td, background: "#fafdf7"}}>
-                  {i.acquisition_type === "finished" ? (
+                <td style={{...td, background: editMode ? "#fafdf7" : undefined}}>
+                  {editMode && i.acquisition_type === "finished" ? (
                     <input type="date" value={i.arrival_date_target || ""}
                       onChange={e => updateRow(i.id, { arrival_date_target: e.target.value || null })}
                       style={{ width: 130, padding: "3px 4px", border: `1px solid ${COLORS.border}`, borderRadius: 4, fontSize: 11 }} />
-                  ) : <span style={{ color: COLORS.muted }}>—</span>}
+                  ) : (i.arrival_date_target ? <span style={{ fontWeight: 600 }}>{i.arrival_date_target}</span> : <span style={{ color: COLORS.muted }}>—</span>)}
                 </td>
               )}
               {showSupplier && (
-                <td style={{...td, background: "#fafdf7"}}>
-                  <input type="text" value={i.supplier || ""}
-                    onChange={e => updateRow(i.id, { supplier: e.target.value || null })}
-                    placeholder="—"
-                    style={{ width: 120, padding: "3px 6px", border: `1px solid ${COLORS.border}`, borderRadius: 4, fontSize: 11 }} />
+                <td style={{...td, background: editMode ? "#fafdf7" : undefined}}>
+                  {editMode ? (
+                    <input type="text" defaultValue={i.supplier || ""}
+                      onBlur={e => updateRow(i.id, { supplier: e.target.value || null })}
+                      placeholder="—"
+                      style={{ width: 120, padding: "3px 6px", border: `1px solid ${COLORS.border}`, borderRadius: 4, fontSize: 11 }} />
+                  ) : (i.supplier || <span style={{ color: COLORS.muted }}>—</span>)}
                 </td>
               )}
               <td style={td}>{i.status}</td>
