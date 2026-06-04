@@ -117,6 +117,32 @@ const ACQ_COLOR = {
   propagate: "#5e35b1",  // purple — propagate in-house
   partner:   "#fb8c00",  // orange — outsourced
 };
+
+// Canonical size ordering used everywhere container sizes are listed:
+// pots (small→large) → finished planters (small→large) → hanging baskets
+// (small→large) → non-container tail (bulbs, misc, plugs, air). Returns a
+// sortable number; parse the inches so "10\"" sorts after "2\"", not before it.
+function sizeRank(potSize) {
+  const s = String(potSize || "").trim();
+  const inches = (() => { const m = s.match(/(\d+(?:\.\d+)?)/); return m ? parseFloat(m[1]) : 0; })();
+  const low = s.toLowerCase();
+  // Tail buckets (always last, in this order)
+  const TAIL = ["bulb", "misc", "plug", "air"];
+  for (let i = 0; i < TAIL.length; i++) if (low.includes(TAIL[i])) return 4000 + i;
+  // Hanging baskets
+  if (/^hb\b/i.test(s) || low.includes("basket")) return 3000 + inches;
+  // Finished planters (patio planters, combos, decorative planters)
+  if (low.includes("planter") || low.includes("patio") || low.includes("combo")) return 2000 + inches;
+  // Plain pots (numeric inch sizes) — the common case
+  if (inches > 0) return 1000 + inches;
+  // Anything unrecognized sorts just above the tail
+  return 3900;
+}
+// Comparator: size order first, then description.
+function bySizeThenDesc(a, b) {
+  const d = sizeRank(a.pot_size) - sizeRank(b.pot_size);
+  return d !== 0 ? d : String(a.description || a.desc || "").localeCompare(String(b.description || b.desc || ""));
+}
 const ACQ_LABEL = {
   finished:  "🛒 Finished",
   liner:     "🌱 Liner",
@@ -1316,7 +1342,7 @@ function CatalogTab({ plan }) {
 
   if (loading) return <div style={{ padding: 20, color: COLORS.muted }}>Loading catalog…</div>;
 
-  const sizes = Array.from(new Set(rows.map(r => r.pot_size).filter(Boolean))).sort();
+  const sizes = Array.from(new Set(rows.map(r => r.pot_size).filter(Boolean))).sort((a, b) => sizeRank(a) - sizeRank(b));
 
   // Score each row for the "Recommendations" view mode
   function scoreItem(r) {
@@ -1355,6 +1381,11 @@ function CatalogTab({ plan }) {
 
   // Custom sort overrides view-mode default when user clicks a column header
   const sorted = sortCol === "_viewmode" ? filtered : [...filtered].sort((a, b) => {
+    // Pot column sorts by physical size order (2" < 10"), not string order
+    if (sortCol === "pot_size") {
+      const d = sizeRank(a.pot_size) - sizeRank(b.pot_size);
+      return sortDir === "asc" ? d : -d;
+    }
     const av = a[sortCol] || 0, bv = b[sortCol] || 0;
     if (typeof av === "string") return sortDir === "asc" ? av.localeCompare(bv) : bv.localeCompare(av);
     return sortDir === "asc" ? (av - bv) : (bv - av);
@@ -1444,7 +1475,7 @@ function CatalogTab({ plan }) {
       max_price: s.prices.length ? Math.max(...s.prices) : 0,
       avg_qty, avg_rev, target_qty, target_rev, projected_qty, projected_rev, delta_pct,
     };
-  }).sort((a, b) => b.rev_26 - a.rev_26);
+  }).sort((a, b) => sizeRank(a.size) - sizeRank(b.size));
 
   const grandAvgQty   = sizeStatsArr.reduce((s, x) => s + x.avg_qty,       0);
   const grandTgtQty   = sizeStatsArr.reduce((s, x) => s + x.target_qty,    0);
@@ -2285,7 +2316,7 @@ function HpSourcingTab({ plan }) {
       body += `Substitution flexibility on cultivars, pot size ±1 step, arrival date ±2 weeks.\n\n`;
     }
     body += `═══════════════════════════════════════════════════════════\nREQUEST LIST\n═══════════════════════════════════════════════════════════\n`;
-    for (const [size, list] of Object.entries(bySize).sort()) {
+    for (const [size, list] of Object.entries(bySize).sort((a, b) => sizeRank(a[0]) - sizeRank(b[0]))) {
       body += `\n── ${size} POT ──\n`;
       const sorted = isFinished
         ? list.sort((a, b) => (a.arrival_date_target || "9999").localeCompare(b.arrival_date_target || "9999"))
@@ -2374,7 +2405,7 @@ function HpSourcingTab({ plan }) {
             Pick how each item comes in. Once tagged, they move to the matching panel below.
           </div>
           <SourcingTable
-            items={untagged}
+            items={[...untagged].sort(bySizeThenDesc)}
             updateRow={updateRow}
             showArrives={false}
             showSupplier={true}
@@ -2393,7 +2424,7 @@ function HpSourcingTab({ plan }) {
             Sale-ready material. Arrives Thursday, quarantined + treated through weekend, on retail benches Monday. Receive / Treat / Move-to-retail tasks auto-generate.
           </div>
           <SourcingTable
-            items={[...finishedItems].sort((a, b) => (a.arrival_date_target || "9999").localeCompare(b.arrival_date_target || "9999"))}
+            items={[...finishedItems].sort((a, b) => sizeRank(a.pot_size) - sizeRank(b.pot_size) || (a.arrival_date_target || "9999").localeCompare(b.arrival_date_target || "9999"))}
             updateRow={updateRow}
             showArrives={true}
             showSupplier={true}
@@ -2411,7 +2442,7 @@ function HpSourcingTab({ plan }) {
           <div style={{ fontSize: 11, color: COLORS.muted, marginBottom: 12 }}>
             Young plants we'll finish in-house. Order 8–10 weeks before sale start.
           </div>
-          <SourcingTable items={linerItems} updateRow={updateRow} showArrives={false} showSupplier={true} editMode={editMode} />
+          <SourcingTable items={[...linerItems].sort(bySizeThenDesc)} updateRow={updateRow} showArrives={false} showSupplier={true} editMode={editMode} />
         </div>
       )}
 
@@ -2424,7 +2455,7 @@ function HpSourcingTab({ plan }) {
           <div style={{ fontSize: 11, color: COLORS.muted, marginBottom: 12 }}>
             Items we propagate from cuttings/seed. No broker required.
           </div>
-          <SourcingTable items={propagateItems} updateRow={updateRow} showArrives={false} showSupplier={false} editMode={editMode} />
+          <SourcingTable items={[...propagateItems].sort(bySizeThenDesc)} updateRow={updateRow} showArrives={false} showSupplier={false} editMode={editMode} />
         </div>
       )}
 
@@ -2434,7 +2465,7 @@ function HpSourcingTab({ plan }) {
           <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 18, color: ACQ_COLOR.partner, marginBottom: 12 }}>
             🤝 Partner · {partnerItems.length} item(s)
           </div>
-          <SourcingTable items={partnerItems} updateRow={updateRow} showArrives={false} showSupplier={true} editMode={editMode} />
+          <SourcingTable items={[...partnerItems].sort(bySizeThenDesc)} updateRow={updateRow} showArrives={false} showSupplier={true} editMode={editMode} />
         </div>
       )}
     </div>
