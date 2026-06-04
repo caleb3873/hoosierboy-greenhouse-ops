@@ -222,6 +222,10 @@ export function AuthProvider({ children }) {
   // Owner is hardcoded to Caleb's email — only he can access the owner dashboard
   const OWNER_EMAIL = "caleb@schlegelgreenhouse.com";
   const isOwner       = !!user && user.email?.toLowerCase() === OWNER_EMAIL.toLowerCase();
+  // Houseplant planning collaborators — Amanda, Kim, Rachel get auto-routed to
+  // Production Plans → Houseplants H1 2027 on login.
+  const HOUSEPLANT_PLANNER_EMAILS = ["amanda@schlegelgreenhouse.com", "kim@schlegelgreenhouse.com", "rachel@schlegelgreenhouse.com"];
+  const isHouseplantPlanner = !!user && HOUSEPLANT_PLANNER_EMAILS.includes(user.email?.toLowerCase());
   const isOperationsManager = role === "operations_manager";
   const isAdmin       = role === "admin" || isOperationsManager;
   const isOperator    = role === "operator" || role === "maintenance" || role === "manager" || isOperationsManager;
@@ -234,7 +238,7 @@ export function AuthProvider({ children }) {
 
   const value = {
     user, role, floorMode, loading, initialized, team,
-    isAdmin, isOperator, isGrower, isOwner, isManager, isShippingManager, isShippingTeam, isShippingOffice, isOperationsManager, isAuthenticated,
+    isAdmin, isOperator, isGrower, isOwner, isManager, isShippingManager, isShippingTeam, isShippingOffice, isOperationsManager, isHouseplantPlanner, isAuthenticated,
     growerProfile,
     signIn, signOut, signInWithCode,
     recoveryMode, clearRecovery,

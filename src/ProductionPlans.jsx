@@ -4,6 +4,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { getSupabase, getCultureClient } from "./supabase";
+import { useAuth } from "./Auth";
 
 const COLORS = {
   bg:        "#f7f8f5",
@@ -35,6 +36,7 @@ const fmtPct   = (n) => n == null ? "—" : Number(n).toFixed(1) + "%";
 
 export default function ProductionPlans() {
   const sb = getSupabase();
+  const { isHouseplantPlanner } = useAuth();
   const [plans, setPlans]             = useState([]);
   const [selectedPlanId, setSelected] = useState(null);
   const [loading, setLoading]         = useState(true);
@@ -44,10 +46,16 @@ export default function ProductionPlans() {
     sb.from("production_plans").select("*").order("created_at", { ascending: false })
       .then(({ data }) => {
         setPlans(data || []);
-        if (data?.length) setSelected(data[0].id);
+        if (data?.length) {
+          // Amanda/Kim/Rachel land directly on Houseplants H1 2027
+          const target = isHouseplantPlanner
+            ? data.find(p => p.name === "Houseplants H1 2027") || data[0]
+            : data[0];
+          setSelected(target.id);
+        }
         setLoading(false);
       });
-  }, [sb]);
+  }, [sb, isHouseplantPlanner]);
 
   if (loading) return <div style={{ padding: 40, color: COLORS.muted }}>Loading plans…</div>;
   if (!plans.length) return <div style={{ padding: 40, color: COLORS.muted }}>No production plans yet. Create one in the database to start.</div>;
@@ -926,28 +934,45 @@ function CatalogTab({ plan }) {
   const [mergeModal, setMergeModal] = useState(null);  // { sourceRow: ... }
   const [reloadTick, setReloadTick] = useState(0);
   const [loading, setLoading] = useState(true);
-  // Projection + avgBase persist per-plan in localStorage so refreshing
-  // doesn't clobber the planning state mid-meeting.
-  const projKey = `hp_catalog_projection_${plan.id}`;
-  const baseKey = `hp_catalog_avgbase_${plan.id}`;
-  const [projection, setProjectionState] = useState(() => {
-    if (typeof window === "undefined") return 5;
-    const saved = window.localStorage.getItem(projKey);
-    return saved != null ? parseFloat(saved) : 5;
-  });
+  // Projection + avgBase live on the plan record so they're shared across
+  // devices/users. Only the owner (Caleb) can edit. Once locked, requires
+  // explicit unlock by the owner before any further changes.
+  const { user, isOwner } = useAuth();
+  const [projection, setProjectionState] = useState(plan.projection_pct ?? 5);
+  const [avgBase, setAvgBaseState]       = useState(plan.avg_base_years ?? 2);
+  const [projectionLockedAt, setProjLockedAt] = useState(plan.projection_locked_at || null);
+  const [projectionLockedBy, setProjLockedBy] = useState(plan.projection_locked_by || null);
+  const isProjectionLocked = !!projectionLockedAt;
+  const canEditProjection = isOwner && !isProjectionLocked;
+
+  async function persistProjection(updates) {
+    await sb.from("production_plans").update(updates).eq("id", plan.id);
+  }
   const setProjection = (v) => {
+    if (!canEditProjection) return;
     setProjectionState(v);
-    if (typeof window !== "undefined") window.localStorage.setItem(projKey, String(v));
+    persistProjection({ projection_pct: v });
   };
-  const [avgBase, setAvgBaseState] = useState(() => {
-    if (typeof window === "undefined") return 2;
-    const saved = window.localStorage.getItem(baseKey);
-    return saved != null ? parseInt(saved) : 2;
-  });
   const setAvgBase = (v) => {
+    if (!canEditProjection) return;
     setAvgBaseState(v);
-    if (typeof window !== "undefined") window.localStorage.setItem(baseKey, String(v));
+    persistProjection({ avg_base_years: v });
   };
+  async function lockProjection() {
+    if (!isOwner || isProjectionLocked) return;
+    if (!confirm(`Lock projection at +${projection}% (${avgBase}-yr avg base)? Only you (Caleb) can unlock it after this.`)) return;
+    const ts = new Date().toISOString();
+    setProjLockedAt(ts);
+    setProjLockedBy(user.email);
+    await persistProjection({ projection_locked_at: ts, projection_locked_by: user.email });
+  }
+  async function unlockProjection() {
+    if (!isOwner) return;
+    if (!confirm("Unlock projection? Allows further changes until you lock it again.")) return;
+    setProjLockedAt(null);
+    setProjLockedBy(null);
+    await persistProjection({ projection_locked_at: null, projection_locked_by: null });
+  }
   const [addModal, setAddModal] = useState(false);
   const [yearDisplay, setYearDisplay] = useState("qty"); // "qty" | "revenue"
   const [hoverRow, setHoverRow] = useState(null);
@@ -978,6 +1003,8 @@ function CatalogTab({ plan }) {
   // Aggressive normalization to catch the "system changeover" duplicates
   function normalizeDesc(d) {
     return String(d || "")
+      // strip leading "Pot N\"" or "Pot NG" or "Pot N''" prefix
+      .replace(/^Pot \d+(\.\d+)?(?:"|G|'')\s*/i, "")
       // strip leading size: '4.5"', '3"', 'HB 6"', etc.
       .replace(/^HB \d+(\.\d+)?"\s*/i, "")
       .replace(/^\d+(\.\d+)?"\s*/, "")
@@ -1432,29 +1459,46 @@ function CatalogTab({ plan }) {
             </div>
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            {isProjectionLocked && (
+              <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", background: "#f0f7ec", border: `1px solid ${COLORS.light}`, borderRadius: 14, fontSize: 11, fontWeight: 700, color: COLORS.dark }}>
+                🔒 Locked by {projectionLockedBy?.split("@")[0] || "owner"} · {new Date(projectionLockedAt).toLocaleDateString()}
+              </div>
+            )}
+            <div style={{ display: "flex", alignItems: "center", gap: 4, opacity: canEditProjection ? 1 : 0.6 }}>
               <span style={{ fontSize: 12, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase", letterSpacing: 0.3 }}>Avg base:</span>
               {[2, 3, 4].map(n => (
-                <button key={n} onClick={() => setAvgBase(n)}
+                <button key={n} onClick={() => setAvgBase(n)} disabled={!canEditProjection}
                   style={{
                     padding: "5px 10px", fontSize: 12, fontWeight: 700,
                     background: avgBase === n ? COLORS.dark : "#f3f5ef",
                     color:      avgBase === n ? "#fff" : COLORS.text,
                     border: `1px solid ${avgBase === n ? COLORS.dark : COLORS.border}`,
-                    borderRadius: 14, cursor: "pointer",
+                    borderRadius: 14, cursor: canEditProjection ? "pointer" : "not-allowed",
                   }}>{n}yr</button>
               ))}
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, opacity: canEditProjection ? 1 : 0.6 }}>
               <span style={{ fontSize: 13, fontWeight: 700, color: COLORS.text }}>Projection</span>
-              <input type="number" value={projection} step="1"
+              <input type="number" value={projection} step="1" disabled={!canEditProjection}
                 onChange={e => setProjection(parseFloat(e.target.value) || 0)}
-                style={{ width: 60, padding: "6px 8px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 14, fontWeight: 700, textAlign: "right" }} />
+                style={{ width: 60, padding: "6px 8px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 14, fontWeight: 700, textAlign: "right", background: canEditProjection ? "#fff" : "#f3f5ef", cursor: canEditProjection ? "text" : "not-allowed" }} />
               <span style={{ fontSize: 13, fontWeight: 700, color: COLORS.text }}>%</span>
             </div>
+            {isOwner && !isProjectionLocked && (
+              <button onClick={lockProjection}
+                style={{ padding: "8px 14px", borderRadius: 6, border: "none", background: COLORS.dark, color: "#fff", fontWeight: 700, cursor: "pointer", fontSize: 12 }}>
+                🔒 Lock projection
+              </button>
+            )}
+            {isOwner && isProjectionLocked && (
+              <button onClick={unlockProjection}
+                style={{ padding: "8px 14px", borderRadius: 6, border: `1px solid ${COLORS.amber}`, background: "#fff", color: COLORS.amber, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>
+                🔓 Unlock
+              </button>
+            )}
             <button onClick={applyProjection}
               style={{ padding: "8px 14px", borderRadius: 6, border: "none", background: COLORS.light, color: "#fff", fontWeight: 700, cursor: "pointer", fontSize: 12 }}>
-              Apply to unset items
+                Apply to unset items
             </button>
             <button onClick={clearProjections}
               style={{ padding: "8px 14px", borderRadius: 6, border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.text, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>

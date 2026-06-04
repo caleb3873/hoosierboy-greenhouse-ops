@@ -140,14 +140,23 @@ function pageGroup(pageId) {
 const LOGO_WHITE = "https://cdn.prod.website-files.com/63b5c78a53ecb12c888ba09a/63b5d5e281aa6766b5cb8ace_HOO-Boy%20Logo%20Reversed-White.png";
 
 function PlannerShell() {
+  const { signOut, displayName, floorMode, isOwner, isHouseplantPlanner } = useAuth();
+  // Houseplant planner emails (Amanda, Kim, Rachel) auto-land on Production Plans.
+  // We use sessionStorage as a one-time flag so the user can navigate freely after
+  // their initial landing — we only force-route on the FIRST visit per session.
   const [page, setPageState] = useState(() => {
-    try { return localStorage.getItem("gh_current_page") || "home"; } catch { return "home"; }
+    try {
+      if (isHouseplantPlanner && !sessionStorage.getItem("gh_hp_planner_routed")) {
+        sessionStorage.setItem("gh_hp_planner_routed", "1");
+        return "plans";
+      }
+      return localStorage.getItem("gh_current_page") || "home";
+    } catch { return "home"; }
   });
   const setPage = (p) => {
     setPageState(p);
     try { localStorage.setItem("gh_current_page", p); } catch {}
   };
-  const { signOut, displayName, floorMode, isOwner } = useAuth();
   const { extractionState } = useExtraction();
   const announcementPopup = useAnnouncementPopup();
 
