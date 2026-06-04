@@ -1160,7 +1160,29 @@ function CatalogTab({ plan }) {
       alias_pot_size: sourceRow.pot_size,
       notes: "Manual merge from Catalog UI",
     }, { onConflict: "alias_desc,alias_pot_size" });
+    // Delete the source's own catalog row(s) so the merged item disappears
+    // entirely instead of lingering as a phantom 0-inventory row.
+    const victims = catalog.filter(c =>
+      normalizeDesc(c.description) === normalizeDesc(sourceRow.desc) && c.pot_size === sourceRow.pot_size);
+    if (victims.length) await sb.from("houseplant_catalog").delete().in("id", victims.map(c => c.id));
     setMergeModal(null);
+    setReloadTick(t => t + 1);
+  }
+
+  // Purge catalog rows that have no sales history, no target qty, and aren't
+  // locked — i.e. items with no inventory and no plan. Confirms with a count
+  // first; never touches locked or targeted rows.
+  async function removeEmptyItems() {
+    const salesKeys = new Set(rows.filter(r => !r.isNew).map(r => `${r.pot_size}|${r.normalized}`));
+    const empties = catalog.filter(c =>
+      c.status !== "locked" &&
+      c.target_qty == null &&
+      !salesKeys.has(`${c.pot_size}|${normalizeDesc(c.description)}`));
+    if (!empties.length) { alert("No empty items to remove — every catalog item has sales, a target, or is locked."); return; }
+    if (!confirm(`Remove ${empties.length} item(s) with no inventory, no target qty, and not locked? This permanently deletes them from the catalog.`)) return;
+    const ids = empties.map(c => c.id);
+    await sb.from("houseplant_catalog").delete().in("id", ids);
+    setCatalog(catalog.filter(c => !ids.includes(c.id)));
     setReloadTick(t => t + 1);
   }
   async function unmergeAll() {
@@ -1349,17 +1371,19 @@ function CatalogTab({ plan }) {
 
   const SortHdr = ({ col, label, align, sticky }) => (
     <th style={{...th, textAlign: align || "left", cursor: "pointer",
-        ...(sticky ? { position: "sticky", top: sticky === 2 ? 78 : 46, zIndex: 20, background: "#eef3e8" } : {})
+        ...(sticky ? { position: "sticky", top: sticky === 2 ? 34 : 0, zIndex: 11, background: "#eef3e8" } : {})
     }} onClick={() => clickSort(col)}>
       {label} {sortCol === col ? (sortDir === "asc" ? "↑" : "↓") : ""}
     </th>
   );
 
-  // Sticky style helpers for the two-row catalog header. Plan tabs above are
-  // sticky at top: 0 with ~46px height, so the table header rows start below them.
-  // boxShadow on row 2 separates the frozen header from scrolling rows below.
-  const stickyRow1 = { position: "sticky", top: 46, zIndex: 20, background: "#eef3e8" };
-  const stickyRow2 = { position: "sticky", top: 78, zIndex: 20, background: "#eef3e8", boxShadow: "0 2px 4px rgba(30,45,26,0.12)" };
+  // Sticky style helpers for the two-row catalog header. The table lives in its
+  // own scroll viewport (maxHeight + overflow:auto), so the header sticks relative
+  // to that container at top:0 — independent of the app nav / plan-tab bars stacked
+  // above. Row 1 is ~34px tall (the "show $" toggle drives the height), so row 2
+  // pins just below it. boxShadow on row 2 separates the frozen header from rows.
+  const stickyRow1 = { position: "sticky", top: 0, zIndex: 11, background: "#eef3e8" };
+  const stickyRow2 = { position: "sticky", top: 34, zIndex: 11, background: "#eef3e8", boxShadow: "0 2px 4px rgba(30,45,26,0.12)" };
 
   // Price-band row shading: 5 green tiers keyed to the houseplant $/ea distribution
   // (p25≈$4, median≈$7, p75≈$12, p90≈$21). Darker green = pricier item, so rows
@@ -1531,6 +1555,10 @@ function CatalogTab({ plan }) {
               style={{ padding: "8px 14px", borderRadius: 6, border: "none", background: COLORS.dark, color: "#fff", fontWeight: 700, cursor: "pointer", fontSize: 12 }}>
               + Add variety
             </button>
+            <button onClick={removeEmptyItems} title="Delete catalog items with no sales history, no target qty, and not locked"
+              style={{ padding: "8px 14px", borderRadius: 6, border: `1px solid ${COLORS.red}`, background: "#fff", color: COLORS.red, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>
+              🗑 Remove empty
+            </button>
           </div>
         </div>
 
@@ -1684,7 +1712,7 @@ function CatalogTab({ plan }) {
           </span>
         </div>
 
-        <div>
+        <div style={{ maxHeight: "calc(100vh - 200px)", overflow: "auto", border: `1px solid ${COLORS.border}`, borderRadius: 8, WebkitOverflowScrolling: "touch" }}>
           {(() => {
             const displayYears = allYears.filter(y =>
               rows.some(r => (r.yearQty?.[y] || 0) > 0)
@@ -1751,8 +1779,6 @@ function CatalogTab({ plan }) {
                 const priceDiffPct = currPrice && targetPrice && currPrice > 0 ? ((targetPrice - currPrice) / currPrice * 100) : null;
                 return (
                   <tr key={i}
-                    onMouseEnter={() => setHoverRow(i)}
-                    onMouseLeave={() => setHoverRow(null)}
                     style={{ borderBottom: `1px solid ${COLORS.border}`, background: r.isNew ? "#fff7e6" : priceShade(currPrice ?? targetPrice), borderLeft: c?.status === "locked" ? `3px solid ${COLORS.light}` : "3px solid transparent", position: "relative" }}>
                     <td style={td}>{r.pot_size}</td>
                     <td style={{...td, position: "relative"}}>
@@ -1766,9 +1792,6 @@ function CatalogTab({ plan }) {
                         <span style={{ marginLeft: 6, fontSize: 10, color: COLORS.light, fontWeight: 700 }} title={`Culture data: ${Object.entries(cultureByGenus[r.genus]).map(([b,n]) => `${b} (${n})`).join(", ")}`}>
                           📖 {Object.keys(cultureByGenus[r.genus]).join("+")}
                         </span>
-                      )}
-                      {hoverRow === i && (
-                        <RowHoverCard row={r} years={displayYears} />
                       )}
                     </td>
                     {displayYears.map(y => {
@@ -1795,8 +1818,14 @@ function CatalogTab({ plan }) {
                     <td style={{...td, textAlign:"right", color: rowDelta == null ? COLORS.muted : rowDelta > 0 ? COLORS.light : rowDelta < -25 ? COLORS.red : rowDelta < 0 ? COLORS.amber : COLORS.text, fontWeight: rowDelta != null ? 700 : 400}}>
                       {rowDelta != null ? (rowDelta >= 0 ? "+" : "") + rowDelta.toFixed(0) + "%" : "—"}
                     </td>
-                    <td style={{...td, textAlign:"center"}}>
+                    <td style={{...td, textAlign:"center", cursor: "help"}}
+                      onMouseEnter={e => setHoverRow({ i, x: e.clientX, y: e.clientY })}
+                      onMouseMove={e => setHoverRow(h => h && h.i === i ? { i, x: e.clientX, y: e.clientY } : h)}
+                      onMouseLeave={() => setHoverRow(null)}>
                       {signal && <span style={{ background: signalColor + "22", color: signalColor, border: `1px solid ${signalColor}`, padding: "2px 6px", borderRadius: 8, fontSize: 10, fontWeight: 800, whiteSpace: "nowrap" }}>{signal}</span>}
+                      {hoverRow?.i === i && (
+                        <RowHoverCard row={r} years={displayYears} anchorX={hoverRow.x} anchorY={hoverRow.y} />
+                      )}
                     </td>
                     <td style={{...td, textAlign:"right", color: COLORS.muted, fontWeight: 600}}>
                       {currPrice ? "$" + currPrice.toFixed(2) : "—"}
@@ -1880,8 +1909,15 @@ function CatalogTab({ plan }) {
 
 // Modal for selecting merge target
 // Hover card shown over a catalog row — 4-yr pricing + sparkline + revenue trend.
-function RowHoverCard({ row, years }) {
+function RowHoverCard({ row, years, anchorX = 0, anchorY = 0 }) {
   const W = 320, H = 80, PADX = 8, PADY = 8;
+  // Fixed-position near the cursor so the card escapes the table's scroll
+  // viewport (overflow:auto would otherwise clip it). Flip left/up near edges.
+  const CARD_W = 360, CARD_H = 210;
+  const vw = typeof window !== "undefined" ? window.innerWidth : 1200;
+  const vh = typeof window !== "undefined" ? window.innerHeight : 800;
+  const left = anchorX + CARD_W + 16 > vw ? Math.max(8, anchorX - CARD_W - 12) : anchorX + 12;
+  const top  = anchorY + CARD_H + 16 > vh ? Math.max(8, anchorY - CARD_H - 12) : anchorY + 16;
   const qtys = years.map(y => row.yearQty?.[y] || 0);
   const revs = years.map(y => row.yearRev?.[y] || 0);
   const prices = years.map(y => {
@@ -1896,9 +1932,9 @@ function RowHoverCard({ row, years }) {
 
   return (
     <div style={{
-      position: "absolute", left: 0, top: "100%", marginTop: 4, zIndex: 50,
+      position: "fixed", left, top, zIndex: 1000,
       background: "#fff", border: `1px solid ${COLORS.dark}`, borderRadius: 8,
-      padding: 10, width: 360, fontSize: 11,
+      padding: 10, width: CARD_W, fontSize: 11,
       boxShadow: "0 4px 12px rgba(0,0,0,0.18)", pointerEvents: "none",
     }}>
       <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 13, color: COLORS.dark, marginBottom: 6 }}>
