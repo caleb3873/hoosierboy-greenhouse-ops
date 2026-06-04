@@ -1191,6 +1191,8 @@ function CatalogTab({ plan }) {
   async function applyProjection() {
     const ops = [];
     for (const r of rows) {
+      // Skip Misc — these revenue still counts in totals but we don't auto-project per-item
+      if (r.pot_size === "Misc") continue;
       const existing = catalog.find(c => normalizeDesc(c.description) === r.normalized && c.pot_size === r.pot_size);
       if (existing && (existing.target_qty != null || existing.status === "locked")) continue;
       const avgQty = avgQtyFor(r);
