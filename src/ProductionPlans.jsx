@@ -1349,7 +1349,7 @@ function CatalogTab({ plan }) {
 
   const SortHdr = ({ col, label, align, sticky }) => (
     <th style={{...th, textAlign: align || "left", cursor: "pointer",
-        ...(sticky ? { position: "sticky", top: sticky === 2 ? 78 : 46, zIndex: 10, background: "#f3f5ef" } : {})
+        ...(sticky ? { position: "sticky", top: sticky === 2 ? 78 : 46, zIndex: 20, background: "#eef3e8" } : {})
     }} onClick={() => clickSort(col)}>
       {label} {sortCol === col ? (sortDir === "asc" ? "↑" : "↓") : ""}
     </th>
@@ -1357,8 +1357,21 @@ function CatalogTab({ plan }) {
 
   // Sticky style helpers for the two-row catalog header. Plan tabs above are
   // sticky at top: 0 with ~46px height, so the table header rows start below them.
-  const stickyRow1 = { position: "sticky", top: 46, zIndex: 10, background: "#f3f5ef" };
-  const stickyRow2 = { position: "sticky", top: 78, zIndex: 10, background: "#f3f5ef" };
+  // boxShadow on row 2 separates the frozen header from scrolling rows below.
+  const stickyRow1 = { position: "sticky", top: 46, zIndex: 20, background: "#eef3e8" };
+  const stickyRow2 = { position: "sticky", top: 78, zIndex: 20, background: "#eef3e8", boxShadow: "0 2px 4px rgba(30,45,26,0.12)" };
+
+  // Price-band row shading: 5 green tiers keyed to the houseplant $/ea distribution
+  // (p25≈$4, median≈$7, p75≈$12, p90≈$21). Darker green = pricier item, so rows
+  // group visually by value and are harder to mix up when scanning.
+  function priceShade(price) {
+    if (price == null || !(price > 0)) return undefined;
+    if (price < 4)  return "#f6faf2";
+    if (price < 7)  return "#eaf3df";
+    if (price < 12) return "#dcebcb";
+    if (price < 21) return "#cbe0b4";
+    return "#b7d49a";
+  }
 
   // Catalog summary stats — per pot size, capture qty + rev for EVERY available year
   const sizeStats = {};
@@ -1650,7 +1663,28 @@ function CatalogTab({ plan }) {
           </div>
         </div>
 
-        <div style={{ overflowX: "auto" }}>
+        {/* Price-band shading legend — rows tint green by $/ea so price tiers are scannable */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, fontSize: 10, color: COLORS.muted, fontWeight: 600 }}>
+          <span style={{ textTransform: "uppercase", letterSpacing: 0.3 }}>Row shade = $/ea:</span>
+          {[
+            { c: "#f6faf2", l: "<$4" },
+            { c: "#eaf3df", l: "$4–7" },
+            { c: "#dcebcb", l: "$7–12" },
+            { c: "#cbe0b4", l: "$12–21" },
+            { c: "#b7d49a", l: "$21+" },
+          ].map(b => (
+            <span key={b.l} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+              <span style={{ width: 14, height: 14, background: b.c, border: `1px solid ${COLORS.border}`, borderRadius: 3, display: "inline-block" }} />
+              {b.l}
+            </span>
+          ))}
+          <span style={{ marginLeft: 6, display: "inline-flex", alignItems: "center", gap: 4 }}>
+            <span style={{ width: 4, height: 14, background: COLORS.light, display: "inline-block", borderRadius: 2 }} />
+            locked
+          </span>
+        </div>
+
+        <div>
           {(() => {
             const displayYears = allYears.filter(y =>
               rows.some(r => (r.yearQty?.[y] || 0) > 0)
@@ -1719,7 +1753,7 @@ function CatalogTab({ plan }) {
                   <tr key={i}
                     onMouseEnter={() => setHoverRow(i)}
                     onMouseLeave={() => setHoverRow(null)}
-                    style={{ borderBottom: `1px solid ${COLORS.border}`, background: c?.status === "locked" ? "#f0f7ec" : r.isNew ? "#fff7e6" : undefined, position: "relative" }}>
+                    style={{ borderBottom: `1px solid ${COLORS.border}`, background: r.isNew ? "#fff7e6" : priceShade(currPrice ?? targetPrice), borderLeft: c?.status === "locked" ? `3px solid ${COLORS.light}` : "3px solid transparent", position: "relative" }}>
                     <td style={td}>{r.pot_size}</td>
                     <td style={{...td, position: "relative"}}>
                       {r.isNew && (
