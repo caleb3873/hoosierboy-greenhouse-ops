@@ -759,6 +759,72 @@ function CultureGuideModal({ row, isAdded, onAdd, onClose }) {
   );
 }
 
+// Phase A — grounded "grower brain" chat. Calls /api/ask, which answers from the
+// culture database + our inputs + variety library (never general knowledge).
+function AskAssistant() {
+  const [msgs, setMsgs] = useState([]); // { role: "user"|"assistant", content }
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  async function send(q) {
+    const text = (q != null ? q : input).trim();
+    if (!text || loading) return;
+    const next = [...msgs, { role: "user", content: text }];
+    setMsgs(next); setInput(""); setError(null); setLoading(true);
+    try {
+      const r = await fetch("/api/ask", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ messages: next }) });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || "request failed");
+      setMsgs(m => [...m, { role: "assistant", content: data.answer || "(no answer)" }]);
+    } catch (e) { setError(e.message || "request failed"); }
+    finally { setLoading(false); }
+  }
+
+  const examples = [
+    "What PGR does Angelonia Archangel need?",
+    "Do we stock/use Florel? What's its REI?",
+    "Is Calibrachoa a cool or warm crop?",
+    "What pests should I watch for on Petunia?",
+  ];
+
+  return (
+    <div>
+      <div style={{ background: "#eef3e8", border: "1px solid #d4e3c8", borderRadius: 10, padding: "12px 16px", marginBottom: 14, fontSize: 13, color: "#3a5a35" }}>
+        💬 <strong>Ask the grower assistant</strong> — answers PGR / spray / watering / disease / culture questions from the breeder culture database, cross-checked against our chemical inventory. It cites its source and won't guess.
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 14 }}>
+        {msgs.length === 0 && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {examples.map(ex => (
+              <button key={ex} onClick={() => send(ex)} style={{ background: "#fff", border: "1px solid #c8d8c0", borderRadius: 16, padding: "6px 12px", fontSize: 12, color: "#4a6a3a", cursor: "pointer", fontFamily: "inherit" }}>{ex}</button>
+            ))}
+          </div>
+        )}
+        {msgs.map((m, i) => (
+          <div key={i} style={{ alignSelf: m.role === "user" ? "flex-end" : "flex-start", maxWidth: "85%", background: m.role === "user" ? "#7fb069" : "#fff", color: m.role === "user" ? "#fff" : "#1e2d1a", border: m.role === "user" ? "none" : "1px solid #e0ead8", borderRadius: 12, padding: "10px 14px", fontSize: 13, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
+            {m.content}
+          </div>
+        ))}
+        {loading && <div style={{ alignSelf: "flex-start", color: "#7a8c74", fontSize: 13, padding: "6px 4px" }}>Looking it up…</div>}
+        {error && <div style={{ alignSelf: "flex-start", color: "#c03030", fontSize: 12 }}>⚠️ {error}</div>}
+      </div>
+
+      <div style={{ display: "flex", gap: 8 }}>
+        <textarea value={input} onChange={e => setInput(e.target.value)} rows={2}
+          onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+          placeholder="Ask about PGRs, sprays, watering, disease, culture…"
+          style={{ flex: 1, padding: "10px 12px", border: "1px solid #c8d8c0", borderRadius: 8, fontSize: 13, resize: "vertical", fontFamily: "inherit" }} />
+        <button onClick={() => send()} disabled={loading || !input.trim()}
+          style={{ background: loading || !input.trim() ? "#cdd" : "#1e2d1a", color: "#fff", border: "none", borderRadius: 8, padding: "0 18px", fontSize: 14, fontWeight: 700, cursor: loading || !input.trim() ? "default" : "pointer", fontFamily: "inherit" }}>
+          {loading ? "…" : "Ask"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function VarietyLibrary() {
   const { rows: library, upsert: upsertVariety, remove: removeVarietyDb } = useVarieties();
   const { rows: containers } = useContainers(); // for the per-variety default pot size
@@ -824,6 +890,7 @@ function VarietyLibrary() {
             <button onClick={() => { setView("library"); setEditingId(null); }} style={{ background: "none", color: "#c8e6b8", border: "1px solid #4a6a3a", borderRadius: 8, padding: "8px 16px", fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>← Library</button>
           )}
           {view === "library" && (<>
+            <button onClick={() => setView("ask")} style={{ background: "#7fb069", color: "#fff", border: "1px solid #7fb069", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>💬 Ask</button>
             <button onClick={() => setView("culture")} style={{ background: "none", color: "#c8e6b8", border: "1px solid #4a6a3a", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>🌱 Culture DB</button>
             <button onClick={() => setView("pdf-import")} style={{ background: "none", color: "#c8e6b8", border: "1px solid #4a6a3a", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>📄 Import PDF Catalog</button>
             <button onClick={() => setView("grades")} style={{ background: "none", color: "#c8e6b8", border: "1px solid #4a6a3a", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>⭐ Grade Varieties</button>
@@ -846,6 +913,9 @@ function VarietyLibrary() {
             onCancel={() => setView("library")}
           />
         )}
+
+        {/* ASK ASSISTANT (Phase A) */}
+        {view === "ask" && <AskAssistant />}
 
         {/* CULTURE DB BROWSER (Phase 2) */}
         {view === "culture" && <CultureBrowser existingLibrary={library} />}
