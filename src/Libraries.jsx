@@ -272,7 +272,7 @@ function StarRating({ value = 0, onChange, label }) {
   );
 }
 
-function VarietyForm({ initial, onSave, onCancel, title, containers = [] }) {
+function VarietyForm({ initial, onSave, onCancel, title, containers = [], inputs = [] }) {
   const [form, setForm] = useState(initial || {
     cropName: "", variety: "", breeder: "", type: "Annual",
     propTraySize: "", propCellCount: "", propWeeks: "",
@@ -371,6 +371,43 @@ function VarietyForm({ initial, onSave, onCancel, title, containers = [] }) {
         <FormField label="Timing / Application"><input {...f("pgrTiming")} placeholder="e.g. Weeks 3-5, drench" /></FormField>
       </div>
 
+      <SectionHeader>Default Inputs / Program</SectionHeader>
+      <FormField label="Inputs for this variety" hint="Fertilizer, PGR, sprays — pulled into plans when this variety is added">
+        {(() => {
+          const selected = form.defaultInputIds || [];
+          const cats = [...new Set(inputs.map(i => i.category).filter(Boolean))];
+          const addInput = id => { if (id && !selected.includes(id)) setForm(x => ({ ...x, defaultInputIds: [...selected, id] })); };
+          const removeInput = id => setForm(x => ({ ...x, defaultInputIds: selected.filter(s => s !== id) }));
+          return (
+            <>
+              <select style={inputStyle(false)} value="" onChange={e => { addInput(e.target.value); e.target.value = ""; }}>
+                <option value="">+ Add an input…</option>
+                {cats.map(cat => (
+                  <optgroup key={cat} label={cat}>
+                    {inputs.filter(i => i.category === cat && !selected.includes(i.id))
+                      .sort((a, b) => (a.name || "").localeCompare(b.name || ""))
+                      .map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
+                  </optgroup>
+                ))}
+              </select>
+              {selected.length > 0 && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+                  {selected.map(id => {
+                    const inp = inputs.find(i => i.id === id);
+                    return (
+                      <span key={id} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#eef3e8", border: "1px solid #d4e3c8", borderRadius: 14, padding: "3px 6px 3px 10px", fontSize: 12, color: "#3a5a35", fontWeight: 600 }}>
+                        {inp ? inp.name : "(removed input)"}
+                        <button type="button" onClick={() => removeInput(id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#7a8c74", fontSize: 14, lineHeight: 1, padding: 0 }}>×</button>
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          );
+        })()}
+      </FormField>
+
       <SectionHeader>Grades</SectionHeader>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 8 }}>
         <StarRating value={form.growerGrade || 0} onChange={v => setForm(x => ({ ...x, growerGrade: v }))} label="Grower Grade" />
@@ -399,11 +436,12 @@ function VarietyForm({ initial, onSave, onCancel, title, containers = [] }) {
 }
 
 // ── VARIETY CARD ──────────────────────────────────────────────────────────────
-function VarietyCard({ variety, onEdit, onDelete, containers = [] }) {
+function VarietyCard({ variety, onEdit, onDelete, containers = [], inputs = [] }) {
   const [expanded, setExpanded] = useState(false);
   const breeder = BREEDERS.find(b => b.name === variety.breeder);
   const breederColor = breeder?.color || "#7a8c74";
   const defaultPot = variety.defaultContainerId ? containers.find(c => c.id === variety.defaultContainerId) : null;
+  const defaultInputs = (variety.defaultInputIds || []).map(id => inputs.find(i => i.id === id)).filter(Boolean);
 
   return (
     <div style={{ background: "#fff", borderRadius: 14, border: "1.5px solid #e0ead8", overflow: "hidden" }}>
@@ -423,6 +461,7 @@ function VarietyCard({ variety, onEdit, onDelete, containers = [] }) {
               </span>
             )}
             {defaultPot && <span style={{ fontWeight: 700, color: "#4a6a3a" }}>🪴 {defaultPot.sku || defaultPot.name}</span>}
+            {defaultInputs.length > 0 && <span title={defaultInputs.map(i => i.name).join(", ")}>🧪 {defaultInputs.length} input{defaultInputs.length === 1 ? "" : "s"}</span>}
             {variety.finishWeeks && <span>🗓 {variety.finishWeeks} wks finish</span>}
             {variety.tempGroup && <span style={{ fontWeight: 700, color: variety.tempGroup === "cool" ? "#1a4a7a" : "#a04010", background: variety.tempGroup === "cool" ? "#e8f3fc" : "#fdf3ea", borderRadius: 4, padding: "1px 6px", fontSize: 11 }}>{variety.tempGroup === "cool" ? "❄️ Cool" : "🌡 Warm"}</span>}
             {variety.finishTempDay && <span>🌡 {variety.finishTempDay}°F day</span>}
@@ -587,6 +626,7 @@ function CultureBrowser({ existingLibrary }) {
 function VarietyLibrary() {
   const { rows: library, upsert: upsertVariety, remove: removeVarietyDb } = useVarieties();
   const { rows: containers } = useContainers(); // for the per-variety default pot size
+  const { rows: inputs } = useInputProducts();  // for the per-variety default inputs/program
   const [view, setView] = useState("library"); // library | add | edit | grades | pdf-import
   const [editingId, setEditingId] = useState(null);
   const [search, setSearch] = useState("");
@@ -736,7 +776,7 @@ function VarietyLibrary() {
                     {isOpen && (
                       <div style={{ display: "flex", flexDirection: "column", gap: 12, padding: 12 }}>
                         {items.map(variety => (
-                          <VarietyCard key={variety.id} variety={variety} containers={containers} onEdit={startEdit} onDelete={deleteVariety} />
+                          <VarietyCard key={variety.id} variety={variety} containers={containers} inputs={inputs} onEdit={startEdit} onDelete={deleteVariety} />
                         ))}
                       </div>
                     )}
@@ -768,6 +808,7 @@ function VarietyLibrary() {
           <VarietyForm
             title="Add New Variety"
             containers={containers}
+            inputs={inputs}
             onSave={saveVariety}
             onCancel={() => setView("library")}
           />
@@ -779,6 +820,7 @@ function VarietyLibrary() {
             title="Edit Variety"
             initial={library.find(v => v.id === editingId)}
             containers={containers}
+            inputs={inputs}
             onSave={saveVariety}
             onCancel={() => { setView("library"); setEditingId(null); }}
           />
