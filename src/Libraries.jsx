@@ -550,6 +550,7 @@ function CultureBrowser({ existingLibrary }) {
   const { rows, loading, error, total } = useCultureGuides({ search, crop, breeder, limit: LIMIT, offset: page * LIMIT });
   const [added, setAdded] = useState(() => new Set(existingLibrary.map(v => v.cultureSourceId).filter(Boolean)));
   const [busyId, setBusyId] = useState(null);
+  const [detail, setDetail] = useState(null); // culture row opened in the guide modal
 
   function applySearch() { setSearch(searchInput.trim()); setPage(0); }
 
@@ -593,7 +594,7 @@ function CultureBrowser({ existingLibrary }) {
           const isAdded = added.has(c.id);
           return (
             <div key={c.id} style={{ background: "#fff", border: "1px solid #e0ead8", borderRadius: 10, padding: "12px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-              <div style={{ minWidth: 0 }}>
+              <div onClick={() => setDetail(c)} title="View culture guide" style={{ minWidth: 0, cursor: "pointer", flex: 1 }}>
                 <div style={{ fontSize: 14, fontWeight: 700, color: "#1e2d1a" }}>
                   {titleCaseCrop(c.crop_name)} <span style={{ color: "#7a8c74", fontWeight: 600 }}>· {[c.series_name, c.series_variety].filter(Boolean).join(" ")}</span>
                 </div>
@@ -619,7 +620,83 @@ function CultureBrowser({ existingLibrary }) {
         </div>
       )}
       <datalist id="culture-crops" />
+
+      {detail && (
+        <CultureGuideModal
+          row={detail}
+          isAdded={added.has(detail.id)}
+          onAdd={() => add(detail)}
+          onClose={() => setDetail(null)}
+        />
+      )}
     </>
+  );
+}
+
+// Full culture guide for one breeder row — temps/light/water/PGR/pests/finish
+// time, the breeder's PDF, and an Add-to-library button.
+function CultureGuideModal({ row, isAdded, onAdd, onClose }) {
+  const cd = row.culture_details || {};
+  const pdf = cd["Culture Guide PDF"] || cd["culture_guide_pdf"] || null;
+  // Key fields first (if present), then everything else in culture_details.
+  const PRIMARY = ["Common Name", "Botanical Name", "Habit", "Exposure", "TEMPERATURE", "Temperature",
+    "WATERING", "Watering", "MEDIA PH", "Media pH", "DAYLENGTH", "Daylength", "Plant Height", "Plant Width",
+    "Bloom Months", "Finishing Pinch", "PGR Suggestions", "Potential Pests"];
+  const skip = new Set([...PRIMARY, "Culture Guide PDF", "culture_guide_pdf"]);
+  const primaryEntries = PRIMARY.map(k => [k, cd[k]]).filter(([, v]) => v);
+  const otherEntries = Object.entries(cd).filter(([k, v]) => v && !skip.has(k));
+  const Row = ({ label, value }) => (
+    <div style={{ display: "grid", gridTemplateColumns: "130px 1fr", gap: 10, padding: "5px 0", borderBottom: "1px solid #f0f5ee", fontSize: 12 }}>
+      <div style={{ color: "#7a8c74", fontWeight: 700 }}>{label}</div>
+      <div style={{ color: "#1e2d1a" }}>{String(value)}</div>
+    </div>
+  );
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200, padding: 16 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 12, padding: 24, maxWidth: 640, width: "100%", maxHeight: "90vh", overflowY: "auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
+          <div>
+            <div style={{ fontFamily: "'Playfair Display', Georgia, serif", fontSize: 20, color: "#1e2d1a" }}>
+              {titleCaseCrop(row.crop_name)} · {[row.series_name, row.series_variety].filter(Boolean).join(" ")}
+            </div>
+            <div style={{ fontSize: 12, color: "#7a8c74", marginTop: 2 }}>{row.breeder_name} · {row.category}</div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#aabba0", lineHeight: 1 }}>×</button>
+        </div>
+
+        <div style={{ display: "flex", gap: 8, margin: "14px 0", flexWrap: "wrap" }}>
+          {pdf && (
+            <a href={pdf} target="_blank" rel="noopener noreferrer"
+              style={{ fontSize: 13, color: "#fff", background: "#4a90d9", textDecoration: "none", borderRadius: 8, padding: "8px 14px", fontWeight: 700 }}>
+              📄 Open breeder culture guide (PDF)
+            </a>
+          )}
+          <button onClick={onAdd} disabled={isAdded}
+            style={{ fontSize: 13, fontWeight: 700, borderRadius: 8, padding: "8px 14px", border: "none", cursor: isAdded ? "default" : "pointer", background: isAdded ? "#e0ead8" : "#7fb069", color: isAdded ? "#7a8c74" : "#fff" }}>
+            {isAdded ? "✓ In your library" : "+ Add to my library"}
+          </button>
+        </div>
+
+        {(row.propagation_weeks || row.requires_heat != null || row.finish_time_matrix) && (
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: 12, color: "#4a6a3a", background: "#eef3e8", borderRadius: 8, padding: "8px 12px", marginBottom: 12 }}>
+            {row.propagation_weeks && <span><strong>Prop:</strong> {row.propagation_weeks} wks</span>}
+            {row.requires_heat != null && <span><strong>Heat:</strong> {row.requires_heat ? "yes" : "no"}</span>}
+          </div>
+        )}
+
+        {primaryEntries.map(([k, v]) => <Row key={k} label={k} value={v} />)}
+        {otherEntries.length > 0 && (
+          <details style={{ marginTop: 10 }}>
+            <summary style={{ cursor: "pointer", fontSize: 12, fontWeight: 700, color: "#7a8c74" }}>More details ({otherEntries.length})</summary>
+            <div style={{ marginTop: 6 }}>{otherEntries.map(([k, v]) => <Row key={k} label={k} value={typeof v === "object" ? JSON.stringify(v) : v} />)}</div>
+          </details>
+        )}
+        {primaryEntries.length === 0 && otherEntries.length === 0 && (
+          <div style={{ fontSize: 13, color: "#aabba0", padding: "12px 0" }}>No detailed culture fields on this guide{pdf ? " — see the PDF above." : "."}</div>
+        )}
+      </div>
+    </div>
   );
 }
 
