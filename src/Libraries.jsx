@@ -470,6 +470,7 @@ function VarietyLibrary() {
   const [search, setSearch] = useState("");
   const [filterBreeder, setFilterBreeder] = useState("");
   const [filterType, setFilterType] = useState("");
+  const [openCrops, setOpenCrops] = useState({}); // crop_name -> expanded?
 
   async function saveVariety(form) {
     if (!form.cropName) return;
@@ -499,6 +500,14 @@ function VarietyLibrary() {
   });
 
   const breeders = [...new Set(library.map(v => v.breeder).filter(Boolean))];
+
+  // Group varieties by crop for the browser. When searching, force every group
+  // open so matches are visible; otherwise honor each section's expanded state.
+  const byCrop = {};
+  for (const v of filtered) { const k = v.cropName || "Uncategorized"; (byCrop[k] = byCrop[k] || []).push(v); }
+  const cropNames = Object.keys(byCrop).sort((a, b) => a.localeCompare(b));
+  const searching = !!search.trim();
+  const allOpen = cropNames.length > 0 && cropNames.every(c => openCrops[c]);
 
   return (
     <div style={{ fontFamily: "'DM Sans', 'Segoe UI', sans-serif", background: "#f2f5ef", minHeight: "100vh" }}>
@@ -561,7 +570,15 @@ function VarietyLibrary() {
             </div>
 
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-              <div style={{ fontSize: 13, color: "#7a8c74" }}>{filtered.length} variet{filtered.length === 1 ? "y" : "ies"} in library</div>
+              <div style={{ fontSize: 13, color: "#7a8c74" }}>
+                {filtered.length} variet{filtered.length === 1 ? "y" : "ies"} across {cropNames.length} crop{cropNames.length === 1 ? "" : "s"}
+              </div>
+              {cropNames.length > 0 && !searching && (
+                <button onClick={() => setOpenCrops(allOpen ? {} : Object.fromEntries(cropNames.map(c => [c, true])))}
+                  style={{ background: "none", color: "#4a6a3a", border: "1px solid #c8d8c0", borderRadius: 8, padding: "5px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                  {allOpen ? "Collapse all" : "Expand all"}
+                </button>
+              )}
             </div>
 
             {filtered.length === 0 && library.length === 0 && (
@@ -576,10 +593,30 @@ function VarietyLibrary() {
               <div style={{ textAlign: "center", padding: "40px 0", color: "#aabba0", fontSize: 14 }}>No varieties match your search</div>
             )}
 
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              {filtered.map(variety => (
-                <VarietyCard key={variety.id} variety={variety} onEdit={startEdit} onDelete={deleteVariety} />
-              ))}
+            {/* Collapsible crop sections — Poinsettia ▸ its varieties, Mum ▸ its, etc. */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {cropNames.map(crop => {
+                const items = byCrop[crop].slice().sort((a, b) => (a.variety || "").localeCompare(b.variety || ""));
+                const isOpen = searching || openCrops[crop];
+                return (
+                  <div key={crop} style={{ background: "#fff", border: "1px solid #e0ead8", borderRadius: 10, overflow: "hidden" }}>
+                    <div onClick={() => setOpenCrops(o => ({ ...o, [crop]: !o[crop] }))}
+                      style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", cursor: "pointer", background: "#eef3e8" }}>
+                      <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 16, color: "#1e2d1a" }}>
+                        <span style={{ color: "#7a8c74", marginRight: 8 }}>{isOpen ? "▾" : "▸"}</span>{crop}
+                      </div>
+                      <div style={{ fontSize: 12, color: "#7a8c74", fontWeight: 700 }}>{items.length}</div>
+                    </div>
+                    {isOpen && (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 12, padding: 12 }}>
+                        {items.map(variety => (
+                          <VarietyCard key={variety.id} variety={variety} onEdit={startEdit} onDelete={deleteVariety} />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </>
         )}
