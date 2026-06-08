@@ -4,6 +4,51 @@ import { useVarieties, useContainers, useSpacingProfiles, useBrokerCatalogs, use
 // Title-case a crop name ("ACHILLEA" -> "Achillea", "Geranium (Annual)" kept readable)
 const titleCaseCrop = s => String(s || "").toLowerCase().replace(/\b\w/g, m => m.toUpperCase());
 
+// Known PGRs (product ↔ active ingredient) for parsing culture-guide warnings.
+const PGR_CHEMS = [
+  { id: "ethephon",      label: "ethephon (Florel)",      aka: ["ethephon", "florel"] },
+  { id: "daminozide",    label: "daminozide (B-Nine)",    aka: ["daminozide", "b-nine", "b nine", "dazide"] },
+  { id: "paclobutrazol", label: "paclobutrazol (Bonzi)",  aka: ["paclobutrazol", "bonzi", "piccolo", "paczol", "downsize"] },
+  { id: "uniconazole",   label: "uniconazole (Sumagic)",  aka: ["uniconazole", "sumagic", "concise"] },
+  { id: "chlormequat",   label: "chlormequat (Cycocel)",  aka: ["chlormequat", "cycocel"] },
+  { id: "ancymidol",     label: "ancymidol (A-Rest)",     aka: ["ancymidol", "a-rest"] },
+  { id: "flurprimidol",  label: "flurprimidol (Topflor)", aka: ["flurprimidol", "topflor"] },
+  { id: "dikegulac",     label: "dikegulac (Augeo)",      aka: ["dikegulac", "augeo"] },
+];
+const esc = s => s.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
+// Pull PGR/spray sensitivity from a culture_details JSONB blob. Hard-flags NAMED
+// chemicals that appear in an avoid/sensitive/not-recommended/"no <chem>" clause;
+// notes "naturally compact" (low PGR need) and "vigorous" (likely needs PGR).
+function parsePgrInfo(cd = {}) {
+  const fieldRx = /pgr|finish|propagat|pinch|note|tip|comment|warning|pest|chemical|production|habit/i;
+  const text = Object.entries(cd).filter(([k]) => fieldRx.test(k)).map(([, v]) => String(v)).join("\n");
+  if (!text.trim()) return { avoid: [], compact: false, vigorous: false, hasInfo: false };
+  const lower = (text + " " + (cd["Habit"] || "")).toLowerCase();
+  const compact  = /(natural\w*\s+)?compact|dwarf|well[-\s]?branch|low\s+vigor/.test(lower);
+  const vigorous = /vigorous|aggressive grow|high\s+vigor|fast\s+grow/.test(lower);
+  const avoid = [];
+  for (const clause of text.split(/[\n•;.]+/)) {
+    const c = clause.toLowerCase();
+    const neg = /\b(avoid|sensitive to|not recommended|never)\b/.test(c);
+    for (const chem of PGR_CHEMS) {
+      if (avoid.includes(chem.label)) continue;
+      const named = chem.aka.some(a => c.includes(a));
+      if (!named) continue;
+      const noChem = chem.aka.some(a => new RegExp("\\bno\\s+" + esc(a)).test(c));
+      if (neg || noChem) avoid.push(chem.label);
+    }
+  }
+  return { avoid, compact, vigorous, hasInfo: true };
+}
+// One-line sensitivity summary for storage on a variety.
+function pgrSummary(info) {
+  return [
+    info.avoid.length ? `Avoid: ${info.avoid.join(", ")}` : "",
+    info.compact ? "Naturally compact (low PGR need)" : "",
+    info.vigorous ? "Vigorous (likely needs PGR)" : "",
+  ].filter(Boolean).join(" · ") || null;
+}
+
 // Map a culture_guides_public row into a variety_library insert. Keeps the full
 // culture_details in care_profile and links back via culture_source_id so we
 // never lose the breeder data we pulled.
@@ -20,6 +65,7 @@ function cultureToVariety(c) {
     light_requirement: cd["Exposure"] || null,
     culture_guide_url: cd["Culture Guide PDF"] || null,
     general_notes: cd["Common Name"] ? `Common name: ${cd["Common Name"]}` : null,
+    chem_sensitivities: pgrSummary(parsePgrInfo(cd)),
     culture_source_id: c.id,
     care_profile: cd,
   };
@@ -638,6 +684,7 @@ function CultureBrowser({ existingLibrary }) {
 function CultureGuideModal({ row, isAdded, onAdd, onClose }) {
   const cd = row.culture_details || {};
   const pdf = cd["Culture Guide PDF"] || cd["culture_guide_pdf"] || null;
+  const pgr = parsePgrInfo(cd);
   // Key fields first (if present), then everything else in culture_details.
   const PRIMARY = ["Common Name", "Botanical Name", "Habit", "Exposure", "TEMPERATURE", "Temperature",
     "WATERING", "Watering", "MEDIA PH", "Media pH", "DAYLENGTH", "Daylength", "Plant Height", "Plant Width",
@@ -677,6 +724,18 @@ function CultureGuideModal({ row, isAdded, onAdd, onClose }) {
             {isAdded ? "✓ In your library" : "+ Add to my library"}
           </button>
         </div>
+
+        {/* Parsed PGR / spray sensitivity */}
+        {(pgr.avoid.length > 0 || pgr.compact || pgr.vigorous) && (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
+            {pgr.avoid.map(a => (
+              <span key={a} style={{ background: "#fde8e8", border: "1px solid #f0b0a0", color: "#c03030", borderRadius: 14, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>⚠️ Avoid {a}</span>
+            ))}
+            {pgr.compact && <span style={{ background: "#e8f8e8", border: "1px solid #7fb069", color: "#1e5a1e", borderRadius: 14, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>🌿 Naturally compact · low PGR need</span>}
+            {pgr.vigorous && <span style={{ background: "#fff4e0", border: "1px solid #e0a850", color: "#8a5a10", borderRadius: 14, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>⚡ Vigorous · likely needs PGR</span>}
+            <span style={{ fontSize: 10, color: "#aabba0" }}>parsed from the guide — verify in the PGR notes below</span>
+          </div>
+        )}
 
         {(row.propagation_weeks || row.requires_heat != null || row.finish_time_matrix) && (
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: 12, color: "#4a6a3a", background: "#eef3e8", borderRadius: 8, padding: "8px 12px", marginBottom: 12 }}>
