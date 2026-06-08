@@ -1,5 +1,29 @@
 import { useState, useEffect, useRef } from "react";
-import { useVarieties, useContainers, useSpacingProfiles, useBrokerCatalogs, useSoilMixes, useInputProducts, useComboTags, useBrokerProfiles } from "./supabase";
+import { useVarieties, useContainers, useSpacingProfiles, useBrokerCatalogs, useSoilMixes, useInputProducts, useComboTags, useBrokerProfiles, useCultureGuides, getSupabase } from "./supabase";
+
+// Title-case a crop name ("ACHILLEA" -> "Achillea", "Geranium (Annual)" kept readable)
+const titleCaseCrop = s => String(s || "").toLowerCase().replace(/\b\w/g, m => m.toUpperCase());
+
+// Map a culture_guides_public row into a variety_library insert. Keeps the full
+// culture_details in care_profile and links back via culture_source_id so we
+// never lose the breeder data we pulled.
+function cultureToVariety(c) {
+  const cd = c.culture_details || {};
+  return {
+    id: crypto.randomUUID(),
+    crop_name: titleCaseCrop(c.crop_name),
+    variety: [c.series_name, c.series_variety].filter(Boolean).join(" ").trim() || c.series_variety || titleCaseCrop(c.crop_name),
+    breeder: c.breeder_name || null,
+    series: c.series_name || null,
+    type: c.category || null,
+    prop_weeks: c.propagation_weeks || null,
+    light_requirement: cd["Exposure"] || null,
+    culture_guide_url: cd["Culture Guide PDF"] || null,
+    general_notes: cd["Common Name"] ? `Common name: ${cd["Common Name"]}` : null,
+    culture_source_id: c.id,
+    care_profile: cd,
+  };
+}
 import { BrokerProfiles, SupplierProfiles, BreederProfiles } from "./Profiles";
 import ComboLibrary from "./ComboDesigner";
 import PdfCatalogImport from "./PdfCatalogImport";
@@ -463,6 +487,93 @@ function VarietyCard({ variety, onEdit, onDelete }) {
 }
 
 // ── MAIN APP ──────────────────────────────────────────────────────────────────
+// Phase 2 — browse the ~3,200-row cross-project culture corpus (Ball/Selecta/
+// Danziger/Darwin/Dümmen) and pull rows into our own variety_library.
+const CULTURE_BREEDERS = ["Ball", "Selecta One", "Danziger", "Darwin Perennials", "Dümmen Orange"];
+function CultureBrowser({ existingLibrary }) {
+  const sb = getSupabase();
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
+  const [crop, setCrop] = useState("");
+  const [breeder, setBreeder] = useState("");
+  const [page, setPage] = useState(0);
+  const LIMIT = 50;
+  const { rows, loading, error, total } = useCultureGuides({ search, crop, breeder, limit: LIMIT, offset: page * LIMIT });
+  const [added, setAdded] = useState(() => new Set(existingLibrary.map(v => v.cultureSourceId).filter(Boolean)));
+  const [busyId, setBusyId] = useState(null);
+
+  function applySearch() { setSearch(searchInput.trim()); setPage(0); }
+
+  async function add(c) {
+    if (!sb) return;
+    setBusyId(c.id);
+    const { error: err } = await sb.from("variety_library").insert(cultureToVariety(c));
+    setBusyId(null);
+    if (err) { alert("Add failed: " + err.message); return; }
+    setAdded(prev => new Set([...prev, c.id]));
+  }
+
+  const pageCount = total ? Math.ceil(total / LIMIT) : 0;
+
+  return (
+    <>
+      <div style={{ background: "#eef3e8", border: "1px solid #d4e3c8", borderRadius: 10, padding: "12px 16px", marginBottom: 16, fontSize: 13, color: "#3a5a35" }}>
+        🌱 <strong>Breeder culture database</strong> — {total != null ? total.toLocaleString() : "~3,200"} guides across Ball, Selecta, Danziger, Darwin &amp; Dümmen. Search and add any to your variety library.
+      </div>
+
+      {/* Filters */}
+      <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
+        <input style={{ ...inputStyle(false), flex: 2, minWidth: 180 }} placeholder="Search crop / series / variety…"
+          value={searchInput} onChange={e => setSearchInput(e.target.value)} onKeyDown={e => e.key === "Enter" && applySearch()} />
+        <input style={{ ...inputStyle(false), flex: 1, minWidth: 130 }} placeholder="Crop (e.g. Echinacea)" list="culture-crops"
+          value={crop} onChange={e => { setCrop(e.target.value); setPage(0); }} />
+        <select style={{ ...inputStyle(false), flex: 1, minWidth: 150 }} value={breeder} onChange={e => { setBreeder(e.target.value); setPage(0); }}>
+          <option value="">All Breeders</option>
+          {CULTURE_BREEDERS.map(b => <option key={b}>{b}</option>)}
+        </select>
+        <button onClick={applySearch} style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 8, padding: "0 18px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Search</button>
+      </div>
+
+      <div style={{ fontSize: 13, color: "#7a8c74", marginBottom: 12 }}>
+        {loading ? "Loading…" : error ? <span style={{ color: "#c03030" }}>{error}</span> : `${total != null ? total.toLocaleString() : rows.length} match${total === 1 ? "" : "es"}`}
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {rows.map(c => {
+          const cd = c.culture_details || {};
+          const isAdded = added.has(c.id);
+          return (
+            <div key={c.id} style={{ background: "#fff", border: "1px solid #e0ead8", borderRadius: 10, padding: "12px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: "#1e2d1a" }}>
+                  {titleCaseCrop(c.crop_name)} <span style={{ color: "#7a8c74", fontWeight: 600 }}>· {[c.series_name, c.series_variety].filter(Boolean).join(" ")}</span>
+                </div>
+                <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2 }}>
+                  {c.breeder_name} · {c.category}{cd["Common Name"] ? ` · ${cd["Common Name"]}` : ""}{cd["Habit"] ? ` · ${cd["Habit"]}` : ""}
+                </div>
+              </div>
+              <button disabled={isAdded || busyId === c.id} onClick={() => add(c)}
+                style={{ flexShrink: 0, background: isAdded ? "#e0ead8" : "#7fb069", color: isAdded ? "#7a8c74" : "#fff", border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: isAdded ? "default" : "pointer", fontFamily: "inherit" }}>
+                {isAdded ? "✓ In library" : busyId === c.id ? "Adding…" : "+ Add"}
+              </button>
+            </div>
+          );
+        })}
+        {!loading && rows.length === 0 && <div style={{ textAlign: "center", padding: "40px 0", color: "#aabba0", fontSize: 14 }}>No culture guides match.</div>}
+      </div>
+
+      {pageCount > 1 && (
+        <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 12, marginTop: 18 }}>
+          <button disabled={page === 0} onClick={() => setPage(p => Math.max(0, p - 1))} style={{ background: "none", border: "1px solid #c8d8c0", borderRadius: 8, padding: "6px 14px", fontSize: 13, cursor: page === 0 ? "default" : "pointer", color: page === 0 ? "#bbb" : "#4a6a3a", fontFamily: "inherit" }}>← Prev</button>
+          <span style={{ fontSize: 12, color: "#7a8c74" }}>Page {page + 1} of {pageCount}</span>
+          <button disabled={page + 1 >= pageCount} onClick={() => setPage(p => p + 1)} style={{ background: "none", border: "1px solid #c8d8c0", borderRadius: 8, padding: "6px 14px", fontSize: 13, cursor: page + 1 >= pageCount ? "default" : "pointer", color: page + 1 >= pageCount ? "#bbb" : "#4a6a3a", fontFamily: "inherit" }}>Next →</button>
+        </div>
+      )}
+      <datalist id="culture-crops" />
+    </>
+  );
+}
+
 function VarietyLibrary() {
   const { rows: library, upsert: upsertVariety, remove: removeVarietyDb } = useVarieties();
   const [view, setView] = useState("library"); // library | add | edit | grades | pdf-import
@@ -526,6 +637,7 @@ function VarietyLibrary() {
             <button onClick={() => { setView("library"); setEditingId(null); }} style={{ background: "none", color: "#c8e6b8", border: "1px solid #4a6a3a", borderRadius: 8, padding: "8px 16px", fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>← Library</button>
           )}
           {view === "library" && (<>
+            <button onClick={() => setView("culture")} style={{ background: "none", color: "#c8e6b8", border: "1px solid #4a6a3a", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>🌱 Culture DB</button>
             <button onClick={() => setView("pdf-import")} style={{ background: "none", color: "#c8e6b8", border: "1px solid #4a6a3a", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>📄 Import PDF Catalog</button>
             <button onClick={() => setView("grades")} style={{ background: "none", color: "#c8e6b8", border: "1px solid #4a6a3a", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>⭐ Grade Varieties</button>
             <button onClick={() => { setEditingId(null); setView("add"); }} style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 8, padding: "8px 18px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>+ Add Variety</button>
@@ -547,6 +659,9 @@ function VarietyLibrary() {
             onCancel={() => setView("library")}
           />
         )}
+
+        {/* CULTURE DB BROWSER (Phase 2) */}
+        {view === "culture" && <CultureBrowser existingLibrary={library} />}
 
         {/* LIBRARY VIEW */}
         {view === "library" && (
