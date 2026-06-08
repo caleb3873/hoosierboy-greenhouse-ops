@@ -272,7 +272,7 @@ function StarRating({ value = 0, onChange, label }) {
   );
 }
 
-function VarietyForm({ initial, onSave, onCancel, title }) {
+function VarietyForm({ initial, onSave, onCancel, title, containers = [] }) {
   const [form, setForm] = useState(initial || {
     cropName: "", variety: "", breeder: "", type: "Annual",
     propTraySize: "", propCellCount: "", propWeeks: "",
@@ -305,6 +305,14 @@ function VarietyForm({ initial, onSave, onCancel, title }) {
         <FormField label="Type">
           <select style={inputStyle(false)} value={form.type || "Annual"} onChange={e => setForm(x => ({ ...x, type: e.target.value }))}>
             <option>Annual</option><option>Perennial</option><option>Biennial</option>
+          </select>
+        </FormField>
+        <FormField label="Default Pot Size" hint="Pulled into plans when this variety is added">
+          <select style={inputStyle(false)} value={form.defaultContainerId || ""} onChange={e => setForm(x => ({ ...x, defaultContainerId: e.target.value || null }))}>
+            <option value="">— None —</option>
+            {[...containers].sort((a, b) => (a.sku || a.name || "").localeCompare(b.sku || b.name || "")).map(c => (
+              <option key={c.id} value={c.id}>{c.sku || c.name}{c.sku && c.name ? ` — ${c.name}` : ""}</option>
+            ))}
           </select>
         </FormField>
       </div>
@@ -391,10 +399,11 @@ function VarietyForm({ initial, onSave, onCancel, title }) {
 }
 
 // ── VARIETY CARD ──────────────────────────────────────────────────────────────
-function VarietyCard({ variety, onEdit, onDelete }) {
+function VarietyCard({ variety, onEdit, onDelete, containers = [] }) {
   const [expanded, setExpanded] = useState(false);
   const breeder = BREEDERS.find(b => b.name === variety.breeder);
   const breederColor = breeder?.color || "#7a8c74";
+  const defaultPot = variety.defaultContainerId ? containers.find(c => c.id === variety.defaultContainerId) : null;
 
   return (
     <div style={{ background: "#fff", borderRadius: 14, border: "1.5px solid #e0ead8", overflow: "hidden" }}>
@@ -413,6 +422,7 @@ function VarietyCard({ variety, onEdit, onDelete }) {
                 {variety.customerGrade > 0 && <span title="Customer Grade">🛒 {"★".repeat(Math.floor(variety.customerGrade))}{variety.customerGrade % 1 ? "½" : ""} <span style={{ fontSize: 10, color: "#aabba0" }}>cust</span></span>}
               </span>
             )}
+            {defaultPot && <span style={{ fontWeight: 700, color: "#4a6a3a" }}>🪴 {defaultPot.sku || defaultPot.name}</span>}
             {variety.finishWeeks && <span>🗓 {variety.finishWeeks} wks finish</span>}
             {variety.tempGroup && <span style={{ fontWeight: 700, color: variety.tempGroup === "cool" ? "#1a4a7a" : "#a04010", background: variety.tempGroup === "cool" ? "#e8f3fc" : "#fdf3ea", borderRadius: 4, padding: "1px 6px", fontSize: 11 }}>{variety.tempGroup === "cool" ? "❄️ Cool" : "🌡 Warm"}</span>}
             {variety.finishTempDay && <span>🌡 {variety.finishTempDay}°F day</span>}
@@ -576,6 +586,7 @@ function CultureBrowser({ existingLibrary }) {
 
 function VarietyLibrary() {
   const { rows: library, upsert: upsertVariety, remove: removeVarietyDb } = useVarieties();
+  const { rows: containers } = useContainers(); // for the per-variety default pot size
   const [view, setView] = useState("library"); // library | add | edit | grades | pdf-import
   const [editingId, setEditingId] = useState(null);
   const [search, setSearch] = useState("");
@@ -725,7 +736,7 @@ function VarietyLibrary() {
                     {isOpen && (
                       <div style={{ display: "flex", flexDirection: "column", gap: 12, padding: 12 }}>
                         {items.map(variety => (
-                          <VarietyCard key={variety.id} variety={variety} onEdit={startEdit} onDelete={deleteVariety} />
+                          <VarietyCard key={variety.id} variety={variety} containers={containers} onEdit={startEdit} onDelete={deleteVariety} />
                         ))}
                       </div>
                     )}
@@ -756,6 +767,7 @@ function VarietyLibrary() {
         {view === "add" && (
           <VarietyForm
             title="Add New Variety"
+            containers={containers}
             onSave={saveVariety}
             onCancel={() => setView("library")}
           />
@@ -766,6 +778,7 @@ function VarietyLibrary() {
           <VarietyForm
             title="Edit Variety"
             initial={library.find(v => v.id === editingId)}
+            containers={containers}
             onSave={saveVariety}
             onCancel={() => { setView("library"); setEditingId(null); }}
           />
