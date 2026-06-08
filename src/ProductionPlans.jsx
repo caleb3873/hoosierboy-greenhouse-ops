@@ -2149,7 +2149,9 @@ function ItemDetailModal({ sb, plan, sizes = [], catalogRow, fallback, history, 
   function duplicate() {
     setCurId(null);
     setShowHistory(false);
-    setForm(f => ({ ...f, description: `${f.description.trim()} (copy)` }));
+    // Copy keeps pricing/qty/supplier/notes but resets to "considered" so a
+    // duplicate of a locked item never silently flows into sourcing unreviewed.
+    setForm(f => ({ ...f, description: `${f.description.trim()} (copy)`, status: "considered" }));
   }
 
   async function del() {
