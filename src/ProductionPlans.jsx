@@ -1035,6 +1035,7 @@ function CatalogTab({ plan }) {
     await persistProjection({ projection_locked_at: null, projection_locked_by: null });
   }
   const [detailItem, setDetailItem] = useState(null); // { catalogRow, fallback, history } for the item detail modal
+  const [showHelp, setShowHelp] = useState(false);     // collapsible "how this works" panel
   const [yearDisplay, setYearDisplay] = useState("qty"); // "qty" | "revenue"
   const [hoverRow, setHoverRow] = useState(null);
   const [showRollup, setShowRollup] = useState(false);
@@ -1497,6 +1498,21 @@ function CatalogTab({ plan }) {
         <Stat label="Catalog items" value={catalog.length} dark />
         <Stat label="Locked"        value={lockedCount} dark />
         <Stat label="Target rev"    value={fmtMoney(totalTargetRev)} dark big />
+      </div>
+
+      {/* How-this-works help (collapsible) */}
+      <div style={{ background: "#eef3e8", border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "10px 14px" }}>
+        <div onClick={() => setShowHelp(h => !h)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700, color: COLORS.dark }}>
+          <span style={{ color: COLORS.muted }}>{showHelp ? "▾" : "▸"}</span>❓ How this works
+        </div>
+        {showHelp && (
+          <div style={{ fontSize: 12, color: COLORS.text, marginTop: 8, lineHeight: 1.55 }}>
+            <strong>Purpose:</strong> decide which houseplants to grow/buy this season — and how many, at what price — using past sales, then turn that into broker orders.<br />
+            <strong>1. Catalog (here):</strong> each row is a variety + pot size with its sales history, an average, and a suggested projection. Type a <strong>🎯 target qty</strong> &amp; price, or <em>Apply to unset items</em> to pre-fill from the average. Set <strong>Status → locked</strong> on what you're committing to; mark losers <em>cancelled</em>. Click a variety name for notes, broker, and duplicate.<br />
+            <strong>2. Sourcing tab:</strong> your <strong>locked</strong> items show up grouped by how they come in — tag each one's broker + acquisition type and generate a copy-paste broker request.<br />
+            <span style={{ color: COLORS.muted }}>Status meanings — <strong>considered</strong>: still deciding · <strong>locked</strong>: committed (this is what flows to Sourcing) · <strong>cancelled</strong>: excluded.</span>
+          </div>
+        )}
       </div>
 
       {/* Projection control + size rollup (always visible) */}
@@ -2366,11 +2382,30 @@ function HpSourcingTab({ plan }) {
   const [editMode, setEditMode] = useState(false);
   const [detailItem, setDetailItem] = useState(null); // houseplant_catalog row opened in the detail modal
   const [tick, setTick] = useState(0);
+  const [search, setSearch] = useState("");
+  const [filterSize, setFilterSize] = useState("");
+  const [sortKey, setSortKey] = useState("size"); // size | variety | qty | rev | broker
 
   useEffect(() => {
     if (!sb) return;
     sb.from("houseplant_catalog").select("*").eq("plan_id", plan.id).then(({ data }) => setRows(data || []));
   }, [sb, plan.id, tick]);
+
+  // Search + size filter + sort, applied to each sourcing panel.
+  function prep(items) {
+    const q = search.trim().toLowerCase();
+    const SORTS = {
+      size:    bySizeThenDesc,
+      variety: (a, b) => (a.description || "").localeCompare(b.description || ""),
+      qty:     (a, b) => (+b.target_qty || 0) - (+a.target_qty || 0),
+      rev:     (a, b) => ((+b.target_qty || 0) * (+b.target_price || 0)) - ((+a.target_qty || 0) * (+a.target_price || 0)),
+      broker:  (a, b) => (a.supplier || "").localeCompare(b.supplier || "") || bySizeThenDesc(a, b),
+    };
+    return items
+      .filter(i => (!q || (i.description || "").toLowerCase().includes(q)) && (!filterSize || i.pot_size === filterSize))
+      .slice()
+      .sort(SORTS[sortKey] || bySizeThenDesc);
+  }
 
   // Sizes present, ordered for the detail modal's size picker
   const sizes = Array.from(new Set(rows.map(r => r.pot_size).filter(Boolean))).sort((a, b) => sizeRank(a) - sizeRank(b));
@@ -2490,6 +2525,29 @@ function HpSourcingTab({ plan }) {
         </button>
       </div>
 
+      {/* Search / filter / sort — applies to every panel below */}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search variety…"
+          style={{ flex: 2, minWidth: 200, padding: "8px 10px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 13 }} />
+        <select value={filterSize} onChange={e => setFilterSize(e.target.value)}
+          style={{ padding: "8px 8px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 13 }}>
+          <option value="">All sizes</option>
+          {Array.from(new Set(lockedRows.map(r => r.pot_size).filter(Boolean))).sort((a, b) => sizeRank(a) - sizeRank(b)).map(s => <option key={s} value={s}>{s}</option>)}
+        </select>
+        <select value={sortKey} onChange={e => setSortKey(e.target.value)}
+          style={{ padding: "8px 8px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 13 }}>
+          <option value="size">Sort: Size</option>
+          <option value="variety">Sort: Variety A–Z</option>
+          <option value="qty">Sort: Target qty ↓</option>
+          <option value="rev">Sort: Target rev ↓</option>
+          <option value="broker">Sort: Broker</option>
+        </select>
+        {(search || filterSize) && (
+          <button onClick={() => { setSearch(""); setFilterSize(""); }}
+            style={{ padding: "8px 12px", border: `1px solid ${COLORS.border}`, borderRadius: 6, background: "#fff", color: COLORS.muted, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Clear</button>
+        )}
+      </div>
+
       {/* Generate broker request */}
       <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 16 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 12 }}>
@@ -2531,7 +2589,7 @@ function HpSourcingTab({ plan }) {
             Pick how each item comes in. Once tagged, they move to the matching panel below.
           </div>
           <SourcingTable
-            items={[...untagged].sort(bySizeThenDesc)}
+            items={prep(untagged)}
             updateRow={updateRow}
             showArrives={false}
             showSupplier={true}
@@ -2551,7 +2609,7 @@ function HpSourcingTab({ plan }) {
             Sale-ready material. Arrives Thursday, quarantined + treated through weekend, on retail benches Monday. Receive / Treat / Move-to-retail tasks auto-generate.
           </div>
           <SourcingTable
-            items={[...finishedItems].sort((a, b) => sizeRank(a.pot_size) - sizeRank(b.pot_size) || (a.arrival_date_target || "9999").localeCompare(b.arrival_date_target || "9999"))}
+            items={prep(finishedItems)}
             updateRow={updateRow}
             showArrives={true}
             showSupplier={true}
@@ -2570,7 +2628,7 @@ function HpSourcingTab({ plan }) {
           <div style={{ fontSize: 11, color: COLORS.muted, marginBottom: 12 }}>
             Young plants we'll finish in-house. Order 8–10 weeks before sale start.
           </div>
-          <SourcingTable items={[...linerItems].sort(bySizeThenDesc)} updateRow={updateRow} showArrives={false} showSupplier={true} editMode={editMode} onOpen={setDetailItem} />
+          <SourcingTable items={prep(linerItems)} updateRow={updateRow} showArrives={false} showSupplier={true} editMode={editMode} onOpen={setDetailItem} />
         </div>
       )}
 
@@ -2583,7 +2641,7 @@ function HpSourcingTab({ plan }) {
           <div style={{ fontSize: 11, color: COLORS.muted, marginBottom: 12 }}>
             Items we propagate from cuttings/seed. No broker required.
           </div>
-          <SourcingTable items={[...propagateItems].sort(bySizeThenDesc)} updateRow={updateRow} showArrives={false} showSupplier={false} editMode={editMode} onOpen={setDetailItem} />
+          <SourcingTable items={prep(propagateItems)} updateRow={updateRow} showArrives={false} showSupplier={false} editMode={editMode} onOpen={setDetailItem} />
         </div>
       )}
 
@@ -2593,7 +2651,7 @@ function HpSourcingTab({ plan }) {
           <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 18, color: ACQ_COLOR.partner, marginBottom: 12 }}>
             🤝 Partner · {partnerItems.length} item(s)
           </div>
-          <SourcingTable items={[...partnerItems].sort(bySizeThenDesc)} updateRow={updateRow} showArrives={false} showSupplier={true} editMode={editMode} onOpen={setDetailItem} />
+          <SourcingTable items={prep(partnerItems)} updateRow={updateRow} showArrives={false} showSupplier={true} editMode={editMode} onOpen={setDetailItem} />
         </div>
       )}
 
