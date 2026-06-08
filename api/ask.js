@@ -10,7 +10,10 @@
 const { createClient } = require("@supabase/supabase-js");
 
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || process.env.REACT_APP_ANTHROPIC_API_KEY;
-const MODEL = "claude-opus-4-8";
+// Use a model this account already has (extract-catalog + import-receiving use Sonnet).
+// Opus 4.8 returned an error — likely no Opus access on this key. Adaptive thinking
+// isn't supported on Sonnet 4.5, so we run tool use without a thinking block.
+const MODEL = "claude-sonnet-4-5";
 
 const CULTURE_URL = process.env.REACT_APP_SUPABASE_CULTURE_URL;
 const CULTURE_KEY = process.env.REACT_APP_SUPABASE_CULTURE_ANON_KEY;
@@ -160,14 +163,13 @@ module.exports = async (req, res) => {
         body: JSON.stringify({
           model: MODEL,
           max_tokens: 4000,
-          thinking: { type: "adaptive" },
           system,
           tools: TOOLS,
           messages: convo,
         }),
       });
       const data = await resp.json();
-      if (!resp.ok) return res.status(502).json({ error: "claude failed", detail: data });
+      if (!resp.ok) return res.status(502).json({ error: "Claude API error: " + (data && data.error && data.error.message ? data.error.message : `HTTP ${resp.status}`) });
 
       if (data.stop_reason === "tool_use") {
         convo.push({ role: "assistant", content: data.content }); // preserve thinking + tool_use blocks
