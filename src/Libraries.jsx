@@ -1068,6 +1068,14 @@ const ctc = (id) => CONTAINER_TYPES.find(c => c.id === id) || CONTAINER_TYPES[0]
 const ttc = (id) => TRAY_TYPES.find(t => t.id === id) || TRAY_TYPES[0];
 
 function fmtVolume(val, unit) { return val ? `${val} ${unit || "qt"}` : null; }
+// Soil is ordered by the cubic foot (e.g. BM5 bale = 3.8 cf). Prefer the stored
+// fill_volume_cu_ft; otherwise convert the per-unit substrate volume (dry).
+function cuFtOf(c) {
+  if (c.fillVolumeCuFt) return Number(c.fillVolumeCuFt);
+  const v = Number(c.substrateVol); if (!v) return null;
+  const div = { pt: 51.43, qt: 25.71, gal: 6.4275, "cu in": 1728, L: 28.32 }[c.substrateUnit || "qt"] || 25.71;
+  return v / div;
+}
 function substrateTotal(substrateVol, substrateUnit, units) {
   if (!substrateVol || !units) return null;
   const perUnit = Number(substrateVol);
@@ -1620,6 +1628,7 @@ function ContainerCard({ container: c, onEdit, onDelete, onDuplicate }) {
             {c.costPerUnit && <Pill label="$/unit" value={`$${Number(c.costPerUnit).toFixed(3)}`} color="#8e44ad" />}
             {c.volumeVal && <Pill label="Volume" value={fmtVolume(c.volumeVal, c.volumeUnit)} color="#4a90d9" />}
             {c.substrateVol && <Pill label="Substrate/unit" value={fmtVolume(c.substrateVol, c.substrateUnit)} color="#2e8b57" />}
+            {cuFtOf(c) != null && <Pill label="Fill (cf)" value={`${cuFtOf(c).toFixed(3)} cf`} color="#6a4fb0" />}
             {hasSpacing && <Pill label="Spacing" value="Set" color="#c8791a" />}
             {c.hasCarrier && c.potsPerCarrier && <Pill label="Carrier" value={`${c.potsPerCarrier}/tray`} color="#2e7d9e" />}
             {c.hasWire && c.wireType && <Pill label="Wire" value={c.wireType} color="#5a5a40" />}
@@ -1652,6 +1661,7 @@ function ContainerCard({ container: c, onEdit, onDelete, onDuplicate }) {
                 c.costPerUnit && c.qtyPerPallet && ["Cost per pallet", `$${(Number(c.costPerUnit) * Number(c.qtyPerPallet)).toFixed(2)}`],
                 c.volumeVal    && ["Container volume",  fmtVolume(c.volumeVal, c.volumeUnit)],
                 c.substrateVol && ["Substrate / unit",  fmtVolume(c.substrateVol, c.substrateUnit)],
+                cuFtOf(c) != null && ["Fill (cubic feet)", `${cuFtOf(c).toFixed(3)} cf`],
                 c.supplier     && ["Primary supplier",  c.supplier],
                 c.supplier2    && ["Secondary supplier",c.supplier2],
                 c.sku          && ["SKU",               c.sku],
