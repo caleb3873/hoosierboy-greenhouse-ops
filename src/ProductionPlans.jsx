@@ -367,6 +367,17 @@ async function createManagerTask(sb, { title, description, items, planId, houseI
   }]);
 }
 
+// Centered popup overlay so detail/task windows appear in view regardless of scroll.
+function Modal({ onClose, children }) {
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "flex-start", justifyContent: "center", zIndex: 1000, padding: "5vh 16px", overflowY: "auto" }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 12, maxWidth: 640, width: "100%", boxShadow: "0 12px 48px rgba(0,0,0,0.35)" }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
 // Shared task form — used by the bench drilldown and the facility Find.
 function TaskComposer({ items, planId, houseId, onClose }) {
   const sb = getSupabase();
@@ -386,7 +397,7 @@ function TaskComposer({ items, planId, houseId, onClose }) {
   }
   const inp = { width: "100%", padding: "8px 10px", border: `1px solid ${COLORS.border}`, borderRadius: 8, marginBottom: 8, fontFamily: "inherit", fontSize: 13, boxSizing: "border-box" };
   return (
-    <div style={{ border: `2px solid ${COLORS.dark}`, borderRadius: 10, padding: 14, marginBottom: 12, background: "#fbfdf9" }}>
+    <div style={{ padding: 18 }}>
       <div style={{ fontWeight: 800, color: COLORS.dark, marginBottom: 6 }}>New task · {items.length} item{items.length === 1 ? "" : "s"} (one task)</div>
       <div style={{ fontSize: 11, color: COLORS.muted, marginBottom: 8, maxHeight: 60, overflow: "auto" }}>{items.map(i => `${i.item}${i.bench ? ` (${i.bench})` : ""}`).join(" · ")}</div>
       <input placeholder="Task title" value={title} onChange={e => setTitle(e.target.value)} style={inp} />
@@ -465,7 +476,7 @@ function BenchTab({ plan, houses, housesProfit, drilldown, setDrilldown }) {
             {sel.size > 0 && <button onClick={() => setTaskItems(matches.filter(m => sel.has(m.id)).map(m => ({ item: m.item || m.variety || "item", bench: m.bench })))} style={{ background: COLORS.dark, color: "#fff", border: "none", borderRadius: 8, padding: "5px 14px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 13 }}>＋ Create one task ({sel.size})</button>}
             {sel.size > 0 && <button onClick={() => setSel(new Set())} style={{ background: "transparent", border: "none", color: COLORS.muted, cursor: "pointer", fontSize: 13 }}>clear</button>}
           </div>
-          {taskItems && <TaskComposer items={taskItems} planId={plan.id} houseId={null} onClose={() => { setTaskItems(null); setSel(new Set()); }} />}
+          {taskItems && <Modal onClose={() => { setTaskItems(null); setSel(new Set()); }}><TaskComposer items={taskItems} planId={plan.id} houseId={null} onClose={() => { setTaskItems(null); setSel(new Set()); }} /></Modal>}
           {matches.length === 0 ? <div style={{ color: COLORS.muted }}>No matches.</div> : Object.keys(byHouse).sort().map(h => (
             <div key={h} style={{ marginBottom: 10 }}>
               <div onClick={() => setDrilldown(h)} style={{ fontWeight: 700, fontSize: 13, color: COLORS.dark, margin: "6px 0", cursor: "pointer" }}>{h} · {byHouse[h].length} →</div>
@@ -4306,7 +4317,7 @@ function ItemDetail({ row, onClose, onTask }) {
   const entries = Object.keys(cd).filter(k => /pgr|warning|pest|water|temp|finish|pinch|exposure|bloom|media|habit|propagation/i.test(k) && cd[k] && String(cd[k]).trim());
   const pdf = cd["Culture Guide PDF"] || guide?.pdf_url;
   return (
-    <div style={{ border: `2px solid ${COLORS.dark}`, borderRadius: 10, padding: 14, marginBottom: 12, background: "#fff" }}>
+    <div style={{ padding: 18 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
           <div style={{ fontWeight: 800, color: COLORS.dark, fontSize: 15 }}>{row.item_name || row.variety?.variety || "Item"}</div>
@@ -4470,8 +4481,8 @@ function HouseDrilldown({ houseName, houses, planId, onClose }) {
           {sel.size > 0 && <button onClick={() => setSel(new Set())} style={{ background: "transparent", border: "none", color: COLORS.muted, cursor: "pointer", fontSize: 13 }}>clear</button>}
         </div>
       )}
-      {taskItems && <TaskComposer items={taskItems} planId={planId} houseId={house.id} onClose={() => { setTaskItems(null); setSel(new Set()); }} />}
-      {detail && <ItemDetail row={detail} onClose={() => setDetail(null)} onTask={() => { setTaskItems(toItems([detail])); setDetail(null); }} />}
+      {taskItems && <Modal onClose={() => { setTaskItems(null); setSel(new Set()); }}><TaskComposer items={taskItems} planId={planId} houseId={house.id} onClose={() => { setTaskItems(null); setSel(new Set()); }} /></Modal>}
+      {detail && <Modal onClose={() => setDetail(null)}><ItemDetail row={detail} onClose={() => setDetail(null)} onTask={() => { setTaskItems(toItems([detail])); setDetail(null); }} /></Modal>}
       {rows.length === 0 ? (
         <div style={{ color: COLORS.muted, padding: "20px 0" }}>No crops planned on this building for this plan.</div>
       ) : (
