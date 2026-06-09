@@ -1,0 +1,64 @@
+{
+  "plan": {
+    "name": "Spring 2027",
+    "season": "spring",
+    "year": 2027,
+    "notes": "Replay of the 2026 MASTER LIST, walked crop-by-crop in earliest-plant-date order. Weeks shifted +1yr (26xx->27xx, 25xx->26xx). House capacity is fixed (zero-sum per house); round 1 (pansies/cool, plant <~wk13) flips to round 2 (warm, wk13+).",
+    "default_soil_mix": {
+      "name": "BM5 Compressed - Peat, Perlite, Woodfiber",
+      "bale_cf": 3.8,
+      "bale_cost": 21.06,
+      "note": "Everything is grown in this one mix. Bales needed = total fill cu ft / 3.8; soil cost = bales * 21.06."
+    }
+  },
+  "field_log": [
+    "default_soil_mix added (BM5 Compressed, 3.8 cf bale, $21.06) — single mix for all crops.",
+    "pot_volumes_cuft added — loose-fill cu ft per master-list pot code. 1801 verified at 0.47; all others are estimates to verify (especially MARKET, POT 6, and the HB/bowl/fiber pots). Soil per line = pots_to_fill * pot_volumes_cuft[pot_size].",
+    "pot_components added — some pots are multi-part assemblies (flat + insert, etc.). 1801R = TV1020P18 retail flat ($0.76) + TPS1801 retail insert ($0.53) = $1.29/unit; soil goes in the insert only. Materials roll-up orders each component per unit.",
+    "MARKET = HC Dillen Jr Market Basket, FILLED WITH SOIL AND PLANTED DIRECTLY (8 plugs straight into the basket — Caleb confirms no separate pots). Soil/unit = basket fill ~0.21 cf (6.34 qt). Basket in containers (sku MPB08350A103050, has_carrier=false). Need basket + handle cost.",
+    "1801L = East Jordan TF-1801 Market Tray (sku TF1801MT-STD-BLK), single 18-cell flat, 457 cu in dry fill = 0.264 cf (corrected from a bad 0.47 library estimate). Updated the existing '1801 Landscape Tray' record. 1801R fill = 0.264 too — Caleb confirms the TPS1801 retail insert is the same as the landscape tray.",
+    "8COLOR = 9 Hanging Basket Patio Pot (sku SHB 900, East Jordan Shuttle 9in HB, 348 cu in = 0.201 cf, $0.4541) — = the fall '8in annual'. Container fill updated.",
+    "PANSIES APPLIED to Supabase 2026-06-09: created 'Spring 2027' production_plan; inserted 69 pansy scheduled_crops at wk 51/2026 (5,785 units) from the 2026 master list; +38 pansy varieties in variety_library (now 52); soil_mix=BM5 Compressed; all pots mapped. Applied directly from CSV (items[] left empty). Bench map: only 28/69 rows mapped — MISSING benches: Quonset 03 (EQ0301-0304), Quonset 07 (EQ0703), EQH0501-0510. Re-runnable via /tmp/apply_pansy.sql (deletes prior 'Spring 2027 pansy replay%' rows first)."
+  ],
+  "pot_components": {
+    "1801R": [
+      { "part": "flat", "container": "TV1020P18 (RETAIL INSERT FLAT)", "cells": 18, "cost": 0.76 },
+      { "part": "insert", "container": "TPS1801 (RETAIL INSERT)", "cells": 18, "cost": 0.53 }
+    ],
+    "_note": "1801R = retail: 1 flat + 1 insert ($1.29 total), soil in the insert (~0.264 cf). 1801L = landscape: a single East Jordan TF1801MT tray ($0.65), soil in its 18 cells (0.264 cf).",
+    "MARKET": [
+      { "part": "basket", "container": "HC Companies Dillen Jr Market Basket", "sku": "MPB08350A103050", "note": "filled with soil + planted directly (8 plugs); 0.21 cf", "cost": null },
+      { "part": "handle", "container": "Jr Market Basket handle (sold separately)", "cost": null }
+    ],
+    "4IN": [
+      { "part": "pot", "container": "4.5 Azalea Pot - NEW Schlegel Logo print", "sku": "SP 450", "fill_cf": 0.0237, "cost": 0.08 },
+      { "part": "tray", "container": "10 Pack Off-set Vented flat filler tray", "sku": "ST 450 - 10 OS V", "cost": 0.85, "per": "1 tray per 10 pots" }
+    ],
+    "10HB": [
+      { "part": "basket", "container": "HB 10 Hanging Basket (Trad S/L Gn)", "sku": "HTI10754", "cost": 0.58 },
+      { "part": "wire", "container": "21in 3-Wire Fishhook (galvanized)", "sku": "HZS21002000D050", "cost": 0.22, "note": "every 10in HB uses this basket + wire = $0.80/unit" }
+    ]
+  },
+  "pot_volumes_cuft": {
+    "1801L": 0.264,
+    "1801R": 0.264,
+    "MARKET": 0.21,
+    "POT 6": 0.05,
+    "6IN": 0.05,
+    "8COLOR": 0.201,
+    "8FIB": 0.12,
+    "8HB": 0.12,
+    "10HB": 0.22,
+    "11FIBER": 0.28,
+    "11DECO": 0.28,
+    "12BOWL": 0.19,
+    "13FANCY": 0.42,
+    "14HB": 0.38,
+    "14HENDRIX": 0.45,
+    "16HB": 0.54,
+    "4IN": 0.0237,
+    "_note": "1801 = verified (0.47). Rest are loose-fill estimates anchored to 1801 — verify/replace."
+  },
+  "house_capacity": {},
+  "items": []
+}

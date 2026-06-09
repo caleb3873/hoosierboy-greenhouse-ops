@@ -4141,12 +4141,15 @@ function HouseDrilldown({ houseName, houses, planId, onClose }) {
       const { data: pl } = await sb.from("v_scheduled_crops_pl")
         .select("id,bench_id,variety_id,qty_pots,qty_plants_ordered,direct_cost_total,revenue,gross_profit,plant_week")
         .eq("plan_id", planId).in("bench_id", benchIds);
+      const ids = (pl || []).map(r => r.id);
+      const { data: sc } = ids.length ? await sb.from("scheduled_crops").select("id,item_name,is_combo_component,combo_parent_id").in("id", ids) : { data: [] };
       const { data: vars } = await sb.from("variety_library").select("id,variety,breeder");
 
       setRows((pl || []).map(r => ({
         ...r,
         bench: (bench || []).find(b => b.id === r.bench_id),
         variety: (vars || []).find(v => v.id === r.variety_id),
+        item_name: (sc || []).find(x => x.id === r.id)?.item_name,
       })).sort((a,b) => (a.bench?.position || 0) - (b.bench?.position || 0)));
     })();
   }, [sb, houseName, planId]);
@@ -4201,7 +4204,7 @@ function HouseDrilldown({ houseName, houses, planId, onClose }) {
             <tr style={{ background: "#f3f5ef" }}>
               <th style={th}>Bench</th>
               <th style={th}>Plant Wk</th>
-              <th style={th}>Variety</th>
+              <th style={th}>Item</th>
               <th style={{...th, textAlign:"right"}}>Pots</th>
               <th style={{...th, textAlign:"right"}}>Liners</th>
               <th style={{...th, textAlign:"right"}}>Cost</th>
@@ -4214,7 +4217,10 @@ function HouseDrilldown({ houseName, houses, planId, onClose }) {
               <tr key={r.id} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
                 <td style={td}>{r.bench?.code}</td>
                 <td style={td}>{r.plant_week}</td>
-                <td style={td}>{r.variety?.variety} <span style={{ color: COLORS.muted, fontSize: 11 }}>{r.variety?.breeder}</span></td>
+                <td style={td}>
+                  <div style={{ fontWeight: 600 }}>{r.item_name || r.variety?.variety || "—"}</div>
+                  {r.variety?.variety && <div style={{ color: COLORS.muted, fontSize: 11 }}>{r.variety.variety}{r.variety.breeder ? ` · ${r.variety.breeder}` : ""}</div>}
+                </td>
                 <td style={{...td, textAlign:"right"}}>{r.qty_pots}</td>
                 <td style={{...td, textAlign:"right"}}>{r.qty_plants_ordered}</td>
                 <td style={{...td, textAlign:"right"}}>{fmtMoney(r.direct_cost_total)}</td>
