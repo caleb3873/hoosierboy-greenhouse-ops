@@ -348,10 +348,139 @@ function DashboardTab({ pl, planId, houses, housesProfit, drilldown, setDrilldow
 }
 
 // ── By Bench tab — full property map + drilldown ─────────────────────────────
+// Shared: write a single manager_task covering one or many items.
+async function createManagerTask(sb, { title, description, items, planId, houseId, team, targetDate }) {
+  const benches = [...new Set((items || []).map(i => i.bench).filter(Boolean))];
+  const itemList = (items || []).map(i => `${i.item}${i.bench ? ` (${i.bench})` : ""}`).join("; ");
+  const due = targetDate ? new Date(targetDate + "T12:00:00") : new Date();
+  const utc = new Date(Date.UTC(due.getFullYear(), due.getMonth(), due.getDate()));
+  const dow = (utc.getUTCDay() + 6) % 7; utc.setUTCDate(utc.getUTCDate() - dow + 3);
+  const firstThu = new Date(Date.UTC(utc.getUTCFullYear(), 0, 4));
+  const wkNum = 1 + Math.round(((utc - firstThu) / 86400000 - 3 + ((firstThu.getUTCDay() + 6) % 7)) / 7);
+  return sb.from("manager_tasks").insert([{
+    id: crypto.randomUUID(), title,
+    week_number: wkNum, year: utc.getUTCFullYear(),
+    description: ((description || "").trim() ? description.trim() + "\n\n" : "") + "Items: " + itemList,
+    bench_numbers: benches, house_id: houseId || null, plan_id: planId,
+    target_date: targetDate || null, team: team || null,
+    status: "pending", created_by: "Production Plan",
+  }]);
+}
+
+// Shared task form — used by the bench drilldown and the facility Find.
+function TaskComposer({ items, planId, houseId, onClose }) {
+  const sb = getSupabase();
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [target, setTarget] = useState("");
+  const [team, setTeam] = useState("");
+  const [saving, setSaving] = useState(false);
+  async function save() {
+    if (!title.trim()) return;
+    setSaving(true);
+    const { error } = await createManagerTask(sb, { title: title.trim(), description, items, planId, houseId, team, targetDate: target });
+    setSaving(false);
+    if (error) { alert("Task save failed: " + error.message); return; }
+    alert("Task created — it'll show in the task manager.");
+    onClose?.();
+  }
+  const inp = { width: "100%", padding: "8px 10px", border: `1px solid ${COLORS.border}`, borderRadius: 8, marginBottom: 8, fontFamily: "inherit", fontSize: 13, boxSizing: "border-box" };
+  return (
+    <div style={{ border: `2px solid ${COLORS.dark}`, borderRadius: 10, padding: 14, marginBottom: 12, background: "#fbfdf9" }}>
+      <div style={{ fontWeight: 800, color: COLORS.dark, marginBottom: 6 }}>New task · {items.length} item{items.length === 1 ? "" : "s"} (one task)</div>
+      <div style={{ fontSize: 11, color: COLORS.muted, marginBottom: 8, maxHeight: 60, overflow: "auto" }}>{items.map(i => `${i.item}${i.bench ? ` (${i.bench})` : ""}`).join(" · ")}</div>
+      <input placeholder="Task title" value={title} onChange={e => setTitle(e.target.value)} style={inp} />
+      <textarea placeholder="Details (optional)" value={description} onChange={e => setDescription(e.target.value)} rows={2} style={{ ...inp, resize: "vertical" }} />
+      <div style={{ display: "flex", gap: 10, marginBottom: 10, flexWrap: "wrap", alignItems: "center" }}>
+        <label style={{ fontSize: 12, color: COLORS.muted }}>Due <input type="date" value={target} onChange={e => setTarget(e.target.value)} style={{ marginLeft: 4, padding: "4px 6px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontFamily: "inherit" }} /></label>
+        <select value={team} onChange={e => setTeam(e.target.value)} style={{ padding: "5px 8px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontFamily: "inherit", fontSize: 13 }}>
+          <option value="">Team…</option><option value="bluff">Bluff</option><option value="sprague">Sprague</option><option value="houseplants">Houseplants</option>
+        </select>
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button onClick={save} disabled={saving || !title.trim()} style={{ background: COLORS.light, color: "#fff", border: "none", borderRadius: 8, padding: "8px 16px", fontWeight: 700, cursor: (saving || !title.trim()) ? "default" : "pointer", fontFamily: "inherit" }}>{saving ? "Saving…" : "Create task"}</button>
+        <button onClick={onClose} style={{ background: "transparent", border: `1px solid ${COLORS.border}`, color: COLORS.muted, borderRadius: 8, padding: "8px 16px", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
 function BenchTab({ plan, houses, housesProfit, drilldown, setDrilldown }) {
+  const sb = getSupabase();
+  const [all, setAll] = useState([]);
+  const [q, setQ] = useState("");
+  const [wk, setWk] = useState("");
+  const [sel, setSel] = useState(() => new Set());
+  const [taskItems, setTaskItems] = useState(null);
+
+  useEffect(() => {
+    if (!sb || !plan?.id) return;
+    (async () => {
+      const { data: scd } = await sb.from("scheduled_crops").select("id,item_name,plant_week,bench_id,variety_id,qty_pots").eq("plan_id", plan.id);
+      const benchIds = [...new Set((scd || []).map(r => r.bench_id).filter(Boolean))];
+      const varIds = [...new Set((scd || []).map(r => r.variety_id).filter(Boolean))];
+      const { data: bdata } = benchIds.length ? await sb.from("benches").select("id,code,zone_label").in("id", benchIds) : { data: [] };
+      const { data: vdata } = varIds.length ? await sb.from("variety_library").select("id,variety,crop_name").in("id", varIds) : { data: [] };
+      setAll((scd || []).map(r => {
+        const b = (bdata || []).find(x => x.id === r.bench_id);
+        const v = (vdata || []).find(x => x.id === r.variety_id);
+        return { id: r.id, item: r.item_name, plant_week: r.plant_week, bench: b?.code, house: b?.zone_label, variety: v?.variety, crop: v?.crop_name };
+      }));
+    })();
+  }, [sb, plan?.id]);
+
+  const weeks = wk.split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
+  const active = !!(q.trim() || weeks.length);
+  const matches = !active ? [] : all.filter(r => {
+    const txt = `${r.item || ""} ${r.variety || ""} ${r.crop || ""}`.toLowerCase();
+    const okText = !q.trim() || txt.includes(q.trim().toLowerCase());
+    const ww = r.plant_week != null ? (r.plant_week % 100) : null;
+    const okWeek = !weeks.length || weeks.some(w => w.length >= 3 ? String(r.plant_week) === w : ww === +w);
+    return okText && okWeek;
+  });
+  const matchCounts = {};
+  matches.forEach(m => { if (m.house) matchCounts[m.house] = (matchCounts[m.house] || 0) + 1; });
+  const byHouse = {};
+  matches.forEach(m => { (byHouse[m.house || "—"] = byHouse[m.house || "—"] || []).push(m); });
+  const toggleSel = id => setSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const finp = { padding: "8px 10px", border: `1px solid ${COLORS.border}`, borderRadius: 8, fontFamily: "inherit", fontSize: 13 };
+
   return (
     <div style={{ display: "grid", gap: 16 }}>
-      <PropertyMap houses={houses} housesProfit={housesProfit} onHouseClick={setDrilldown} />
+      <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 12, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+        <strong style={{ color: COLORS.dark }}>🔎 Find across facility</strong>
+        <input placeholder="crop or item (e.g. geranium)" value={q} onChange={e => setQ(e.target.value)} style={{ ...finp, flex: "1 1 220px" }} />
+        <input placeholder="plant week(s) e.g. 5,6" value={wk} onChange={e => setWk(e.target.value)} style={{ ...finp, width: 150 }} />
+        {active && <span style={{ color: COLORS.muted, fontSize: 13 }}>{matches.length} match{matches.length === 1 ? "" : "es"} · {Object.keys(matchCounts).length} house(s)</span>}
+        {active && <button onClick={() => { setQ(""); setWk(""); setSel(new Set()); setTaskItems(null); }} style={{ background: "transparent", border: "none", color: COLORS.muted, cursor: "pointer" }}>clear</button>}
+      </div>
+
+      <PropertyMap houses={houses} housesProfit={housesProfit} onHouseClick={setDrilldown} highlight={active ? matchCounts : null} />
+
+      {active && (
+        <div style={{ background: COLORS.card, border: `2px solid ${COLORS.dark}`, borderRadius: 10, padding: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+            <div style={{ fontWeight: 800, color: COLORS.dark }}>Results · {matches.length}</div>
+            <button onClick={() => setSel(new Set(matches.map(m => m.id)))} style={{ background: "transparent", border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "4px 10px", cursor: "pointer", fontSize: 12, fontFamily: "inherit" }}>Select all</button>
+            {sel.size > 0 && <button onClick={() => setTaskItems(matches.filter(m => sel.has(m.id)).map(m => ({ item: m.item || m.variety || "item", bench: m.bench })))} style={{ background: COLORS.dark, color: "#fff", border: "none", borderRadius: 8, padding: "5px 14px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 13 }}>＋ Create one task ({sel.size})</button>}
+            {sel.size > 0 && <button onClick={() => setSel(new Set())} style={{ background: "transparent", border: "none", color: COLORS.muted, cursor: "pointer", fontSize: 13 }}>clear</button>}
+          </div>
+          {taskItems && <TaskComposer items={taskItems} planId={plan.id} houseId={null} onClose={() => { setTaskItems(null); setSel(new Set()); }} />}
+          {matches.length === 0 ? <div style={{ color: COLORS.muted }}>No matches.</div> : Object.keys(byHouse).sort().map(h => (
+            <div key={h} style={{ marginBottom: 10 }}>
+              <div onClick={() => setDrilldown(h)} style={{ fontWeight: 700, fontSize: 13, color: COLORS.dark, margin: "6px 0", cursor: "pointer" }}>{h} · {byHouse[h].length} →</div>
+              {byHouse[h].slice().sort((a, b) => (a.bench || "").localeCompare(b.bench || "") || (a.item || "").localeCompare(b.item || "")).map(m => (
+                <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0", fontSize: 13 }}>
+                  <input type="checkbox" checked={sel.has(m.id)} onChange={() => toggleSel(m.id)} style={{ cursor: "pointer", accentColor: COLORS.light }} />
+                  <span style={{ color: COLORS.muted, width: 72, flexShrink: 0 }}>{m.bench}</span>
+                  <span>{m.item || m.variety} <span style={{ color: COLORS.muted, fontSize: 11 }}>· wk {m.plant_week}</span></span>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+
       {drilldown && <HouseDrilldown houseName={drilldown} houses={houses} planId={plan.id} onClose={() => setDrilldown(null)} />}
     </div>
   );
@@ -4018,7 +4147,7 @@ function CostBreakdown({ pl }) {
 // Each house = a rectangle positioned by layout_x/y, sized by width_ft/length_ft.
 // Color = profit density (gross_profit / sq_ft).
 const SCALE = 0.6;  // px per ft — controls overall diagram size
-function PropertyMap({ houses, housesProfit, onHouseClick }) {
+function PropertyMap({ houses, housesProfit, onHouseClick, highlight }) {
   if (!houses?.length) return null;
   const bluff   = houses.filter(h => h.location === "Bluff Road");
   const sprague = houses.filter(h => h.location === "Sprague Road");
@@ -4050,8 +4179,8 @@ function PropertyMap({ houses, housesProfit, onHouseClick }) {
         Dimensions are <strong>estimates</strong> — corrections welcome.
       </div>
       <div style={{ display: "grid", gridTemplateColumns: `${bb.w*SCALE+20}px ${sb.w*SCALE+20}px`, gap: 24, overflowX: "auto" }}>
-        <PropertySVG label="Bluff Road"   buildings={bluff}   bounds={bb} profitFor={profitForHouse} onHouseClick={onHouseClick} />
-        <PropertySVG label="Sprague Road" buildings={sprague} bounds={sb} profitFor={profitForHouse} onHouseClick={onHouseClick} />
+        <PropertySVG label="Bluff Road"   buildings={bluff}   bounds={bb} profitFor={profitForHouse} onHouseClick={onHouseClick} highlight={highlight} />
+        <PropertySVG label="Sprague Road" buildings={sprague} bounds={sb} profitFor={profitForHouse} onHouseClick={onHouseClick} highlight={highlight} />
       </div>
 
       {/* Color legend */}
@@ -4071,7 +4200,7 @@ function PropertyMap({ houses, housesProfit, onHouseClick }) {
   );
 }
 
-function PropertySVG({ label, buildings, bounds, profitFor, onHouseClick }) {
+function PropertySVG({ label, buildings, bounds, profitFor, onHouseClick, highlight }) {
   return (
     <div>
       <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 6, color: COLORS.dark }}>{label}</div>
@@ -4084,13 +4213,15 @@ function PropertySVG({ label, buildings, bounds, profitFor, onHouseClick }) {
           const w = (+b.width_ft || 0) * SCALE;
           const h = (+b.length_ft || 0) * SCALE;
           const isPad = b.type === "pad";
+          const hl = highlight ? (highlight[b.name] || 0) : 0;
           return (
             <g key={b.id} onClick={() => onHouseClick?.(b.name)} style={{ cursor: "pointer" }}>
               <rect x={x} y={y} width={w} height={h}
                 fill={fill}
-                stroke={isPad ? "#a8a8a8" : "#3a4a32"}
-                strokeWidth={isPad ? 1 : 1.5}
-                strokeDasharray={isPad ? "4 3" : "none"}
+                opacity={highlight && !hl ? 0.35 : 1}
+                stroke={hl ? "#e89a3a" : (isPad ? "#a8a8a8" : "#3a4a32")}
+                strokeWidth={hl ? 3 : (isPad ? 1 : 1.5)}
+                strokeDasharray={isPad && !hl ? "4 3" : "none"}
               />
               {w > 30 && h > 20 && (
                 <text x={x + w/2} y={y + h/2} textAnchor="middle" dominantBaseline="middle"
@@ -4098,7 +4229,11 @@ function PropertySVG({ label, buildings, bounds, profitFor, onHouseClick }) {
                   {shortName(b.name)}
                 </text>
               )}
-              <title>{b.name} · {b.width_ft}×{b.length_ft} ft{profitDensity != null ? ` · $${profitDensity.toFixed(2)}/sqft` : ""}</title>
+              {hl ? (<>
+                <circle cx={x + w - 7} cy={y + 7} r={7.5} fill="#e89a3a" stroke="#fff" strokeWidth={1} style={{ pointerEvents: "none" }} />
+                <text x={x + w - 7} y={y + 7} textAnchor="middle" dominantBaseline="central" style={{ fontSize: 9, fontWeight: 800, fill: "#fff", pointerEvents: "none" }}>{hl}</text>
+              </>) : null}
+              <title>{b.name} · {b.width_ft}×{b.length_ft} ft{profitDensity != null ? ` · $${profitDensity.toFixed(2)}/sqft` : ""}{hl ? ` · ${hl} match(es)` : ""}</title>
             </g>
           );
         })}
@@ -4132,41 +4267,11 @@ function HouseDrilldown({ houseName, houses, planId, onClose }) {
   const house = (houses || []).find(h => h.name === houseName) || {};
   const houseArea = (+house.width_ft || 0) * (+house.length_ft || 0);
   const [sel, setSel] = useState(() => new Set());
-  const [taskForm, setTaskForm] = useState(null);
-  const [saving, setSaving] = useState(false);
+  const [taskItems, setTaskItems] = useState(null);
+  const [fq, setFq] = useState("");
+  const [fwk, setFwk] = useState("");
   function toggleSel(id) { setSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; }); }
-  function startTask(list) {
-    setTaskForm({ title: "", description: "", target_date: "", team: "", items: list.map(r => ({ item: r.item_name || r.variety?.variety || "item", bench: r.bench?.code })) });
-  }
-  async function submitTask() {
-    if (!taskForm.title.trim()) return;
-    setSaving(true);
-    const benches = [...new Set(taskForm.items.map(i => i.bench).filter(Boolean))];
-    const itemList = taskForm.items.map(i => `${i.item}${i.bench ? ` (${i.bench})` : ""}`).join("; ");
-    const due = taskForm.target_date ? new Date(taskForm.target_date + "T12:00:00") : new Date();
-    const utc = new Date(Date.UTC(due.getFullYear(), due.getMonth(), due.getDate()));
-    const dow = (utc.getUTCDay() + 6) % 7; utc.setUTCDate(utc.getUTCDate() - dow + 3);
-    const firstThu = new Date(Date.UTC(utc.getUTCFullYear(), 0, 4));
-    const wkNum = 1 + Math.round(((utc - firstThu) / 86400000 - 3 + ((firstThu.getUTCDay() + 6) % 7)) / 7);
-    const { error } = await sb.from("manager_tasks").insert([{
-      id: crypto.randomUUID(),
-      title: taskForm.title.trim(),
-      week_number: wkNum,
-      year: utc.getUTCFullYear(),
-      description: (taskForm.description.trim() ? taskForm.description.trim() + "\n\n" : "") + "Items: " + itemList,
-      bench_numbers: benches,
-      house_id: house.id || null,
-      plan_id: planId,
-      target_date: taskForm.target_date || null,
-      team: taskForm.team || null,
-      status: "pending",
-      created_by: "Production Plan",
-    }]);
-    setSaving(false);
-    if (error) { alert("Task save failed: " + error.message); return; }
-    setTaskForm(null); setSel(new Set());
-    alert("Task created — it'll show in the task manager.");
-  }
+  const toItems = list => list.map(r => ({ item: r.item_name || r.variety?.variety || "item", bench: r.bench?.code }));
 
   useEffect(() => {
     if (!sb) return;
@@ -4215,6 +4320,13 @@ function HouseDrilldown({ houseName, houses, planId, onClose }) {
   const SortHdr = ({ col, label, align }) => (
     <th style={{ ...th, textAlign: align || "left", cursor: "pointer" }} onClick={() => clickSort(col)}>{label} {sortCol === col ? (sortDir === "asc" ? "↑" : "↓") : ""}</th>
   );
+  const fwks = fwk.split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
+  const shown = sorted.filter(r => {
+    const okT = !fq.trim() || `${r.item_name || ""} ${r.variety?.variety || ""}`.toLowerCase().includes(fq.trim().toLowerCase());
+    const ww = r.plant_week != null ? (r.plant_week % 100) : null;
+    const okW = !fwks.length || fwks.some(w => w.length >= 3 ? String(r.plant_week) === w : ww === +w);
+    return okT && okW;
+  });
 
   // Roll up totals for the house
   const totalCost    = rows.reduce((s, r) => s + (+r.direct_cost_total || 0), 0);
@@ -4258,31 +4370,16 @@ function HouseDrilldown({ houseName, houses, planId, onClose }) {
         </div>
       )}
 
-      {sel.size > 0 && (
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, padding: "8px 12px", background: "#eef6e6", borderRadius: 8 }}>
-          <span style={{ fontWeight: 700, color: COLORS.dark }}>{sel.size} selected</span>
-          <button onClick={() => startTask(rows.filter(r => sel.has(r.id)))} style={{ background: COLORS.dark, color: "#fff", border: "none", borderRadius: 8, padding: "6px 14px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 13 }}>＋ Create task</button>
-          <button onClick={() => setSel(new Set())} style={{ background: "transparent", border: "none", color: COLORS.muted, cursor: "pointer", fontSize: 13 }}>Clear</button>
+      {rows.length > 0 && (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
+          <input placeholder="filter items…" value={fq} onChange={e => setFq(e.target.value)} style={{ padding: "6px 10px", border: `1px solid ${COLORS.border}`, borderRadius: 8, fontFamily: "inherit", fontSize: 13, flex: "1 1 160px" }} />
+          <input placeholder="plant wk(s)" value={fwk} onChange={e => setFwk(e.target.value)} style={{ padding: "6px 10px", border: `1px solid ${COLORS.border}`, borderRadius: 8, fontFamily: "inherit", fontSize: 13, width: 110 }} />
+          <button onClick={() => setSel(new Set(shown.map(r => r.id)))} style={{ background: "transparent", border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "6px 12px", cursor: "pointer", fontSize: 12, fontFamily: "inherit" }}>Select all shown ({shown.length})</button>
+          {sel.size > 0 && <button onClick={() => setTaskItems(toItems(rows.filter(r => sel.has(r.id))))} style={{ background: COLORS.dark, color: "#fff", border: "none", borderRadius: 8, padding: "6px 14px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 13 }}>＋ Create one task ({sel.size})</button>}
+          {sel.size > 0 && <button onClick={() => setSel(new Set())} style={{ background: "transparent", border: "none", color: COLORS.muted, cursor: "pointer", fontSize: 13 }}>clear</button>}
         </div>
       )}
-      {taskForm && (
-        <div style={{ border: `2px solid ${COLORS.dark}`, borderRadius: 10, padding: 14, marginBottom: 12, background: "#fbfdf9" }}>
-          <div style={{ fontWeight: 800, color: COLORS.dark, marginBottom: 6 }}>New task · {taskForm.items.length} item{taskForm.items.length === 1 ? "" : "s"}</div>
-          <div style={{ fontSize: 11, color: COLORS.muted, marginBottom: 8 }}>{taskForm.items.map(i => `${i.item}${i.bench ? ` (${i.bench})` : ""}`).join(" · ")}</div>
-          <input placeholder="Task title" value={taskForm.title} onChange={e => setTaskForm(f => ({ ...f, title: e.target.value }))} style={{ width: "100%", padding: "8px 10px", border: `1px solid ${COLORS.border}`, borderRadius: 8, marginBottom: 8, fontFamily: "inherit", fontSize: 13, boxSizing: "border-box" }} />
-          <textarea placeholder="Details (optional)" value={taskForm.description} onChange={e => setTaskForm(f => ({ ...f, description: e.target.value }))} rows={2} style={{ width: "100%", padding: "8px 10px", border: `1px solid ${COLORS.border}`, borderRadius: 8, marginBottom: 8, fontFamily: "inherit", fontSize: 13, boxSizing: "border-box", resize: "vertical" }} />
-          <div style={{ display: "flex", gap: 10, marginBottom: 10, flexWrap: "wrap", alignItems: "center" }}>
-            <label style={{ fontSize: 12, color: COLORS.muted }}>Due <input type="date" value={taskForm.target_date} onChange={e => setTaskForm(f => ({ ...f, target_date: e.target.value }))} style={{ marginLeft: 4, padding: "4px 6px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontFamily: "inherit" }} /></label>
-            <select value={taskForm.team} onChange={e => setTaskForm(f => ({ ...f, team: e.target.value }))} style={{ padding: "5px 8px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontFamily: "inherit", fontSize: 13 }}>
-              <option value="">Team…</option><option value="bluff">Bluff</option><option value="sprague">Sprague</option><option value="houseplants">Houseplants</option>
-            </select>
-          </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={submitTask} disabled={saving || !taskForm.title.trim()} style={{ background: COLORS.light, color: "#fff", border: "none", borderRadius: 8, padding: "8px 16px", fontWeight: 700, cursor: (saving || !taskForm.title.trim()) ? "default" : "pointer", fontFamily: "inherit" }}>{saving ? "Saving…" : "Create task"}</button>
-            <button onClick={() => setTaskForm(null)} style={{ background: "transparent", border: `1px solid ${COLORS.border}`, color: COLORS.muted, borderRadius: 8, padding: "8px 16px", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
-          </div>
-        </div>
-      )}
+      {taskItems && <TaskComposer items={taskItems} planId={planId} houseId={house.id} onClose={() => { setTaskItems(null); setSel(new Set()); }} />}
       {rows.length === 0 ? (
         <div style={{ color: COLORS.muted, padding: "20px 0" }}>No crops planned on this building for this plan.</div>
       ) : (
@@ -4301,13 +4398,13 @@ function HouseDrilldown({ houseName, houses, planId, onClose }) {
             </tr>
           </thead>
           <tbody>
-            {sorted.map(r => (
+            {shown.map(r => (
               <tr key={r.id} style={{ borderBottom: `1px solid ${COLORS.border}`, background: sel.has(r.id) ? "#eef6e6" : "transparent" }}>
                 <td style={{ ...td, textAlign: "center" }}><input type="checkbox" checked={sel.has(r.id)} onChange={() => toggleSel(r.id)} style={{ cursor: "pointer", accentColor: COLORS.light }} /></td>
                 <td style={td}>{r.bench?.code}</td>
                 <td style={td}>{r.plant_week}</td>
                 <td style={td}>
-                  <div style={{ fontWeight: 600, cursor: "pointer", color: COLORS.dark }} onClick={() => startTask([r])} title="Create a task for this item">{r.item_name || r.variety?.variety || "—"}</div>
+                  <div style={{ fontWeight: 600, cursor: "pointer", color: COLORS.dark }} onClick={() => setTaskItems(toItems([r]))} title="Create a task for this item">{r.item_name || r.variety?.variety || "—"}</div>
                   {r.variety?.variety && <div style={{ color: COLORS.muted, fontSize: 11 }}>{r.variety.variety}{r.variety.breeder ? ` · ${r.variety.breeder}` : ""}</div>}
                 </td>
                 <td style={{...td, textAlign:"right"}}>{r.qty_pots}</td>
