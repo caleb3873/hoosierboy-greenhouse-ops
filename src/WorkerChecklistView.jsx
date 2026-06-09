@@ -325,6 +325,27 @@ function WorkerChecklistViewInner({ onSwitchMode, onBackToApp, onOpenTaskCreator
       notes: combinedNotes,
       photos,
     });
+    // Water-in triggers: completing a Plant task spawns "water-in plants";
+    // completing a Fill-pots task spawns "water-in dry pots" — at the same location/week.
+    const ttl = completingTask.title || "";
+    const waterTitle = ttl.startsWith("🌿 Plant") ? "💧 Water-in plants"
+      : ttl.startsWith("🪴 Fill pots") ? "💧 Water-in dry pots" : null;
+    if (waterTitle) {
+      await upsert({
+        id: crypto.randomUUID(),
+        title: waterTitle + (completingTask.location ? ` — ${completingTask.location}` : ""),
+        weekNumber: completingTask.weekNumber,
+        year: completingTask.year,
+        targetDate: completingTask.targetDate,
+        status: "pending",
+        category: "growing",
+        location: completingTask.location,
+        bench_numbers: completingTask.bench_numbers,
+        planId: completingTask.planId,
+        createdBy: "auto (water-in)",
+        notes: `Auto-created when "${ttl}" was completed.`,
+      });
+    }
     setCompletingTask(null);
     refresh();
   }
