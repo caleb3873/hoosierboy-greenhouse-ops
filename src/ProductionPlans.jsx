@@ -4380,7 +4380,7 @@ function HouseDrilldown({ houseName, houses, planId, onClose }) {
         .select("id,bench_id,variety_id,qty_pots,qty_plants_ordered,direct_cost_total,revenue,gross_profit,plant_week")
         .eq("plan_id", planId).in("bench_id", benchIds);
       const ids = (pl || []).map(r => r.id);
-      const { data: sc } = ids.length ? await sb.from("scheduled_crops").select("id,item_name,is_combo_component,combo_parent_id,planting_layout").in("id", ids) : { data: [] };
+      const { data: sc } = ids.length ? await sb.from("scheduled_crops").select("id,item_name,is_combo_component,combo_parent_id,planting_layout,notes").in("id", ids) : { data: [] };
       const { data: vars } = await sb.from("variety_library").select("id,variety,breeder,culture_source_id");
 
       setRows((pl || []).map(r => {
@@ -4392,6 +4392,7 @@ function HouseDrilldown({ houseName, houses, planId, onClose }) {
           item_name: scr?.item_name,
           is_combo_component: scr?.is_combo_component,
           planting_layout: scr?.planting_layout,
+          notes: scr?.notes,
         };
       }).sort((a,b) => (a.bench?.position || 0) - (b.bench?.position || 0)));
     })();
@@ -4510,6 +4511,7 @@ function HouseDrilldown({ houseName, houses, planId, onClose }) {
                 <td style={td}>
                   <div style={{ fontWeight: 600, cursor: "pointer", color: COLORS.dark, display: "flex", alignItems: "center", gap: 6 }} onClick={() => setDetail(r)} title="Open item details + culture">
                     {r.planting_layout && <span style={{ background: "#6a4fb0", color: "#fff", fontSize: 9, fontWeight: 800, padding: "1px 6px", borderRadius: 8, letterSpacing: 0.5, flexShrink: 0 }}>COMBO</span>}
+                    {/flagged to drop/i.test(r.notes || "") && <span style={{ background: "#d94f3d", color: "#fff", fontSize: 9, fontWeight: 800, padding: "1px 6px", borderRadius: 8, letterSpacing: 0.5, flexShrink: 0 }}>⚠ DROP</span>}
                     <span>{r.item_name || r.variety?.variety || "—"}</span>
                   </div>
                   {r.variety?.variety && <div style={{ color: COLORS.muted, fontSize: 11 }}>{r.variety.variety}{r.variety.breeder ? ` · ${r.variety.breeder}` : ""}</div>}
