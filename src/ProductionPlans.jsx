@@ -4259,6 +4259,49 @@ function shortName(name) {
 }
 
 // ── House Drilldown panel ───────────────────────────────────────────────────
+// Item detail + LIVE culture (reads the linked guide from the Culture DB each time,
+// so parser updates flow through automatically).
+function ItemDetail({ row, onClose, onTask }) {
+  const [guide, setGuide] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const srcId = row?.variety?.culture_source_id;
+  useEffect(() => {
+    if (!srcId) { setGuide(null); return; }
+    const cc = getCultureClient();
+    if (!cc) { setGuide(null); return; }
+    setLoading(true);
+    cc.from("culture_guides_public").select("*").eq("id", srcId).single().then(({ data }) => { setGuide(data || null); setLoading(false); });
+  }, [srcId]);
+  const cd = guide?.culture_details || {};
+  const entries = Object.keys(cd).filter(k => /pgr|warning|pest|water|temp|finish|pinch|exposure|bloom|media|habit|propagation/i.test(k) && cd[k] && String(cd[k]).trim());
+  const pdf = cd["Culture Guide PDF"] || guide?.pdf_url;
+  return (
+    <div style={{ border: `2px solid ${COLORS.dark}`, borderRadius: 10, padding: 14, marginBottom: 12, background: "#fff" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div>
+          <div style={{ fontWeight: 800, color: COLORS.dark, fontSize: 15 }}>{row.item_name || row.variety?.variety || "Item"}</div>
+          <div style={{ fontSize: 12, color: COLORS.muted, marginTop: 2 }}>{row.bench?.code} · {row.variety?.variety}{row.variety?.breeder ? ` · ${row.variety.breeder}` : ""} · plant wk {row.plant_week} · {row.qty_pots} pots</div>
+        </div>
+        <button onClick={onClose} style={{ background: "transparent", border: "none", fontSize: 18, cursor: "pointer", color: COLORS.muted }}>✕</button>
+      </div>
+      <div style={{ margin: "10px 0", display: "flex", gap: 10, alignItems: "center" }}>
+        <button onClick={onTask} style={{ background: COLORS.dark, color: "#fff", border: "none", borderRadius: 8, padding: "7px 14px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 13 }}>＋ Create task</button>
+        {pdf && <a href={pdf} target="_blank" rel="noreferrer" style={{ fontSize: 13, color: COLORS.light }}>Full guide ↗</a>}
+      </div>
+      <div style={{ borderTop: `1px solid ${COLORS.border}`, paddingTop: 10 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>Culture{guide ? ` · ${guide.breeder_name || ""} ${guide.crop_name || ""} ${guide.series_name || ""}` : ""}</div>
+        {!srcId ? <div style={{ color: COLORS.muted, fontSize: 13 }}>No culture guide linked yet — add it in the parser, then re-link.</div>
+          : loading ? <div style={{ color: COLORS.muted, fontSize: 13 }}>Loading culture…</div>
+          : !guide ? <div style={{ color: COLORS.muted, fontSize: 13 }}>Linked guide not found.</div>
+          : entries.length === 0 ? <div style={{ color: COLORS.muted, fontSize: 13 }}>Guide linked — no culture detail fields filled in yet.</div>
+          : <div style={{ display: "grid", gap: 6 }}>{entries.map(k => (
+              <div key={k} style={{ fontSize: 13, lineHeight: 1.5 }}><strong style={{ color: COLORS.dark }}>{k}:</strong> <span style={{ color: COLORS.text }}>{String(cd[k])}</span></div>
+            ))}</div>}
+      </div>
+    </div>
+  );
+}
+
 function HouseDrilldown({ houseName, houses, planId, onClose }) {
   const sb = getSupabase();
   const [rows, setRows] = useState([]);
@@ -4268,6 +4311,7 @@ function HouseDrilldown({ houseName, houses, planId, onClose }) {
   const houseArea = (+house.width_ft || 0) * (+house.length_ft || 0);
   const [sel, setSel] = useState(() => new Set());
   const [taskItems, setTaskItems] = useState(null);
+  const [detail, setDetail] = useState(null);
   const [fq, setFq] = useState("");
   const [fwk, setFwk] = useState("");
   function toggleSel(id) { setSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; }); }
@@ -4284,7 +4328,7 @@ function HouseDrilldown({ houseName, houses, planId, onClose }) {
         .eq("plan_id", planId).in("bench_id", benchIds);
       const ids = (pl || []).map(r => r.id);
       const { data: sc } = ids.length ? await sb.from("scheduled_crops").select("id,item_name,is_combo_component,combo_parent_id").in("id", ids) : { data: [] };
-      const { data: vars } = await sb.from("variety_library").select("id,variety,breeder");
+      const { data: vars } = await sb.from("variety_library").select("id,variety,breeder,culture_source_id");
 
       setRows((pl || []).map(r => ({
         ...r,
@@ -4380,6 +4424,7 @@ function HouseDrilldown({ houseName, houses, planId, onClose }) {
         </div>
       )}
       {taskItems && <TaskComposer items={taskItems} planId={planId} houseId={house.id} onClose={() => { setTaskItems(null); setSel(new Set()); }} />}
+      {detail && <ItemDetail row={detail} onClose={() => setDetail(null)} onTask={() => { setTaskItems(toItems([detail])); setDetail(null); }} />}
       {rows.length === 0 ? (
         <div style={{ color: COLORS.muted, padding: "20px 0" }}>No crops planned on this building for this plan.</div>
       ) : (
@@ -4404,7 +4449,7 @@ function HouseDrilldown({ houseName, houses, planId, onClose }) {
                 <td style={td}>{r.bench?.code}</td>
                 <td style={td}>{r.plant_week}</td>
                 <td style={td}>
-                  <div style={{ fontWeight: 600, cursor: "pointer", color: COLORS.dark }} onClick={() => setTaskItems(toItems([r]))} title="Create a task for this item">{r.item_name || r.variety?.variety || "—"}</div>
+                  <div style={{ fontWeight: 600, cursor: "pointer", color: COLORS.dark }} onClick={() => setDetail(r)} title="Open item details + culture">{r.item_name || r.variety?.variety || "—"}</div>
                   {r.variety?.variety && <div style={{ color: COLORS.muted, fontSize: 11 }}>{r.variety.variety}{r.variety.breeder ? ` · ${r.variety.breeder}` : ""}</div>}
                 </td>
                 <td style={{...td, textAlign:"right"}}>{r.qty_pots}</td>
