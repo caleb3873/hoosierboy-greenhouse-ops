@@ -4131,6 +4131,42 @@ function HouseDrilldown({ houseName, houses, planId, onClose }) {
   // Look up building info from the houses table
   const house = (houses || []).find(h => h.name === houseName) || {};
   const houseArea = (+house.width_ft || 0) * (+house.length_ft || 0);
+  const [sel, setSel] = useState(() => new Set());
+  const [taskForm, setTaskForm] = useState(null);
+  const [saving, setSaving] = useState(false);
+  function toggleSel(id) { setSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; }); }
+  function startTask(list) {
+    setTaskForm({ title: "", description: "", target_date: "", team: "", items: list.map(r => ({ item: r.item_name || r.variety?.variety || "item", bench: r.bench?.code })) });
+  }
+  async function submitTask() {
+    if (!taskForm.title.trim()) return;
+    setSaving(true);
+    const benches = [...new Set(taskForm.items.map(i => i.bench).filter(Boolean))];
+    const itemList = taskForm.items.map(i => `${i.item}${i.bench ? ` (${i.bench})` : ""}`).join("; ");
+    const due = taskForm.target_date ? new Date(taskForm.target_date + "T12:00:00") : new Date();
+    const utc = new Date(Date.UTC(due.getFullYear(), due.getMonth(), due.getDate()));
+    const dow = (utc.getUTCDay() + 6) % 7; utc.setUTCDate(utc.getUTCDate() - dow + 3);
+    const firstThu = new Date(Date.UTC(utc.getUTCFullYear(), 0, 4));
+    const wkNum = 1 + Math.round(((utc - firstThu) / 86400000 - 3 + ((firstThu.getUTCDay() + 6) % 7)) / 7);
+    const { error } = await sb.from("manager_tasks").insert([{
+      id: crypto.randomUUID(),
+      title: taskForm.title.trim(),
+      week_number: wkNum,
+      year: utc.getUTCFullYear(),
+      description: (taskForm.description.trim() ? taskForm.description.trim() + "\n\n" : "") + "Items: " + itemList,
+      bench_numbers: benches,
+      house_id: house.id || null,
+      plan_id: planId,
+      target_date: taskForm.target_date || null,
+      team: taskForm.team || null,
+      status: "pending",
+      created_by: "Production Plan",
+    }]);
+    setSaving(false);
+    if (error) { alert("Task save failed: " + error.message); return; }
+    setTaskForm(null); setSel(new Set());
+    alert("Task created — it'll show in the task manager.");
+  }
 
   useEffect(() => {
     if (!sb) return;
@@ -4153,6 +4189,32 @@ function HouseDrilldown({ houseName, houses, planId, onClose }) {
       })).sort((a,b) => (a.bench?.position || 0) - (b.bench?.position || 0)));
     })();
   }, [sb, houseName, planId]);
+
+  // Sort — default bench then item; all columns sortable
+  const [sortCol, setSortCol] = useState("bench");
+  const [sortDir, setSortDir] = useState("asc");
+  function clickSort(c) { if (c === sortCol) setSortDir(d => d === "asc" ? "desc" : "asc"); else { setSortCol(c); setSortDir("asc"); } }
+  const sortVal = (r, c) =>
+    c === "bench" ? (r.bench?.code || "") :
+    c === "item" ? (r.item_name || r.variety?.variety || "") :
+    c === "plant_week" ? (+r.plant_week || 0) :
+    c === "pots" ? (+r.qty_pots || 0) :
+    c === "liners" ? (+r.qty_plants_ordered || 0) :
+    c === "cost" ? (+r.direct_cost_total || 0) :
+    c === "revenue" ? (+r.revenue || 0) :
+    c === "profit" ? (+r.gross_profit || 0) : "";
+  const sorted = [...rows].sort((a, b) => {
+    const pa = sortVal(a, sortCol), pb = sortVal(b, sortCol);
+    let cmp = typeof pa === "string" ? pa.localeCompare(pb) : pa - pb;
+    if (sortDir === "desc") cmp = -cmp;
+    if (cmp !== 0) return cmp;
+    const ba = a.bench?.code || "", bb = b.bench?.code || "";
+    if (ba !== bb) return ba.localeCompare(bb);
+    return (a.item_name || "").localeCompare(b.item_name || "");
+  });
+  const SortHdr = ({ col, label, align }) => (
+    <th style={{ ...th, textAlign: align || "left", cursor: "pointer" }} onClick={() => clickSort(col)}>{label} {sortCol === col ? (sortDir === "asc" ? "↑" : "↓") : ""}</th>
+  );
 
   // Roll up totals for the house
   const totalCost    = rows.reduce((s, r) => s + (+r.direct_cost_total || 0), 0);
@@ -4196,29 +4258,56 @@ function HouseDrilldown({ houseName, houses, planId, onClose }) {
         </div>
       )}
 
+      {sel.size > 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, padding: "8px 12px", background: "#eef6e6", borderRadius: 8 }}>
+          <span style={{ fontWeight: 700, color: COLORS.dark }}>{sel.size} selected</span>
+          <button onClick={() => startTask(rows.filter(r => sel.has(r.id)))} style={{ background: COLORS.dark, color: "#fff", border: "none", borderRadius: 8, padding: "6px 14px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 13 }}>＋ Create task</button>
+          <button onClick={() => setSel(new Set())} style={{ background: "transparent", border: "none", color: COLORS.muted, cursor: "pointer", fontSize: 13 }}>Clear</button>
+        </div>
+      )}
+      {taskForm && (
+        <div style={{ border: `2px solid ${COLORS.dark}`, borderRadius: 10, padding: 14, marginBottom: 12, background: "#fbfdf9" }}>
+          <div style={{ fontWeight: 800, color: COLORS.dark, marginBottom: 6 }}>New task · {taskForm.items.length} item{taskForm.items.length === 1 ? "" : "s"}</div>
+          <div style={{ fontSize: 11, color: COLORS.muted, marginBottom: 8 }}>{taskForm.items.map(i => `${i.item}${i.bench ? ` (${i.bench})` : ""}`).join(" · ")}</div>
+          <input placeholder="Task title" value={taskForm.title} onChange={e => setTaskForm(f => ({ ...f, title: e.target.value }))} style={{ width: "100%", padding: "8px 10px", border: `1px solid ${COLORS.border}`, borderRadius: 8, marginBottom: 8, fontFamily: "inherit", fontSize: 13, boxSizing: "border-box" }} />
+          <textarea placeholder="Details (optional)" value={taskForm.description} onChange={e => setTaskForm(f => ({ ...f, description: e.target.value }))} rows={2} style={{ width: "100%", padding: "8px 10px", border: `1px solid ${COLORS.border}`, borderRadius: 8, marginBottom: 8, fontFamily: "inherit", fontSize: 13, boxSizing: "border-box", resize: "vertical" }} />
+          <div style={{ display: "flex", gap: 10, marginBottom: 10, flexWrap: "wrap", alignItems: "center" }}>
+            <label style={{ fontSize: 12, color: COLORS.muted }}>Due <input type="date" value={taskForm.target_date} onChange={e => setTaskForm(f => ({ ...f, target_date: e.target.value }))} style={{ marginLeft: 4, padding: "4px 6px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontFamily: "inherit" }} /></label>
+            <select value={taskForm.team} onChange={e => setTaskForm(f => ({ ...f, team: e.target.value }))} style={{ padding: "5px 8px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontFamily: "inherit", fontSize: 13 }}>
+              <option value="">Team…</option><option value="bluff">Bluff</option><option value="sprague">Sprague</option><option value="houseplants">Houseplants</option>
+            </select>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={submitTask} disabled={saving || !taskForm.title.trim()} style={{ background: COLORS.light, color: "#fff", border: "none", borderRadius: 8, padding: "8px 16px", fontWeight: 700, cursor: (saving || !taskForm.title.trim()) ? "default" : "pointer", fontFamily: "inherit" }}>{saving ? "Saving…" : "Create task"}</button>
+            <button onClick={() => setTaskForm(null)} style={{ background: "transparent", border: `1px solid ${COLORS.border}`, color: COLORS.muted, borderRadius: 8, padding: "8px 16px", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+          </div>
+        </div>
+      )}
       {rows.length === 0 ? (
         <div style={{ color: COLORS.muted, padding: "20px 0" }}>No crops planned on this building for this plan.</div>
       ) : (
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead>
             <tr style={{ background: "#f3f5ef" }}>
-              <th style={th}>Bench</th>
-              <th style={th}>Plant Wk</th>
-              <th style={th}>Item</th>
-              <th style={{...th, textAlign:"right"}}>Pots</th>
-              <th style={{...th, textAlign:"right"}}>Liners</th>
-              <th style={{...th, textAlign:"right"}}>Cost</th>
-              <th style={{...th, textAlign:"right"}}>Revenue</th>
-              <th style={{...th, textAlign:"right"}}>Profit</th>
+              <th style={{ ...th, width: 28 }}></th>
+              <SortHdr col="bench" label="Bench" />
+              <SortHdr col="plant_week" label="Plant Wk" />
+              <SortHdr col="item" label="Item" />
+              <SortHdr col="pots" label="Pots" align="right" />
+              <SortHdr col="liners" label="Liners" align="right" />
+              <SortHdr col="cost" label="Cost" align="right" />
+              <SortHdr col="revenue" label="Revenue" align="right" />
+              <SortHdr col="profit" label="Profit" align="right" />
             </tr>
           </thead>
           <tbody>
-            {rows.map(r => (
-              <tr key={r.id} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
+            {sorted.map(r => (
+              <tr key={r.id} style={{ borderBottom: `1px solid ${COLORS.border}`, background: sel.has(r.id) ? "#eef6e6" : "transparent" }}>
+                <td style={{ ...td, textAlign: "center" }}><input type="checkbox" checked={sel.has(r.id)} onChange={() => toggleSel(r.id)} style={{ cursor: "pointer", accentColor: COLORS.light }} /></td>
                 <td style={td}>{r.bench?.code}</td>
                 <td style={td}>{r.plant_week}</td>
                 <td style={td}>
-                  <div style={{ fontWeight: 600 }}>{r.item_name || r.variety?.variety || "—"}</div>
+                  <div style={{ fontWeight: 600, cursor: "pointer", color: COLORS.dark }} onClick={() => startTask([r])} title="Create a task for this item">{r.item_name || r.variety?.variety || "—"}</div>
                   {r.variety?.variety && <div style={{ color: COLORS.muted, fontSize: 11 }}>{r.variety.variety}{r.variety.breeder ? ` · ${r.variety.breeder}` : ""}</div>}
                 </td>
                 <td style={{...td, textAlign:"right"}}>{r.qty_pots}</td>
