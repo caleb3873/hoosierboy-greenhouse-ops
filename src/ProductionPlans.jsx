@@ -427,7 +427,7 @@ function BenchTab({ plan, houses, housesProfit, drilldown, setDrilldown }) {
   useEffect(() => {
     if (!sb || !plan?.id) return;
     (async () => {
-      const { data: scd } = await sb.from("scheduled_crops").select("id,item_name,plant_week,bench_id,variety_id,qty_pots").eq("plan_id", plan.id);
+      const { data: scd } = await sb.from("scheduled_crops").select("id,item_name,plant_week,bench_id,variety_id,qty_pots,is_combo_component").eq("plan_id", plan.id);
       const benchIds = [...new Set((scd || []).map(r => r.bench_id).filter(Boolean))];
       const varIds = [...new Set((scd || []).map(r => r.variety_id).filter(Boolean))];
       const { data: bdata } = benchIds.length ? await sb.from("benches").select("id,code,zone_label").in("id", benchIds) : { data: [] };
@@ -435,7 +435,7 @@ function BenchTab({ plan, houses, housesProfit, drilldown, setDrilldown }) {
       setAll((scd || []).map(r => {
         const b = (bdata || []).find(x => x.id === r.bench_id);
         const v = (vdata || []).find(x => x.id === r.variety_id);
-        return { id: r.id, item: r.item_name, plant_week: r.plant_week, bench: b?.code, house: b?.zone_label, variety: v?.variety, crop: v?.crop_name };
+        return { id: r.id, item: r.item_name, plant_week: r.plant_week, bench: b?.code, house: b?.zone_label, variety: v?.variety, crop: v?.crop_name, is_combo_component: r.is_combo_component };
       }));
     })();
   }, [sb, plan?.id]);
@@ -447,7 +447,7 @@ function BenchTab({ plan, houses, housesProfit, drilldown, setDrilldown }) {
     const okText = !q.trim() || txt.includes(q.trim().toLowerCase());
     const ww = r.plant_week != null ? (r.plant_week % 100) : null;
     const okWeek = !weeks.length || weeks.some(w => w.length >= 3 ? String(r.plant_week) === w : ww === +w);
-    return okText && okWeek;
+    return !r.is_combo_component && okText && okWeek;
   });
   const matchCounts = {};
   matches.forEach(m => { if (m.house) matchCounts[m.house] = (matchCounts[m.house] || 0) + 1; });
@@ -4424,6 +4424,7 @@ function HouseDrilldown({ houseName, houses, planId, onClose }) {
   );
   const fwks = fwk.split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
   const shown = sorted.filter(r => {
+    if (r.is_combo_component) return false; // components fold into their combo parent
     const okT = !fq.trim() || `${r.item_name || ""} ${r.variety?.variety || ""}`.toLowerCase().includes(fq.trim().toLowerCase());
     const ww = r.plant_week != null ? (r.plant_week % 100) : null;
     const okW = !fwks.length || fwks.some(w => w.length >= 3 ? String(r.plant_week) === w : ww === +w);
@@ -4507,7 +4508,10 @@ function HouseDrilldown({ houseName, houses, planId, onClose }) {
                 <td style={td}>{r.bench?.code}</td>
                 <td style={td}>{r.plant_week}</td>
                 <td style={td}>
-                  <div style={{ fontWeight: 600, cursor: "pointer", color: COLORS.dark }} onClick={() => setDetail(r)} title="Open item details + culture">{r.item_name || r.variety?.variety || "—"}</div>
+                  <div style={{ fontWeight: 600, cursor: "pointer", color: COLORS.dark, display: "flex", alignItems: "center", gap: 6 }} onClick={() => setDetail(r)} title="Open item details + culture">
+                    {r.planting_layout && <span style={{ background: "#6a4fb0", color: "#fff", fontSize: 9, fontWeight: 800, padding: "1px 6px", borderRadius: 8, letterSpacing: 0.5, flexShrink: 0 }}>COMBO</span>}
+                    <span>{r.item_name || r.variety?.variety || "—"}</span>
+                  </div>
                   {r.variety?.variety && <div style={{ color: COLORS.muted, fontSize: 11 }}>{r.variety.variety}{r.variety.breeder ? ` · ${r.variety.breeder}` : ""}</div>}
                 </td>
                 <td style={{...td, textAlign:"right"}}>{r.qty_pots}</td>
