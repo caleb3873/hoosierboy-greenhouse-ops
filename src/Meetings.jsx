@@ -1,8 +1,7 @@
 import { useState, useEffect } from "react";
-import { useCropRuns, useFlags, useManualTasks, useContainers, useHouses, usePads } from "./supabase";
+import { useCropRuns, useFlags, useManualTasks, useContainers, useHouses, usePads, useMeetings } from "./supabase";
 
 // ── HELPERS ───────────────────────────────────────────────────────────────────
-const STORAGE_KEY = "gh_meeting_notes_v1";
 
 function getWeekNumber(date) {
   const d = new Date(date);
@@ -249,142 +248,182 @@ function PrepSheet({ runs, flags, tasks, containers, houses, pads }) {
 }
 
 // ── NOTES ─────────────────────────────────────────────────────────────────────
+const MEETING_TEMPLATES = {
+  "Blank": "",
+  "Tissue Culture lab (vendor)": `GOAL: leave knowing (1) their business model, (2) what it takes to build & run a TC area here, (3) economics — cost per liner in-house vs. buying.
+
+PIN DOWN FIRST
+- What are they offering? Turnkey lab design/build · sell us initiated cultures we multiply · sell finished plantlets we just acclimatize · license/partnership?
+- Do they provide mother stock / explants, or do we source them?
+
+VARIETIES & IP
+- Which of our crops are good TC candidates? (houseplants / aroids, perennials, mums, poinsettias?)
+- Licensing / royalties on patented varieties — what can we legally micropropagate?
+
+FACILITY BUILD-OUT
+- Rooms + sq ft: media prep · transfer room (laminar flow hoods) · growth room · acclimatization greenhouse
+- Clean room: HEPA / positive pressure / sterilizable surfaces / flooring
+- Utilities: power load · RO/DI water · drainage · HVAC temp + humidity
+
+EQUIPMENT & COST
+- Laminar flow hoods (how many for our volume?) · autoclave · media prep (balance, pH, stirrers, dispenser) · growth-room shelving + LED lighting · glassware / washing
+- Capital cost for the equipment package
+
+PROCESS & THROUGHPUT
+- Stages: initiation → multiplication → rooting → acclimatization; time per stage
+- Throughput (plantlets/week per footprint); what volume justifies a lab?
+- Contamination rate + sterility / QC protocols
+
+ACCLIMATIZATION (where losses happen)
+- Weaning in-vitro plantlets into our greenhouse: humidity / fog, hardening, expected survival %
+
+CONSUMABLES (recurring)
+- Media (MS salts, sucrose, agar), PGRs (cytokinins / auxins), vessels, PPM — cost per plantlet
+
+LABOR & TRAINING
+- Skilled labor / sterile technique; who runs it; vendor training + ongoing support
+
+ECONOMICS & DECISION
+- Capex to build · cost/liner in-house vs. buying · breakeven volume · ROI timeline
+- MOQs, lead times, support contract`,
+  "Broker / supplier": `- Availability & confirmations for our list
+- Pricing / minimums / lead times
+- Substitution policy
+- Ship windows & freight
+- New varieties worth trying`,
+  "Weekly production": `- Transplanting / shipping this week
+- Crops behind or needing attention
+- Sourcing gaps / confirmations needed
+- Labor & space
+- Decisions needed`,
+};
+
 function MeetingNotes() {
-  const [notes, setNotes] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"); } catch { return []; }
-  });
-  const [view, setView] = useState("list"); // list | new | detail
+  const { rows: meetings, upsert, remove } = useMeetings();
+  const [view, setView] = useState("list"); // list | edit
   const [editId, setEditId] = useState(null);
-  const [form, setForm] = useState({ title: "", body: "", actionItems: [], tags: [] });
+  const [form, setForm] = useState(null);
   const [newAction, setNewAction] = useState("");
-  const [filterTag, setFilterTag] = useState("all");
+  const [busy, setBusy] = useState(false);
+  const [sumErr, setSumErr] = useState(null);
 
-  const save = (n) => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(n));
-    setNotes(n);
-  };
-
-  const allTags = [...new Set(notes.flatMap(n => n.tags || []))].sort();
-  const { week: nowW, year: nowY } = nowWeekYear();
+  const IS = { padding: "10px 12px", borderRadius: 10, border: "1.5px solid #c8d8c0", fontSize: 14, fontFamily: "inherit", background: "#fff", color: "#1e2d1a", width: "100%", outline: "none", boxSizing: "border-box" };
+  const LBL = { fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .7, marginBottom: 6 };
+  const todayStr = () => new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
 
   function startNew() {
-    setForm({ title: `Week ${nowW} Meeting — ${new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}`, body: "", actionItems: [], tags: [], date: new Date().toISOString() });
-    setEditId(null);
-    setView("new");
+    setForm({ title: `Meeting — ${todayStr()}`, meetingDate: new Date().toISOString().slice(0, 10), type: "", attendees: "", agenda: "", transcript: "", summary: "", actionItems: [], tags: [] });
+    setEditId(null); setSumErr(null); setView("edit");
   }
-
-  function startEdit(note) {
-    setForm({ ...note });
-    setEditId(note.id);
-    setView("new");
+  function openMeeting(m) {
+    setForm({ title: m.title || "", meetingDate: m.meetingDate || new Date().toISOString().slice(0, 10), type: m.type || "", attendees: m.attendees || "", agenda: m.agenda || "", transcript: m.transcript || "", summary: m.summary || "", actionItems: m.actionItems || [], tags: m.tags || [] });
+    setEditId(m.id); setSumErr(null); setView("edit");
   }
-
-  function saveNote() {
+  async function saveMeeting() {
     if (!form.title.trim()) return;
-    const id = editId || crypto.randomUUID();
-    const updated = editId
-      ? notes.map(n => n.id === editId ? { ...form, id } : n)
-      : [{ ...form, id, date: form.date || new Date().toISOString() }, ...notes];
-    save(updated);
-    setView("list");
-    setEditId(null);
+    setBusy(true);
+    try { await upsert({ ...form, id: editId || crypto.randomUUID() }); setView("list"); setEditId(null); }
+    catch (e) { alert("Save failed: " + e.message); }
+    finally { setBusy(false); }
   }
-
-  function deleteNote(id) {
-    if (!window.confirm("Delete this meeting note?")) return;
-    save(notes.filter(n => n.id !== id));
+  async function deleteMeeting(id) {
+    if (!window.confirm("Delete this meeting?")) return;
+    await remove(id);
   }
-
+  function applyTemplate(name) {
+    const t = MEETING_TEMPLATES[name] || "";
+    const guessType = name.indexOf("Tissue") >= 0 ? "Vendor / Setup" : name.indexOf("Broker") >= 0 ? "Broker" : name.indexOf("Weekly") >= 0 ? "Production" : "";
+    setForm(f => ({ ...f, agenda: t, type: f.type || guessType }));
+  }
+  async function summarize() {
+    if (!form.transcript || !form.transcript.trim()) { setSumErr("Paste the Teams transcript (or your notes) first."); return; }
+    setBusy(true); setSumErr(null);
+    try {
+      const r = await fetch("/api/meeting-summary", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ transcript: form.transcript, agenda: form.agenda, title: form.title }) });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || "failed");
+      setForm(f => ({ ...f, summary: data.summary }));
+    } catch (e) { setSumErr(e.message || "summary failed"); }
+    finally { setBusy(false); }
+  }
   function addAction() {
     if (!newAction.trim()) return;
     setForm(f => ({ ...f, actionItems: [...(f.actionItems || []), { id: crypto.randomUUID(), text: newAction.trim(), done: false }] }));
     setNewAction("");
   }
+  function toggleAction(aid) { setForm(f => ({ ...f, actionItems: f.actionItems.map(a => a.id === aid ? { ...a, done: !a.done } : a) })); }
+  function removeAction(aid) { setForm(f => ({ ...f, actionItems: f.actionItems.filter(a => a.id !== aid) })); }
 
-  function toggleAction(aid) {
-    setForm(f => ({ ...f, actionItems: f.actionItems.map(a => a.id === aid ? { ...a, done: !a.done } : a) }));
-  }
-
-  function removeAction(aid) {
-    setForm(f => ({ ...f, actionItems: f.actionItems.filter(a => a.id !== aid) }));
-  }
-
-  // Toggle action done in list view (without editing full note)
-  function toggleActionInList(noteId, actionId) {
-    const updated = notes.map(n => n.id !== noteId ? n : {
-      ...n, actionItems: n.actionItems.map(a => a.id === actionId ? { ...a, done: !a.done } : a)
-    });
-    save(updated);
-  }
-
-  const TAG_OPTIONS = ["transplant", "order", "labor", "quality", "variety", "schedule", "equipment", "other"];
-
-  const filtered = notes.filter(n => filterTag === "all" || (n.tags || []).includes(filterTag));
-
-  const IS = { padding: "10px 12px", borderRadius: 10, border: "1.5px solid #c8d8c0", fontSize: 14, fontFamily: "inherit", background: "#fff", color: "#1e2d1a", width: "100%", outline: "none", boxSizing: "border-box" };
-
-  if (view === "new") return (
-    <div style={{ maxWidth: 700 }}>
-      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 20 }}>
-        <button onClick={() => setView("list")} style={{ background: "none", border: "none", color: "#7a8c74", fontSize: 22, cursor: "pointer", padding: 0 }}>←</button>
-        <div style={{ fontWeight: 800, fontSize: 18, color: "#1e2d1a" }}>{editId ? "Edit Meeting Notes" : "New Meeting Notes"}</div>
+  if (view === "edit" && form) return (
+    <div style={{ maxWidth: 760 }}>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 18 }}>
+        <button onClick={() => { setView("list"); setEditId(null); }} style={{ background: "none", border: "none", color: "#7a8c74", fontSize: 22, cursor: "pointer", padding: 0 }}>←</button>
+        <div style={{ fontWeight: 800, fontSize: 18, color: "#1e2d1a" }}>{editId ? "Meeting" : "New Meeting"}</div>
       </div>
 
       <div style={S.card}>
-        <div style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .7, marginBottom: 6 }}>Meeting Title</div>
-          <input value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} style={IS} placeholder="e.g. Week 18 Production Meeting" />
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 170px", gap: 12, marginBottom: 14 }}>
+          <div><div style={LBL}>Title</div><input value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} style={IS} /></div>
+          <div><div style={LBL}>Date</div><input type="date" value={form.meetingDate} onChange={e => setForm(f => ({ ...f, meetingDate: e.target.value }))} style={IS} /></div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
+          <div><div style={LBL}>Type</div>
+            <select value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value }))} style={IS}>
+              <option value="">—</option><option>Vendor / Setup</option><option>Broker</option><option>Production</option><option>Internal</option><option>Other</option>
+            </select>
+          </div>
+          <div><div style={LBL}>Attendees</div><input value={form.attendees} onChange={e => setForm(f => ({ ...f, attendees: e.target.value }))} style={IS} placeholder="who was there" /></div>
         </div>
 
         <div style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .7, marginBottom: 6 }}>Tags</div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-            {TAG_OPTIONS.map(t => {
-              const on = (form.tags || []).includes(t);
-              return (
-                <button key={t} onClick={() => setForm(f => ({ ...f, tags: on ? f.tags.filter(x => x !== t) : [...(f.tags||[]), t] }))}
-                  style={{ padding: "4px 12px", borderRadius: 20, border: `1.5px solid ${on ? "#7fb069" : "#c8d8c0"}`, background: on ? "#f0f8eb" : "#fff", color: on ? "#2e5c1e" : "#7a8c74", fontWeight: on ? 700 : 600, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
-                  {t}
-                </button>
-              );
-            })}
+          <div style={LBL}>Agenda / prep — load a template</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+            {Object.keys(MEETING_TEMPLATES).map(n => (
+              <button key={n} onClick={() => applyTemplate(n)} style={{ padding: "5px 12px", borderRadius: 16, border: "1.5px solid #c8d8c0", background: "#fff", color: "#4a6a3a", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{n}</button>
+            ))}
+          </div>
+          <textarea value={form.agenda} onChange={e => setForm(f => ({ ...f, agenda: e.target.value }))} style={{ ...IS, minHeight: 120, resize: "vertical", lineHeight: 1.5 }} placeholder="Agenda / questions to ask…" />
+        </div>
+
+        <div style={{ marginBottom: 14 }}>
+          <div style={LBL}>Transcript / raw notes</div>
+          <div style={{ fontSize: 11, color: "#aabba0", marginBottom: 6 }}>Turn on live transcription in Teams, then paste the transcript here after the call — or jot notes live.</div>
+          <textarea value={form.transcript} onChange={e => setForm(f => ({ ...f, transcript: e.target.value }))} style={{ ...IS, minHeight: 140, resize: "vertical", lineHeight: 1.5 }} placeholder="Paste transcript or type notes…" />
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
+            <button onClick={summarize} disabled={busy} style={{ padding: "9px 16px", borderRadius: 10, background: busy ? "#cdd" : "#7fb069", color: "#fff", border: "none", fontWeight: 700, fontSize: 13, cursor: busy ? "default" : "pointer", fontFamily: "inherit" }}>{busy ? "Summarizing…" : "✨ Summarize with AI"}</button>
+            {sumErr && <span style={{ color: "#c03030", fontSize: 12 }}>⚠️ {sumErr}</span>}
           </div>
         </div>
 
         <div style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .7, marginBottom: 6 }}>Notes</div>
-          <textarea value={form.body} onChange={e => setForm(f => ({ ...f, body: e.target.value }))}
-            style={{ ...IS, minHeight: 160, resize: "vertical", lineHeight: 1.6 }}
-            placeholder="What was discussed? Any decisions made? Key observations from the floor..." />
+          <div style={LBL}>Summary (AI — editable)</div>
+          <textarea value={form.summary} onChange={e => setForm(f => ({ ...f, summary: e.target.value }))} style={{ ...IS, minHeight: 160, resize: "vertical", lineHeight: 1.6, background: "#f8faf6" }} placeholder="Click ✨ Summarize, or write your own…" />
         </div>
 
         <div>
-          <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .7, marginBottom: 8 }}>Action Items</div>
+          <div style={LBL}>Action items</div>
           {(form.actionItems || []).map(a => (
             <div key={a.id} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
               <input type="checkbox" checked={a.done} onChange={() => toggleAction(a.id)} style={{ width: 16, height: 16, cursor: "pointer", accentColor: "#7fb069" }} />
               <span style={{ flex: 1, fontSize: 13, color: a.done ? "#aabba0" : "#1e2d1a", textDecoration: a.done ? "line-through" : "none" }}>{a.text}</span>
-              <button onClick={() => removeAction(a.id)} style={{ background: "none", border: "none", color: "#aabba0", fontSize: 16, cursor: "pointer", padding: "0 4px" }}>×</button>
+              <button onClick={() => removeAction(a.id)} style={{ background: "none", border: "none", color: "#aabba0", fontSize: 16, cursor: "pointer" }}>×</button>
             </div>
           ))}
           <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-            <input value={newAction} onChange={e => setNewAction(e.target.value)}
-              onKeyDown={e => e.key === "Enter" && addAction()}
-              style={{ ...IS, flex: 1 }} placeholder="Add action item... (press Enter)" />
+            <input value={newAction} onChange={e => setNewAction(e.target.value)} onKeyDown={e => e.key === "Enter" && addAction()} style={{ ...IS, flex: 1 }} placeholder="Add action item… (Enter)" />
             <button onClick={addAction} style={{ padding: "10px 16px", borderRadius: 10, background: "#7fb069", color: "#fff", border: "none", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>+ Add</button>
           </div>
         </div>
       </div>
 
       <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
-        <button onClick={saveNote} style={{ flex: 1, padding: 13, borderRadius: 10, background: "#1e2d1a", color: "#fff", border: "none", fontWeight: 700, fontSize: 15, cursor: "pointer", fontFamily: "inherit" }}>
-          {editId ? "Save Changes" : "Save Meeting Notes"}
-        </button>
-        <button onClick={() => setView("list")} style={{ padding: "13px 20px", borderRadius: 10, background: "#fff", color: "#7a8c74", border: "1.5px solid #c8d8c0", fontWeight: 600, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+        <button onClick={saveMeeting} disabled={busy} style={{ flex: 1, padding: 13, borderRadius: 10, background: "#1e2d1a", color: "#fff", border: "none", fontWeight: 700, fontSize: 15, cursor: "pointer", fontFamily: "inherit" }}>{editId ? "Save Changes" : "Save Meeting"}</button>
+        <button onClick={() => { setView("list"); setEditId(null); }} style={{ padding: "13px 20px", borderRadius: 10, background: "#fff", color: "#7a8c74", border: "1.5px solid #c8d8c0", fontWeight: 600, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
       </div>
     </div>
   );
 
+  // LIST
   return (
     <div>
       <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 16 }}>
@@ -392,72 +431,37 @@ function MeetingNotes() {
         <button onClick={startNew} style={{ padding: "9px 18px", borderRadius: 10, background: "#1e2d1a", color: "#fff", border: "none", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>+ New Meeting</button>
       </div>
 
-      {/* Tag filter */}
-      {allTags.length > 0 && (
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
-          {["all", ...allTags].map(t => (
-            <button key={t} onClick={() => setFilterTag(t)}
-              style={{ padding: "4px 12px", borderRadius: 20, border: `1.5px solid ${filterTag === t ? "#7fb069" : "#c8d8c0"}`, background: filterTag === t ? "#f0f8eb" : "#fff", color: filterTag === t ? "#2e5c1e" : "#7a8c74", fontWeight: filterTag === t ? 700 : 600, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
-              {t === "all" ? "All" : t}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {filtered.length === 0 ? (
+      {(!meetings || meetings.length === 0) ? (
         <div style={{ ...S.card, textAlign: "center", padding: "40px 20px" }}>
           <div style={{ fontSize: 32, marginBottom: 10 }}>📝</div>
-          <div style={{ fontWeight: 700, color: "#1e2d1a", marginBottom: 6 }}>No meeting notes yet</div>
-          <div style={{ color: "#7a8c74", fontSize: 13, marginBottom: 20 }}>Start logging your weekly production meetings</div>
-          <button onClick={startNew} style={{ padding: "10px 22px", borderRadius: 10, background: "#7fb069", color: "#fff", border: "none", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>Start First Meeting</button>
+          <div style={{ fontWeight: 700, color: "#1e2d1a", marginBottom: 6 }}>No meetings yet</div>
+          <div style={{ color: "#7a8c74", fontSize: 13, marginBottom: 20 }}>Start a meeting, load a template, capture notes, and summarize.</div>
+          <button onClick={startNew} style={{ padding: "10px 22px", borderRadius: 10, background: "#7fb069", color: "#fff", border: "none", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>Start a Meeting</button>
         </div>
       ) : (
-        filtered.map(note => {
-          const openActions = (note.actionItems || []).filter(a => !a.done);
-          const doneActions = (note.actionItems || []).filter(a => a.done);
+        meetings.map(m => {
+          const open = (m.actionItems || []).filter(a => !a.done).length;
           return (
-            <div key={note.id} style={S.card}>
-              <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: note.body || note.actionItems?.length ? 12 : 0 }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 800, fontSize: 15, color: "#1e2d1a" }}>{note.title}</div>
+            <div key={m.id} style={S.card}>
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+                <div style={{ flex: 1, cursor: "pointer" }} onClick={() => openMeeting(m)}>
+                  <div style={{ fontWeight: 800, fontSize: 15, color: "#1e2d1a" }}>{m.title}</div>
                   <div style={{ fontSize: 12, color: "#aabba0", marginTop: 2 }}>
-                    {new Date(note.date).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
+                    {m.meetingDate ? new Date(m.meetingDate + "T00:00:00").toLocaleDateString("en-US", { weekday: "short", month: "long", day: "numeric", year: "numeric" }) : ""}
+                    {m.type ? ` · ${m.type}` : ""}{m.attendees ? ` · ${m.attendees}` : ""}
                   </div>
-                  {(note.tags || []).length > 0 && (
-                    <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 6 }}>
-                      {note.tags.map(t => <span key={t} style={S.pill("#7a8c74", "#f0f5ee")}>{t}</span>)}
-                    </div>
-                  )}
                 </div>
                 <div style={{ display: "flex", gap: 6 }}>
-                  <button onClick={() => startEdit(note)} style={{ padding: "5px 12px", borderRadius: 8, border: "1.5px solid #c8d8c0", background: "#fff", color: "#7a8c74", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Edit</button>
-                  <button onClick={() => deleteNote(note.id)} style={{ padding: "5px 10px", borderRadius: 8, border: "1.5px solid #f0d0c0", background: "#fff", color: "#e07b39", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>×</button>
+                  <button onClick={() => openMeeting(m)} style={{ padding: "5px 12px", borderRadius: 8, border: "1.5px solid #c8d8c0", background: "#fff", color: "#7a8c74", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Open</button>
+                  <button onClick={() => deleteMeeting(m.id)} style={{ padding: "5px 10px", borderRadius: 8, border: "1.5px solid #f0d0c0", background: "#fff", color: "#e07b39", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>×</button>
                 </div>
               </div>
-
-              {note.body && (
-                <div style={{ fontSize: 13, color: "#4a5a40", lineHeight: 1.65, whiteSpace: "pre-wrap", background: "#f8faf6", borderRadius: 8, padding: "10px 14px", marginBottom: note.actionItems?.length ? 12 : 0 }}>
-                  {note.body}
+              {m.summary && (
+                <div style={{ fontSize: 13, color: "#4a5a40", lineHeight: 1.6, whiteSpace: "pre-wrap", background: "#f8faf6", borderRadius: 8, padding: "10px 14px", marginTop: 10, maxHeight: 220, overflow: "hidden" }}>
+                  {m.summary.length > 600 ? m.summary.slice(0, 600) + "…" : m.summary}
                 </div>
               )}
-
-              {(note.actionItems || []).length > 0 && (
-                <div>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .7, marginBottom: 8 }}>
-                    Action Items · <span style={{ color: openActions.length > 0 ? "#c8791a" : "#7fb069" }}>{openActions.length} open</span>
-                    {doneActions.length > 0 && <span style={{ color: "#aabba0" }}> · {doneActions.length} done</span>}
-                  </div>
-                  {note.actionItems.map(a => (
-                    <div key={a.id} onClick={() => toggleActionInList(note.id, a.id)}
-                      style={{ display: "flex", gap: 8, alignItems: "center", padding: "5px 0", cursor: "pointer" }}>
-                      <div style={{ width: 16, height: 16, borderRadius: 4, border: `2px solid ${a.done ? "#7fb069" : "#c8d8c0"}`, background: a.done ? "#7fb069" : "#fff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                        {a.done && <span style={{ color: "#fff", fontSize: 10, fontWeight: 900 }}>✓</span>}
-                      </div>
-                      <span style={{ fontSize: 13, color: a.done ? "#aabba0" : "#1e2d1a", textDecoration: a.done ? "line-through" : "none" }}>{a.text}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
+              {open > 0 && <div style={{ fontSize: 12, color: "#c8791a", fontWeight: 700, marginTop: 8 }}>{open} open action item{open === 1 ? "" : "s"}</div>}
             </div>
           );
         })
@@ -465,6 +469,7 @@ function MeetingNotes() {
     </div>
   );
 }
+
 
 // ── MAIN EXPORT ───────────────────────────────────────────────────────────────
 export default function Meetings() {

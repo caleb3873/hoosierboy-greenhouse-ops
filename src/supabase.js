@@ -24,6 +24,7 @@ const JSONB_KEYS = new Set([
   "pick_sheet_photos","pickSheetPhotos",
   "signed_invoice_photos","signedInvoicePhotos",
   "alerts",
+  "action_items","actionItems",
 ]);
 
 // Convert snake_case DB row to camelCase app object
@@ -248,6 +249,7 @@ export function getBrokerSubCode(cropRunCode, broker, allBrokers) {
 }
 export const useComboTags = () => useTable("combo_tags", { orderBy: "name", localKey: "gh_tags_v1" });
 export const useOrderMeta = () => useTable("order_meta", { orderBy: "created_at", localKey: "gh_order_meta_v1" });
+export const useMeetings = () => useTable("meetings", { orderBy: "meeting_date", ascending: false, localKey: "gh_meetings_v2" });
 // Removed: useReceiving (receiving_records table) — superseded by useReceivingLines /
 // useReceivingOrders below; the old table was empty and only a dead Export import used it.
 export const useBrokerProfiles   = () => useTable("broker_profiles",   { orderBy: "name", localKey: "gh_broker_profiles_v1" });
