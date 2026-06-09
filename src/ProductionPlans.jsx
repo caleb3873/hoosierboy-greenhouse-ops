@@ -4259,11 +4259,32 @@ function shortName(name) {
 }
 
 // ── House Drilldown panel ───────────────────────────────────────────────────
+// Top-down combo planting diagram: center plant + alternating ring.
+function ComboDiagram({ layout }) {
+  const ring = layout.ring || [];
+  const cx = 90, cy = 90, R = 52, rC = 30, rR = 19, N = 6;
+  const ringColors = ["#7fb069", "#e89a3a"];
+  const pos = Array.from({ length: N }, (_, i) => { const a = -Math.PI / 2 + i * 2 * Math.PI / N; return { x: cx + R * Math.cos(a), y: cy + R * Math.sin(a), label: ring[i % (ring.length || 1)] || "" }; });
+  return (
+    <svg width="180" height="180" viewBox="0 0 180 180" style={{ flexShrink: 0 }}>
+      {pos.map((p, i) => (
+        <g key={i}>
+          <circle cx={p.x} cy={p.y} r={rR} fill={ringColors[i % 2]} stroke="#fff" strokeWidth="1.5" />
+          <text x={p.x} y={p.y} textAnchor="middle" dominantBaseline="central" style={{ fontSize: 8, fontWeight: 700, fill: "#fff" }}>{String(p.label).slice(0, 5)}</text>
+        </g>
+      ))}
+      <circle cx={cx} cy={cy} r={rC} fill="#6a4fb0" stroke="#fff" strokeWidth="2" />
+      <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central" style={{ fontSize: 9, fontWeight: 800, fill: "#fff" }}>{String(layout.center || "").slice(0, 7)}</text>
+    </svg>
+  );
+}
+
 // Item detail + LIVE culture (reads the linked guide from the Culture DB each time,
-// so parser updates flow through automatically).
+// so parser updates flow through automatically) + combo planting diagram.
 function ItemDetail({ row, onClose, onTask }) {
   const [guide, setGuide] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [combo, setCombo] = useState([]);
   const srcId = row?.variety?.culture_source_id;
   useEffect(() => {
     if (!srcId) { setGuide(null); return; }
@@ -4272,6 +4293,15 @@ function ItemDetail({ row, onClose, onTask }) {
     setLoading(true);
     cc.from("culture_guides_public").select("*").eq("id", srcId).single().then(({ data }) => { setGuide(data || null); setLoading(false); });
   }, [srcId]);
+  useEffect(() => {
+    if (!row?.planting_layout) { setCombo([]); return; }
+    const sb = getSupabase(); if (!sb) return;
+    sb.from("scheduled_crops").select("variety_id,qty_plants_ordered").eq("combo_parent_id", row.id).then(async ({ data }) => {
+      const vids = [...new Set((data || []).map(d => d.variety_id).filter(Boolean))];
+      const { data: vs } = vids.length ? await sb.from("variety_library").select("id,crop_name,variety").in("id", vids) : { data: [] };
+      setCombo((data || []).map(d => ({ qty: d.qty_plants_ordered, v: (vs || []).find(x => x.id === d.variety_id) })));
+    });
+  }, [row?.id, row?.planting_layout]);
   const cd = guide?.culture_details || {};
   const entries = Object.keys(cd).filter(k => /pgr|warning|pest|water|temp|finish|pinch|exposure|bloom|media|habit|propagation/i.test(k) && cd[k] && String(cd[k]).trim());
   const pdf = cd["Culture Guide PDF"] || guide?.pdf_url;
@@ -4288,6 +4318,18 @@ function ItemDetail({ row, onClose, onTask }) {
         <button onClick={onTask} style={{ background: COLORS.dark, color: "#fff", border: "none", borderRadius: 8, padding: "7px 14px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 13 }}>＋ Create task</button>
         {pdf && <a href={pdf} target="_blank" rel="noreferrer" style={{ fontSize: 13, color: COLORS.light }}>Full guide ↗</a>}
       </div>
+      {row?.planting_layout && (
+        <div style={{ borderTop: `1px solid ${COLORS.border}`, paddingTop: 10, marginBottom: 10 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>Combo planting</div>
+          <div style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
+            <ComboDiagram layout={row.planting_layout} />
+            <div style={{ flex: "1 1 200px" }}>
+              <div style={{ fontSize: 13, color: COLORS.text, marginBottom: 8 }}>{row.planting_layout.howto}</div>
+              <div style={{ fontSize: 12, color: COLORS.muted }}>{combo.length ? combo.map(c => `${c.v?.crop_name || ""} ${c.v?.variety || ""}${c.qty ? ` (${c.qty})` : ""}`).join(" · ") : "—"}</div>
+            </div>
+          </div>
+        </div>
+      )}
       <div style={{ borderTop: `1px solid ${COLORS.border}`, paddingTop: 10 }}>
         <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>Culture{guide ? ` · ${guide.breeder_name || ""} ${guide.crop_name || ""} ${guide.series_name || ""}` : ""}</div>
         {!srcId ? <div style={{ color: COLORS.muted, fontSize: 13 }}>No culture guide linked yet — add it in the parser, then re-link.</div>
@@ -4327,15 +4369,20 @@ function HouseDrilldown({ houseName, houses, planId, onClose }) {
         .select("id,bench_id,variety_id,qty_pots,qty_plants_ordered,direct_cost_total,revenue,gross_profit,plant_week")
         .eq("plan_id", planId).in("bench_id", benchIds);
       const ids = (pl || []).map(r => r.id);
-      const { data: sc } = ids.length ? await sb.from("scheduled_crops").select("id,item_name,is_combo_component,combo_parent_id").in("id", ids) : { data: [] };
+      const { data: sc } = ids.length ? await sb.from("scheduled_crops").select("id,item_name,is_combo_component,combo_parent_id,planting_layout").in("id", ids) : { data: [] };
       const { data: vars } = await sb.from("variety_library").select("id,variety,breeder,culture_source_id");
 
-      setRows((pl || []).map(r => ({
-        ...r,
-        bench: (bench || []).find(b => b.id === r.bench_id),
-        variety: (vars || []).find(v => v.id === r.variety_id),
-        item_name: (sc || []).find(x => x.id === r.id)?.item_name,
-      })).sort((a,b) => (a.bench?.position || 0) - (b.bench?.position || 0)));
+      setRows((pl || []).map(r => {
+        const scr = (sc || []).find(x => x.id === r.id);
+        return {
+          ...r,
+          bench: (bench || []).find(b => b.id === r.bench_id),
+          variety: (vars || []).find(v => v.id === r.variety_id),
+          item_name: scr?.item_name,
+          is_combo_component: scr?.is_combo_component,
+          planting_layout: scr?.planting_layout,
+        };
+      }).sort((a,b) => (a.bench?.position || 0) - (b.bench?.position || 0)));
     })();
   }, [sb, houseName, planId]);
 
