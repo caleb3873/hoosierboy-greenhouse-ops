@@ -67,6 +67,7 @@ export default function ProductionPlans() {
   const { isHouseplantPlanner } = useAuth();
   const [plans, setPlans]             = useState([]);
   const [selectedPlanId, setSelected] = useState(null);
+  const [initialTab, setInitialTab]   = useState(null);
   const [loading, setLoading]         = useState(true);
 
   useEffect(() => {
@@ -74,12 +75,11 @@ export default function ProductionPlans() {
     sb.from("production_plans").select("*").order("created_at", { ascending: false })
       .then(({ data }) => {
         setPlans(data || []);
-        if (data?.length) {
-          // Amanda/Kim/Rachel land directly on Houseplants H1 2027
-          const target = isHouseplantPlanner
-            ? data.find(p => p.name === "Houseplants H1 2027") || data[0]
-            : data[0];
+        if (data?.length && isHouseplantPlanner) {
+          // Amanda/Kim/Rachel still land directly in the current houseplant catalog.
+          const target = data.find(p => p.name === "Houseplants H1 2027") || data[0];
           setSelected(target.id);
+          setInitialTab("catalog");
         }
         setLoading(false);
       });
@@ -89,34 +89,165 @@ export default function ProductionPlans() {
   if (!plans.length) return <div style={{ padding: 40, color: COLORS.muted }}>No production plans yet. Create one in the database to start.</div>;
 
   const selected = plans.find(p => p.id === selectedPlanId);
+  const openPlan = (plan, tab) => {
+    setInitialTab(tab || nextActionForPlan(plan).tab);
+    setSelected(plan.id);
+  };
 
   return (
     <div style={{ padding: 24, background: COLORS.bg, minHeight: "100vh" }}>
-      <h1 style={{ fontFamily: "'DM Serif Display', serif", color: COLORS.dark, margin: "0 0 18px" }}>
-        Production Plans
-      </h1>
-
-      {/* Plan switcher */}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 24 }}>
-        {plans.map(p => (
-          <button key={p.id} onClick={() => setSelected(p.id)}
-            style={{
-              padding: "10px 18px", borderRadius: 8,
-              border: `2px solid ${selectedPlanId === p.id ? COLORS.dark : COLORS.border}`,
-              background: selectedPlanId === p.id ? COLORS.dark : COLORS.card,
-              color: selectedPlanId === p.id ? "#fff" : COLORS.text,
-              fontWeight: 600, cursor: "pointer", fontSize: 14,
-            }}>
-            {p.name}
-            <span style={{ marginLeft: 8, fontSize: 11, opacity: 0.7 }}>
-              {p.year} · {p.status}
-            </span>
+      {selected ? (
+        <>
+          <button onClick={() => setSelected(null)}
+            style={{ background: "none", border: "none", color: COLORS.muted, padding: 0, marginBottom: 10, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+            ← All production plans
           </button>
-        ))}
+          <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, flexWrap: "wrap", marginBottom: 18 }}>
+            <div>
+              <div style={{ color: seasonMeta(selected).color, fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: 1.3, marginBottom: 3 }}>
+                {seasonMeta(selected).label} · {selected.year}
+              </div>
+              <h1 style={{ fontFamily: "'DM Serif Display', serif", color: COLORS.dark, margin: 0 }}>
+                {selected.name}
+              </h1>
+            </div>
+            <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
+              {plans.map(p => (
+                <button key={p.id} onClick={() => openPlan(p)}
+                  style={{
+                    padding: "7px 11px", borderRadius: 20,
+                    border: `1.5px solid ${selectedPlanId === p.id ? COLORS.dark : COLORS.border}`,
+                    background: selectedPlanId === p.id ? COLORS.dark : COLORS.card,
+                    color: selectedPlanId === p.id ? "#fff" : COLORS.text,
+                    fontWeight: 700, cursor: "pointer", fontSize: 11, fontFamily: "inherit",
+                  }}>
+                  {seasonMeta(p).label} {p.year}
+                </button>
+              ))}
+            </div>
+          </div>
+          <PlanDashboard key={selected.id} plan={selected} initialTab={initialTab} />
+        </>
+      ) : (
+        <PlansIndex plans={plans} onOpen={openPlan} />
+      )}
+    </div>
+  );
+}
+
+const SEASON_STYLES = {
+  fall:        { label: "Fall",        color: "#a85d18", pale: "#fff3e5", mark: "F" },
+  winter:      { label: "Winter",      color: "#376c83", pale: "#eaf5f8", mark: "W" },
+  spring:      { label: "Spring",      color: "#4f8a3d", pale: "#edf7e8", mark: "S" },
+  houseplants: { label: "Houseplants", color: "#416f52", pale: "#e8f3ec", mark: "H" },
+  summer:      { label: "Summer",      color: "#a67913", pale: "#fff8df", mark: "S" },
+  other:       { label: "Other",       color: COLORS.muted, pale: "#f0f3ed", mark: "P" },
+};
+
+function seasonMeta(plan) {
+  const text = `${plan?.season || ""} ${plan?.name || ""}`.toLowerCase();
+  if (text.includes("houseplant")) return SEASON_STYLES.houseplants;
+  if (text.includes("spring")) return SEASON_STYLES.spring;
+  if (text.includes("fall") || text.includes("mum")) return SEASON_STYLES.fall;
+  if (text.includes("winter") || text.includes("holiday") || text.includes("poinsettia")) return SEASON_STYLES.winter;
+  if (text.includes("summer")) return SEASON_STYLES.summer;
+  return SEASON_STYLES.other;
+}
+
+function statusMeta(status) {
+  const key = String(status || "draft").toLowerCase();
+  if (key === "active") return { label: "Active", color: "#2f7436", bg: "#e7f5e7" };
+  if (key === "archived") return { label: "Archived", color: "#6f786b", bg: "#edf0eb" };
+  return { label: key.charAt(0).toUpperCase() + key.slice(1), color: "#9a641b", bg: "#fff1d8" };
+}
+
+function nextActionForPlan(plan) {
+  const season = seasonMeta(plan).label;
+  const archived = String(plan?.status || "").toLowerCase() === "archived";
+  if (archived) return { label: "Review archived plan", tab: season === "Houseplants" ? "catalog" : "dashboard" };
+  if (season === "Houseplants") return { label: "Review catalog", tab: "catalog" };
+  if (season === "Fall") return { label: "Review orders", tab: "orders" };
+  if (season === "Winter") return { label: "Review plant schedule", tab: "week" };
+  if (season === "Spring") return { label: "Continue plant schedule", tab: "week" };
+  return { label: "Open plan dashboard", tab: "dashboard" };
+}
+
+function formatLastEdited(plan) {
+  const value = plan?.updated_at || plan?.created_at;
+  if (!value) return "Not recorded";
+  const date = new Date(value);
+  if (isNaN(date.getTime())) return "Not recorded";
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+function PlansIndex({ plans, onOpen }) {
+  const sorted = [...plans].sort((a, b) => {
+    const statusOrder = { active: 0, draft: 1, archived: 2 };
+    const statusDiff = (statusOrder[a.status] ?? 1) - (statusOrder[b.status] ?? 1);
+    if (statusDiff) return statusDiff;
+    return (b.year || 0) - (a.year || 0);
+  });
+
+  return (
+    <>
+      <div style={{ marginBottom: 24 }}>
+        <div style={{ color: COLORS.light, fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: 1.4, marginBottom: 4 }}>Plan index</div>
+        <h1 style={{ fontFamily: "'DM Serif Display', serif", color: COLORS.dark, margin: "0 0 6px", fontSize: 34 }}>
+          Production Plans
+        </h1>
+        <div style={{ color: COLORS.muted, fontSize: 14 }}>Choose a season to pick up the right planning workflow.</div>
       </div>
 
-      {selected && <PlanDashboard plan={selected} />}
-    </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(270px, 1fr))", gap: 16 }}>
+        {sorted.map(plan => {
+          const season = seasonMeta(plan);
+          const status = statusMeta(plan.status);
+          const action = nextActionForPlan(plan);
+          return (
+            <div key={plan.id} onClick={() => onOpen(plan, action.tab)}
+              style={{
+                background: COLORS.card, border: `1.5px solid ${COLORS.border}`, borderRadius: 16,
+                overflow: "hidden", cursor: "pointer", boxShadow: "0 3px 12px rgba(30,45,26,0.05)",
+                display: "flex", flexDirection: "column", minHeight: 245,
+              }}>
+              <div style={{ height: 8, background: season.color }} />
+              <div style={{ padding: 20, display: "flex", flexDirection: "column", flex: 1 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 14 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
+                    <div style={{ width: 46, height: 46, borderRadius: 13, background: season.pale, color: season.color, display: "grid", placeItems: "center", fontFamily: "'DM Serif Display', serif", fontSize: 24, flexShrink: 0 }}>
+                      {season.mark}
+                    </div>
+                    <div>
+                      <div style={{ color: season.color, fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: 1.2 }}>{season.label}</div>
+                      <div style={{ color: COLORS.dark, fontFamily: "'DM Serif Display', serif", fontSize: 22, lineHeight: 1.08 }}>{plan.name}</div>
+                    </div>
+                  </div>
+                  <span style={{ background: status.bg, color: status.color, borderRadius: 20, padding: "5px 9px", fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: .5, flexShrink: 0 }}>
+                    {status.label}
+                  </span>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 22 }}>
+                  <div style={{ background: COLORS.bg, borderRadius: 10, padding: "10px 12px" }}>
+                    <div style={{ color: COLORS.muted, fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: .7 }}>Season</div>
+                    <div style={{ color: COLORS.text, fontSize: 13, fontWeight: 800, marginTop: 2 }}>{season.label} {plan.year}</div>
+                  </div>
+                  <div style={{ background: COLORS.bg, borderRadius: 10, padding: "10px 12px" }}>
+                    <div style={{ color: COLORS.muted, fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: .7 }}>Last edited</div>
+                    <div style={{ color: COLORS.text, fontSize: 13, fontWeight: 800, marginTop: 2 }}>{formatLastEdited(plan)}</div>
+                  </div>
+                </div>
+
+                <button onClick={e => { e.stopPropagation(); onOpen(plan, action.tab); }}
+                  style={{ marginTop: "auto", paddingTop: 20, background: "none", border: "none", color: season.color, fontSize: 13, fontWeight: 900, cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}>
+                  {action.label} →
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </>
   );
 }
 
@@ -187,6 +318,7 @@ const PLAN_TABS = [
   { id: "week",      label: "📅 By Plant Week" },
   { id: "tasks",     label: "✓ Tasks" },
   { id: "materials", label: "📦 Materials" },
+  { id: "plugs",     label: "🧮 Plug Orders" },
   { id: "orders",    label: "📋 Orders" },
   { id: "inputs",    label: "⚙ Inputs" },
   { id: "pricing",   label: "💰 Pricing" },
@@ -208,10 +340,14 @@ function tabsForPlan(plan) {
   return PLAN_TABS;
 }
 
-function PlanDashboard({ plan }) {
+function PlanDashboard({ plan, initialTab }) {
   const sb = getSupabase();
   const isHouseplant = plan?.name?.toLowerCase().startsWith("houseplants");
-  const [tab, setTab]             = useState(isHouseplant ? "catalog" : "dashboard");
+  const availableTabs = tabsForPlan(plan);
+  const startingTab = availableTabs.some(t => t.id === initialTab)
+    ? initialTab
+    : (isHouseplant ? "catalog" : "dashboard");
+  const [tab, setTab]             = useState(startingTab);
   const [pl, setPL]               = useState(null);
   const [housesProfit, setHouses] = useState([]);
   const [houses, setHousesList]   = useState([]);
@@ -319,6 +455,7 @@ function PlanDashboard({ plan }) {
           {hasData && tab === "week"      && <WeekTab planId={plan.id} />}
           {tab === "tasks"     && <PlanTasks planId={plan.id} />}
           {hasData && tab === "materials" && <MaterialsTab plan={plan} />}
+          {hasData && tab === "plugs"     && <PlugOrdersTab plan={plan} />}
           {hasData && tab === "orders"    && <OrdersTab plan={plan} />}
           {hasData && tab === "inputs"    && <InputsTab plan={plan} />}
           {hasData && tab === "pricing"   && <PricingTab plan={plan} />}
@@ -812,6 +949,144 @@ function ItemsTab({ plan }) {
 //   • Soil (total fluffed cf → bags needed)
 //   • Rings (per pinched container, via default_ring_id)
 //   • Inputs (program_inputs allocated share)
+// ── Plug Orders tab — live what-if calculator ────────────────────────────────
+// Enter flat/pot counts → see plug trays (sized by destination), extras, $ cost.
+// 1801 → count 288 (a full tray = 16 flats); 4.5"/basket/combo → count 280.
+// Billing is always 280/tray. Flag when extras > ½ tray. Nudge the mix live.
+const PLUG_SIZES = {
+  "288": { cells: 288, billed: 280, price: 0.12 },
+  "285": { cells: 285, billed: 280, price: 0.12 },
+  "160": { cells: 160, billed: 160, price: 0.26 },
+  "144": { cells: 144, billed: 140, price: 0.12 },
+};
+function plugDest(c, item) {
+  const s = `${c?.sku || ""} ${c?.name || ""} ${item || ""}`.toLowerCase();
+  if (s.includes("1801")) return "1801";
+  if (s.includes("4.5") || s.includes("4in") || s.includes("azalea")) return '4.5"';
+  return "basket/combo";
+}
+function plugUsable(size, dest) {
+  if (size === "288" && dest === "1801") return 288; // full tray = 16 1801 flats, plant it all
+  return PLUG_SIZES[size]?.billed || 280;            // else plan on the billed count (8 = buffer)
+}
+
+function PlugOrdersTab({ plan }) {
+  const sb = getSupabase();
+  const [rows, setRows] = useState(null);
+  const [flats, setFlats] = useState({}); // id -> flat-count override
+  const [sizes, setSizes] = useState({}); // id -> plug-size override
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!sb) return;
+    (async () => {
+      const { data: sc } = await sb.from("scheduled_crops")
+        .select("id,variety_id,container_id,qty_pots,ppp,qty_plants_ordered,plant_week,plant_year,item_name,prop_method")
+        .eq("plan_id", plan.id).eq("is_combo_component", false);
+      const plugs = (sc || []).filter(r => (r.prop_method || "").toUpperCase().startsWith("PLUG"));
+      const vids = [...new Set(plugs.map(r => r.variety_id).filter(Boolean))];
+      const cids = [...new Set(plugs.map(r => r.container_id).filter(Boolean))];
+      const { data: vars } = vids.length ? await sb.from("variety_library").select("id,crop_name,variety").in("id", vids) : { data: [] };
+      const { data: cons } = cids.length ? await sb.from("containers").select("id,sku,name").in("id", cids) : { data: [] };
+      setRows(plugs.map(r => ({ ...r, v: (vars || []).find(x => x.id === r.variety_id), c: (cons || []).find(x => x.id === r.container_id) })));
+    })();
+  }, [sb, plan.id]);
+
+  if (!rows) return <div style={{ padding: 20, color: COLORS.muted }}>Loading…</div>;
+  if (!rows.length) return <div style={{ padding: 20, color: COLORS.muted }}>No plug-grown items in this plan yet (pansies, violas, etc.).</div>;
+
+  const compute = (r) => {
+    const f = flats[r.id] != null ? +flats[r.id] : (+r.qty_pots || 0);
+    const ppp = +r.ppp || 1;
+    const need = Math.round(f * ppp);
+    const dest = plugDest(r.c, r.item_name);
+    const defSize = /cool wave/i.test(r.item_name || "") ? "285" : "288";
+    const size = sizes[r.id] || defSize;
+    const cfg = PLUG_SIZES[size] || PLUG_SIZES["288"];
+    const cnt = plugUsable(size, dest);
+    const trays = cnt ? Math.ceil(need / cnt) : 0;
+    const received = trays * cfg.cells;
+    const extras = received - need;
+    const cost = trays * cfg.billed * cfg.price;
+    const flag = extras > cnt / 2;
+    return { f, ppp, need, dest, size, cnt, trays, received, extras, cost, flag };
+  };
+
+  const computed = rows.map(r => ({ r, ...compute(r) }))
+    .sort((a, b) => `${a.r.v?.crop_name} ${a.r.v?.variety}`.localeCompare(`${b.r.v?.crop_name} ${b.r.v?.variety}`));
+  const byWeek = {};
+  computed.forEach(x => { const k = `${x.r.plant_year}·wk${x.r.plant_week}`; (byWeek[k] = byWeek[k] || []).push(x); });
+  const weeks = Object.keys(byWeek).sort();
+  const grand = computed.reduce((a, x) => ({ trays: a.trays + x.trays, extras: a.extras + x.extras, cost: a.cost + x.cost }), { trays: 0, extras: 0, cost: 0 });
+  const flagged = computed.filter(x => x.flag).length;
+  const dirty = Object.keys(flats).length > 0;
+
+  async function save() {
+    setSaving(true);
+    const updates = computed.filter(x => flats[x.r.id] != null);
+    for (const x of updates) await sb.from("scheduled_crops").update({ qty_pots: x.f, qty_plants_ordered: x.need }).eq("id", x.r.id);
+    setRows(rs => rs.map(r => { const u = updates.find(x => x.r.id === r.id); return u ? { ...r, qty_pots: u.f, qty_plants_ordered: u.need } : r; }));
+    setFlats({}); setSaving(false);
+  }
+
+  const numIn = { width: 56, padding: "3px 5px", border: `1px solid ${COLORS.border}`, borderRadius: 5, fontSize: 13, textAlign: "right" };
+
+  return (
+    <div style={{ display: "grid", gap: 14 }}>
+      <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "12px 14px", fontSize: 12, color: COLORS.muted, lineHeight: 1.5 }}>
+        Enter <strong>flats / pots</strong> per item — it sizes the plug order live (never short): <strong>1801 → 288/tray</strong> (a full tray = 16 flats), <strong>4.5"/basket/combo → 280/tray</strong>; you're billed 280/tray either way. <span style={{ color: COLORS.red, fontWeight: 700 }}>Extras over ½ tray flag red</span> — nudge the mix (−one variety, +another) to absorb them so nothing's left as orphan partial trays.
+      </div>
+
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+        <RevStat label="Plug trays" value={grand.trays.toLocaleString()} accent={COLORS.dark} />
+        <RevStat label="Total extras" value={grand.extras.toLocaleString()} accent={flagged ? COLORS.red : COLORS.light} />
+        <RevStat label="Plug cost" value={fmtMoney(grand.cost)} accent={COLORS.dark} />
+        <RevStat label="Flagged (>½ tray)" value={flagged} accent={flagged ? COLORS.red : COLORS.muted} />
+        {dirty && <button onClick={save} disabled={saving} style={{ marginLeft: "auto", padding: "8px 16px", background: COLORS.dark, color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer" }}>{saving ? "Saving…" : "💾 Save quantities"}</button>}
+      </div>
+
+      {weeks.map(wk => {
+        const ws = byWeek[wk];
+        const wt = ws.reduce((a, x) => ({ trays: a.trays + x.trays, extras: a.extras + x.extras, cost: a.cost + x.cost }), { trays: 0, extras: 0, cost: 0 });
+        return (
+          <div key={wk} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, overflow: "hidden" }}>
+            <div style={{ padding: "8px 12px", background: "#eaf3df", fontWeight: 800, color: COLORS.dark, fontSize: 13 }}>📅 {wk} · {ws.length} varieties · {wt.trays} trays · {wt.extras} extra · {fmtMoney(wt.cost)}</div>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead><tr>
+                <th style={th}>Variety</th><th style={th}>Dest</th><th style={th}>Plug</th>
+                <th style={{ ...th, textAlign: "right" }}>Flats/Pots</th><th style={{ ...th, textAlign: "right" }}>Need</th>
+                <th style={{ ...th, textAlign: "right" }}>Trays</th><th style={{ ...th, textAlign: "right" }}>Recv</th>
+                <th style={{ ...th, textAlign: "right" }}>Extra</th><th style={{ ...th, textAlign: "right" }}>$ Cost</th>
+              </tr></thead>
+              <tbody>
+                {ws.map(x => (
+                  <tr key={x.r.id} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
+                    <td style={td}><span style={{ fontWeight: 600 }}>{x.r.v?.crop_name} {x.r.v?.variety}</span></td>
+                    <td style={{ ...td, fontSize: 11, color: COLORS.muted }}>{x.dest}</td>
+                    <td style={td}>
+                      <select value={x.size} onChange={e => setSizes(s => ({ ...s, [x.r.id]: e.target.value }))} style={{ fontSize: 12, padding: "2px 4px", border: `1px solid ${COLORS.border}`, borderRadius: 5 }}>
+                        {Object.keys(PLUG_SIZES).map(k => <option key={k} value={k}>{k}</option>)}
+                      </select>
+                    </td>
+                    <td style={{ ...td, textAlign: "right" }}>
+                      <input type="number" min="0" value={x.f} onChange={e => setFlats(s => ({ ...s, [x.r.id]: e.target.value === "" ? 0 : Math.max(0, +e.target.value) }))} style={numIn} />
+                    </td>
+                    <td style={{ ...td, textAlign: "right", color: COLORS.muted }}>{x.need.toLocaleString()}</td>
+                    <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{x.trays}</td>
+                    <td style={{ ...td, textAlign: "right", color: COLORS.muted }}>{x.received.toLocaleString()}</td>
+                    <td style={{ ...td, textAlign: "right", fontWeight: 700, color: x.flag ? "#fff" : COLORS.text, background: x.flag ? COLORS.red : "transparent", borderRadius: x.flag ? 5 : 0 }}>{x.extras.toLocaleString()}</td>
+                    <td style={{ ...td, textAlign: "right" }}>{fmtMoney(x.cost)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function MaterialsTab({ plan }) {
   const sb = getSupabase();
   const [data, setData] = useState(null);
