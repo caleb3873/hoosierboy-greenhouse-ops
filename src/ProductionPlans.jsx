@@ -4860,16 +4860,19 @@ function plantColor(name) {
   if (/red|crimson|scarlet|wine/.test(s)) return "#d94f3d";
   if (/blue|denim/.test(s)) return "#4a7fc0";
   if (/orange|apricot|sunburst|coral/.test(s)) return "#e8943a";
-  return "#7fb069";
+  return null;
 }
 const PALE = new Set(["#e8ede2", "#e6c84a"]); // light fills → dark number text
+const PALETTE = ["#7fb069", "#8e5fb0", "#e89a3a", "#4a7fc0", "#d94f3d", "#2e8b8b", "#b06fa0"]; // per-plant fallback
 // Round hanging-basket planting diagram. Schema:
 //   { plants:["Pink","Purple",...], center:<idx|null>, rings:[[idx...],...] (outer→in),
 //     edge:{plant:<idx>,count:N} (rim, evenly spread — e.g. dichondra), howto }
-// Dots are numbered (legend below maps number→plant) and color-coded by plant name.
+// Dots are numbered (legend below maps number→plant); colored by color-word in the
+// name, else a distinct palette color per plant so every plant reads differently.
 function ComboDiagram({ layout }) {
   const plants = layout.plants;
   if (!plants) return null; // old-format layouts are migrated to this schema
+  const COLS = plants.map((p, i) => plantColor(p) || PALETTE[i % PALETTE.length]);
   const cx = 110, cy = 110, RB = 96;
   const dot = (x, y, r, n, fill, key) => (
     <g key={key}>
@@ -4882,17 +4885,17 @@ function ComboDiagram({ layout }) {
     <circle key="rim2" cx={cx} cy={cy} r={RB - 5} fill="none" stroke="#dde7d3" strokeWidth="1" />,
   ];
   // edge plants on the rim (evenly spread)
-  if (layout.edge && layout.edge.count) { const { plant, count } = layout.edge; for (let i = 0; i < count; i++) { const a = -Math.PI / 2 + i * 2 * Math.PI / count; els.push(dot(cx + (RB - 13) * Math.cos(a), cy + (RB - 13) * Math.sin(a), 13, plant + 1, plantColor(plants[plant]), "e" + i)); } }
-  // concentric rings (outer first)
-  (layout.rings || []).forEach((ring, ri) => { const R = RB * (0.52 - ri * 0.26); const off = ri % 2 ? Math.PI / (ring.length || 1) : 0; ring.forEach((pi, i) => { const a = -Math.PI / 2 + off + i * 2 * Math.PI / (ring.length || 1); els.push(dot(cx + R * Math.cos(a), cy + R * Math.sin(a), 16, pi + 1, plantColor(plants[pi]), `r${ri}_${i}`)); }); });
-  if (layout.center != null) els.push(dot(cx, cy, 18, layout.center + 1, plantColor(plants[layout.center]), "c"));
+  if (layout.edge && layout.edge.count) { const { plant, count } = layout.edge; for (let i = 0; i < count; i++) { const a = -Math.PI / 2 + i * 2 * Math.PI / count; els.push(dot(cx + (RB - 13) * Math.cos(a), cy + (RB - 13) * Math.sin(a), 13, plant + 1, COLS[plant], "e" + i)); } }
+  // concentric rings — spread out: outer pushed further, inner given more room
+  (layout.rings || []).forEach((ring, ri) => { const R = RB * (0.64 - ri * 0.30); const off = ri % 2 ? Math.PI / (ring.length || 1) : 0; ring.forEach((pi, i) => { const a = -Math.PI / 2 + off + i * 2 * Math.PI / (ring.length || 1); els.push(dot(cx + R * Math.cos(a), cy + R * Math.sin(a), 16, pi + 1, COLS[pi], `r${ri}_${i}`)); }); });
+  if (layout.center != null) els.push(dot(cx, cy, 18, layout.center + 1, COLS[layout.center], "c"));
   return (
     <div>
       <svg width="220" height="220" viewBox="0 0 220 220" style={{ flexShrink: 0 }}>{els}</svg>
       <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 14px", marginTop: 6 }}>
         {plants.map((p, i) => (
           <span key={i} style={{ fontSize: 12, display: "inline-flex", alignItems: "center", gap: 5 }}>
-            <span style={{ display: "inline-flex", width: 17, height: 17, borderRadius: 9, background: plantColor(p), color: PALE.has(plantColor(p)) ? "#5a6a54" : "#fff", fontSize: 10, fontWeight: 800, alignItems: "center", justifyContent: "center" }}>{i + 1}</span>
+            <span style={{ display: "inline-flex", width: 17, height: 17, borderRadius: 9, background: COLS[i], color: PALE.has(COLS[i]) ? "#5a6a54" : "#fff", fontSize: 10, fontWeight: 800, alignItems: "center", justifyContent: "center" }}>{i + 1}</span>
             {p}
           </span>
         ))}
