@@ -4864,6 +4864,7 @@ function plantColor(name) {
 }
 const PALE = new Set(["#e8ede2", "#e6c84a"]); // light fills → dark number text
 const PALETTE = ["#7fb069", "#8e5fb0", "#e89a3a", "#4a7fc0", "#d94f3d", "#2e8b8b", "#b06fa0"]; // per-plant fallback
+const LET = i => String.fromCharCode(65 + (i % 26)); // plant reference letter A,B,C…
 // Round hanging-basket planting diagram. Schema:
 //   { plants:["Pink","Purple",...], center:<idx|null>, rings:[[idx...],...] (outer→in),
 //     edge:{plant:<idx>,count:N} (rim, evenly spread — e.g. dichondra), howto }
@@ -4873,6 +4874,9 @@ function ComboDiagram({ layout }) {
   const plants = layout.plants;
   if (!plants) return null; // old-format layouts are migrated to this schema
   const COLS = plants.map((p, i) => plantColor(p) || PALETTE[i % PALETTE.length]);
+  const counts = plants.map(() => 0);
+  if (layout.dots) layout.dots.forEach(d => { counts[d.plant]++; });
+  else { if (layout.center != null) counts[layout.center]++; (layout.rings || []).forEach(r => r.forEach(pi => counts[pi]++)); if (layout.edge && layout.edge.count) counts[layout.edge.plant] += layout.edge.count; }
   const cx = 110, cy = 110, RB = 96;
   const dot = (x, y, r, n, fill, key) => (
     <g key={key}>
@@ -4886,13 +4890,13 @@ function ComboDiagram({ layout }) {
   ];
   if (layout.dots) {
     // hand-placed positions (from the basket designer): normalized 0..1 → basket circle
-    layout.dots.forEach((d, i) => els.push(dot(cx + (d.x - 0.5) * 2 * RB, cy + (d.y - 0.5) * 2 * RB, 15, d.plant + 1, COLS[d.plant], "d" + i)));
+    layout.dots.forEach((d, i) => els.push(dot(cx + (d.x - 0.5) * 2 * RB, cy + (d.y - 0.5) * 2 * RB, 15, LET(d.plant), COLS[d.plant], "d" + i)));
   } else {
     // edge plants on the rim (evenly spread)
-    if (layout.edge && layout.edge.count) { const { plant, count } = layout.edge; for (let i = 0; i < count; i++) { const a = -Math.PI / 2 + i * 2 * Math.PI / count; els.push(dot(cx + (RB - 13) * Math.cos(a), cy + (RB - 13) * Math.sin(a), 13, plant + 1, COLS[plant], "e" + i)); } }
+    if (layout.edge && layout.edge.count) { const { plant, count } = layout.edge; for (let i = 0; i < count; i++) { const a = -Math.PI / 2 + i * 2 * Math.PI / count; els.push(dot(cx + (RB - 13) * Math.cos(a), cy + (RB - 13) * Math.sin(a), 13, LET(plant), COLS[plant], "e" + i)); } }
     // concentric rings — spread out: outer pushed further, inner given more room
-    (layout.rings || []).forEach((ring, ri) => { const R = RB * (0.64 - ri * 0.30); const off = ri % 2 ? Math.PI / (ring.length || 1) : 0; ring.forEach((pi, i) => { const a = -Math.PI / 2 + off + i * 2 * Math.PI / (ring.length || 1); els.push(dot(cx + R * Math.cos(a), cy + R * Math.sin(a), 16, pi + 1, COLS[pi], `r${ri}_${i}`)); }); });
-    if (layout.center != null) els.push(dot(cx, cy, 18, layout.center + 1, COLS[layout.center], "c"));
+    (layout.rings || []).forEach((ring, ri) => { const R = RB * (0.64 - ri * 0.30); const off = ri % 2 ? Math.PI / (ring.length || 1) : 0; ring.forEach((pi, i) => { const a = -Math.PI / 2 + off + i * 2 * Math.PI / (ring.length || 1); els.push(dot(cx + R * Math.cos(a), cy + R * Math.sin(a), 16, LET(pi), COLS[pi], `r${ri}_${i}`)); }); });
+    if (layout.center != null) els.push(dot(cx, cy, 18, LET(layout.center), COLS[layout.center], "c"));
   }
   return (
     <div>
@@ -4900,8 +4904,8 @@ function ComboDiagram({ layout }) {
       <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 14px", marginTop: 6 }}>
         {plants.map((p, i) => (
           <span key={i} style={{ fontSize: 12, display: "inline-flex", alignItems: "center", gap: 5 }}>
-            <span style={{ display: "inline-flex", width: 17, height: 17, borderRadius: 9, background: COLS[i], color: PALE.has(COLS[i]) ? "#5a6a54" : "#fff", fontSize: 10, fontWeight: 800, alignItems: "center", justifyContent: "center" }}>{i + 1}</span>
-            {p}
+            <span style={{ display: "inline-flex", width: 17, height: 17, borderRadius: 9, background: COLS[i], color: PALE.has(COLS[i]) ? "#5a6a54" : "#fff", fontSize: 10, fontWeight: 800, alignItems: "center", justifyContent: "center" }}>{LET(i)}</span>
+            {p} <span style={{ color: COLORS.muted, fontWeight: 700 }}>×{counts[i]}</span>
           </span>
         ))}
       </div>
@@ -4970,15 +4974,15 @@ function BasketDesigner({ layout, plantNames, onSave, onClose }) {
         {dots.map((d, i) => { const x = cx + (d.x - 0.5) * 2 * RB, y = cy + (d.y - 0.5) * 2 * RB; return (
           <g key={i} style={{ cursor: "grab" }} onPointerDown={e => { e.preventDefault(); setDrag(i); setSel(i); }} onDoubleClick={() => { setDots(ds => ds.filter((_, j) => j !== i)); setSel(null); }}>
             <circle cx={x} cy={y} r={dotR} fill={COLS[d.plant]} stroke={sel === i ? COLORS.dark : "#fff"} strokeWidth={sel === i ? 3 : 2} />
-            <text x={x} y={y} textAnchor="middle" dominantBaseline="central" style={{ fontSize: 13, fontWeight: 800, fill: PALE.has(COLS[d.plant]) ? "#5a6a54" : "#fff", pointerEvents: "none" }}>{d.plant + 1}</text>
+            <text x={x} y={y} textAnchor="middle" dominantBaseline="central" style={{ fontSize: 13, fontWeight: 800, fill: PALE.has(COLS[d.plant]) ? "#5a6a54" : "#fff", pointerEvents: "none" }}>{LET(d.plant)}</text>
           </g>
         ); })}
       </svg>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, margin: "10px 0" }}>
         {plants.map((p, i) => (
           <button key={i} onClick={() => setDots(ds => [...ds, { plant: i, x: 0.5, y: 0.5 }])} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 10px", border: `1px solid ${COLORS.border}`, borderRadius: 16, background: "#fff", cursor: "pointer", fontSize: 12, fontFamily: "inherit" }}>
-            <span style={{ width: 16, height: 16, borderRadius: 8, background: COLS[i], color: PALE.has(COLS[i]) ? "#5a6a54" : "#fff", fontSize: 10, fontWeight: 800, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>{i + 1}</span>
-            + {p} <span style={{ color: COLORS.muted }}>({dots.filter(d => d.plant === i).length})</span>
+            <span style={{ width: 16, height: 16, borderRadius: 8, background: COLS[i], color: PALE.has(COLS[i]) ? "#5a6a54" : "#fff", fontSize: 10, fontWeight: 800, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>{LET(i)}</span>
+            + {p} <span style={{ color: COLORS.muted }}>×{dots.filter(d => d.plant === i).length}</span>
           </button>
         ))}
       </div>
