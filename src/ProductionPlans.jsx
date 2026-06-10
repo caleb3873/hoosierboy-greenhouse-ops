@@ -1154,8 +1154,6 @@ function PropagationTab({ plan }) {
   const [rows, setRows] = useState(null);
   const [q, setQ] = useState("");
   const [mist, setMist] = useState("all"); // all | mist | dry
-  const [sortCol, setSortCol] = useState("date");
-  const [sortDir, setSortDir] = useState("asc");
   const [sel, setSel] = useState(() => new Set());
   const [taskItems, setTaskItems] = useState(null);
 
@@ -1183,6 +1181,7 @@ function PropagationTab({ plan }) {
           prio: STICKING_PRIORITY[v.crop_name] || 9,
           mistDays: md, needsMist: md != null ? (+md > 0) : null,
           hormone: pd.rooting_hormone || pd.hormone || "", fungicide: pd.fungicide || "", pinch: pd.propagation_pinch || pd.pinch || "", tips: pd.key_tips || "",
+          callused: /^call/i.test(r.prop_method || ""),
         };
       }));
     })();
@@ -1198,54 +1197,74 @@ function PropagationTab({ plan }) {
     if (ql && !`${r.crop} ${r.variety} ${r.item}`.toLowerCase().includes(ql)) return false;
     return true;
   });
-  const sv = (r, c) => c === "date" ? `${r.year}-${String(r.week).padStart(2, "0")}` : c === "cell" ? r.cell : c === "prio" ? r.prio : c === "crop" ? `${r.crop} ${r.variety}` : c === "mist" ? (r.mistDays ?? 999) : c === "trays" ? r.trays : "";
-  // Default order = date → cell size → priority; clicking a header overrides the primary key.
-  const sorted = [...shown].sort((a, b) => {
-    const keys = sortCol === "date" ? ["date", "cell", "prio"] : [sortCol, "date", "cell", "prio"];
-    for (const k of keys) { const x = sv(a, k), y = sv(b, k); if (x < y) return sortDir === "asc" ? -1 : 1; if (x > y) return sortDir === "asc" ? 1 : -1; }
-    return 0;
-  });
-  const clickSort = c => { if (c === sortCol) setSortDir(d => d === "asc" ? "desc" : "asc"); else { setSortCol(c); setSortDir("asc"); } };
-  const H = ({ c, children, r }) => <th onClick={() => clickSort(c)} style={{ ...th, textAlign: r ? "right" : "left", cursor: "pointer" }}>{children}{sortCol === c ? (sortDir === "asc" ? " ▲" : " ▼") : ""}</th>;
   const toggle = id => setSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  const selRows = sorted.filter(r => sel.has(r.id));
+  const selRows = shown.filter(r => sel.has(r.id));
+
+  // top totals by cell size (across the filtered set)
+  const sizeTotals = {}; shown.forEach(r => { sizeTotals[r.cell] = (sizeTotals[r.cell] || 0) + r.trays; });
+  const sizes = Object.keys(sizeTotals).map(Number).sort((a, b) => a - b);
+  // group: week → size → items
+  const byWeek = {}; shown.forEach(r => { const w = byWeek[r.weekKey] = byWeek[r.weekKey] || {}; (w[r.cell] = w[r.cell] || []).push(r); });
+  const weekKeys = Object.keys(byWeek).sort();
+  const sumTrays = arr => arr.reduce((a, r) => a + r.trays, 0);
+
+  const ItemRow = ({ r }) => (
+    <tr style={{ borderBottom: `1px solid ${COLORS.border}`, background: sel.has(r.id) ? "#eef5e7" : "transparent" }}>
+      <td style={td}><input type="checkbox" checked={sel.has(r.id)} onChange={() => toggle(r.id)} /></td>
+      <td style={td}>
+        <span style={{ fontWeight: 600 }}>{r.crop}</span> <span style={{ color: COLORS.muted }}>{r.variety}</span>
+        {r.callused && <span style={{ marginLeft: 6, background: "#e89a3a", color: "#fff", fontSize: 9, fontWeight: 800, padding: "1px 6px", borderRadius: 8 }} title="Callused — shorter rooting window">CALLUSED</span>}
+      </td>
+      <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{r.trays}</td>
+      <td style={td}>{r.needsMist === true ? <span style={{ color: "#2e7d9e" }}>💦 {r.mistDays}d</span> : r.needsMist === false ? <span style={{ color: COLORS.muted }}>🌵 dry</span> : <span style={{ color: "#c8d0c0" }}>—</span>}</td>
+      <td style={{ ...td, textAlign: "right" }}><span style={{ background: PRIO_COLOR[r.prio], color: "#fff", fontWeight: 800, fontSize: 11, padding: "1px 7px", borderRadius: 8 }}>{r.prio === 9 ? "?" : "P" + r.prio}</span></td>
+      <td style={{ ...td, fontSize: 11, color: COLORS.muted }} title={r.tips || ""}>{r.hormone ? `🧴 ${r.hormone}  ` : ""}{r.fungicide ? `🛡 ${r.fungicide}  ` : ""}{r.pinch ? `✂️ ${r.pinch}` : ""}{!r.hormone && !r.fungicide && !r.pinch ? "—" : ""}</td>
+    </tr>
+  );
+  const itemTable = items => (
+    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+      <thead><tr><th style={th}></th><th style={th}>Crop / variety</th><th style={{ ...th, textAlign: "right" }}>Trays</th><th style={th}>Mist</th><th style={{ ...th, textAlign: "right" }}>Prio</th><th style={th}>Treatments (prop)</th></tr></thead>
+      <tbody>{[...items].sort((a, b) => a.prio - b.prio).map(r => <ItemRow key={r.id} r={r} />)}</tbody>
+    </table>
+  );
 
   return (
     <div style={{ display: "grid", gap: 14 }}>
       <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "12px 14px", fontSize: 12, color: COLORS.muted }}>
-        Sticking schedule — ordered <strong>stick date → cell size → priority</strong> (P1 = stick first, from the Ball/Selecta URC list). Split by misting need from the culture DB. Select rows to make a sticking task; treatment recs (rooting hormone / fungicide / pinch) come from each crop's propagation culture.
+        Sticking schedule — <strong>week ▸ cell size</strong> dropdowns, items in priority order (P1 = stick first, Ball/Selecta URC list). Callused (CALL) sticks like URC, just a shorter rooting window. Mist need + treatment recs come from the culture DB.
       </div>
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
         <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search crop / variety…" style={{ padding: "8px 12px", border: `1px solid ${COLORS.border}`, borderRadius: 8, fontSize: 13, minWidth: 200 }} />
         {["all", "mist", "dry"].map(m => <button key={m} onClick={() => setMist(m)} style={{ padding: "7px 14px", borderRadius: 20, fontSize: 12, fontWeight: 700, cursor: "pointer", border: `1px solid ${mist === m ? COLORS.light : COLORS.border}`, background: mist === m ? COLORS.light : "#fff", color: mist === m ? "#fff" : COLORS.text }}>{m === "all" ? "All" : m === "mist" ? "💦 Needs mist" : "🌵 Dry / no mist"}</button>)}
-        <span style={{ marginLeft: "auto", fontSize: 13, color: COLORS.muted }}>{shown.length} items · {shown.reduce((s, r) => s + r.trays, 0)} trays</span>
-        {sel.size > 0 && <button onClick={() => setTaskItems(selRows.map(r => ({ item: `Stick ${r.crop} ${r.variety} — ${r.trays}× ${r.cell}-cell`, bench: r.weekKey })))} style={{ padding: "8px 16px", background: COLORS.dark, color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer" }}>＋ Stick task ({sel.size})</button>}
+        {sel.size > 0 && <button onClick={() => setTaskItems(selRows.map(r => ({ item: `Stick ${r.crop} ${r.variety} — ${r.trays}× ${r.cell}-cell`, bench: r.weekKey })))} style={{ marginLeft: "auto", padding: "8px 16px", background: COLORS.dark, color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer" }}>＋ Stick task ({sel.size})</button>}
       </div>
-      <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, overflow: "hidden" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-          <thead><tr>
-            <th style={th}></th>
-            <H c="date">Stick wk</H><H c="crop">Crop / variety</H><H c="cell" r>Cell</H><H c="trays" r>Trays</H>
-            <H c="mist">Mist</H><H c="prio" r>Prio</H><th style={th}>Treatments (prop)</th>
-          </tr></thead>
-          <tbody>
-            {sorted.map(r => (
-              <tr key={r.id} style={{ borderBottom: `1px solid ${COLORS.border}`, background: sel.has(r.id) ? "#eef5e7" : "transparent" }}>
-                <td style={td}><input type="checkbox" checked={sel.has(r.id)} onChange={() => toggle(r.id)} /></td>
-                <td style={{ ...td, fontWeight: 600 }}>{r.weekKey}</td>
-                <td style={td}><span style={{ fontWeight: 600 }}>{r.crop}</span> <span style={{ color: COLORS.muted }}>{r.variety}</span></td>
-                <td style={{ ...td, textAlign: "right" }}>{r.cell}</td>
-                <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{r.trays}</td>
-                <td style={td}>{r.needsMist === true ? <span style={{ color: "#2e7d9e" }}>💦 {r.mistDays}d</span> : r.needsMist === false ? <span style={{ color: COLORS.muted }}>🌵 dry</span> : <span style={{ color: "#c8d0c0" }}>—</span>}</td>
-                <td style={{ ...td, textAlign: "right" }}><span style={{ background: PRIO_COLOR[r.prio], color: "#fff", fontWeight: 800, fontSize: 11, padding: "1px 7px", borderRadius: 8 }}>{r.prio === 9 ? "?" : "P" + r.prio}</span></td>
-                <td style={{ ...td, fontSize: 11, color: COLORS.muted }} title={r.tips || ""}>
-                  {r.hormone ? `🧴 ${r.hormone}  ` : ""}{r.fungicide ? `🛡 ${r.fungicide}  ` : ""}{r.pinch ? `✂️ ${r.pinch}` : ""}{!r.hormone && !r.fungicide && !r.pinch ? "—" : ""}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+
+      {/* TOP TOTALS by cell size */}
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+        {sizes.map(s => <BigSoilStat key={s} icon="🌱" value={sizeTotals[s].toLocaleString()} label={`${s}-cell trays (total)`} />)}
+        <BigSoilStat icon="📋" value={shown.reduce((a, r) => a + r.trays, 0).toLocaleString()} label="total prop trays" />
       </div>
+
+      {/* WEEK ▸ SIZE dropdowns */}
+      {weekKeys.map(wk => {
+        const w = byWeek[wk]; const wSizes = Object.keys(w).map(Number).sort((a, b) => a - b);
+        const wItems = wSizes.reduce((a, s) => a + w[s].length, 0);
+        return (
+          <details key={wk} style={{ border: `1px solid ${COLORS.border}`, borderRadius: 10, background: COLORS.card }}>
+            <summary style={{ cursor: "pointer", padding: "10px 14px", fontWeight: 800, color: COLORS.dark }}>
+              📅 {wk} · {wItems} items · {wSizes.map(s => `${s}-cell: ${sumTrays(w[s])} trays`).join("  ·  ")}
+            </summary>
+            <div style={{ padding: "0 10px 10px" }}>
+              {wSizes.map(s => (
+                <details key={s} style={{ borderTop: `1px solid ${COLORS.border}` }}>
+                  <summary style={{ cursor: "pointer", padding: "8px 8px", fontWeight: 700, color: COLORS.text, fontSize: 13 }}>🔲 {s}-cell · {sumTrays(w[s])} trays · {w[s].length} items</summary>
+                  {itemTable(w[s])}
+                </details>
+              ))}
+            </div>
+          </details>
+        );
+      })}
       {taskItems && <Modal onClose={() => { setTaskItems(null); setSel(new Set()); }}><TaskComposer items={taskItems} planId={plan.id} houseId={null} onClose={() => { setTaskItems(null); setSel(new Set()); }} /></Modal>}
     </div>
   );
