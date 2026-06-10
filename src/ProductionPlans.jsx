@@ -4940,16 +4940,17 @@ function splitTerms(val) {
   return String(val || "").split(/[,;\n•·]| and /i).map(s => s.trim()).filter(s => s.length > 2);
 }
 
-// Self-contained, no-login HTML page of a basket diagram — for a public share link.
-const escHtml = s => String(s || "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+// Self-contained SVG of a basket diagram (Supabase serves .svg as image/svg+xml, so it
+// renders on any phone with no login — unlike .html which it serves as text/plain).
+const escXml = s => String(s || "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const comboSlug = s => String(s || "combo").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "combo";
-function comboShareHTML(layout, title, recipe) {
+function comboShareSVG(layout, title, recipe) {
   const plants = layout.plants || [];
   const COLS = plants.map((p, i) => plantColor(p) || PALETTE[i % PALETTE.length]);
   const counts = plants.map(() => 0);
   if (layout.dots) layout.dots.forEach(d => { counts[d.plant]++; });
   else { if (layout.center != null) counts[layout.center]++; (layout.rings || []).forEach(r => r.forEach(pi => counts[pi]++)); if (layout.edge && layout.edge.count) counts[layout.edge.plant] += layout.edge.count; }
-  const cx = 110, cy = 110, RB = 96; const dots = [];
+  const W = 360, cx = 180, cy = 158, RB = 96; const dots = [];
   const push = (x, y, r, pi) => dots.push({ x, y, r, pi });
   if (layout.dots) layout.dots.forEach(d => push(cx + (d.x - 0.5) * 2 * RB, cy + (d.y - 0.5) * 2 * RB, 15, d.plant));
   else {
@@ -4957,16 +4958,22 @@ function comboShareHTML(layout, title, recipe) {
     (layout.rings || []).forEach((ring, ri) => { const R = RB * (0.64 - ri * 0.30); const off = ri % 2 ? Math.PI / (ring.length || 1) : 0; ring.forEach((pi, i) => { const a = -Math.PI / 2 + off + i * 2 * Math.PI / (ring.length || 1); push(cx + R * Math.cos(a), cy + R * Math.sin(a), 16, pi); }); });
     if (layout.center != null) push(cx, cy, 18, layout.center);
   }
-  const circles = dots.map(d => `<circle cx="${d.x.toFixed(1)}" cy="${d.y.toFixed(1)}" r="${d.r}" fill="${COLS[d.pi]}" stroke="#fff" stroke-width="2"/><text x="${d.x.toFixed(1)}" y="${d.y.toFixed(1)}" text-anchor="middle" dominant-baseline="central" font-size="${Math.round(d.r * 0.95)}" font-weight="800" fill="${PALE.has(COLS[d.pi]) ? "#5a6a54" : "#fff"}">${LET(d.pi)}</text>`).join("");
-  const legend = plants.map((p, i) => `<div style="display:flex;align-items:center;gap:8px;font-size:16px;margin:6px 0"><span style="display:inline-flex;width:24px;height:24px;border-radius:12px;background:${COLS[i]};color:${PALE.has(COLS[i]) ? "#5a6a54" : "#fff"};font-weight:800;align-items:center;justify-content:center">${LET(i)}</span> ${escHtml(p)} <b>&times;${counts[i]}</b></div>`).join("");
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escHtml(title)}</title></head><body style="font-family:system-ui,-apple-system,sans-serif;margin:0;padding:20px;background:#f2f5ef;color:#1e2d1a"><div style="max-width:420px;margin:0 auto"><h2 style="margin:0 0 4px;font-size:20px">🪴 ${escHtml(title)}</h2><div style="color:#7a8c74;font-size:14px;margin-bottom:14px">${escHtml(recipe || "")}</div><svg width="100%" viewBox="0 0 220 220" style="display:block;max-width:360px;margin:0 auto"><circle cx="${cx}" cy="${cy}" r="${RB}" fill="#f7faf3" stroke="#b9c9ad" stroke-width="2"/><circle cx="${cx}" cy="${cy}" r="${RB - 5}" fill="none" stroke="#dde7d3"/>${circles}</svg><div style="margin-top:16px">${legend}</div><div style="margin-top:16px;font-size:15px;line-height:1.55">${escHtml(layout.howto || "")}</div><div style="margin-top:22px;color:#aab39f;font-size:12px">Schlegel Greenhouse · planting diagram</div></div></body></html>`;
+  const dotSvg = dots.map(d => `<circle cx="${d.x.toFixed(1)}" cy="${d.y.toFixed(1)}" r="${d.r}" fill="${COLS[d.pi]}" stroke="#fff" stroke-width="2"/><text x="${d.x.toFixed(1)}" y="${d.y.toFixed(1)}" text-anchor="middle" dominant-baseline="central" font-size="${Math.round(d.r * 0.95)}" font-weight="800" fill="${PALE.has(COLS[d.pi]) ? "#5a6a54" : "#fff"}">${LET(d.pi)}</text>`).join("");
+  let y = 280;
+  const legend = plants.map((p, i) => { const ly = y + i * 28; return `<circle cx="26" cy="${ly}" r="12" fill="${COLS[i]}"/><text x="26" y="${ly}" text-anchor="middle" dominant-baseline="central" font-size="11" font-weight="800" fill="${PALE.has(COLS[i]) ? "#5a6a54" : "#fff"}">${LET(i)}</text><text x="46" y="${ly}" dominant-baseline="central" font-size="15" fill="#1e2d1a">${escXml(p)}  &#215;${counts[i]}</text>`; }).join("");
+  y += plants.length * 28 + 6;
+  const words = String(layout.howto || "").split(/\s+/).filter(Boolean); const lines = []; let cur = "";
+  words.forEach(w => { if ((cur + " " + w).length > 52) { if (cur) lines.push(cur); cur = w; } else cur = cur ? cur + " " + w : w; }); if (cur) lines.push(cur);
+  const howSvg = lines.map((ln, i) => `<text x="16" y="${y + 12 + i * 19}" font-size="13" fill="#3a4a32">${escXml(ln)}</text>`).join("");
+  const H = y + 12 + lines.length * 19 + 26;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" font-family="system-ui,-apple-system,Segoe UI,sans-serif"><rect width="${W}" height="${H}" fill="#f2f5ef"/><text x="16" y="30" font-size="19" font-weight="800" fill="#1e2d1a">${escXml(title)}</text><text x="16" y="50" font-size="12" fill="#7a8c74">${escXml(recipe || "")}</text><circle cx="${cx}" cy="${cy}" r="${RB}" fill="#f7faf3" stroke="#b9c9ad" stroke-width="2"/><circle cx="${cx}" cy="${cy}" r="${RB - 5}" fill="none" stroke="#dde7d3"/>${dotSvg}${legend}${howSvg}<text x="16" y="${H - 10}" font-size="11" fill="#aab39f">Schlegel Greenhouse · planting diagram</text></svg>`;
 }
 async function shareComboDiagram(row, planId, recipe) {
   const sb = getSupabase();
   if (!sb || !row?.planting_layout) { window.alert("Nothing to share yet."); return null; }
-  const html = comboShareHTML(row.planting_layout, row.item_name || "Combo", recipe || "");
-  const path = `${planId || "x"}/${comboSlug(row.item_name)}.html`;
-  const { error } = await sb.storage.from("combo-diagrams").upload(path, new Blob([html], { type: "text/html" }), { contentType: "text/html", upsert: true });
+  const svg = comboShareSVG(row.planting_layout, row.item_name || "Combo", recipe || "");
+  const path = `${planId || "x"}/${comboSlug(row.item_name)}.svg`;
+  const { error } = await sb.storage.from("combo-diagrams").upload(path, new Blob([svg], { type: "image/svg+xml" }), { contentType: "image/svg+xml", upsert: true });
   if (error) { window.alert("Share failed: " + error.message); return null; }
   return sb.storage.from("combo-diagrams").getPublicUrl(path).data.publicUrl;
 }
