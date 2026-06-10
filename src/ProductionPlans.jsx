@@ -4918,7 +4918,7 @@ function ItemDetail({ row, onClose, onTask }) {
   const cd = guide?.culture_details || {};
   const DEDICATED = /potential pest|potential disease|growth regulator/i;
   const entries = Object.keys(cd).filter(k => /pgr|warning|water|temp|finish|pinch|exposure|bloom|media|habit|propagation|ph|ec|fertil/i.test(k) && !DEDICATED.test(k) && cd[k] && String(cd[k]).trim());
-  const pdf = cd["Culture Guide PDF"] || guide?.pdf_url;
+  const pdf = cd["Culture Guide PDF"] || cd["Culture Guide PDF (Origin)"] || guide?.pdf_url;
   const pests = splitTerms(cd["Potential Pests"]);
   const diseases = splitTerms(cd["Potential Diseases"]);
   const pgr = cd["Growth Regulators"] || cd["Growth Regulator"] || cd["PGR"] || cd["PGRs"];
@@ -4944,7 +4944,7 @@ function ItemDetail({ row, onClose, onTask }) {
       </div>
       <div style={{ margin: "10px 0", display: "flex", gap: 10, alignItems: "center" }}>
         <button onClick={onTask} style={{ background: COLORS.dark, color: "#fff", border: "none", borderRadius: 8, padding: "7px 14px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 13 }}>＋ Create task</button>
-        {pdf && <a href={pdf} target="_blank" rel="noreferrer" style={{ fontSize: 13, color: COLORS.light }}>Full guide ↗</a>}
+        {pdf && <a href={pdf} target="_blank" rel="noreferrer" style={{ fontSize: 13, fontWeight: 700, color: "#fff", background: COLORS.light, padding: "7px 12px", borderRadius: 8, textDecoration: "none" }}>📄 Grower guide ↗</a>}
       </div>
       {row?.planting_layout && (
         <div style={{ borderTop: `1px solid ${COLORS.border}`, paddingTop: 10, marginBottom: 10 }}>
