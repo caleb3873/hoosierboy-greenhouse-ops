@@ -1203,7 +1203,7 @@ function PropagationTab({ plan }) {
           week: r.ship_week, year: r.ship_year, weekKey: r.ship_week != null ? `${r.ship_year}·wk${String(r.ship_week).padStart(2, "0")}` : "—",
           cell: size, trays: Math.ceil((+r.qty_pots || 0) / usable), plugs: +r.qty_pots || 0,
           prio: STICKING_PRIORITY[v.crop_name] || 9,
-          mistDays: md, needsMist: mistNeed(md),
+          mistDays: /^geranium/i.test(v.crop_name || "") ? "no (in-house)" : md, needsMist: /^geranium/i.test(v.crop_name || "") ? false : mistNeed(md),
           hormone: realHormone(pd.rooting_hormone || pd.hormone), fungicide: pd.fungicide || "", pinch: pd.propagation_pinch || pd.pinch || "", tips: pd.key_tips || "",
           pgr: pd.plug_pgr || "", pd, pdf: ce.pdf || null,
           callused: /^call/i.test(r.prop_method || ""),
@@ -4862,30 +4862,43 @@ function plantColor(name) {
   if (/orange|apricot|sunburst|coral/.test(s)) return "#e8943a";
   return "#7fb069";
 }
+const PALE = new Set(["#e8ede2", "#e6c84a"]); // light fills → dark number text
+// Round hanging-basket planting diagram. Schema:
+//   { plants:["Pink","Purple",...], center:<idx|null>, rings:[[idx...],...] (outer→in),
+//     edge:{plant:<idx>,count:N} (rim, evenly spread — e.g. dichondra), howto }
+// Dots are numbered (legend below maps number→plant) and color-coded by plant name.
 function ComboDiagram({ layout }) {
-  const cx = 100, cy = 100;
-  const dot = (x, y, r, label, fill, fs = 7) => (
-    <g key={`${x.toFixed(0)}_${y.toFixed(0)}`}>
-      <circle cx={x} cy={y} r={r} fill={fill} stroke="#fff" strokeWidth="1.5" />
-      <text x={x} y={y} textAnchor="middle" dominantBaseline="central" style={{ fontSize: fs, fontWeight: 700, fill: /white|amethyst|cream|frost/i.test(label) ? "#5a6a54" : "#fff" }}>{String(label || "").slice(0, 6)}</text>
+  const plants = layout.plants;
+  if (!plants) return null; // old-format layouts are migrated to this schema
+  const cx = 110, cy = 110, RB = 96;
+  const dot = (x, y, r, n, fill, key) => (
+    <g key={key}>
+      <circle cx={x} cy={y} r={r} fill={fill} stroke="#fff" strokeWidth="2" />
+      <text x={x} y={y} textAnchor="middle" dominantBaseline="central" style={{ fontSize: r * 0.95, fontWeight: 800, fill: PALE.has(fill) ? "#5a6a54" : "#fff" }}>{n}</text>
     </g>
   );
-  // Concentric layout: outer[] + inner[] rings (+ optional center) — colors offset/alternating.
-  if (layout.outer || layout.inner) {
-    const outer = layout.outer || [], inner = layout.inner || [];
-    const els = [];
-    const place = (arr, R, off) => arr.forEach((lab, i) => { const a = -Math.PI / 2 + off + i * 2 * Math.PI / (arr.length || 1); els.push(dot(cx + R * Math.cos(a), cy + R * Math.sin(a), 18, lab, plantColor(lab))); });
-    place(outer, 72, 0);
-    place(inner, 36, inner.length ? Math.PI / inner.length : 0);
-    if (layout.center) els.push(dot(cx, cy, 20, layout.center, plantColor(layout.center), 8));
-    return <svg width="200" height="200" viewBox="0 0 200 200" style={{ flexShrink: 0 }}>{els}</svg>;
-  }
-  // Center + single ring (e.g. Bloom Buddy: Stock center, Pansy/Alyssum alternating).
-  const ring = layout.ring || [];
-  const R = 58, rC = 32, rR = 20, N = 6; const rc = ["#7fb069", "#e89a3a"]; const els = [];
-  for (let i = 0; i < N; i++) { const a = -Math.PI / 2 + i * 2 * Math.PI / N; const lab = ring[i % (ring.length || 1)] || ""; els.push(<g key={i}><circle cx={cx + R * Math.cos(a)} cy={cy + R * Math.sin(a)} r={rR} fill={rc[i % 2]} stroke="#fff" strokeWidth="1.5" /><text x={cx + R * Math.cos(a)} y={cy + R * Math.sin(a)} textAnchor="middle" dominantBaseline="central" style={{ fontSize: 8, fontWeight: 700, fill: "#fff" }}>{String(lab).slice(0, 5)}</text></g>); }
-  els.push(<g key="c"><circle cx={cx} cy={cy} r={rC} fill="#6a4fb0" stroke="#fff" strokeWidth="2" /><text x={cx} y={cy} textAnchor="middle" dominantBaseline="central" style={{ fontSize: 9, fontWeight: 800, fill: "#fff" }}>{String(layout.center || "").slice(0, 7)}</text></g>);
-  return <svg width="200" height="200" viewBox="0 0 200 200" style={{ flexShrink: 0 }}>{els}</svg>;
+  const els = [
+    <circle key="rim" cx={cx} cy={cy} r={RB} fill="#f7faf3" stroke="#b9c9ad" strokeWidth="2" />,
+    <circle key="rim2" cx={cx} cy={cy} r={RB - 5} fill="none" stroke="#dde7d3" strokeWidth="1" />,
+  ];
+  // edge plants on the rim (evenly spread)
+  if (layout.edge && layout.edge.count) { const { plant, count } = layout.edge; for (let i = 0; i < count; i++) { const a = -Math.PI / 2 + i * 2 * Math.PI / count; els.push(dot(cx + (RB - 13) * Math.cos(a), cy + (RB - 13) * Math.sin(a), 13, plant + 1, plantColor(plants[plant]), "e" + i)); } }
+  // concentric rings (outer first)
+  (layout.rings || []).forEach((ring, ri) => { const R = RB * (0.52 - ri * 0.26); const off = ri % 2 ? Math.PI / (ring.length || 1) : 0; ring.forEach((pi, i) => { const a = -Math.PI / 2 + off + i * 2 * Math.PI / (ring.length || 1); els.push(dot(cx + R * Math.cos(a), cy + R * Math.sin(a), 16, pi + 1, plantColor(plants[pi]), `r${ri}_${i}`)); }); });
+  if (layout.center != null) els.push(dot(cx, cy, 18, layout.center + 1, plantColor(plants[layout.center]), "c"));
+  return (
+    <div>
+      <svg width="220" height="220" viewBox="0 0 220 220" style={{ flexShrink: 0 }}>{els}</svg>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 14px", marginTop: 6 }}>
+        {plants.map((p, i) => (
+          <span key={i} style={{ fontSize: 12, display: "inline-flex", alignItems: "center", gap: 5 }}>
+            <span style={{ display: "inline-flex", width: 17, height: 17, borderRadius: 9, background: plantColor(p), color: PALE.has(plantColor(p)) ? "#5a6a54" : "#fff", fontSize: 10, fontWeight: 800, alignItems: "center", justifyContent: "center" }}>{i + 1}</span>
+            {p}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 // Item detail + LIVE culture (reads the linked guide from the Culture DB each time,
