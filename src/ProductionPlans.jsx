@@ -2516,7 +2516,7 @@ function CatalogTab({ plan }) {
                 const priceDiffPct = currPrice && targetPrice && currPrice > 0 ? ((targetPrice - currPrice) / currPrice * 100) : null;
                 return (
                   <tr key={rowKey}
-                    style={{ borderBottom: `1px solid ${COLORS.border}`, background: r.isNew ? "#fff7e6" : priceShade(currPrice ?? targetPrice), borderLeft: c?.status === "locked" ? `3px solid ${COLORS.light}` : "3px solid transparent", position: "relative" }}>
+                    style={{ borderBottom: `1px solid ${COLORS.border}`, background: c?.status === "locked" ? "#e3f0d8" : c?.status === "cancelled" ? "#fbeae7" : r.isNew ? "#fff7e6" : priceShade(currPrice ?? targetPrice), borderLeft: c?.status === "locked" ? `4px solid ${COLORS.light}` : c?.status === "cancelled" ? `4px solid ${COLORS.red}` : "4px solid transparent", position: "relative" }}>
                     <td style={td}>{r.pot_size}</td>
                     <td style={{...td, position: "relative"}}>
                       {r.isNew && (
