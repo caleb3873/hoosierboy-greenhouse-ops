@@ -1204,7 +1204,12 @@ function MaterialsTab({ plan }) {
       const soilWeeks = Object.keys(soilByWeek).sort().reduce((acc, wk) => {
         const cuft = soilByWeek[wk];
         const cum = (acc.length ? acc[acc.length - 1].cumCuft : 0) + cuft;
-        acc.push({ week: wk, cuft, bags: Math.ceil(cuft / fluffed), cumCuft: cum, cumBags: Math.ceil(cum / fluffed) });
+        const cumBags = Math.ceil(cum / fluffed);
+        acc.push({
+          week: wk, cuft, bags: Math.ceil(cuft / fluffed), cumCuft: cum, cumBags,
+          cumPallets: soilMix?.bags_per_pallet ? Math.ceil(cumBags / +soilMix.bags_per_pallet) : null,
+          cumTrucks: soilMix?.cf_per_truck ? Math.ceil(cum / +soilMix.cf_per_truck) : null,
+        });
         return acc;
       }, []);
 
@@ -1335,7 +1340,9 @@ function MaterialsTab({ plan }) {
                   <th style={{ ...th, textAlign: "right" }}>Soil this week (cf)</th>
                   <th style={{ ...th, textAlign: "right" }}>Bags this week</th>
                   <th style={{ ...th, textAlign: "right" }}>Cumulative cf</th>
-                  <th style={{ ...th, textAlign: "right" }}>Cumulative bags</th>
+                  <th style={{ ...th, textAlign: "right" }}>Cum. bags</th>
+                  <th style={{ ...th, textAlign: "right" }}>Cum. pallets</th>
+                  <th style={{ ...th, textAlign: "right" }}>Cum. trucks</th>
                 </tr></thead>
                 <tbody>
                   {data.soil.weeks.map((w, i) => (
@@ -1345,6 +1352,8 @@ function MaterialsTab({ plan }) {
                       <td style={{ ...td, textAlign: "right", color: COLORS.muted }}>{w.bags.toLocaleString()}</td>
                       <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{w.cumCuft.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
                       <td style={{ ...td, textAlign: "right", fontWeight: 800, color: COLORS.dark }}>{w.cumBags.toLocaleString()}</td>
+                      <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{w.cumPallets != null ? w.cumPallets : "—"}</td>
+                      <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{w.cumTrucks != null ? w.cumTrucks : "—"}</td>
                     </tr>
                   ))}
                 </tbody>
