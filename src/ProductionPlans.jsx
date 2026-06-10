@@ -1152,6 +1152,14 @@ function mistNeed(md) {
   return true; // any other non-empty value in the mist field → treat as needs mist
 }
 function mistLabel(md) { const s = String(md); return /^\s*\d/.test(s) ? `${s}d` : s; }
+// Real rooting hormone reads like "500 ppm IBA" / "Optional" / "No"; a bare number range
+// ("12 to 16") is a harvester mis-parse (days, wrong field) — drop it so it isn't shown as a rate.
+function realHormone(v) {
+  if (v == null || v === "") return "";
+  const s = String(v).trim();
+  if (/^\d+(\s*(to|-|–)\s*\d+)?$/.test(s)) return "";
+  return s;
+}
 
 // Sticking priority by crop (Ball/Selecta URC 2024-25 list): 1 = stick first … 4 = last.
 const STICKING_PRIORITY = {
@@ -1196,7 +1204,7 @@ function PropagationTab({ plan }) {
           cell: size, trays: Math.ceil((+r.qty_pots || 0) / usable), plugs: +r.qty_pots || 0,
           prio: STICKING_PRIORITY[v.crop_name] || 9,
           mistDays: md, needsMist: mistNeed(md),
-          hormone: pd.rooting_hormone || pd.hormone || "", fungicide: pd.fungicide || "", pinch: pd.propagation_pinch || pd.pinch || "", tips: pd.key_tips || "",
+          hormone: realHormone(pd.rooting_hormone || pd.hormone), fungicide: pd.fungicide || "", pinch: pd.propagation_pinch || pd.pinch || "", tips: pd.key_tips || "",
           pgr: pd.plug_pgr || "", pd, pdf: ce.pdf || null,
           callused: /^call/i.test(r.prop_method || ""),
         };
@@ -1293,7 +1301,7 @@ function PropagationTab({ plan }) {
 function PropCard({ row, onClose }) {
   const pd = row.pd || {};
   const det = [["form", "Form"], ["tray_size", "Tray size"], ["tray_sizes", "Tray sizes"], ["plants_per_cell", "Plants per cell"], ["days_in_mist", "Days in mist"], ["days_with_mist", "Days with mist"], ["avg_soil_temp", "Soil temp"], ["avg_air_temp_day", "Air temp · day"], ["avg_air_temp_night", "Air temp · night"], ["temp", "Temp"], ["ph_range", "pH"], ["ec_range", "EC"], ["fertility_rate", "Fertility"], ["fertilization", "Fertilization"], ["plug_fertilizer", "Plug fertilizer"], ["propagation_weeks", "Prop weeks"], ["weeks_to_pinch", "Weeks to pinch"], ["wks_stick_to_transplant", "Stick→transplant wks"]].filter(([k]) => pd[k] != null && String(pd[k]).trim());
-  const treat = [["🧴 Rooting hormone", pd.rooting_hormone || pd.hormone], ["🛡 Fungicide", pd.fungicide], ["📏 PGR", pd.plug_pgr], ["✂️ Pinch", pd.propagation_pinch || pd.pinch]].filter(t => t[1] && String(t[1]).trim());
+  const treat = [["🧴 Rooting hormone", realHormone(pd.rooting_hormone || pd.hormone)], ["🛡 Fungicide", pd.fungicide], ["📏 PGR", pd.plug_pgr], ["✂️ Pinch", pd.propagation_pinch || pd.pinch]].filter(t => t[1] && String(t[1]).trim());
   const sec = { fontSize: 11, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase", letterSpacing: 0.5, margin: "14px 0 6px" };
   return (
     <div style={{ padding: 18 }}>
