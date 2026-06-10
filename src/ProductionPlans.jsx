@@ -2,7 +2,7 @@
 // Phase 1: plan list + dashboard + property map (SVG) colored by per-house profit.
 // Future phases: per-bench drilldown, inline crop edit, satellite-photo overlays.
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { getSupabase, getCultureClient } from "./supabase";
 import { useAuth } from "./Auth";
 
@@ -4884,11 +4884,16 @@ function ComboDiagram({ layout }) {
     <circle key="rim" cx={cx} cy={cy} r={RB} fill="#f7faf3" stroke="#b9c9ad" strokeWidth="2" />,
     <circle key="rim2" cx={cx} cy={cy} r={RB - 5} fill="none" stroke="#dde7d3" strokeWidth="1" />,
   ];
-  // edge plants on the rim (evenly spread)
-  if (layout.edge && layout.edge.count) { const { plant, count } = layout.edge; for (let i = 0; i < count; i++) { const a = -Math.PI / 2 + i * 2 * Math.PI / count; els.push(dot(cx + (RB - 13) * Math.cos(a), cy + (RB - 13) * Math.sin(a), 13, plant + 1, COLS[plant], "e" + i)); } }
-  // concentric rings — spread out: outer pushed further, inner given more room
-  (layout.rings || []).forEach((ring, ri) => { const R = RB * (0.64 - ri * 0.30); const off = ri % 2 ? Math.PI / (ring.length || 1) : 0; ring.forEach((pi, i) => { const a = -Math.PI / 2 + off + i * 2 * Math.PI / (ring.length || 1); els.push(dot(cx + R * Math.cos(a), cy + R * Math.sin(a), 16, pi + 1, COLS[pi], `r${ri}_${i}`)); }); });
-  if (layout.center != null) els.push(dot(cx, cy, 18, layout.center + 1, COLS[layout.center], "c"));
+  if (layout.dots) {
+    // hand-placed positions (from the basket designer): normalized 0..1 → basket circle
+    layout.dots.forEach((d, i) => els.push(dot(cx + (d.x - 0.5) * 2 * RB, cy + (d.y - 0.5) * 2 * RB, 15, d.plant + 1, COLS[d.plant], "d" + i)));
+  } else {
+    // edge plants on the rim (evenly spread)
+    if (layout.edge && layout.edge.count) { const { plant, count } = layout.edge; for (let i = 0; i < count; i++) { const a = -Math.PI / 2 + i * 2 * Math.PI / count; els.push(dot(cx + (RB - 13) * Math.cos(a), cy + (RB - 13) * Math.sin(a), 13, plant + 1, COLS[plant], "e" + i)); } }
+    // concentric rings — spread out: outer pushed further, inner given more room
+    (layout.rings || []).forEach((ring, ri) => { const R = RB * (0.64 - ri * 0.30); const off = ri % 2 ? Math.PI / (ring.length || 1) : 0; ring.forEach((pi, i) => { const a = -Math.PI / 2 + off + i * 2 * Math.PI / (ring.length || 1); els.push(dot(cx + R * Math.cos(a), cy + R * Math.sin(a), 16, pi + 1, COLS[pi], `r${ri}_${i}`)); }); });
+    if (layout.center != null) els.push(dot(cx, cy, 18, layout.center + 1, COLS[layout.center], "c"));
+  }
   return (
     <div>
       <svg width="220" height="220" viewBox="0 0 220 220" style={{ flexShrink: 0 }}>{els}</svg>
@@ -4930,11 +4935,69 @@ function splitTerms(val) {
   return String(val || "").split(/[,;\n•·]| and /i).map(s => s.trim()).filter(s => s.length > 2);
 }
 
+// Drag-to-place basket designer — move plant dots anywhere in the basket, add/remove, lock & save.
+function BasketDesigner({ layout, plantNames, onSave, onClose }) {
+  const plants = (layout.plants && layout.plants.length) ? layout.plants : (plantNames || []);
+  const COLS = plants.map((p, i) => plantColor(p) || PALETTE[i % PALETTE.length]);
+  const cx = 130, cy = 130, RB = 118, dotR = 15, VB = 260;
+  const seed = () => {
+    if (layout.dots) return layout.dots.map(d => ({ ...d }));
+    const ds = [];
+    if (layout.center != null) ds.push({ plant: layout.center, x: 0.5, y: 0.5 });
+    (layout.rings || []).forEach((ring, ri) => { const R = 0.34 - ri * 0.15; const off = ri % 2 ? Math.PI / (ring.length || 1) : 0; ring.forEach((pi, i) => { const a = -Math.PI / 2 + off + i * 2 * Math.PI / (ring.length || 1); ds.push({ plant: pi, x: 0.5 + R * Math.cos(a), y: 0.5 + R * Math.sin(a) }); }); });
+    if (layout.edge && layout.edge.count) { const { plant, count } = layout.edge; for (let i = 0; i < count; i++) { const a = -Math.PI / 2 + i * 2 * Math.PI / count; ds.push({ plant, x: 0.5 + 0.45 * Math.cos(a), y: 0.5 + 0.45 * Math.sin(a) }); } }
+    return ds;
+  };
+  const [dots, setDots] = useState(seed);
+  const [drag, setDrag] = useState(null);
+  const [sel, setSel] = useState(null);
+  const svgRef = useRef(null);
+  const toNorm = (clientX, clientY) => {
+    const r = svgRef.current.getBoundingClientRect();
+    const sx = (clientX - r.left) * (VB / r.width), sy = (clientY - r.top) * (VB / r.height);
+    let dx = sx - cx, dy = sy - cy; const dist = Math.hypot(dx, dy) || 1; const max = RB - dotR;
+    if (dist > max) { dx = dx / dist * max; dy = dy / dist * max; }
+    return { x: dx / (2 * RB) + 0.5, y: dy / (2 * RB) + 0.5 };
+  };
+  const move = e => { if (drag == null) return; const n = toNorm(e.clientX, e.clientY); setDots(ds => ds.map((d, i) => i === drag ? { ...d, ...n } : d)); };
+  return (
+    <div style={{ padding: 4 }}>
+      <div style={{ fontSize: 12, color: COLORS.muted, marginBottom: 8 }}>Drag a plant to position · tap a plant below to add one · double-click a dot to remove · then Lock & save.</div>
+      <svg ref={svgRef} width="260" height="260" viewBox="0 0 260 260" style={{ touchAction: "none", border: `1px solid ${COLORS.border}`, borderRadius: 10, background: "#fff" }}
+        onPointerMove={move} onPointerUp={() => setDrag(null)} onPointerLeave={() => setDrag(null)}>
+        <circle cx={cx} cy={cy} r={RB} fill="#f7faf3" stroke="#b9c9ad" strokeWidth="2" />
+        <circle cx={cx} cy={cy} r={RB - 6} fill="none" stroke="#dde7d3" strokeWidth="1" />
+        {dots.map((d, i) => { const x = cx + (d.x - 0.5) * 2 * RB, y = cy + (d.y - 0.5) * 2 * RB; return (
+          <g key={i} style={{ cursor: "grab" }} onPointerDown={e => { e.preventDefault(); setDrag(i); setSel(i); }} onDoubleClick={() => { setDots(ds => ds.filter((_, j) => j !== i)); setSel(null); }}>
+            <circle cx={x} cy={y} r={dotR} fill={COLS[d.plant]} stroke={sel === i ? COLORS.dark : "#fff"} strokeWidth={sel === i ? 3 : 2} />
+            <text x={x} y={y} textAnchor="middle" dominantBaseline="central" style={{ fontSize: 13, fontWeight: 800, fill: PALE.has(COLS[d.plant]) ? "#5a6a54" : "#fff", pointerEvents: "none" }}>{d.plant + 1}</text>
+          </g>
+        ); })}
+      </svg>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, margin: "10px 0" }}>
+        {plants.map((p, i) => (
+          <button key={i} onClick={() => setDots(ds => [...ds, { plant: i, x: 0.5, y: 0.5 }])} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 10px", border: `1px solid ${COLORS.border}`, borderRadius: 16, background: "#fff", cursor: "pointer", fontSize: 12, fontFamily: "inherit" }}>
+            <span style={{ width: 16, height: 16, borderRadius: 8, background: COLS[i], color: PALE.has(COLS[i]) ? "#5a6a54" : "#fff", fontSize: 10, fontWeight: 800, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>{i + 1}</span>
+            + {p} <span style={{ color: COLORS.muted }}>({dots.filter(d => d.plant === i).length})</span>
+          </button>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button onClick={() => onSave({ plants, dots, howto: layout.howto || "" })} style={{ padding: "8px 16px", background: COLORS.dark, color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>🔒 Lock &amp; save</button>
+        <button onClick={onClose} style={{ padding: "8px 16px", background: "#fff", color: COLORS.text, border: `1px solid ${COLORS.border}`, borderRadius: 8, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
 function ItemDetail({ row, onClose, onTask }) {
   const [guide, setGuide] = useState(null);
   const [loading, setLoading] = useState(false);
   const [combo, setCombo] = useState([]);
   const [cp, setCp] = useState([]);
+  const [layout, setLayout] = useState(row?.planting_layout || null);
+  const [editLayout, setEditLayout] = useState(false);
+  useEffect(() => { setLayout(row?.planting_layout || null); setEditLayout(false); }, [row?.id, row?.planting_layout]);
   const srcId = row?.variety?.culture_source_id;
   useEffect(() => {
     const cc = getCultureClient(); if (!cc) return;
@@ -4989,16 +5052,25 @@ function ItemDetail({ row, onClose, onTask }) {
         <button onClick={onTask} style={{ background: COLORS.dark, color: "#fff", border: "none", borderRadius: 8, padding: "7px 14px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 13 }}>＋ Create task</button>
         {pdf && <a href={pdf} target="_blank" rel="noreferrer" style={{ fontSize: 13, fontWeight: 700, color: "#fff", background: COLORS.light, padding: "7px 12px", borderRadius: 8, textDecoration: "none" }}>📄 Grower guide ↗</a>}
       </div>
-      {row?.planting_layout && (
+      {layout && (
         <div style={{ borderTop: `1px solid ${COLORS.border}`, paddingTop: 10, marginBottom: 10 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>Combo planting</div>
-          <div style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
-            <ComboDiagram layout={row.planting_layout} />
-            <div style={{ flex: "1 1 200px" }}>
-              <div style={{ fontSize: 13, color: COLORS.text, marginBottom: 8 }}>{row.planting_layout.howto}</div>
-              <div style={{ fontSize: 12, color: COLORS.muted }}>{combo.length ? combo.map(c => `${c.v?.crop_name || ""} ${c.v?.variety || ""}${c.qty ? ` (${c.qty})` : ""}`).join(" · ") : "—"}</div>
-            </div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase", letterSpacing: 0.5 }}>Combo planting</div>
+            {!editLayout && <button onClick={() => setEditLayout(true)} style={{ fontSize: 12, fontWeight: 700, color: COLORS.dark, background: "#fff", border: `1px solid ${COLORS.border}`, borderRadius: 7, padding: "4px 10px", cursor: "pointer", fontFamily: "inherit" }}>✏️ Arrange</button>}
           </div>
+          {editLayout ? (
+            <BasketDesigner layout={layout} plantNames={combo.map(c => `${c.v?.crop_name || ""} ${c.v?.variety || ""}`.trim()).filter(Boolean)}
+              onSave={async (l) => { setLayout(l); setEditLayout(false); const sb = getSupabase(); if (sb) await sb.from("scheduled_crops").update({ planting_layout: l }).eq("id", row.id); }}
+              onClose={() => setEditLayout(false)} />
+          ) : (
+            <div style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
+              <ComboDiagram layout={layout} />
+              <div style={{ flex: "1 1 200px" }}>
+                <div style={{ fontSize: 13, color: COLORS.text, marginBottom: 8 }}>{layout.howto}</div>
+                <div style={{ fontSize: 12, color: COLORS.muted }}>{combo.length ? combo.map(c => `${c.v?.crop_name || ""} ${c.v?.variety || ""}${c.qty ? ` (${c.qty})` : ""}`).join(" · ") : "—"}</div>
+              </div>
+            </div>
+          )}
         </div>
       )}
       {matrix && Object.values(matrix).some(finishWeeks) && (
