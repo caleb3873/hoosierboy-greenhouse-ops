@@ -1138,6 +1138,17 @@ function LinerWeekGroups({ groups }) {
   );
 }
 
+// Misting need from a culture days_in_mist / days_with_mist value (number, range, "yes"/"no", text).
+function mistNeed(md) {
+  if (md == null || md === "") return null;
+  const s = String(md).toLowerCase().trim();
+  if (/^(no|none|0|dry|n\/?a)$/.test(s)) return false;
+  if (/yes|mist|fog/.test(s)) return true;
+  const n = parseFloat(s); if (!isNaN(n)) return n > 0;
+  return true; // any other non-empty value in the mist field → treat as needs mist
+}
+function mistLabel(md) { const s = String(md); return /^\s*\d/.test(s) ? `${s}d` : s; }
+
 // Sticking priority by crop (Ball/Selecta URC 2024-25 list): 1 = stick first … 4 = last.
 const STICKING_PRIORITY = {
   Geranium: 1, Lantana: 1, Euphorbia: 1, Portulaca: 1, Purslane: 1, Thunbergia: 1, Heliotrope: 1, Lobelia: 1, Ipomoea: 1, Dahlia: 1, Lavender: 1, Lavandula: 1, Lobularia: 1, Alyssum: 1, Fuchsia: 1, Plectranthus: 1, Dianthus: 1, Cleome: 1, Ageratum: 1, Mandevilla: 1, Dipladenia: 1,
@@ -1179,7 +1190,7 @@ function PropagationTab({ plan }) {
           week: r.ship_week, year: r.ship_year, weekKey: r.ship_week != null ? `${r.ship_year}·wk${String(r.ship_week).padStart(2, "0")}` : "—",
           cell: size, trays: Math.ceil((+r.qty_pots || 0) / usable), plugs: +r.qty_pots || 0,
           prio: STICKING_PRIORITY[v.crop_name] || 9,
-          mistDays: md, needsMist: md != null ? (+md > 0) : null,
+          mistDays: md, needsMist: mistNeed(md),
           hormone: pd.rooting_hormone || pd.hormone || "", fungicide: pd.fungicide || "", pinch: pd.propagation_pinch || pd.pinch || "", tips: pd.key_tips || "",
           callused: /^call/i.test(r.prop_method || ""),
         };
@@ -1216,7 +1227,7 @@ function PropagationTab({ plan }) {
         {r.callused && <span style={{ marginLeft: 6, background: "#e89a3a", color: "#fff", fontSize: 9, fontWeight: 800, padding: "1px 6px", borderRadius: 8 }} title="Callused — shorter rooting window">CALLUSED</span>}
       </td>
       <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{r.trays}</td>
-      <td style={td}>{r.needsMist === true ? <span style={{ color: "#2e7d9e" }}>💦 {r.mistDays}d</span> : r.needsMist === false ? <span style={{ color: COLORS.muted }}>🌵 dry</span> : <span style={{ color: "#c8d0c0" }}>—</span>}</td>
+      <td style={td}>{r.needsMist === true ? <span style={{ color: "#2e7d9e" }}>💦 {mistLabel(r.mistDays)}</span> : r.needsMist === false ? <span style={{ color: COLORS.muted }}>🌵 dry</span> : <span style={{ color: "#c8d0c0" }}>—</span>}</td>
       <td style={{ ...td, textAlign: "right" }}><span style={{ background: PRIO_COLOR[r.prio], color: "#fff", fontWeight: 800, fontSize: 11, padding: "1px 7px", borderRadius: 8 }}>{r.prio === 9 ? "?" : "P" + r.prio}</span></td>
       <td style={{ ...td, fontSize: 11, color: COLORS.muted }} title={r.tips || ""}>{r.hormone ? `🧴 ${r.hormone}  ` : ""}{r.fungicide ? `🛡 ${r.fungicide}  ` : ""}{r.pinch ? `✂️ ${r.pinch}` : ""}{!r.hormone && !r.fungicide && !r.pinch ? "—" : ""}</td>
     </tr>
