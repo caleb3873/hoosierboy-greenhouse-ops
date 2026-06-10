@@ -825,9 +825,14 @@ function AskAssistant() {
   );
 }
 
+// Normalized key to link catalog products ↔ local My-Inputs by name.
+const cpKey = s => String(s || "").toLowerCase().replace(/[®™]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+
 // Crop-protection + biologicals catalog — reads crop_protection_inputs_public from the
-// culture project via the SAME culture client (NOT this app's local `inputs` table).
+// culture project via the SAME culture client. Linked to the local `inputs` (My Inputs)
+// by normalized name: shows what you carry + "+Add" to pull a product into your list.
 function CropProtectionCatalog() {
+  const { rows: myInputs, upsert: upsertInput } = useInputProducts();
   const [rows, setRows] = useState(null);
   const [q, setQ] = useState("");
   const [cls, setCls] = useState("");
@@ -851,6 +856,17 @@ function CropProtectionCatalog() {
     const hay = [r.name, r.active_ingredient, r.moa_group, (r.controls || []).join(" "), (r.target_pests || []).join(" "), (r.labeled_crops || []).join(" "), r.phytotox_cautions].join(" ").toLowerCase();
     return hay.includes(ql);
   }).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+
+  const myKeys = new Set((myInputs || []).map(i => cpKey(i.name)));
+  const addToInputs = async (p) => {
+    await upsertInput({
+      id: crypto.randomUUID(), name: p.name, category: p.product_type || "other",
+      activeIngredient: p.active_ingredient || "", signalWord: p.signal_word || "Caution",
+      formulation: p.formulation || "", rei: p.rei_hours != null ? p.rei_hours + " hrs" : "",
+      supplier: p.manufacturer || "", cropSensitivities: p.phytotox_cautions || "",
+      notes: [(p.controls || []).length ? "Controls: " + p.controls.join(", ") : "", p.moa_group ? "MOA " + p.moa_group : "", p.source_url || ""].filter(Boolean).join(" | "),
+    });
+  };
 
   const sel = { padding: "8px 10px", border: "1px solid #cdd9c4", borderRadius: 8, fontSize: 13, fontFamily: "inherit", background: "#fff", color: "#1e2d1a" };
   const chip = (txt, bg) => <span style={{ fontSize: 11, padding: "2px 7px", borderRadius: 7, background: bg, color: "#1e2d1a", border: "1px solid #cdd9c4" }}>{txt}</span>;
@@ -885,6 +901,9 @@ function CropProtectionCatalog() {
                 {chip(r.input_class === "biological" ? "🌿 biological" : "🧪 chemical", r.input_class === "biological" ? "#e6f2e0" : "#eef3f8")}
                 {r.product_type && chip(r.product_type, "#f3f8ee")}
                 {r.manufacturer && chip(r.manufacturer, "#f3f8ee")}
+                {myKeys.has(cpKey(r.name))
+                  ? <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 7, background: "#7fb069", color: "#fff", fontWeight: 700 }}>✓ in My Inputs</span>
+                  : <button onClick={() => addToInputs(r)} style={{ fontSize: 11, padding: "2px 8px", borderRadius: 7, background: "#fff", color: "#1e2d1a", border: "1px solid #7fb069", fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>+ Add to My Inputs</button>}
               </div>
             </div>
             <div style={{ fontSize: 12, color: "#5a6a54", marginTop: 4 }}>
@@ -977,7 +996,7 @@ function VarietyLibrary() {
           {view === "library" && (<>
             <button onClick={() => setView("ask")} style={{ background: "#7fb069", color: "#fff", border: "1px solid #7fb069", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>💬 Ask</button>
             <button onClick={() => setView("culture")} style={{ background: "none", color: "#c8e6b8", border: "1px solid #4a6a3a", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>🌱 Culture DB</button>
-            <button onClick={() => setView("cropprotect")} style={{ background: "none", color: "#c8e6b8", border: "1px solid #4a6a3a", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>🧪 Crop Protection</button>
+            <button onClick={() => setView("cropprotect")} style={{ background: "none", color: "#c8e6b8", border: "1px solid #4a6a3a", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>🛡 Crop-Protection Catalog</button>
             <button onClick={() => setView("pdf-import")} style={{ background: "none", color: "#c8e6b8", border: "1px solid #4a6a3a", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>📄 Import PDF Catalog</button>
             <button onClick={() => setView("grades")} style={{ background: "none", color: "#c8e6b8", border: "1px solid #4a6a3a", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>⭐ Grade Varieties</button>
             <button onClick={() => { setEditingId(null); setView("add"); }} style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 8, padding: "8px 18px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>+ Add Variety</button>
@@ -4008,7 +4027,7 @@ const LIBRARY_TABS = [
   { id: "variety",   label: "Varieties",  icon: "🌿" },
   { id: "container", label: "Containers", icon: "🪴" },
   { id: "soil",      label: "Soil",       icon: "🪱" },
-  { id: "inputs",    label: "Inputs",     icon: "🧪" },
+  { id: "inputs",    label: "My Inputs",  icon: "🧪" },
   { id: "spacing",   label: "Spacing",    icon: "📐" },
   { id: "brokers",   label: "Brokers",    icon: "🤝" },
   { id: "tags",      label: "Tags",       icon: "🏷️" },
@@ -4566,7 +4585,7 @@ function InputForm({ initial, onSave, onCancel }) {
   );
 }
 
-function InputCard({ product, onEdit, onDelete, onUpdateStock }) {
+function InputCard({ product, onEdit, onDelete, onUpdateStock, reference }) {
   const cat    = INPUT_CATEGORIES.find(c => c.id === product.category) || INPUT_CATEGORIES[4];
   const status = STOCK_STATUS(product);
   const sm     = STOCK_META[status];
@@ -4601,6 +4620,15 @@ function InputCard({ product, onEdit, onDelete, onUpdateStock }) {
       {product.cropSensitivities && <div style={{ fontSize: 12, color: "#c03030", background: "#fff0f0", borderRadius: 8, padding: "7px 10px", marginBottom: 8 }}>⚠️ <strong>Sensitive crops:</strong> {product.cropSensitivities}</div>}
       {product.crossBenefits && <div style={{ fontSize: 12, color: "#4a5a40", background: "#f0f8eb", borderRadius: 8, padding: "7px 10px", marginBottom: 8 }}>✓ {product.crossBenefits}</div>}
       {product.bulkPriceNote && <div style={{ fontSize: 12, color: "#2e7d9e", background: "#e8f4f8", borderRadius: 8, padding: "7px 10px", marginBottom: 8 }}>💰 {product.bulkPriceNote}</div>}
+      {reference && (
+        <div style={{ fontSize: 12, color: "#4a5a40", background: "#f3f8ee", borderRadius: 8, padding: "7px 10px", marginBottom: 8 }}>
+          🛡 <strong>Label reference</strong>
+          {reference.moa_group ? ` · MOA ${reference.moa_group}` : ""}
+          {(reference.controls || []).length ? ` · controls: ${reference.controls.join(", ")}` : ""}
+          {(reference.labeled_crops || []).length ? ` · labeled on ${reference.labeled_crops.length} crops` : ""}
+          {reference.source_url ? <a href={reference.source_url} target="_blank" rel="noreferrer" style={{ color: "#7fb069", marginLeft: 4 }}>label ↗</a> : null}
+        </div>
+      )}
 
       {/* Quick stock adjust */}
       {product.stockQty !== "" && (
@@ -4632,6 +4660,9 @@ function InputsLibrary() {
   const [catFilter, setCat]    = useState("all");
   const [statusFilter, setStat] = useState("all");
   const [search, setSearch]    = useState("");
+  const [catalog, setCatalog]  = useState([]);
+  useEffect(() => { const cc = getCultureClient(); if (!cc) return; cc.from("crop_protection_inputs_public").select("name,moa_group,controls,labeled_crops,source_url").then(({ data }) => setCatalog(data || [])); }, []);
+  const catByKey = {}; (catalog || []).forEach(c => { catByKey[cpKey(c.name)] = c; });
 
   const INPUT_FIELDS = [
     { id: "name",            label: "Product Name *",    required: true,  guesses: ["name","product","chemical","input"] },
@@ -4699,7 +4730,7 @@ function InputsLibrary() {
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-        <div style={{ fontSize: 16, fontWeight: 800, color: "#1a2a1a" }}>Inputs Inventory</div>
+        <div style={{ fontSize: 16, fontWeight: 800, color: "#1a2a1a" }}>My Inputs <span style={{ fontWeight: 400, fontSize: 12, color: "#7a8c74" }}>· your products + linked label reference</span></div>
         <div style={{ display: "flex", gap: 8 }}>
           <button onClick={() => setView("import")} style={{ background: "none", border: "1.5px solid #c8d8c0", borderRadius: 10, padding: "9px 14px", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit", color: "#7a8c74" }}>📥 Import</button>
           <button onClick={() => setView("add")} style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 10, padding: "9px 18px", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>+ Add Product</button>
@@ -4747,7 +4778,8 @@ function InputsLibrary() {
                 <InputCard key={product.id} product={product}
                   onEdit={() => { setEditId(product.id); setView("edit"); }}
                   onDelete={() => removeInputDb(product.id)}
-                  onUpdateStock={updateStock} />
+                  onUpdateStock={updateStock}
+                  reference={catByKey[cpKey(product.name)]} />
               ))
           }
         </div>
