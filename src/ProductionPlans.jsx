@@ -4940,6 +4940,37 @@ function splitTerms(val) {
   return String(val || "").split(/[,;\n•·]| and /i).map(s => s.trim()).filter(s => s.length > 2);
 }
 
+// Self-contained, no-login HTML page of a basket diagram — for a public share link.
+const escHtml = s => String(s || "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const comboSlug = s => String(s || "combo").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "combo";
+function comboShareHTML(layout, title, recipe) {
+  const plants = layout.plants || [];
+  const COLS = plants.map((p, i) => plantColor(p) || PALETTE[i % PALETTE.length]);
+  const counts = plants.map(() => 0);
+  if (layout.dots) layout.dots.forEach(d => { counts[d.plant]++; });
+  else { if (layout.center != null) counts[layout.center]++; (layout.rings || []).forEach(r => r.forEach(pi => counts[pi]++)); if (layout.edge && layout.edge.count) counts[layout.edge.plant] += layout.edge.count; }
+  const cx = 110, cy = 110, RB = 96; const dots = [];
+  const push = (x, y, r, pi) => dots.push({ x, y, r, pi });
+  if (layout.dots) layout.dots.forEach(d => push(cx + (d.x - 0.5) * 2 * RB, cy + (d.y - 0.5) * 2 * RB, 15, d.plant));
+  else {
+    if (layout.edge && layout.edge.count) { const { plant, count } = layout.edge; for (let i = 0; i < count; i++) { const a = -Math.PI / 2 + i * 2 * Math.PI / count; push(cx + (RB - 13) * Math.cos(a), cy + (RB - 13) * Math.sin(a), 13, plant); } }
+    (layout.rings || []).forEach((ring, ri) => { const R = RB * (0.64 - ri * 0.30); const off = ri % 2 ? Math.PI / (ring.length || 1) : 0; ring.forEach((pi, i) => { const a = -Math.PI / 2 + off + i * 2 * Math.PI / (ring.length || 1); push(cx + R * Math.cos(a), cy + R * Math.sin(a), 16, pi); }); });
+    if (layout.center != null) push(cx, cy, 18, layout.center);
+  }
+  const circles = dots.map(d => `<circle cx="${d.x.toFixed(1)}" cy="${d.y.toFixed(1)}" r="${d.r}" fill="${COLS[d.pi]}" stroke="#fff" stroke-width="2"/><text x="${d.x.toFixed(1)}" y="${d.y.toFixed(1)}" text-anchor="middle" dominant-baseline="central" font-size="${Math.round(d.r * 0.95)}" font-weight="800" fill="${PALE.has(COLS[d.pi]) ? "#5a6a54" : "#fff"}">${LET(d.pi)}</text>`).join("");
+  const legend = plants.map((p, i) => `<div style="display:flex;align-items:center;gap:8px;font-size:16px;margin:6px 0"><span style="display:inline-flex;width:24px;height:24px;border-radius:12px;background:${COLS[i]};color:${PALE.has(COLS[i]) ? "#5a6a54" : "#fff"};font-weight:800;align-items:center;justify-content:center">${LET(i)}</span> ${escHtml(p)} <b>&times;${counts[i]}</b></div>`).join("");
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escHtml(title)}</title></head><body style="font-family:system-ui,-apple-system,sans-serif;margin:0;padding:20px;background:#f2f5ef;color:#1e2d1a"><div style="max-width:420px;margin:0 auto"><h2 style="margin:0 0 4px;font-size:20px">🪴 ${escHtml(title)}</h2><div style="color:#7a8c74;font-size:14px;margin-bottom:14px">${escHtml(recipe || "")}</div><svg width="100%" viewBox="0 0 220 220" style="display:block;max-width:360px;margin:0 auto"><circle cx="${cx}" cy="${cy}" r="${RB}" fill="#f7faf3" stroke="#b9c9ad" stroke-width="2"/><circle cx="${cx}" cy="${cy}" r="${RB - 5}" fill="none" stroke="#dde7d3"/>${circles}</svg><div style="margin-top:16px">${legend}</div><div style="margin-top:16px;font-size:15px;line-height:1.55">${escHtml(layout.howto || "")}</div><div style="margin-top:22px;color:#aab39f;font-size:12px">Schlegel Greenhouse · planting diagram</div></div></body></html>`;
+}
+async function shareComboDiagram(row, planId, recipe) {
+  const sb = getSupabase();
+  if (!sb || !row?.planting_layout) { window.alert("Nothing to share yet."); return null; }
+  const html = comboShareHTML(row.planting_layout, row.item_name || "Combo", recipe || "");
+  const path = `${planId || "x"}/${comboSlug(row.item_name)}.html`;
+  const { error } = await sb.storage.from("combo-diagrams").upload(path, new Blob([html], { type: "text/html" }), { contentType: "text/html", upsert: true });
+  if (error) { window.alert("Share failed: " + error.message); return null; }
+  return sb.storage.from("combo-diagrams").getPublicUrl(path).data.publicUrl;
+}
+
 // Drag-to-place basket designer — move plant dots anywhere in the basket, add/remove, lock & save.
 function BasketDesigner({ layout, plantNames, onSave, onClose }) {
   const plants = (layout.plants && layout.plants.length) ? layout.plants : (plantNames || []);
@@ -5077,7 +5108,16 @@ function ItemDetail({ row, onClose, onTask, planId }) {
         <div style={{ borderTop: `1px solid ${COLORS.border}`, paddingTop: 10, marginBottom: 10 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
             <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase", letterSpacing: 0.5 }}>Combo planting</div>
-            {!editLayout && <button onClick={() => setEditLayout(true)} style={{ fontSize: 12, fontWeight: 700, color: COLORS.dark, background: "#fff", border: `1px solid ${COLORS.border}`, borderRadius: 7, padding: "4px 10px", cursor: "pointer", fontFamily: "inherit" }}>✏️ Arrange</button>}
+            {!editLayout && (
+              <div style={{ display: "flex", gap: 6 }}>
+                <button onClick={() => setEditLayout(true)} style={{ fontSize: 12, fontWeight: 700, color: COLORS.dark, background: "#fff", border: `1px solid ${COLORS.border}`, borderRadius: 7, padding: "4px 10px", cursor: "pointer", fontFamily: "inherit" }}>✏️ Arrange</button>
+                <button onClick={async () => {
+                  const recipe = combo.map(c => `${c.v?.crop_name || ""} ${c.v?.variety || ""}${c.qty ? ` ×${c.qty}` : ""}`.trim()).filter(Boolean).join(" · ");
+                  const url = await shareComboDiagram(row, planId, recipe);
+                  if (url) { try { await navigator.clipboard.writeText(url); } catch {} window.prompt("Shareable link (copied) — anyone can open this on their phone, no login needed:", url); }
+                }} style={{ fontSize: 12, fontWeight: 700, color: COLORS.dark, background: "#fff", border: `1px solid ${COLORS.border}`, borderRadius: 7, padding: "4px 10px", cursor: "pointer", fontFamily: "inherit" }}>🔗 Share</button>
+              </div>
+            )}
           </div>
           {editLayout ? (
             <BasketDesigner layout={layout} plantNames={combo.map(c => `${c.v?.crop_name || ""} ${c.v?.variety || ""}`.trim()).filter(Boolean)}
