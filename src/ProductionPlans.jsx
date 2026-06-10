@@ -1167,6 +1167,7 @@ function PropagationTab({ plan }) {
   const [mist, setMist] = useState("all"); // all | mist | dry
   const [sel, setSel] = useState(() => new Set());
   const [taskItems, setTaskItems] = useState(null);
+  const [detail, setDetail] = useState(null);
 
   useEffect(() => {
     if (!sb) return;
@@ -1192,6 +1193,7 @@ function PropagationTab({ plan }) {
           prio: STICKING_PRIORITY[v.crop_name] || 9,
           mistDays: md, needsMist: mistNeed(md),
           hormone: pd.rooting_hormone || pd.hormone || "", fungicide: pd.fungicide || "", pinch: pd.propagation_pinch || pd.pinch || "", tips: pd.key_tips || "",
+          pgr: pd.plug_pgr || "", pd,
           callused: /^call/i.test(r.prop_method || ""),
         };
       }));
@@ -1223,13 +1225,13 @@ function PropagationTab({ plan }) {
     <tr style={{ borderBottom: `1px solid ${COLORS.border}`, background: sel.has(r.id) ? "#eef5e7" : "transparent" }}>
       <td style={td}><input type="checkbox" checked={sel.has(r.id)} onChange={() => toggle(r.id)} /></td>
       <td style={td}>
-        <span style={{ fontWeight: 600 }}>{r.crop}</span> <span style={{ color: COLORS.muted }}>{r.variety}</span>
+        <span onClick={() => setDetail(r)} title="Open propagation card" style={{ fontWeight: 600, color: COLORS.dark, cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted" }}>{r.crop} <span style={{ color: COLORS.muted, fontWeight: 400 }}>{r.variety}</span></span>
         {r.callused && <span style={{ marginLeft: 6, background: "#e89a3a", color: "#fff", fontSize: 9, fontWeight: 800, padding: "1px 6px", borderRadius: 8 }} title="Callused — shorter rooting window">CALLUSED</span>}
       </td>
       <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{r.trays}</td>
       <td style={td}>{r.needsMist === true ? <span style={{ color: "#2e7d9e" }}>💦 {mistLabel(r.mistDays)}</span> : r.needsMist === false ? <span style={{ color: COLORS.muted }}>🌵 dry</span> : <span style={{ color: "#c8d0c0" }}>—</span>}</td>
       <td style={{ ...td, textAlign: "right" }}><span style={{ background: PRIO_COLOR[r.prio], color: "#fff", fontWeight: 800, fontSize: 11, padding: "1px 7px", borderRadius: 8 }}>{r.prio === 9 ? "?" : "P" + r.prio}</span></td>
-      <td style={{ ...td, fontSize: 11, color: COLORS.muted }} title={r.tips || ""}>{r.hormone ? `🧴 ${r.hormone}  ` : ""}{r.fungicide ? `🛡 ${r.fungicide}  ` : ""}{r.pinch ? `✂️ ${r.pinch}` : ""}{!r.hormone && !r.fungicide && !r.pinch ? "—" : ""}</td>
+      <td style={{ ...td, fontSize: 11, color: COLORS.muted }} title={r.tips || ""}>{r.hormone ? `🧴 ${r.hormone}  ` : ""}{r.fungicide ? `🛡 ${r.fungicide}  ` : ""}{r.pgr ? `📏 ${r.pgr}  ` : ""}{r.pinch ? `✂️ ${r.pinch}` : ""}{!r.hormone && !r.fungicide && !r.pgr && !r.pinch ? "—" : ""}</td>
     </tr>
   );
   const itemTable = items => (
@@ -1277,6 +1279,33 @@ function PropagationTab({ plan }) {
         );
       })}
       {taskItems && <Modal onClose={() => { setTaskItems(null); setSel(new Set()); }}><TaskComposer items={taskItems} planId={plan.id} houseId={null} onClose={() => { setTaskItems(null); setSel(new Set()); }} /></Modal>}
+      {detail && <Modal onClose={() => setDetail(null)}><PropCard row={detail} onClose={() => setDetail(null)} /></Modal>}
+    </div>
+  );
+}
+
+// Click-a-variety propagation card — transcribes the guide's propagation section + treatments/PGR.
+function PropCard({ row, onClose }) {
+  const pd = row.pd || {};
+  const det = [["form", "Form"], ["tray_size", "Tray size"], ["tray_sizes", "Tray sizes"], ["plants_per_cell", "Plants per cell"], ["days_in_mist", "Days in mist"], ["days_with_mist", "Days with mist"], ["avg_soil_temp", "Soil temp"], ["avg_air_temp_day", "Air temp · day"], ["avg_air_temp_night", "Air temp · night"], ["temp", "Temp"], ["ph_range", "pH"], ["ec_range", "EC"], ["fertility_rate", "Fertility"], ["fertilization", "Fertilization"], ["plug_fertilizer", "Plug fertilizer"], ["propagation_weeks", "Prop weeks"], ["weeks_to_pinch", "Weeks to pinch"], ["wks_stick_to_transplant", "Stick→transplant wks"]].filter(([k]) => pd[k] != null && String(pd[k]).trim());
+  const treat = [["🧴 Rooting hormone", pd.rooting_hormone || pd.hormone], ["🛡 Fungicide", pd.fungicide], ["📏 PGR", pd.plug_pgr], ["✂️ Pinch", pd.propagation_pinch || pd.pinch]].filter(t => t[1] && String(t[1]).trim());
+  const sec = { fontSize: 11, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase", letterSpacing: 0.5, margin: "14px 0 6px" };
+  return (
+    <div style={{ padding: 18 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div>
+          <div style={{ fontWeight: 800, color: COLORS.dark, fontSize: 15 }}>🌱 {row.crop} {row.variety}</div>
+          <div style={{ fontSize: 12, color: COLORS.muted, marginTop: 2 }}>Propagation card · stick wk {row.weekKey} · {row.cell}-cell · {row.trays} trays{row.callused ? " · callused" : ""}</div>
+        </div>
+        <button onClick={onClose} style={{ background: "transparent", border: "none", fontSize: 18, cursor: "pointer", color: COLORS.muted }}>✕</button>
+      </div>
+      {treat.length > 0 && (<><div style={sec}>Treatments</div>
+        <div style={{ display: "grid", gap: 6 }}>{treat.map(([l, v], i) => <div key={i} style={{ fontSize: 13, background: "#f3f8ee", borderRadius: 8, padding: "7px 10px" }}><strong>{l}:</strong> {String(v)}</div>)}</div></>)}
+      {det.length > 0 && (<><div style={sec}>Propagation</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 6 }}>{det.map(([k, l]) => <div key={k} style={{ fontSize: 13 }}><span style={{ color: COLORS.muted }}>{l}:</span> <strong>{String(pd[k])}</strong></div>)}</div></>)}
+      {pd.key_tips && (<><div style={sec}>Key tips</div><div style={{ fontSize: 13, lineHeight: 1.5, color: COLORS.text }}>{String(pd.key_tips)}</div></>)}
+      {pd.comments && (<><div style={sec}>Propagation notes (full section)</div><div style={{ fontSize: 13, lineHeight: 1.5, color: COLORS.text, whiteSpace: "pre-wrap" }}>{String(pd.comments)}</div></>)}
+      {!det.length && !treat.length && !pd.comments && !pd.key_tips && <div style={{ color: COLORS.muted, fontSize: 13, marginTop: 12 }}>No propagation detail on the linked guide yet.</div>}
     </div>
   );
 }
