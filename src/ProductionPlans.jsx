@@ -4664,11 +4664,42 @@ function ComboDiagram({ layout }) {
 
 // Item detail + LIVE culture (reads the linked guide from the Culture DB each time,
 // so parser updates flow through automatically) + combo planting diagram.
+// ── Culture/crop-protection helpers (shared) ─────────────────────────────────
+const FINISH_LABELS = {
+  size_4_inch: '4"', size_5_inch: '5"', size_6_inch: '6"', size_6_5_inch: '6.5"', size_8_inch: '8"',
+  size_10_inch: '10"', size_11_inch: '11"', size_12_inch: '12"', size_1_gallon: "1 gal", size_2_gallon: "2 gal",
+  basket_10_inch: '10" basket', basket_12_inch: '12" basket',
+};
+function finishWeeks(v) {
+  if (!v || typeof v !== "object") return null;
+  const lo = v.lower ?? v.weeks_lower, hi = v.upper ?? v.weeks_upper;
+  if (lo == null && hi == null) return null;
+  return (lo != null && hi != null && lo !== hi) ? `${lo}–${hi} wk` : `${lo ?? hi} wk`;
+}
+function cpNorm(s) { return String(s || "").toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim(); }
+function cpMatch(term, control) {
+  const a = cpNorm(term), b = cpNorm(control);
+  if (a.length < 3 || b.length < 3) return false;
+  const as = a.replace(/s$/, ""), bs = b.replace(/s$/, "");
+  return a.includes(b) || b.includes(a) || as.includes(bs) || bs.includes(as);
+}
+function splitTerms(val) {
+  if (Array.isArray(val)) return val.map(String).map(s => s.trim()).filter(s => s.length > 2);
+  return String(val || "").split(/[,;\n•·]| and /i).map(s => s.trim()).filter(s => s.length > 2);
+}
+
 function ItemDetail({ row, onClose, onTask }) {
   const [guide, setGuide] = useState(null);
   const [loading, setLoading] = useState(false);
   const [combo, setCombo] = useState([]);
+  const [cp, setCp] = useState([]);
   const srcId = row?.variety?.culture_source_id;
+  useEffect(() => {
+    const cc = getCultureClient(); if (!cc) return;
+    cc.from("crop_protection_inputs_public")
+      .select("name,manufacturer,input_class,product_type,active_ingredient,moa_group,rei_hours,controls,target_pests,labeled_crops,phytotox_cautions,use_rates")
+      .then(({ data }) => setCp(data || []));
+  }, []);
   useEffect(() => {
     if (!srcId) { setGuide(null); return; }
     const cc = getCultureClient();
@@ -4686,8 +4717,23 @@ function ItemDetail({ row, onClose, onTask }) {
     });
   }, [row?.id, row?.planting_layout]);
   const cd = guide?.culture_details || {};
-  const entries = Object.keys(cd).filter(k => /pgr|warning|pest|water|temp|finish|pinch|exposure|bloom|media|habit|propagation/i.test(k) && cd[k] && String(cd[k]).trim());
+  const DEDICATED = /potential pest|potential disease|growth regulator/i;
+  const entries = Object.keys(cd).filter(k => /pgr|warning|water|temp|finish|pinch|exposure|bloom|media|habit|propagation|ph|ec|fertil/i.test(k) && !DEDICATED.test(k) && cd[k] && String(cd[k]).trim());
   const pdf = cd["Culture Guide PDF"] || guide?.pdf_url;
+  const pests = splitTerms(cd["Potential Pests"]);
+  const diseases = splitTerms(cd["Potential Diseases"]);
+  const pgr = cd["Growth Regulators"] || cd["Growth Regulator"] || cd["PGR"] || cd["PGRs"];
+  const matrix = guide?.finish_time_matrix && typeof guide.finish_time_matrix === "object" ? guide.finish_time_matrix : null;
+  const cropName = guide?.crop_name || row?.variety?.crop_name || "";
+  // C — interlink: match this crop's pests/diseases against crop_protection controls
+  const treatments = [...pests.map(t => ({ t, kind: "pest" })), ...diseases.map(t => ({ t, kind: "disease" }))]
+    .map(({ t, kind }) => {
+      const prods = cp.filter(p => (p.controls || []).some(c => cpMatch(t, c)) || (p.target_pests || []).some(x => cpMatch(t, x)))
+        .map(p => ({ ...p, safe: (p.labeled_crops || []).some(lc => cpMatch(cropName, lc)) }));
+      return { t, kind, prods };
+    }).filter(x => x.prods.length);
+  const secLabel = { fontSize: 11, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 };
+  const secWrap = { borderTop: `1px solid ${COLORS.border}`, paddingTop: 10, marginTop: 10 };
   return (
     <div style={{ padding: 18 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -4713,7 +4759,44 @@ function ItemDetail({ row, onClose, onTask }) {
           </div>
         </div>
       )}
-      <div style={{ borderTop: `1px solid ${COLORS.border}`, paddingTop: 10 }}>
+      {matrix && Object.values(matrix).some(finishWeeks) && (
+        <div style={secWrap}>
+          <div style={secLabel}>Finish time (by container)</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {Object.entries(matrix).map(([k, v]) => { const w = finishWeeks(v); if (!w) return null; return (
+              <span key={k} style={{ fontSize: 12, padding: "3px 9px", borderRadius: 8, background: "#f3f8ee", border: `1px solid ${COLORS.border}` }}>{FINISH_LABELS[k] || k}: <strong>{w}</strong>{(v.ppp_lower || v.ppp_upper) ? <span style={{ color: COLORS.muted }}> · {v.ppp_lower === v.ppp_upper || !v.ppp_upper ? (v.ppp_lower || v.ppp_upper) : `${v.ppp_lower}–${v.ppp_upper}`} ppp</span> : null}</span>
+            ); })}
+          </div>
+        </div>
+      )}
+      {(pests.length > 0 || diseases.length > 0 || pgr) && (
+        <div style={secWrap}>
+          {pests.length > 0 && <div style={{ fontSize: 13, marginBottom: 4, lineHeight: 1.5 }}><strong style={{ color: COLORS.dark }}>🐛 Potential pests:</strong> {pests.join(", ")}</div>}
+          {diseases.length > 0 && <div style={{ fontSize: 13, marginBottom: 4, lineHeight: 1.5 }}><strong style={{ color: COLORS.dark }}>🦠 Potential diseases:</strong> {diseases.join(", ")}</div>}
+          {pgr && <div style={{ fontSize: 13, lineHeight: 1.5 }}><strong style={{ color: COLORS.dark }}>📏 Growth regulators:</strong> {String(pgr)}</div>}
+        </div>
+      )}
+      {treatments.length > 0 && (
+        <div style={secWrap}>
+          <div style={secLabel}>🛡 Treatments {cropName ? <span style={{ textTransform: "none", fontWeight: 400 }}>· ✓ = labeled safe on {cropName}</span> : null}</div>
+          <div style={{ display: "grid", gap: 8 }}>
+            {treatments.map(({ t, kind, prods }) => (
+              <div key={kind + t}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.dark }}>{kind === "pest" ? "🐛" : "🦠"} {t}</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
+                  {prods.map((p, i) => (
+                    <span key={i} title={`${p.product_type || ""} · ${p.active_ingredient || "?"} · MOA ${p.moa_group || "?"} · REI ${p.rei_hours ?? "?"}h${p.use_rates ? " · " + p.use_rates : ""}`}
+                      style={{ fontSize: 11, padding: "2px 8px", borderRadius: 8, background: p.input_class === "biological" ? "#e6f2e0" : "#eef3f8", border: `1px solid ${p.safe ? COLORS.light : COLORS.border}` }}>
+                      {p.safe ? "✓ " : ""}{p.name} <span style={{ color: COLORS.muted }}>· {p.manufacturer || ""} · {p.input_class === "biological" ? "bio" : "chem"}</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      <div style={{ borderTop: `1px solid ${COLORS.border}`, paddingTop: 10, marginTop: 10 }}>
         <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>Culture{guide ? ` · ${guide.breeder_name || ""} ${guide.crop_name || ""} ${guide.series_name || ""}` : ""}</div>
         {!srcId ? <div style={{ color: COLORS.muted, fontSize: 13 }}>No culture guide linked yet — add it in the parser, then re-link.</div>
           : loading ? <div style={{ color: COLORS.muted, fontSize: 13 }}>Loading culture…</div>

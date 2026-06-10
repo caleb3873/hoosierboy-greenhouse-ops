@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { useVarieties, useContainers, useSpacingProfiles, useBrokerCatalogs, useSoilMixes, useInputProducts, useComboTags, useBrokerProfiles, useCultureGuides, getSupabase } from "./supabase";
+import { useVarieties, useContainers, useSpacingProfiles, useBrokerCatalogs, useSoilMixes, useInputProducts, useComboTags, useBrokerProfiles, useCultureGuides, getSupabase, getCultureClient } from "./supabase";
 
 // Title-case a crop name ("ACHILLEA" -> "Achillea", "Geranium (Annual)" kept readable)
 const titleCaseCrop = s => String(s || "").toLowerCase().replace(/\b\w/g, m => m.toUpperCase());
@@ -825,6 +825,91 @@ function AskAssistant() {
   );
 }
 
+// Crop-protection + biologicals catalog — reads crop_protection_inputs_public from the
+// culture project via the SAME culture client (NOT this app's local `inputs` table).
+function CropProtectionCatalog() {
+  const [rows, setRows] = useState(null);
+  const [q, setQ] = useState("");
+  const [cls, setCls] = useState("");
+  const [type, setType] = useState("");
+  const [mfr, setMfr] = useState("");
+  useEffect(() => {
+    const cc = getCultureClient(); if (!cc) { setRows([]); return; }
+    cc.from("crop_protection_inputs_public").select("*").then(({ data }) => setRows(data || []));
+  }, []);
+  if (rows === null) return <div style={{ color: "#7a8c74", padding: 24 }}>Loading crop-protection catalog…</div>;
+  if (!rows.length) return <div style={{ color: "#7a8c74", padding: 24 }}>No crop-protection data found in the culture project.</div>;
+
+  const types = [...new Set(rows.map(r => r.product_type).filter(Boolean))].sort();
+  const mfrs = [...new Set(rows.map(r => r.manufacturer).filter(Boolean))].sort();
+  const ql = q.trim().toLowerCase();
+  const shown = rows.filter(r => {
+    if (cls && r.input_class !== cls) return false;
+    if (type && r.product_type !== type) return false;
+    if (mfr && r.manufacturer !== mfr) return false;
+    if (!ql) return true;
+    const hay = [r.name, r.active_ingredient, r.moa_group, (r.controls || []).join(" "), (r.target_pests || []).join(" "), (r.labeled_crops || []).join(" "), r.phytotox_cautions].join(" ").toLowerCase();
+    return hay.includes(ql);
+  }).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+
+  const sel = { padding: "8px 10px", border: "1px solid #cdd9c4", borderRadius: 8, fontSize: 13, fontFamily: "inherit", background: "#fff", color: "#1e2d1a" };
+  const chip = (txt, bg) => <span style={{ fontSize: 11, padding: "2px 7px", borderRadius: 7, background: bg, color: "#1e2d1a", border: "1px solid #cdd9c4" }}>{txt}</span>;
+  const Pill = ({ active, onClick, children }) => (
+    <button onClick={onClick} style={{ padding: "6px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", border: `1px solid ${active ? "#7fb069" : "#cdd9c4"}`, background: active ? "#7fb069" : "#fff", color: active ? "#fff" : "#1e2d1a" }}>{children}</button>
+  );
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
+        <h2 style={{ fontFamily: "'Playfair Display', serif", color: "#1e2d1a", margin: 0 }}>🧪 Crop Protection & Biologicals</h2>
+        <span style={{ fontSize: 13, color: "#7a8c74" }}>{shown.length} of {rows.length}</span>
+      </div>
+      <p style={{ fontSize: 12, color: "#7a8c74", marginTop: 0 }}>Search by what it controls ("Botrytis"), active ingredient, or crop safety. Filter chemical vs biological, type, and manufacturer.</p>
+
+      <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search — pest/disease it controls, active ingredient, crop…"
+        style={{ width: "100%", padding: "10px 12px", border: "1px solid #cdd9c4", borderRadius: 8, fontSize: 14, fontFamily: "inherit", marginBottom: 10, boxSizing: "border-box" }} />
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 16 }}>
+        <Pill active={!cls} onClick={() => setCls("")}>All</Pill>
+        <Pill active={cls === "chemical"} onClick={() => setCls("chemical")}>🧪 Chemical</Pill>
+        <Pill active={cls === "biological"} onClick={() => setCls("biological")}>🌿 Biological</Pill>
+        <select value={type} onChange={e => setType(e.target.value)} style={sel}><option value="">All types</option>{types.map(t => <option key={t} value={t}>{t}</option>)}</select>
+        <select value={mfr} onChange={e => setMfr(e.target.value)} style={sel}><option value="">All makers</option>{mfrs.map(m => <option key={m} value={m}>{m}</option>)}</select>
+      </div>
+
+      <div style={{ display: "grid", gap: 12 }}>
+        {shown.map(r => (
+          <div key={r.id || r.name} style={{ background: "#fff", border: "1px solid #e0e8d8", borderRadius: 10, padding: "14px 16px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+              <div style={{ fontWeight: 800, color: "#1e2d1a", fontSize: 15 }}>{r.name}</div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {chip(r.input_class === "biological" ? "🌿 biological" : "🧪 chemical", r.input_class === "biological" ? "#e6f2e0" : "#eef3f8")}
+                {r.product_type && chip(r.product_type, "#f3f8ee")}
+                {r.manufacturer && chip(r.manufacturer, "#f3f8ee")}
+              </div>
+            </div>
+            <div style={{ fontSize: 12, color: "#5a6a54", marginTop: 4 }}>
+              {r.active_ingredient && <span><strong>AI:</strong> {r.active_ingredient} · </span>}
+              {r.moa_group && <span><strong>MOA:</strong> {r.moa_group} · </span>}
+              {r.formulation && <span>{r.formulation} · </span>}
+              {r.rei_hours != null && <span>REI {r.rei_hours}h</span>}
+            </div>
+            {(r.controls || []).length > 0 && (
+              <div style={{ marginTop: 8 }}><span style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74" }}>CONTROLS </span>
+                <span style={{ display: "inline-flex", gap: 5, flexWrap: "wrap", verticalAlign: "middle" }}>{r.controls.map((c, i) => chip(c, "#fbf3e0"))}</span>
+              </div>
+            )}
+            {(r.labeled_crops || []).length > 0 && <div style={{ fontSize: 12, color: "#5a6a54", marginTop: 6 }}><strong>Labeled crops:</strong> {r.labeled_crops.join(", ")}</div>}
+            {r.use_rates && <div style={{ fontSize: 12, color: "#5a6a54", marginTop: 4 }}><strong>Rate:</strong> {r.use_rates}</div>}
+            {r.phytotox_cautions && <div style={{ fontSize: 12, color: "#c0392b", marginTop: 4 }}>⚠ {r.phytotox_cautions}</div>}
+            {r.source_url && <a href={r.source_url} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: "#7fb069", marginTop: 4, display: "inline-block" }}>Label / source ↗</a>}
+          </div>
+        ))}
+        {!shown.length && <div style={{ color: "#7a8c74", padding: 16 }}>Nothing matches that filter.</div>}
+      </div>
+    </div>
+  );
+}
+
 function VarietyLibrary() {
   const { rows: library, upsert: upsertVariety, remove: removeVarietyDb } = useVarieties();
   const { rows: containers } = useContainers(); // for the per-variety default pot size
@@ -892,6 +977,7 @@ function VarietyLibrary() {
           {view === "library" && (<>
             <button onClick={() => setView("ask")} style={{ background: "#7fb069", color: "#fff", border: "1px solid #7fb069", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>💬 Ask</button>
             <button onClick={() => setView("culture")} style={{ background: "none", color: "#c8e6b8", border: "1px solid #4a6a3a", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>🌱 Culture DB</button>
+            <button onClick={() => setView("cropprotect")} style={{ background: "none", color: "#c8e6b8", border: "1px solid #4a6a3a", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>🧪 Crop Protection</button>
             <button onClick={() => setView("pdf-import")} style={{ background: "none", color: "#c8e6b8", border: "1px solid #4a6a3a", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>📄 Import PDF Catalog</button>
             <button onClick={() => setView("grades")} style={{ background: "none", color: "#c8e6b8", border: "1px solid #4a6a3a", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>⭐ Grade Varieties</button>
             <button onClick={() => { setEditingId(null); setView("add"); }} style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 8, padding: "8px 18px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>+ Add Variety</button>
@@ -919,6 +1005,9 @@ function VarietyLibrary() {
 
         {/* CULTURE DB BROWSER (Phase 2) */}
         {view === "culture" && <CultureBrowser existingLibrary={library} />}
+
+        {/* CROP-PROTECTION CATALOG */}
+        {view === "cropprotect" && <CropProtectionCatalog />}
 
         {/* LIBRARY VIEW */}
         {view === "library" && (
