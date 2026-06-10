@@ -1158,7 +1158,7 @@ function MaterialsTab({ plan }) {
     if (!sb) return;
     (async () => {
       const { data: sc } = await sb.from("scheduled_crops")
-        .select("variety_id,container_id,qty_pots,qty_plants_ordered,liner_unit_cost,soil_mix_id,is_combo_component,combo_parent_id,prop_method,ship_week,ship_year,plant_week,plant_year")
+        .select("variety_id,container_id,qty_pots,qty_plants_ordered,liner_unit_cost,soil_mix_id,is_combo_component,combo_parent_id,prop_method,prop_tray_size,ship_week,ship_year,plant_week,plant_year")
         .eq("plan_id", plan.id);
       const { data: vars } = await sb.from("variety_library").select("id,crop_name,variety,breeder");
       const { data: containers } = await sb.from("containers").select("id,sku,name,cost_per_unit,units_per_case,qty_per_pallet,fill_volume_cu_ft,default_ring_id,primary_supplier");
@@ -1170,6 +1170,7 @@ function MaterialsTab({ plan }) {
       const linerRows = []; const byPot = {}, byRing = {};
       let totalSoilCuFt = 0;
       const soilByWeek = {};
+      const propByTray = {};
       let soilMix = null;
 
       for (const r of (sc || [])) {
@@ -1191,6 +1192,7 @@ function MaterialsTab({ plan }) {
 
         if (isChild) continue;
         const qtyPots = +r.qty_pots || 0;
+        if (r.prop_tray_size && String(r.prop_tray_size).trim()) propByTray[r.prop_tray_size] = (propByTray[r.prop_tray_size] || 0) + qtyPots;
         if (c) {
           if (!byPot[c.sku]) byPot[c.sku] = { ...c, qty: 0, cost: 0 };
           byPot[c.sku].qty  += qtyPots;
@@ -1225,6 +1227,10 @@ function MaterialsTab({ plan }) {
         });
         return acc;
       }, []);
+      const propTrays = Object.entries(propByTray).map(([size, plugs]) => {
+        const usable = (+size === 105) ? 100 : (+size || 1);
+        return { size, plugs, trays: Math.ceil(plugs / usable) };
+      }).sort((a, b) => (+a.size) - (+b.size));
 
       // Year totals for input allocation
       let yearPots = 0, yearSoilCf = 0;
@@ -1267,6 +1273,7 @@ function MaterialsTab({ plan }) {
         pots:   Object.values(byPot).sort((a,b) => b.cost - a.cost),
         rings:  Object.values(byRing).sort((a,b) => b.cost - a.cost),
         soil:   { mix: soilMix, cuft: totalSoilCuFt, bags: bagsNeeded, cost: soilCost, pallets: palletsNeeded, trucks: trucksNeeded, weeks: soilWeeks },
+        propTrays,
         inputs: allocatedInputs,
         totalPots: planPots,
       });
@@ -1344,6 +1351,16 @@ function MaterialsTab({ plan }) {
           <div style={{ color: COLORS.muted, padding: 12 }}>No soil mix assigned to scheduled crops.</div>
         )}
       </MaterialSection>
+
+      {/* PROP TRAYS */}
+      {data.propTrays && data.propTrays.length > 0 && (
+        <MaterialSection title="🌱 Prop Trays" subtitle="Trays to stick — by cell size (105 counted as 100 usable)">
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+            {data.propTrays.map(p => <BigSoilStat key={p.size} icon="🌱" value={p.trays.toLocaleString()} label={`${p.size}-cell trays · ${p.plugs.toLocaleString()} plugs`} />)}
+            <BigSoilStat icon="📋" value={data.propTrays.reduce((s, p) => s + p.trays, 0).toLocaleString()} label="total prop trays" />
+          </div>
+        </MaterialSection>
+      )}
 
       {/* RINGS */}
       <MaterialSection title="⭕ Rings" subtitle="For pinched containers — one ring per pot">
