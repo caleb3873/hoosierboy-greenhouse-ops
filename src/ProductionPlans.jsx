@@ -1099,7 +1099,7 @@ function MaterialsTab({ plan }) {
         .eq("plan_id", plan.id);
       const { data: vars } = await sb.from("variety_library").select("id,variety,breeder");
       const { data: containers } = await sb.from("containers").select("id,sku,name,cost_per_unit,units_per_case,qty_per_pallet,fill_volume_cu_ft,default_ring_id,primary_supplier");
-      const { data: soils } = await sb.from("soil_mixes").select("id,name,vendor,cost_per_bag,fluffed_volume,bag_size");
+      const { data: soils } = await sb.from("soil_mixes").select("id,name,vendor,cost_per_bag,fluffed_volume,bag_size,bags_per_pallet");
       const { data: inputs } = await sb.from("program_inputs").select("*").eq("year", plan.year);
       const { data: yearRows } = await sb.from("scheduled_crops")
         .select("qty_pots,is_combo_component,combo_parent_id,container_id,plant_year");
@@ -1140,6 +1140,7 @@ function MaterialsTab({ plan }) {
       const fluffed = +soilMix?.fluffed_volume || 8;
       const bagsNeeded = soilMix ? Math.ceil(totalSoilCuFt / fluffed) : 0;
       const soilCost   = bagsNeeded * (+soilMix?.cost_per_bag || 0);
+      const palletsNeeded = soilMix?.bags_per_pallet ? Math.ceil(bagsNeeded / +soilMix.bags_per_pallet) : null;
 
       // Year totals for input allocation
       let yearPots = 0, yearSoilCf = 0;
@@ -1178,7 +1179,7 @@ function MaterialsTab({ plan }) {
         liners: Object.values(byLiner).sort((a,b) => b.cost - a.cost),
         pots:   Object.values(byPot).sort((a,b) => b.cost - a.cost),
         rings:  Object.values(byRing).sort((a,b) => b.cost - a.cost),
-        soil:   { mix: soilMix, cuft: totalSoilCuFt, bags: bagsNeeded, cost: soilCost },
+        soil:   { mix: soilMix, cuft: totalSoilCuFt, bags: bagsNeeded, cost: soilCost, pallets: palletsNeeded },
         inputs: allocatedInputs,
         totalPots: planPots,
       });
@@ -1239,10 +1240,11 @@ function MaterialsTab({ plan }) {
       {/* SOIL */}
       <MaterialSection title="💧 Soil" subtitle={data.soil.mix ? `${data.soil.mix.name} (${data.soil.mix.vendor})` : "No soil mix set"}>
         {data.soil.mix ? (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12 }}>
-            <Stat label="Cu ft needed (fluffed)" value={data.soil.cuft.toFixed(0)} dark />
-            <Stat label="Bag size (compressed)"  value={`${data.soil.mix.bag_size} cf`} dark />
-            <Stat label="Bags needed"            value={data.soil.bags.toLocaleString()} dark />
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 12 }}>
+            <Stat label="Cu ft needed (fluffed)" value={data.soil.cuft.toLocaleString(undefined, { maximumFractionDigits: 0 })} dark />
+            <Stat label="Bag size (compressed)"  value={`${data.soil.mix.bag_size} cf → ${(+data.soil.mix.fluffed_volume || 8)} fluffed`} dark />
+            <Stat label="🛍 Bags needed"          value={data.soil.bags.toLocaleString()} dark />
+            <Stat label="🚛 Pallets needed"       value={data.soil.pallets != null ? `${data.soil.pallets} (${data.soil.mix.bags_per_pallet}/pallet)` : "set bags/pallet"} dark />
             <Stat label="$/bag"                  value={"$" + (+data.soil.mix.cost_per_bag).toFixed(2)} dark />
             <Stat label="Total"                  value={fmtMoney(data.soil.cost)} big dark />
           </div>
