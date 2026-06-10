@@ -384,7 +384,8 @@ function PlanDashboard({ plan, initialTab }) {
       const { data: br } = await sb.from("v_scheduled_crops_pl")
         .select("bench_id,direct_cost_total,revenue,gross_profit")
         .eq("plan_id", plan.id);
-      const { data: bench } = await sb.from("benches").select("id,zone_label");
+      const benchIds = [...new Set((br || []).map(r => r.bench_id).filter(Boolean))];
+      const { data: bench } = benchIds.length ? await sb.from("benches").select("id,zone_label").in("id", benchIds) : { data: [] };
       const byHouse = {};
       for (const r of (br || [])) {
         const b = (bench || []).find(x => x.id === r.bench_id);
@@ -753,7 +754,7 @@ function WeekTab({ planId }) {
         .select("plant_week,variety_id,qty_pots,qty_plants_ordered,direct_cost_total,revenue,gross_profit,bench_id,is_combo_component,combo_parent_id")
         .eq("plan_id", planId);
       const { data: vars } = await sb.from("variety_library").select("id,variety");
-      const { data: bench } = await sb.from("benches").select("id,zone_label");
+      const { data: bench } = await sb.from("benches").select("id,zone_label").limit(2000);
 
       const byW = {};
       for (const r of (pl || [])) {
@@ -882,7 +883,7 @@ function ItemsTab({ plan }) {
         .eq("plan_id", plan.id);
       const { data: vars } = await sb.from("variety_library").select("id,variety,breeder");
       const { data: containers } = await sb.from("containers").select("id,sku");
-      const { data: bench } = await sb.from("benches").select("id,code,zone_label");
+      const { data: bench } = await sb.from("benches").select("id,code,zone_label").limit(2000);
 
       setRows((sc || []).map(r => ({
         ...r,
