@@ -4358,7 +4358,7 @@ function ProfitBySize({ planId }) {
       const topThreshold = sortedSqFt[Math.floor(sortedSqFt.length / 3)] || 0;
       const botThreshold = sortedSqFt[Math.floor(sortedSqFt.length * 2 / 3)] || 0;
       for (const r of arr) {
-        if (r.profitPerSqFt === 0) { r.rec = "incomplete"; r.recColor = COLORS.muted; }
+        if (r.profitPerSqFt === 0 || !r.revenue) { r.rec = "incomplete"; r.recColor = COLORS.muted; }
         else if (r.profitPerSqFt >= topThreshold) { r.rec = "EXPAND"; r.recColor = COLORS.light; }
         else if (r.profitPerSqFt >= botThreshold) { r.rec = "HOLD"; r.recColor = COLORS.amber; }
         else { r.rec = "REDUCE"; r.recColor = COLORS.red; }
