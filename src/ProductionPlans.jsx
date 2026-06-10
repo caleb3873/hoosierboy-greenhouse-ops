@@ -4964,6 +4964,18 @@ function BasketDesigner({ layout, plantNames, onSave, onClose }) {
     return { x: dx / (2 * RB) + 0.5, y: dy / (2 * RB) + 0.5 };
   };
   const move = e => { if (drag == null) return; const n = toNorm(e.clientX, e.clientY); setDots(ds => ds.map((d, i) => i === drag ? { ...d, ...n } : d)); };
+  // Alignment helpers: place dots on a ring at normalized radius R (0=center, ~0.5=rim), evenly spaced.
+  const ringPlace = (arr, R, off = 0) => arr.map((d, i) => { const a = -Math.PI / 2 + off + i * 2 * Math.PI / (arr.length || 1); return { ...d, x: 0.5 + R * Math.cos(a), y: 0.5 + R * Math.sin(a) }; });
+  const spaceEvenly = () => { // one ring, interleaved by plant so colors sit across from each other
+    const byPlant = {}; dots.forEach(d => { (byPlant[d.plant] = byPlant[d.plant] || []).push(d); });
+    const order = []; let added = true; while (added) { added = false; Object.keys(byPlant).sort((a, b) => a - b).forEach(k => { if (byPlant[k].length) { order.push(byPlant[k].shift()); added = true; } }); }
+    setDots(ringPlace(order, 0.34));
+  };
+  const concentric = () => { // each plant on its own ring, inner→outer (last plant, e.g. dichondra, to the rim)
+    const present = [...new Set(dots.map(d => d.plant))].sort((a, b) => a - b); const out = [];
+    present.forEach((pi, idx) => { const grp = dots.filter(d => d.plant === pi); const R = present.length <= 1 ? 0.34 : (0.13 + idx * (0.38 / (present.length - 1))); out.push(...ringPlace(grp, R, idx % 2 ? Math.PI / (grp.length || 1) : 0)); });
+    setDots(out);
+  };
   return (
     <div style={{ padding: 4 }}>
       <div style={{ fontSize: 12, color: COLORS.muted, marginBottom: 8 }}>Drag a plant to position · tap a plant below to add one · double-click a dot to remove · then Lock & save.</div>
@@ -4978,6 +4990,10 @@ function BasketDesigner({ layout, plantNames, onSave, onClose }) {
           </g>
         ); })}
       </svg>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, margin: "8px 0" }}>
+        <button onClick={spaceEvenly} style={{ padding: "5px 10px", border: `1px solid ${COLORS.dark}`, borderRadius: 8, background: "#f3f8ee", color: COLORS.dark, cursor: "pointer", fontSize: 12, fontWeight: 700, fontFamily: "inherit" }}>⊙ Space evenly in a circle</button>
+        <button onClick={concentric} style={{ padding: "5px 10px", border: `1px solid ${COLORS.dark}`, borderRadius: 8, background: "#f3f8ee", color: COLORS.dark, cursor: "pointer", fontSize: 12, fontWeight: 700, fontFamily: "inherit" }}>◎ Rings by plant</button>
+      </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, margin: "10px 0" }}>
         {plants.map((p, i) => (
           <button key={i} onClick={() => setDots(ds => [...ds, { plant: i, x: 0.5, y: 0.5 }])} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 10px", border: `1px solid ${COLORS.border}`, borderRadius: 16, background: "#fff", cursor: "pointer", fontSize: 12, fontFamily: "inherit" }}>
@@ -4994,7 +5010,7 @@ function BasketDesigner({ layout, plantNames, onSave, onClose }) {
   );
 }
 
-function ItemDetail({ row, onClose, onTask }) {
+function ItemDetail({ row, onClose, onTask, planId }) {
   const [guide, setGuide] = useState(null);
   const [loading, setLoading] = useState(false);
   const [combo, setCombo] = useState([]);
@@ -5064,7 +5080,17 @@ function ItemDetail({ row, onClose, onTask }) {
           </div>
           {editLayout ? (
             <BasketDesigner layout={layout} plantNames={combo.map(c => `${c.v?.crop_name || ""} ${c.v?.variety || ""}`.trim()).filter(Boolean)}
-              onSave={async (l) => { setLayout(l); setEditLayout(false); const sb = getSupabase(); if (sb) await sb.from("scheduled_crops").update({ planting_layout: l }).eq("id", row.id); }}
+              onSave={async (l) => {
+                const sb = getSupabase();
+                if (!sb) { window.alert("No database connection — not saved."); return; }
+                // Save to EVERY combo with this same name in the plan (same recipe → same diagram).
+                let q = sb.from("scheduled_crops").update({ planting_layout: l }).eq("is_combo_component", false).eq("item_name", row.item_name);
+                if (planId) q = q.eq("plan_id", planId);
+                const { data, error } = await q.select("id");
+                if (error) { window.alert("Save failed: " + error.message); return; }
+                setLayout(l); setEditLayout(false);
+                window.alert(`Saved ✓  (${data?.length || 0} basket${(data?.length || 0) === 1 ? "" : "s"} named "${row.item_name}")`);
+              }}
               onClose={() => setEditLayout(false)} />
           ) : (
             <div style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
@@ -5257,7 +5283,7 @@ function HouseDrilldown({ houseName, houses, planId, onClose }) {
         </div>
       )}
       {taskItems && <Modal onClose={() => { setTaskItems(null); setSel(new Set()); }}><TaskComposer items={taskItems} planId={planId} houseId={house.id} onClose={() => { setTaskItems(null); setSel(new Set()); }} /></Modal>}
-      {detail && <Modal onClose={() => setDetail(null)}><ItemDetail row={detail} onClose={() => setDetail(null)} onTask={() => { setTaskItems(toItems([detail])); setDetail(null); }} /></Modal>}
+      {detail && <Modal onClose={() => setDetail(null)}><ItemDetail row={detail} planId={planId} onClose={() => setDetail(null)} onTask={() => { setTaskItems(toItems([detail])); setDetail(null); }} /></Modal>}
       {rows.length === 0 ? (
         <div style={{ color: COLORS.muted, padding: "20px 0" }}>No crops planned on this building for this plan.</div>
       ) : (
