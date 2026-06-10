@@ -4850,23 +4850,42 @@ function shortName(name) {
 
 // ── House Drilldown panel ───────────────────────────────────────────────────
 // Top-down combo planting diagram: center plant + alternating ring.
+// Color a basket position by the plant/color name in its label.
+function plantColor(name) {
+  const s = String(name || "").toLowerCase();
+  if (/pink|rose|blush/.test(s)) return "#e87fa8";
+  if (/purple|violet|lavender|plum/.test(s)) return "#8e5fb0";
+  if (/white|amethyst|cream|frost/.test(s)) return "#e8ede2";
+  if (/yellow|gold|lemon/.test(s)) return "#e6c84a";
+  if (/red|crimson|scarlet|wine/.test(s)) return "#d94f3d";
+  if (/blue|denim/.test(s)) return "#4a7fc0";
+  if (/orange|apricot|sunburst|coral/.test(s)) return "#e8943a";
+  return "#7fb069";
+}
 function ComboDiagram({ layout }) {
-  const ring = layout.ring || [];
-  const cx = 90, cy = 90, R = 52, rC = 30, rR = 19, N = 6;
-  const ringColors = ["#7fb069", "#e89a3a"];
-  const pos = Array.from({ length: N }, (_, i) => { const a = -Math.PI / 2 + i * 2 * Math.PI / N; return { x: cx + R * Math.cos(a), y: cy + R * Math.sin(a), label: ring[i % (ring.length || 1)] || "" }; });
-  return (
-    <svg width="180" height="180" viewBox="0 0 180 180" style={{ flexShrink: 0 }}>
-      {pos.map((p, i) => (
-        <g key={i}>
-          <circle cx={p.x} cy={p.y} r={rR} fill={ringColors[i % 2]} stroke="#fff" strokeWidth="1.5" />
-          <text x={p.x} y={p.y} textAnchor="middle" dominantBaseline="central" style={{ fontSize: 8, fontWeight: 700, fill: "#fff" }}>{String(p.label).slice(0, 5)}</text>
-        </g>
-      ))}
-      <circle cx={cx} cy={cy} r={rC} fill="#6a4fb0" stroke="#fff" strokeWidth="2" />
-      <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central" style={{ fontSize: 9, fontWeight: 800, fill: "#fff" }}>{String(layout.center || "").slice(0, 7)}</text>
-    </svg>
+  const cx = 100, cy = 100;
+  const dot = (x, y, r, label, fill, fs = 7) => (
+    <g key={`${x.toFixed(0)}_${y.toFixed(0)}`}>
+      <circle cx={x} cy={y} r={r} fill={fill} stroke="#fff" strokeWidth="1.5" />
+      <text x={x} y={y} textAnchor="middle" dominantBaseline="central" style={{ fontSize: fs, fontWeight: 700, fill: /white|amethyst|cream|frost/i.test(label) ? "#5a6a54" : "#fff" }}>{String(label || "").slice(0, 6)}</text>
+    </g>
   );
+  // Concentric layout: outer[] + inner[] rings (+ optional center) — colors offset/alternating.
+  if (layout.outer || layout.inner) {
+    const outer = layout.outer || [], inner = layout.inner || [];
+    const els = [];
+    const place = (arr, R, off) => arr.forEach((lab, i) => { const a = -Math.PI / 2 + off + i * 2 * Math.PI / (arr.length || 1); els.push(dot(cx + R * Math.cos(a), cy + R * Math.sin(a), 18, lab, plantColor(lab))); });
+    place(outer, 72, 0);
+    place(inner, 36, inner.length ? Math.PI / inner.length : 0);
+    if (layout.center) els.push(dot(cx, cy, 20, layout.center, plantColor(layout.center), 8));
+    return <svg width="200" height="200" viewBox="0 0 200 200" style={{ flexShrink: 0 }}>{els}</svg>;
+  }
+  // Center + single ring (e.g. Bloom Buddy: Stock center, Pansy/Alyssum alternating).
+  const ring = layout.ring || [];
+  const R = 58, rC = 32, rR = 20, N = 6; const rc = ["#7fb069", "#e89a3a"]; const els = [];
+  for (let i = 0; i < N; i++) { const a = -Math.PI / 2 + i * 2 * Math.PI / N; const lab = ring[i % (ring.length || 1)] || ""; els.push(<g key={i}><circle cx={cx + R * Math.cos(a)} cy={cy + R * Math.sin(a)} r={rR} fill={rc[i % 2]} stroke="#fff" strokeWidth="1.5" /><text x={cx + R * Math.cos(a)} y={cy + R * Math.sin(a)} textAnchor="middle" dominantBaseline="central" style={{ fontSize: 8, fontWeight: 700, fill: "#fff" }}>{String(lab).slice(0, 5)}</text></g>); }
+  els.push(<g key="c"><circle cx={cx} cy={cy} r={rC} fill="#6a4fb0" stroke="#fff" strokeWidth="2" /><text x={cx} y={cy} textAnchor="middle" dominantBaseline="central" style={{ fontSize: 9, fontWeight: 800, fill: "#fff" }}>{String(layout.center || "").slice(0, 7)}</text></g>);
+  return <svg width="200" height="200" viewBox="0 0 200 200" style={{ flexShrink: 0 }}>{els}</svg>;
 }
 
 // Item detail + LIVE culture (reads the linked guide from the Culture DB each time,
