@@ -1139,12 +1139,13 @@ function LinerWeekGroups({ groups }) {
 function MaterialsTab({ plan }) {
   const sb = getSupabase();
   const [data, setData] = useState(null);
+  const [tick, setTick] = useState(0);
 
   useEffect(() => {
     if (!sb) return;
     (async () => {
       const { data: sc } = await sb.from("scheduled_crops")
-        .select("variety_id,container_id,qty_pots,qty_plants_ordered,liner_unit_cost,soil_mix_id,is_combo_component,combo_parent_id,prop_method,ship_week,ship_year")
+        .select("variety_id,container_id,qty_pots,qty_plants_ordered,liner_unit_cost,soil_mix_id,is_combo_component,combo_parent_id,prop_method,ship_week,ship_year,plant_week,plant_year")
         .eq("plan_id", plan.id);
       const { data: vars } = await sb.from("variety_library").select("id,crop_name,variety,breeder");
       const { data: containers } = await sb.from("containers").select("id,sku,name,cost_per_unit,units_per_case,qty_per_pallet,fill_volume_cu_ft,default_ring_id,primary_supplier");
@@ -1155,6 +1156,7 @@ function MaterialsTab({ plan }) {
 
       const linerRows = []; const byPot = {}, byRing = {};
       let totalSoilCuFt = 0;
+      const soilByWeek = {};
       let soilMix = null;
 
       for (const r of (sc || [])) {
@@ -1180,7 +1182,10 @@ function MaterialsTab({ plan }) {
           if (!byPot[c.sku]) byPot[c.sku] = { ...c, qty: 0, cost: 0 };
           byPot[c.sku].qty  += qtyPots;
           byPot[c.sku].cost += qtyPots * (+c.cost_per_unit || 0);
-          totalSoilCuFt    += qtyPots * (+c.fill_volume_cu_ft || 0);
+          const cf = qtyPots * (+c.fill_volume_cu_ft || 0);
+          totalSoilCuFt += cf;
+          const swk = r.plant_week != null ? `${r.plant_year}·wk${String(r.plant_week).padStart(2, "0")}` : "Unscheduled";
+          soilByWeek[swk] = (soilByWeek[swk] || 0) + cf;
           if (ring) {
             if (!byRing[ring.sku]) byRing[ring.sku] = { ...ring, qty: 0, cost: 0 };
             byRing[ring.sku].qty  += qtyPots;
@@ -1195,6 +1200,13 @@ function MaterialsTab({ plan }) {
       const soilCost   = bagsNeeded * (+soilMix?.cost_per_bag || 0);
       const palletsNeeded = soilMix?.bags_per_pallet ? Math.ceil(bagsNeeded / +soilMix.bags_per_pallet) : null;
       const trucksNeeded  = soilMix?.cf_per_truck ? Math.ceil(totalSoilCuFt / +soilMix.cf_per_truck) : null;
+      // Running (cumulative) soil total by plant week — watch it climb as product is added.
+      const soilWeeks = Object.keys(soilByWeek).sort().reduce((acc, wk) => {
+        const cuft = soilByWeek[wk];
+        const cum = (acc.length ? acc[acc.length - 1].cumCuft : 0) + cuft;
+        acc.push({ week: wk, cuft, bags: Math.ceil(cuft / fluffed), cumCuft: cum, cumBags: Math.ceil(cum / fluffed) });
+        return acc;
+      }, []);
 
       // Year totals for input allocation
       let yearPots = 0, yearSoilCf = 0;
@@ -1236,12 +1248,12 @@ function MaterialsTab({ plan }) {
         cuttingCost: linerRows.filter(r => r.section === "cuttings").reduce((s, r) => s + r.cost, 0),
         pots:   Object.values(byPot).sort((a,b) => b.cost - a.cost),
         rings:  Object.values(byRing).sort((a,b) => b.cost - a.cost),
-        soil:   { mix: soilMix, cuft: totalSoilCuFt, bags: bagsNeeded, cost: soilCost, pallets: palletsNeeded, trucks: trucksNeeded },
+        soil:   { mix: soilMix, cuft: totalSoilCuFt, bags: bagsNeeded, cost: soilCost, pallets: palletsNeeded, trucks: trucksNeeded, weeks: soilWeeks },
         inputs: allocatedInputs,
         totalPots: planPots,
       });
     })();
-  }, [sb, plan.id, plan.year]);
+  }, [sb, plan.id, plan.year, tick]);
 
   if (!data) return <div style={{ padding: 20, color: COLORS.muted }}>Loading materials…</div>;
 
@@ -1253,6 +1265,9 @@ function MaterialsTab({ plan }) {
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <button onClick={() => { setData(null); setTick(t => t + 1); }} style={{ padding: "6px 14px", background: "#fff", color: COLORS.dark, border: `1px solid ${COLORS.border}`, borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 13 }}>↻ Refresh totals</button>
+      </div>
       {/* Grand total banner */}
       <div style={{ background: COLORS.dark, color: "#fff", borderRadius: 10, padding: 16, display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 12 }}>
         <Stat label="Liners + URC" value={fmtMoney(linerTotal)} />
@@ -1309,6 +1324,31 @@ function MaterialsTab({ plan }) {
               <span><strong>${(+data.soil.mix.cost_per_cf).toFixed(2)}</strong>/cf</span>
               <span>{(+data.soil.mix.cf_per_truck).toLocaleString()} cf/truck @ {fmtMoney(+data.soil.mix.cost_per_truck)}</span>
               <span style={{ fontWeight: 800, color: COLORS.dark }}>Trucks needed: {data.soil.trucks}</span>
+            </div>
+          )}
+          {data.soil.weeks && data.soil.weeks.length > 0 && (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: COLORS.muted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>Running total by plant week</div>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead><tr>
+                  <th style={th}>Plant week</th>
+                  <th style={{ ...th, textAlign: "right" }}>Soil this week (cf)</th>
+                  <th style={{ ...th, textAlign: "right" }}>Bags this week</th>
+                  <th style={{ ...th, textAlign: "right" }}>Cumulative cf</th>
+                  <th style={{ ...th, textAlign: "right" }}>Cumulative bags</th>
+                </tr></thead>
+                <tbody>
+                  {data.soil.weeks.map((w, i) => (
+                    <tr key={w.week} style={{ borderBottom: `1px solid ${COLORS.border}`, background: i === data.soil.weeks.length - 1 ? "#eaf3df" : "transparent" }}>
+                      <td style={{ ...td, fontWeight: 600 }}>{w.week}</td>
+                      <td style={{ ...td, textAlign: "right", color: COLORS.muted }}>{w.cuft.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
+                      <td style={{ ...td, textAlign: "right", color: COLORS.muted }}>{w.bags.toLocaleString()}</td>
+                      <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{w.cumCuft.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
+                      <td style={{ ...td, textAlign: "right", fontWeight: 800, color: COLORS.dark }}>{w.cumBags.toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
           </>
