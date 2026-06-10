@@ -318,6 +318,7 @@ const PLAN_TABS = [
   { id: "week",      label: "📅 By Plant Week" },
   { id: "tasks",     label: "✓ Tasks" },
   { id: "materials", label: "📦 Materials" },
+  { id: "prop",      label: "🌱 Propagation" },
   { id: "plugs",     label: "🧮 Plug Orders" },
   { id: "orders",    label: "📋 Orders" },
   { id: "inputs",    label: "⚙ Inputs" },
@@ -455,6 +456,7 @@ function PlanDashboard({ plan, initialTab }) {
           {hasData && tab === "week"      && <WeekTab planId={plan.id} />}
           {tab === "tasks"     && <PlanTasks planId={plan.id} />}
           {hasData && tab === "materials" && <MaterialsTab plan={plan} />}
+          {hasData && tab === "prop"      && <PropagationTab plan={plan} />}
           {hasData && tab === "plugs"     && <PlugOrdersTab plan={plan} />}
           {hasData && tab === "orders"    && <OrdersTab plan={plan} />}
           {hasData && tab === "inputs"    && <InputsTab plan={plan} />}
@@ -1132,6 +1134,119 @@ function LinerWeekGroups({ groups }) {
           </table>
         </details>
       ))}
+    </div>
+  );
+}
+
+// Sticking priority by crop (Ball/Selecta URC 2024-25 list): 1 = stick first … 4 = last.
+const STICKING_PRIORITY = {
+  Geranium: 1, Lantana: 1, Euphorbia: 1, Portulaca: 1, Purslane: 1, Thunbergia: 1, Heliotrope: 1, Lobelia: 1, Ipomoea: 1, Dahlia: 1, Lavender: 1, Lavandula: 1, Lobularia: 1, Alyssum: 1, Fuchsia: 1, Plectranthus: 1, Dianthus: 1, Cleome: 1, Ageratum: 1, Mandevilla: 1, Dipladenia: 1,
+  Verbena: 2, Erysimum: 2, Arctotis: 2, Phlox: 2, Salvia: 2, Strobilanthes: 2, Evolvulus: 2, Diascia: 2, Calceolaria: 2, Pericallis: 2, Begonia: 2, Bacopa: 2, Sutera: 2, Calibrachoa: 2, Coleus: 2, Gomphrena: 2, Impatiens: 2, Nemesia: 2, Muehlenbeckia: 2, Osteospermum: 2, Perilla: 2, Petunia: 2, Petchoa: 2,
+  Alternanthera: 3, Angelonia: 3, Bidens: 3, Brachyscome: 3, Bracteantha: 3, Cuphea: 3, Helichrysum: 3, Iresine: 3, Lamium: 3, Nierembergia: 3, Scaevola: 3, Torenia: 3, Celosia: 3, Gaura: 3, Hebe: 3,
+  Mecardonia: 4, Glechoma: 4, Lysimachia: 4, Vinca: 4, Ajuga: 4, Sanvitalia: 4, Sedum: 4,
+};
+const PRIO_COLOR = { 1: "#d94f3d", 2: "#e89a3a", 3: "#7fb069", 4: "#7a8c74", 9: "#c8d0c0" };
+
+// Propagation schedule — prop-stage items sorted date → cell size → sticking priority,
+// split by misting need (culture days_in_mist), with treatment recs + task creation.
+function PropagationTab({ plan }) {
+  const sb = getSupabase();
+  const [rows, setRows] = useState(null);
+  const [q, setQ] = useState("");
+  const [mist, setMist] = useState("all"); // all | mist | dry
+  const [sortCol, setSortCol] = useState("date");
+  const [sortDir, setSortDir] = useState("asc");
+  const [sel, setSel] = useState(() => new Set());
+  const [taskItems, setTaskItems] = useState(null);
+
+  useEffect(() => {
+    if (!sb) return;
+    (async () => {
+      const { data: sc } = await sb.from("scheduled_crops")
+        .select("id,variety_id,prop_method,prop_tray_size,ship_week,ship_year,qty_pots,item_name,bench_id")
+        .eq("plan_id", plan.id).eq("is_combo_component", false);
+      const prop = (sc || []).filter(r => r.prop_tray_size && String(r.prop_tray_size).trim() && /^(URC|CALL|SEED)/i.test(r.prop_method || ""));
+      const vids = [...new Set(prop.map(r => r.variety_id).filter(Boolean))];
+      const { data: vars } = vids.length ? await sb.from("variety_library").select("id,crop_name,variety,breeder,culture_source_id").in("id", vids) : { data: [] };
+      const vmap = Object.fromEntries((vars || []).map(v => [v.id, v]));
+      const csids = [...new Set((vars || []).map(v => v.culture_source_id).filter(Boolean))];
+      const cmap = {}; const cc = getCultureClient();
+      if (cc && csids.length) for (let i = 0; i < csids.length; i += 100) { const { data: cg } = await cc.from("culture_guides_public").select("id,propagation_details").in("id", csids.slice(i, i + 100)); (cg || []).forEach(g => cmap[g.id] = g.propagation_details || {}); }
+      setRows(prop.map(r => {
+        const v = vmap[r.variety_id] || {}; const pd = v.culture_source_id ? (cmap[v.culture_source_id] || {}) : {};
+        const size = +r.prop_tray_size || 0; const usable = size === 105 ? 100 : (size || 1);
+        const md = pd.days_in_mist ?? pd.days_with_mist ?? null;
+        return {
+          id: r.id, crop: v.crop_name || "", variety: v.variety || "", breeder: v.breeder || "", item: r.item_name, bench_id: r.bench_id,
+          week: r.ship_week, year: r.ship_year, weekKey: r.ship_week != null ? `${r.ship_year}·wk${String(r.ship_week).padStart(2, "0")}` : "—",
+          cell: size, trays: Math.ceil((+r.qty_pots || 0) / usable), plugs: +r.qty_pots || 0,
+          prio: STICKING_PRIORITY[v.crop_name] || 9,
+          mistDays: md, needsMist: md != null ? (+md > 0) : null,
+          hormone: pd.rooting_hormone || pd.hormone || "", fungicide: pd.fungicide || "", pinch: pd.propagation_pinch || pd.pinch || "", tips: pd.key_tips || "",
+        };
+      }));
+    })();
+  }, [sb, plan.id]);
+
+  if (!rows) return <div style={{ padding: 20, color: COLORS.muted }}>Loading propagation schedule…</div>;
+  if (!rows.length) return <div style={{ padding: 20, color: COLORS.muted }}>No prop-stage items (URC / callused / seed with a prop tray) in this plan yet.</div>;
+
+  const ql = q.trim().toLowerCase();
+  const shown = rows.filter(r => {
+    if (mist === "mist" && r.needsMist !== true) return false;
+    if (mist === "dry" && r.needsMist === true) return false;
+    if (ql && !`${r.crop} ${r.variety} ${r.item}`.toLowerCase().includes(ql)) return false;
+    return true;
+  });
+  const sv = (r, c) => c === "date" ? `${r.year}-${String(r.week).padStart(2, "0")}` : c === "cell" ? r.cell : c === "prio" ? r.prio : c === "crop" ? `${r.crop} ${r.variety}` : c === "mist" ? (r.mistDays ?? 999) : c === "trays" ? r.trays : "";
+  // Default order = date → cell size → priority; clicking a header overrides the primary key.
+  const sorted = [...shown].sort((a, b) => {
+    const keys = sortCol === "date" ? ["date", "cell", "prio"] : [sortCol, "date", "cell", "prio"];
+    for (const k of keys) { const x = sv(a, k), y = sv(b, k); if (x < y) return sortDir === "asc" ? -1 : 1; if (x > y) return sortDir === "asc" ? 1 : -1; }
+    return 0;
+  });
+  const clickSort = c => { if (c === sortCol) setSortDir(d => d === "asc" ? "desc" : "asc"); else { setSortCol(c); setSortDir("asc"); } };
+  const H = ({ c, children, r }) => <th onClick={() => clickSort(c)} style={{ ...th, textAlign: r ? "right" : "left", cursor: "pointer" }}>{children}{sortCol === c ? (sortDir === "asc" ? " ▲" : " ▼") : ""}</th>;
+  const toggle = id => setSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const selRows = sorted.filter(r => sel.has(r.id));
+
+  return (
+    <div style={{ display: "grid", gap: 14 }}>
+      <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "12px 14px", fontSize: 12, color: COLORS.muted }}>
+        Sticking schedule — ordered <strong>stick date → cell size → priority</strong> (P1 = stick first, from the Ball/Selecta URC list). Split by misting need from the culture DB. Select rows to make a sticking task; treatment recs (rooting hormone / fungicide / pinch) come from each crop's propagation culture.
+      </div>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search crop / variety…" style={{ padding: "8px 12px", border: `1px solid ${COLORS.border}`, borderRadius: 8, fontSize: 13, minWidth: 200 }} />
+        {["all", "mist", "dry"].map(m => <button key={m} onClick={() => setMist(m)} style={{ padding: "7px 14px", borderRadius: 20, fontSize: 12, fontWeight: 700, cursor: "pointer", border: `1px solid ${mist === m ? COLORS.light : COLORS.border}`, background: mist === m ? COLORS.light : "#fff", color: mist === m ? "#fff" : COLORS.text }}>{m === "all" ? "All" : m === "mist" ? "💦 Needs mist" : "🌵 Dry / no mist"}</button>)}
+        <span style={{ marginLeft: "auto", fontSize: 13, color: COLORS.muted }}>{shown.length} items · {shown.reduce((s, r) => s + r.trays, 0)} trays</span>
+        {sel.size > 0 && <button onClick={() => setTaskItems(selRows.map(r => ({ item: `Stick ${r.crop} ${r.variety} — ${r.trays}× ${r.cell}-cell`, bench: r.weekKey })))} style={{ padding: "8px 16px", background: COLORS.dark, color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer" }}>＋ Stick task ({sel.size})</button>}
+      </div>
+      <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, overflow: "hidden" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <thead><tr>
+            <th style={th}></th>
+            <H c="date">Stick wk</H><H c="crop">Crop / variety</H><H c="cell" r>Cell</H><H c="trays" r>Trays</H>
+            <H c="mist">Mist</H><H c="prio" r>Prio</H><th style={th}>Treatments (prop)</th>
+          </tr></thead>
+          <tbody>
+            {sorted.map(r => (
+              <tr key={r.id} style={{ borderBottom: `1px solid ${COLORS.border}`, background: sel.has(r.id) ? "#eef5e7" : "transparent" }}>
+                <td style={td}><input type="checkbox" checked={sel.has(r.id)} onChange={() => toggle(r.id)} /></td>
+                <td style={{ ...td, fontWeight: 600 }}>{r.weekKey}</td>
+                <td style={td}><span style={{ fontWeight: 600 }}>{r.crop}</span> <span style={{ color: COLORS.muted }}>{r.variety}</span></td>
+                <td style={{ ...td, textAlign: "right" }}>{r.cell}</td>
+                <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{r.trays}</td>
+                <td style={td}>{r.needsMist === true ? <span style={{ color: "#2e7d9e" }}>💦 {r.mistDays}d</span> : r.needsMist === false ? <span style={{ color: COLORS.muted }}>🌵 dry</span> : <span style={{ color: "#c8d0c0" }}>—</span>}</td>
+                <td style={{ ...td, textAlign: "right" }}><span style={{ background: PRIO_COLOR[r.prio], color: "#fff", fontWeight: 800, fontSize: 11, padding: "1px 7px", borderRadius: 8 }}>{r.prio === 9 ? "?" : "P" + r.prio}</span></td>
+                <td style={{ ...td, fontSize: 11, color: COLORS.muted }} title={r.tips || ""}>
+                  {r.hormone ? `🧴 ${r.hormone}  ` : ""}{r.fungicide ? `🛡 ${r.fungicide}  ` : ""}{r.pinch ? `✂️ ${r.pinch}` : ""}{!r.hormone && !r.fungicide && !r.pinch ? "—" : ""}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {taskItems && <Modal onClose={() => { setTaskItems(null); setSel(new Set()); }}><TaskComposer items={taskItems} planId={plan.id} houseId={null} onClose={() => { setTaskItems(null); setSel(new Set()); }} /></Modal>}
     </div>
   );
 }
