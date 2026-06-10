@@ -1185,9 +1185,9 @@ function PropagationTab({ plan }) {
       const vmap = Object.fromEntries((vars || []).map(v => [v.id, v]));
       const csids = [...new Set((vars || []).map(v => v.culture_source_id).filter(Boolean))];
       const cmap = {}; const cc = getCultureClient();
-      if (cc && csids.length) for (let i = 0; i < csids.length; i += 100) { const { data: cg } = await cc.from("culture_guides_public").select("id,propagation_details").in("id", csids.slice(i, i + 100)); (cg || []).forEach(g => cmap[g.id] = g.propagation_details || {}); }
+      if (cc && csids.length) for (let i = 0; i < csids.length; i += 100) { const { data: cg } = await cc.from("culture_guides_public").select("id,propagation_details,culture_details").in("id", csids.slice(i, i + 100)); (cg || []).forEach(g => { const cdt = g.culture_details || {}; cmap[g.id] = { pd: g.propagation_details || {}, pdf: cdt["Culture Guide PDF"] || cdt["Culture Guide PDF (Origin)"] || null }; }); }
       setRows(prop.map(r => {
-        const v = vmap[r.variety_id] || {}; const pd = v.culture_source_id ? (cmap[v.culture_source_id] || {}) : {};
+        const v = vmap[r.variety_id] || {}; const ce = v.culture_source_id ? (cmap[v.culture_source_id] || {}) : {}; const pd = ce.pd || {};
         const size = +r.prop_tray_size || 0; const usable = size === 105 ? 100 : (size || 1);
         const md = pd.days_in_mist ?? pd.days_with_mist ?? null;
         return {
@@ -1197,7 +1197,7 @@ function PropagationTab({ plan }) {
           prio: STICKING_PRIORITY[v.crop_name] || 9,
           mistDays: md, needsMist: mistNeed(md),
           hormone: pd.rooting_hormone || pd.hormone || "", fungicide: pd.fungicide || "", pinch: pd.propagation_pinch || pd.pinch || "", tips: pd.key_tips || "",
-          pgr: pd.plug_pgr || "", pd,
+          pgr: pd.plug_pgr || "", pd, pdf: ce.pdf || null,
           callused: /^call/i.test(r.prop_method || ""),
         };
       }));
@@ -1231,6 +1231,7 @@ function PropagationTab({ plan }) {
       <td style={td}>
         <span onClick={() => setDetail(r)} title="Open propagation card" style={{ fontWeight: 600, color: COLORS.dark, cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted" }}>{r.crop} <span style={{ color: COLORS.muted, fontWeight: 400 }}>{r.variety}</span></span>
         {r.callused && <span style={{ marginLeft: 6, background: "#e89a3a", color: "#fff", fontSize: 9, fontWeight: 800, padding: "1px 6px", borderRadius: 8 }} title="Callused — shorter rooting window">CALLUSED</span>}
+        {r.pdf && <span title="Grower guide PDF available — click to open" style={{ marginLeft: 6 }}>📄</span>}
       </td>
       <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{r.trays}</td>
       <td style={td}>{r.needsMist === true ? <span style={{ color: "#2e7d9e" }}>💦 {mistLabel(r.mistDays)}</span> : r.needsMist === false ? <span style={{ color: COLORS.muted }}>🌵 dry</span> : <span style={{ color: "#c8d0c0" }}>—</span>}</td>
@@ -1303,6 +1304,9 @@ function PropCard({ row, onClose }) {
         </div>
         <button onClick={onClose} style={{ background: "transparent", border: "none", fontSize: 18, cursor: "pointer", color: COLORS.muted }}>✕</button>
       </div>
+      {row.pdf
+        ? <a href={row.pdf} target="_blank" rel="noreferrer" style={{ display: "inline-block", marginTop: 10, padding: "8px 14px", background: COLORS.dark, color: "#fff", borderRadius: 8, fontWeight: 700, fontSize: 13, textDecoration: "none" }}>📄 View / download grower guide (PDF) ↗</a>
+        : <div style={{ marginTop: 10, fontSize: 12, color: COLORS.muted }}>No grower-guide PDF linked for this variety.</div>}
       {treat.length > 0 && (<><div style={sec}>Treatments</div>
         <div style={{ display: "grid", gap: 6 }}>{treat.map(([l, v], i) => <div key={i} style={{ fontSize: 13, background: "#f3f8ee", borderRadius: 8, padding: "7px 10px" }}><strong>{l}:</strong> {String(v)}</div>)}</div></>)}
       {det.length > 0 && (<><div style={sec}>Propagation</div>
