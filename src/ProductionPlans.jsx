@@ -1087,6 +1087,55 @@ function PlugOrdersTab({ plan }) {
   );
 }
 
+// Group liner/cutting rows by week → variety (for the Materials dropdowns).
+function groupLinersByWeek(rows) {
+  const byWeek = {};
+  for (const r of rows) {
+    const w = byWeek[r.weekKey] = byWeek[r.weekKey] || {};
+    if (!w[r.vid]) w[r.vid] = { name: r.name, breeder: r.breeder, qty: 0, cost: 0 };
+    w[r.vid].qty += r.qty; w[r.vid].cost += r.cost;
+  }
+  return Object.entries(byWeek).map(([week, vmap]) => {
+    const items = Object.values(vmap).sort((a, b) => a.name.localeCompare(b.name));
+    return { week, items, qty: items.reduce((s, i) => s + i.qty, 0), cost: items.reduce((s, i) => s + i.cost, 0) };
+  }).sort((a, b) => a.week.localeCompare(b.week));
+}
+
+// Collapsible per-week dropdowns of liner/cutting varieties.
+function LinerWeekGroups({ groups }) {
+  if (!groups || !groups.length) return <div style={{ color: COLORS.muted, padding: 12 }}>None in this plan.</div>;
+  return (
+    <div style={{ display: "grid", gap: 8 }}>
+      {groups.map(g => (
+        <details key={g.week} style={{ border: `1px solid ${COLORS.border}`, borderRadius: 8 }}>
+          <summary style={{ cursor: "pointer", padding: "8px 12px", fontWeight: 700, color: COLORS.dark, background: "#f3f8ee", borderRadius: 8 }}>
+            📅 {g.week} · {g.items.length} varieties · {g.qty.toLocaleString()} plants · {fmtMoney(g.cost)}
+          </summary>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead><tr>
+              <th style={th}>Variety</th><th style={th}>Breeder</th>
+              <th style={{ ...th, textAlign: "right" }}>Qty</th><th style={{ ...th, textAlign: "right" }}>$/each</th>
+              <th style={{ ...th, textAlign: "right" }}>Total</th><th style={th}>Conf #</th>
+            </tr></thead>
+            <tbody>
+              {g.items.map((it, i) => (
+                <tr key={i} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
+                  <td style={{ ...td, fontWeight: 600 }}>{it.name}</td>
+                  <td style={{ ...td, color: COLORS.muted }}>{it.breeder || "—"}</td>
+                  <td style={{ ...td, textAlign: "right" }}>{it.qty.toLocaleString()}</td>
+                  <td style={{ ...td, textAlign: "right" }}>{it.qty ? "$" + (it.cost / it.qty).toFixed(3) : "—"}</td>
+                  <td style={{ ...td, textAlign: "right" }}>{fmtMoney(it.cost)}</td>
+                  <td style={{ ...td, color: COLORS.muted, fontSize: 11 }}>—</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </details>
+      ))}
+    </div>
+  );
+}
+
 function MaterialsTab({ plan }) {
   const sb = getSupabase();
   const [data, setData] = useState(null);
@@ -1095,16 +1144,16 @@ function MaterialsTab({ plan }) {
     if (!sb) return;
     (async () => {
       const { data: sc } = await sb.from("scheduled_crops")
-        .select("variety_id,container_id,qty_pots,qty_plants_ordered,liner_unit_cost,soil_mix_id,is_combo_component,combo_parent_id")
+        .select("variety_id,container_id,qty_pots,qty_plants_ordered,liner_unit_cost,soil_mix_id,is_combo_component,combo_parent_id,prop_method,ship_week,ship_year")
         .eq("plan_id", plan.id);
-      const { data: vars } = await sb.from("variety_library").select("id,variety,breeder");
+      const { data: vars } = await sb.from("variety_library").select("id,crop_name,variety,breeder");
       const { data: containers } = await sb.from("containers").select("id,sku,name,cost_per_unit,units_per_case,qty_per_pallet,fill_volume_cu_ft,default_ring_id,primary_supplier");
       const { data: soils } = await sb.from("soil_mixes").select("id,name,vendor,cost_per_bag,fluffed_volume,bag_size,bags_per_pallet,cost_per_cf,cf_per_truck,cost_per_truck,origin");
       const { data: inputs } = await sb.from("program_inputs").select("*").eq("year", plan.year);
       const { data: yearRows } = await sb.from("scheduled_crops")
         .select("qty_pots,is_combo_component,combo_parent_id,container_id,plant_year");
 
-      const byLiner = {}, byPot = {}, byRing = {};
+      const linerRows = []; const byPot = {}, byRing = {};
       let totalSoilCuFt = 0;
       let soilMix = null;
 
@@ -1114,11 +1163,15 @@ function MaterialsTab({ plan }) {
         const c = containers.find(x => x.id === r.container_id);
         const ring = c?.default_ring_id ? containers.find(x => x.id === c.default_ring_id) : null;
 
-        if (v) {
-          const key = v.id;
-          if (!byLiner[key]) byLiner[key] = { variety: v.variety, breeder: v.breeder, qty: 0, cost: 0 };
-          byLiner[key].qty  += +r.qty_plants_ordered || 0;
-          byLiner[key].cost += (+r.qty_plants_ordered || 0) * (+r.liner_unit_cost || 0);
+        if (v && v.crop_name !== "Combo" && (+r.qty_plants_ordered || 0) > 0) {
+          const isCutting = /^(URC|CALL)/i.test(r.prop_method || "");
+          linerRows.push({
+            section: isCutting ? "cuttings" : "liners",
+            vid: v.id, name: `${v.crop_name || ""} ${v.variety || ""}`.trim(), breeder: v.breeder,
+            qty: +r.qty_plants_ordered || 0,
+            cost: (+r.qty_plants_ordered || 0) * (+r.liner_unit_cost || 0),
+            weekKey: r.ship_week != null ? `${r.ship_year}·wk${String(r.ship_week).padStart(2, "0")}` : "Unscheduled",
+          });
         }
 
         if (isChild) continue;
@@ -1177,7 +1230,10 @@ function MaterialsTab({ plan }) {
       });
 
       setData({
-        liners: Object.values(byLiner).sort((a,b) => b.cost - a.cost),
+        liners:   groupLinersByWeek(linerRows.filter(r => r.section === "liners")),
+        cuttings: groupLinersByWeek(linerRows.filter(r => r.section === "cuttings")),
+        linerCost:   linerRows.filter(r => r.section === "liners").reduce((s, r) => s + r.cost, 0),
+        cuttingCost: linerRows.filter(r => r.section === "cuttings").reduce((s, r) => s + r.cost, 0),
         pots:   Object.values(byPot).sort((a,b) => b.cost - a.cost),
         rings:  Object.values(byRing).sort((a,b) => b.cost - a.cost),
         soil:   { mix: soilMix, cuft: totalSoilCuFt, bags: bagsNeeded, cost: soilCost, pallets: palletsNeeded, trucks: trucksNeeded },
@@ -1189,7 +1245,7 @@ function MaterialsTab({ plan }) {
 
   if (!data) return <div style={{ padding: 20, color: COLORS.muted }}>Loading materials…</div>;
 
-  const linerTotal = data.liners.reduce((s, r) => s + r.cost, 0);
+  const linerTotal = (data.linerCost || 0) + (data.cuttingCost || 0);
   const potTotal   = data.pots.reduce((s, r) => s + r.cost, 0);
   const ringTotal  = data.rings.reduce((s, r) => s + r.cost, 0);
   const inputTotal = data.inputs.reduce((s, r) => s + r.share, 0);
@@ -1199,7 +1255,7 @@ function MaterialsTab({ plan }) {
     <div style={{ display: "grid", gap: 16 }}>
       {/* Grand total banner */}
       <div style={{ background: COLORS.dark, color: "#fff", borderRadius: 10, padding: 16, display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 12 }}>
-        <Stat label="Liners"  value={fmtMoney(linerTotal)} />
+        <Stat label="Liners + URC" value={fmtMoney(linerTotal)} />
         <Stat label="Pots"    value={fmtMoney(potTotal)} />
         <Stat label="Soil"    value={fmtMoney(data.soil.cost)} />
         <Stat label="Rings"   value={fmtMoney(ringTotal)} />
@@ -1208,17 +1264,13 @@ function MaterialsTab({ plan }) {
       </div>
 
       {/* LINERS */}
-      <MaterialSection title="🌱 Liners" subtitle="Broker order (EHR / direct) — by variety + breeder">
-        <SimpleTable
-          cols={["Variety", "Breeder", "Qty", "$/each", "Total"]}
-          aligns={["L","L","R","R","R"]}
-          rows={data.liners.map(r => [
-            r.variety, r.breeder, r.qty.toLocaleString(),
-            r.qty ? "$" + (r.cost/r.qty).toFixed(3) : "—",
-            fmtMoney(r.cost),
-          ])}
-          totalRow={["", `${data.liners.length} varieties`, data.liners.reduce((s,r)=>s+r.qty,0).toLocaleString(), "", fmtMoney(linerTotal)]}
-        />
+      <MaterialSection title="🌱 Liners (rooted plugs)" subtitle="By week → variety · broker order">
+        <LinerWeekGroups groups={data.liners} />
+      </MaterialSection>
+
+      {/* UNROOTED CUTTINGS */}
+      <MaterialSection title="✂️ Unrooted Cuttings (URC)" subtitle="By week → variety · stuck in prop (105 trays)">
+        <LinerWeekGroups groups={data.cuttings} />
       </MaterialSection>
 
       {/* POTS */}
@@ -4261,7 +4313,7 @@ function ProfitBySize({ planId }) {
       const { data: pl } = await sb.from("v_scheduled_crops_pl")
         .select("container_id,qty_pots,direct_cost_total,revenue,gross_profit,is_combo_component,combo_parent_id")
         .eq("plan_id", planId);
-      const { data: containers } = await sb.from("containers").select("id,sku,name,diameter_in");
+      const { data: containers } = await sb.from("containers").select("id,sku,name,diameter_in,width_in,length_in");
 
       const bySize = {};
       for (const r of (pl || [])) {
@@ -4269,6 +4321,7 @@ function ProfitBySize({ planId }) {
         const key = c?.sku || "unknown";
         if (!bySize[key]) bySize[key] = {
           sku: key, name: c?.name, diameter: +c?.diameter_in || 0,
+          width: +c?.width_in || 0, length: +c?.length_in || 0,
           pots: 0, cost: 0, revenue: 0, profit: 0,
         };
         const isChild = r.is_combo_component && r.combo_parent_id;
@@ -4278,9 +4331,11 @@ function ProfitBySize({ planId }) {
         bySize[key].profit  += (+r.gross_profit || 0);
       }
 
-      // Square footprint = (diameter / 12)² sq ft. Square packing approximation.
+      // Square footprint: round pots → (diameter/12)²; flats/inserts/baskets without a
+      // diameter → width × length / 144. Else 0 (truly no dims = "incomplete").
       const arr = Object.values(bySize).map(r => {
-        const potFootprint = r.diameter ? Math.pow(r.diameter / 12, 2) : 0;
+        const potFootprint = r.diameter ? Math.pow(r.diameter / 12, 2)
+          : (r.width && r.length ? (r.width * r.length) / 144 : 0);
         const benchSqFt    = r.pots * potFootprint;
         return {
           ...r,
