@@ -1136,6 +1136,19 @@ function LinerWeekGroups({ groups }) {
   );
 }
 
+// Big icon + number stat for the soil summary (bags / pallets / trucks).
+function BigSoilStat({ icon, value, label }) {
+  return (
+    <div style={{ flex: "1 1 130px", minWidth: 120, background: "#f3f8ee", border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "14px 16px", display: "flex", alignItems: "center", gap: 12 }}>
+      <span style={{ fontSize: 30, lineHeight: 1 }}>{icon}</span>
+      <div>
+        <div style={{ fontSize: 24, fontWeight: 800, color: COLORS.dark, lineHeight: 1 }}>{value}</div>
+        <div style={{ fontSize: 11, color: COLORS.muted, marginTop: 3 }}>{label}</div>
+      </div>
+    </div>
+  );
+}
+
 function MaterialsTab({ plan }) {
   const sb = getSupabase();
   const [data, setData] = useState(null);
@@ -1314,50 +1327,16 @@ function MaterialsTab({ plan }) {
       <MaterialSection title="💧 Soil" subtitle={data.soil.mix ? `${data.soil.mix.name} (${data.soil.mix.vendor})` : "No soil mix set"}>
         {data.soil.mix ? (
           <>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 12 }}>
-            <Stat label="Cu ft needed (fluffed)" value={data.soil.cuft.toLocaleString(undefined, { maximumFractionDigits: 0 })} dark />
-            <Stat label="Bag size (compressed)"  value={`${data.soil.mix.bag_size} cf → ${(+data.soil.mix.fluffed_volume || 8)} fluffed`} dark />
-            <Stat label="🛍 Bags needed"          value={data.soil.bags.toLocaleString()} dark />
-            <Stat label="🚛 Pallets needed"       value={data.soil.pallets != null ? `${data.soil.pallets} (${data.soil.mix.bags_per_pallet}/pallet)` : "set bags/pallet"} dark />
-            <Stat label="$/bag"                  value={"$" + (+data.soil.mix.cost_per_bag).toFixed(2)} dark />
-            <Stat label="Total"                  value={fmtMoney(data.soil.cost)} big dark />
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+            <BigSoilStat icon="🛍" value={data.soil.bags.toLocaleString()} label="bags" />
+            <BigSoilStat icon="📦" value={data.soil.mix.bags_per_pallet ? (data.soil.bags / +data.soil.mix.bags_per_pallet).toFixed(1) : "—"} label={data.soil.mix.bags_per_pallet ? `pallets · ${data.soil.mix.bags_per_pallet}/pallet` : "pallets"} />
+            <BigSoilStat icon="🚛" value={data.soil.mix.cf_per_truck ? (data.soil.cuft / +data.soil.mix.cf_per_truck).toFixed(1) : "—"} label="trucks" />
+            <BigSoilStat icon="💧" value={data.soil.cuft.toLocaleString(undefined, { maximumFractionDigits: 0 })} label="cu ft (fluffed)" />
+            <BigSoilStat icon="💰" value={fmtMoney(data.soil.cost)} label={`total · $${(+data.soil.mix.cost_per_bag).toFixed(2)}/bag`} />
           </div>
           {data.soil.mix.cf_per_truck && (
-            <div style={{ marginTop: 10, padding: "8px 12px", background: "#f3f8ee", borderRadius: 8, fontSize: 12, color: COLORS.text, display: "flex", gap: 18, flexWrap: "wrap", alignItems: "center" }}>
-              <span style={{ fontWeight: 800 }}>🚛 Freight</span>
-              <span>Origin <strong>{data.soil.mix.origin || "—"}</strong></span>
-              <span><strong>${(+data.soil.mix.cost_per_cf).toFixed(2)}</strong>/cf</span>
-              <span>{(+data.soil.mix.cf_per_truck).toLocaleString()} cf/truck @ {fmtMoney(+data.soil.mix.cost_per_truck)}</span>
-              <span style={{ fontWeight: 800, color: COLORS.dark }}>Trucks needed: {data.soil.trucks}</span>
-            </div>
-          )}
-          {data.soil.weeks && data.soil.weeks.length > 0 && (
-            <div style={{ marginTop: 12 }}>
-              <div style={{ fontSize: 11, fontWeight: 800, color: COLORS.muted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>Running total by plant week</div>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-                <thead><tr>
-                  <th style={th}>Plant week</th>
-                  <th style={{ ...th, textAlign: "right" }}>Soil this week (cf)</th>
-                  <th style={{ ...th, textAlign: "right" }}>Bags this week</th>
-                  <th style={{ ...th, textAlign: "right" }}>Cumulative cf</th>
-                  <th style={{ ...th, textAlign: "right" }}>Cum. bags</th>
-                  <th style={{ ...th, textAlign: "right" }}>Cum. pallets</th>
-                  <th style={{ ...th, textAlign: "right" }}>Cum. trucks</th>
-                </tr></thead>
-                <tbody>
-                  {data.soil.weeks.map((w, i) => (
-                    <tr key={w.week} style={{ borderBottom: `1px solid ${COLORS.border}`, background: i === data.soil.weeks.length - 1 ? "#eaf3df" : "transparent" }}>
-                      <td style={{ ...td, fontWeight: 600 }}>{w.week}</td>
-                      <td style={{ ...td, textAlign: "right", color: COLORS.muted }}>{w.cuft.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
-                      <td style={{ ...td, textAlign: "right", color: COLORS.muted }}>{w.bags.toLocaleString()}</td>
-                      <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{w.cumCuft.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
-                      <td style={{ ...td, textAlign: "right", fontWeight: 800, color: COLORS.dark }}>{w.cumBags.toLocaleString()}</td>
-                      <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{w.cumPallets != null ? w.cumPallets : "—"}</td>
-                      <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{w.cumTrucks != null ? w.cumTrucks : "—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div style={{ marginTop: 10, padding: "8px 12px", background: "#f3f8ee", borderRadius: 8, fontSize: 12, color: COLORS.muted, display: "flex", gap: 16, flexWrap: "wrap" }}>
+              <span>🚛 Origin <strong>{data.soil.mix.origin || "—"}</strong> · ${(+data.soil.mix.cost_per_cf).toFixed(2)}/cf · {(+data.soil.mix.cf_per_truck).toLocaleString()} cf/truck @ {fmtMoney(+data.soil.mix.cost_per_truck)} · {data.soil.mix.bag_size} cf bale → {(+data.soil.mix.fluffed_volume || 8)} fluffed</span>
             </div>
           )}
           </>
