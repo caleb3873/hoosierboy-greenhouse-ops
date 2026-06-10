@@ -66,8 +66,8 @@ export default function ProductionPlans() {
   const sb = getSupabase();
   const { isHouseplantPlanner } = useAuth();
   const [plans, setPlans]             = useState([]);
-  const [selectedPlanId, setSelected] = useState(null);
-  const [initialTab, setInitialTab]   = useState(null);
+  const [selectedPlanId, setSelected] = useState(() => { try { return localStorage.getItem("gh_plan_open") || null; } catch { return null; } });
+  const [initialTab, setInitialTab]   = useState(() => { try { return localStorage.getItem("gh_plan_tab") || null; } catch { return null; } });
   const [loading, setLoading]         = useState(true);
 
   useEffect(() => {
@@ -90,15 +90,18 @@ export default function ProductionPlans() {
 
   const selected = plans.find(p => p.id === selectedPlanId);
   const openPlan = (plan, tab) => {
-    setInitialTab(tab || nextActionForPlan(plan).tab);
+    const t = tab || nextActionForPlan(plan).tab;
+    setInitialTab(t);
     setSelected(plan.id);
+    try { localStorage.setItem("gh_plan_open", plan.id); localStorage.setItem("gh_plan_tab", t); } catch {}
   };
+  const closePlan = () => { setSelected(null); try { localStorage.removeItem("gh_plan_open"); } catch {} };
 
   return (
     <div style={{ padding: 24, background: COLORS.bg, minHeight: "100vh" }}>
       {selected ? (
         <>
-          <button onClick={() => setSelected(null)}
+          <button onClick={closePlan}
             style={{ background: "none", border: "none", color: COLORS.muted, padding: 0, marginBottom: 10, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
             ← All production plans
           </button>
@@ -348,7 +351,8 @@ function PlanDashboard({ plan, initialTab }) {
   const startingTab = availableTabs.some(t => t.id === initialTab)
     ? initialTab
     : (isHouseplant ? "catalog" : "dashboard");
-  const [tab, setTab]             = useState(startingTab);
+  const [tab, setTabState]        = useState(startingTab);
+  const setTab = (t) => { setTabState(t); try { localStorage.setItem("gh_plan_tab", t); } catch {} };
   const [pl, setPL]               = useState(null);
   const [housesProfit, setHouses] = useState([]);
   const [houses, setHousesList]   = useState([]);
