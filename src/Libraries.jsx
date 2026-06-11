@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useVarieties, useContainers, useSpacingProfiles, useBrokerCatalogs, useSoilMixes, useInputProducts, useComboTags, useBrokerProfiles, useCultureGuides, getSupabase, getCultureClient } from "./supabase";
+import { ComboDiagram } from "./ProductionPlans";
 
 // Title-case a crop name ("ACHILLEA" -> "Achillea", "Geranium (Annual)" kept readable)
 const titleCaseCrop = s => String(s || "").toLowerCase().replace(/\b\w/g, m => m.toUpperCase());
@@ -929,6 +930,89 @@ function CropProtectionCatalog() {
   );
 }
 
+// 🪴 Combo Library — reusable basket-combo templates: diagram, grade, years run,
+// timing/variety change log, and photos. Import from the plans, then grade & annotate.
+const COMBO_GRADES = ["A", "B", "C", "D"];
+function ComboTemplateLibrary() {
+  const sb = getSupabase();
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [importing, setImporting] = useState(false);
+  const load = async () => { if (!sb) { setLoading(false); return; } const { data } = await sb.from("combo_templates").select("*").order("name"); setRows(data || []); setLoading(false); };
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+  const sizeOf = name => { const m = String(name || "").match(/(\d+)\s*"/); return m ? m[1] + '"' : ""; };
+
+  async function importFromPlans() {
+    if (!sb || importing) return; setImporting(true);
+    const { data: parents } = await sb.from("scheduled_crops").select("id,item_name,planting_layout").not("planting_layout", "is", null).eq("is_combo_component", false);
+    const byName = {}; (parents || []).forEach(p => { if (p.item_name && p.planting_layout?.plants && !byName[p.item_name]) byName[p.item_name] = p; });
+    const existing = {}; rows.forEach(r => { existing[r.name] = r; });
+    let added = 0, updated = 0;
+    for (const name of Object.keys(byName)) {
+      const p = byName[name]; const components = p.planting_layout.plants || [];
+      if (existing[name]) { await sb.from("combo_templates").update({ planting_layout: p.planting_layout, components, updated_at: new Date().toISOString() }).eq("id", existing[name].id); updated++; }
+      else { await sb.from("combo_templates").insert({ name, size: sizeOf(name), planting_layout: p.planting_layout, components, years_run: 1 }); added++; }
+    }
+    setImporting(false); await load(); window.alert(`Imported from plans — ${added} new, ${updated} updated (kept grades/notes).`);
+  }
+  async function patch(id, fields) { await sb.from("combo_templates").update({ ...fields, updated_at: new Date().toISOString() }).eq("id", id); setRows(rs => rs.map(r => r.id === id ? { ...r, ...fields } : r)); }
+  async function del(id) { if (!window.confirm("Delete this combo template from the library?")) return; await sb.from("combo_templates").delete().eq("id", id); setRows(rs => rs.filter(r => r.id !== id)); }
+  async function addLog(row) { const note = window.prompt("Change-log note (e.g. 'swapped red cali → coral', 'plant date moved +1 wk'):"); if (!note) return; await patch(row.id, { change_log: [...(row.change_log || []), { date: new Date().toISOString().slice(0, 10), note }] }); }
+  async function uploadPhoto(row, file) { if (!file || !sb) return; const path = `${row.id}/${Date.now()}-${file.name.replace(/[^a-z0-9.]+/gi, "_")}`; const { error } = await sb.storage.from("combo-photos").upload(path, file, { upsert: true }); if (error) { window.alert("Upload failed: " + error.message); return; } const url = sb.storage.from("combo-photos").getPublicUrl(path).data.publicUrl; await patch(row.id, { photos: [...(row.photos || []), url] }); }
+
+  const filtered = rows.filter(r => !search || r.name.toLowerCase().includes(search.toLowerCase()));
+  const card = { background: "#fff", border: "1px solid #d8e3cf", borderRadius: 12, padding: 16, marginBottom: 16 };
+  const lbl = { fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", letterSpacing: 0.4 };
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 16, flexWrap: "wrap" }}>
+        <input placeholder="Search combos…" value={search} onChange={e => setSearch(e.target.value)} style={{ flex: 1, minWidth: 180, padding: "8px 10px", border: "1px solid #4a6a3a", borderRadius: 8, background: "#13210f", color: "#e8f0e0", fontFamily: "inherit" }} />
+        <button onClick={importFromPlans} disabled={importing} style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 8, padding: "9px 16px", fontWeight: 700, cursor: importing ? "default" : "pointer", fontFamily: "inherit" }}>{importing ? "Importing…" : "📥 Import combos from plans"}</button>
+      </div>
+      {loading ? <div style={{ color: "#9cb894" }}>Loading…</div> : filtered.length === 0 ? (
+        <div style={{ color: "#9cb894", padding: 20, textAlign: "center" }}>No combo templates yet. Click <b>Import combos from plans</b> to pull in every basket you've designed (they keep their grades/notes on re-import).</div>
+      ) : filtered.map(r => (
+        <div key={r.id} style={card}>
+          <div style={{ display: "flex", gap: 18, flexWrap: "wrap" }}>
+            <div style={{ flexShrink: 0 }}>{r.planting_layout?.plants ? <ComboDiagram layout={r.planting_layout} /> : <div style={{ width: 200, color: "#aab39f", fontSize: 12 }}>No diagram</div>}</div>
+            <div style={{ flex: "1 1 280px", minWidth: 260 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "space-between" }}>
+                <div style={{ fontWeight: 800, color: "#1e2d1a", fontSize: 16 }}>{r.name}{r.size ? <span style={{ marginLeft: 8, fontSize: 11, background: "#eef3e8", color: "#5a6a54", padding: "2px 8px", borderRadius: 10 }}>{r.size}</span> : null}</div>
+                <button onClick={() => del(r.id)} style={{ background: "none", border: "none", color: "#c0392b", cursor: "pointer", fontSize: 13, fontWeight: 700 }}>Delete</button>
+              </div>
+              <div style={{ display: "flex", gap: 18, flexWrap: "wrap", margin: "10px 0" }}>
+                <div>
+                  <div style={lbl}>Grade</div>
+                  <div style={{ display: "flex", gap: 4, marginTop: 3 }}>
+                    {COMBO_GRADES.map(g => <button key={g} onClick={() => patch(r.id, { grade: r.grade === g ? null : g })} style={{ width: 28, height: 28, borderRadius: 6, border: "1px solid #c5d3b8", background: r.grade === g ? "#7fb069" : "#fff", color: r.grade === g ? "#fff" : "#5a6a54", fontWeight: 800, cursor: "pointer" }}>{g}</button>)}
+                  </div>
+                </div>
+                <div>
+                  <div style={lbl}>Years run</div>
+                  <input type="number" min="0" value={r.years_run ?? 1} onChange={e => patch(r.id, { years_run: e.target.value ? parseInt(e.target.value) : 0 })} style={{ width: 60, marginTop: 3, padding: "5px 8px", border: "1px solid #c5d3b8", borderRadius: 6, fontWeight: 700, textAlign: "center" }} />
+                </div>
+              </div>
+              <div style={{ ...lbl, marginTop: 4 }}>Components</div>
+              <div style={{ fontSize: 13, color: "#3a4a32", margin: "2px 0 10px" }}>{(r.components || []).join(" · ") || "—"}</div>
+              <div style={{ ...lbl }}>Timing / variety changes</div>
+              <div style={{ margin: "3px 0 6px" }}>
+                {(r.change_log || []).map((e, i) => <div key={i} style={{ fontSize: 12, color: "#4a5a42" }}>• <b>{e.date}</b> — {e.note}</div>)}
+                <button onClick={() => addLog(r)} style={{ marginTop: 4, background: "none", border: "1px dashed #9cb894", color: "#5a7a45", borderRadius: 6, padding: "3px 8px", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>+ log a change</button>
+              </div>
+              <textarea defaultValue={r.notes || ""} onBlur={e => { if (e.target.value !== (r.notes || "")) patch(r.id, { notes: e.target.value }); }} placeholder="Notes / what worked, what to tweak…" rows={2} style={{ width: "100%", boxSizing: "border-box", padding: "6px 8px", border: "1px solid #c5d3b8", borderRadius: 6, fontFamily: "inherit", fontSize: 13, resize: "vertical", marginTop: 4 }} />
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 8 }}>
+                {(r.photos || []).map((u, i) => <a key={i} href={u} target="_blank" rel="noreferrer"><img src={u} alt="" style={{ width: 54, height: 54, objectFit: "cover", borderRadius: 6, border: "1px solid #d8e3cf" }} /></a>)}
+                <label style={{ fontSize: 12, color: "#5a7a45", cursor: "pointer", border: "1px dashed #9cb894", borderRadius: 6, padding: "6px 10px" }}>📷 Add photo<input type="file" accept="image/*" style={{ display: "none" }} onChange={e => uploadPhoto(r, e.target.files?.[0])} /></label>
+              </div>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function VarietyLibrary() {
   const { rows: library, upsert: upsertVariety, remove: removeVarietyDb } = useVarieties();
   const { rows: containers } = useContainers(); // for the per-variety default pot size
@@ -997,6 +1081,7 @@ function VarietyLibrary() {
             <button onClick={() => setView("ask")} style={{ background: "#7fb069", color: "#fff", border: "1px solid #7fb069", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>💬 Ask</button>
             <button onClick={() => setView("culture")} style={{ background: "none", color: "#c8e6b8", border: "1px solid #4a6a3a", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>🌱 Culture DB</button>
             <button onClick={() => setView("cropprotect")} style={{ background: "none", color: "#c8e6b8", border: "1px solid #4a6a3a", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>🛡 Crop-Protection Catalog</button>
+            <button onClick={() => setView("combotemplates")} style={{ background: "none", color: "#c8e6b8", border: "1px solid #4a6a3a", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>🪴 Combo Templates</button>
             <button onClick={() => setView("pdf-import")} style={{ background: "none", color: "#c8e6b8", border: "1px solid #4a6a3a", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>📄 Import PDF Catalog</button>
             <button onClick={() => setView("grades")} style={{ background: "none", color: "#c8e6b8", border: "1px solid #4a6a3a", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>⭐ Grade Varieties</button>
             <button onClick={() => { setEditingId(null); setView("add"); }} style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 8, padding: "8px 18px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>+ Add Variety</button>
@@ -1027,6 +1112,9 @@ function VarietyLibrary() {
 
         {/* CROP-PROTECTION CATALOG */}
         {view === "cropprotect" && <CropProtectionCatalog />}
+
+        {/* COMBO TEMPLATE LIBRARY */}
+        {view === "combotemplates" && <ComboTemplateLibrary />}
 
         {/* LIBRARY VIEW */}
         {view === "library" && (

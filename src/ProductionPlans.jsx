@@ -4878,7 +4878,7 @@ const LET = i => String.fromCharCode(65 + (i % 26)); // plant reference letter A
 //     edge:{plant:<idx>,count:N} (rim, evenly spread — e.g. dichondra), howto }
 // Dots are numbered (legend below maps number→plant); colored by color-word in the
 // name, else a distinct palette color per plant so every plant reads differently.
-function ComboDiagram({ layout }) {
+export function ComboDiagram({ layout }) {
   const plants = layout.plants;
   if (!plants) return null; // old-format layouts are migrated to this schema
   const COLS = plants.map((p, i) => plantColor(p) || PALETTE[i % PALETTE.length]);
