@@ -72,7 +72,6 @@ function cultureToVariety(c) {
   };
 }
 import { BrokerProfiles, SupplierProfiles, BreederProfiles } from "./Profiles";
-import ComboLibrary from "./ComboDesigner";
 import PdfCatalogImport from "./PdfCatalogImport";
 
 // ── BREEDER CONFIG ────────────────────────────────────────────────────────────
@@ -1081,7 +1080,6 @@ function VarietyLibrary() {
             <button onClick={() => setView("ask")} style={{ background: "#7fb069", color: "#fff", border: "1px solid #7fb069", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>💬 Ask</button>
             <button onClick={() => setView("culture")} style={{ background: "none", color: "#c8e6b8", border: "1px solid #4a6a3a", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>🌱 Culture DB</button>
             <button onClick={() => setView("cropprotect")} style={{ background: "none", color: "#c8e6b8", border: "1px solid #4a6a3a", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>🛡 Crop-Protection Catalog</button>
-            <button onClick={() => setView("combotemplates")} style={{ background: "none", color: "#c8e6b8", border: "1px solid #4a6a3a", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>🪴 Combo Templates</button>
             <button onClick={() => setView("pdf-import")} style={{ background: "none", color: "#c8e6b8", border: "1px solid #4a6a3a", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>📄 Import PDF Catalog</button>
             <button onClick={() => setView("grades")} style={{ background: "none", color: "#c8e6b8", border: "1px solid #4a6a3a", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>⭐ Grade Varieties</button>
             <button onClick={() => { setEditingId(null); setView("add"); }} style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 8, padding: "8px 18px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>+ Add Variety</button>
@@ -1113,8 +1111,6 @@ function VarietyLibrary() {
         {/* CROP-PROTECTION CATALOG */}
         {view === "cropprotect" && <CropProtectionCatalog />}
 
-        {/* COMBO TEMPLATE LIBRARY */}
-        {view === "combotemplates" && <ComboTemplateLibrary />}
 
         {/* LIBRARY VIEW */}
         {view === "library" && (
@@ -3685,7 +3681,7 @@ function useBrokerLookup() {
 }
 
 
-// ── CATALOG PICKER — exported for use in CropPlanning & ComboDesigner ──────────
+// ── CATALOG PICKER — exported for use in CropPlanning ──────────
 // Usage: <CatalogPicker broker="Ball Seed" onSelect={({crop,series,color,itemNumber,perQty,sellPrice,...}) => ...} />
 export function CatalogPicker({ broker: brokerProp, onSelect, initial = {} }) {
   const { getCrops, getSeries, getColors, lookupByCascade, getBrokerNames } = useBrokerLookup();
@@ -4151,7 +4147,7 @@ export default function Libraries() {
       {tab === "spacing"   && <SpacingLibrary />}
       {tab === "brokers"   && <BrokersSection />}
       {tab === "tags"      && <TagsLibrary />}
-      {tab === "combos"    && <ComboLibrary />}
+      {tab === "combos"    && <ComboTemplateLibrary />}
       {tab === "pricing"   && <PriceUpdateLibrary />}
       {tab === "suppliers"  && <SupplierProfiles />}
       {tab === "breeders"   && <BreederProfiles />}

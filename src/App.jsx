@@ -19,7 +19,6 @@ import Export              from "./Export";
 import GrowerManagement   from "./GrowerManagement";
 import WateringPlan        from "./WateringPlan";
 import SprayLog            from "./SprayLog";
-import ComboDesigner       from "./ComboDesigner";
 import SoilCalculator      from "./SoilCalculator";
 import HouseplantAvailability from "./HouseplantAvailability";
 import OwnerDashboard       from "./OwnerDashboard";
@@ -91,9 +90,6 @@ const NAV_GROUPS = [
       { id: "tradeshow", label: "Trade Show" },
       { id: "export",    label: "Export" },
     ],
-  },
-  {
-    id: "combos", label: "Combos", icon: "🎨", solo: true,
   },
   {
     id: "houseplants", label: "Houseplants", icon: "🌿", solo: true,
@@ -253,7 +249,6 @@ function PlannerShell() {
         {page === "meetings"   && <Meetings        />}
         {page === "tradeshow"  && <TradeShow       />}
         {page === "export"     && <Export          />}
-        {page === "combos"     && <ComboDesigner   />}
         {page === "soil"       && <SoilCalculator />}
         {page === "fall"       && <FallProgram />}
         {page === "plans"      && <ProductionPlans />}
