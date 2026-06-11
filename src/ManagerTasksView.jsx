@@ -874,6 +874,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
               </div>
             )}
             {(t.photos || []).length > 0 && <div style={{ fontSize: 11, color: "#4a90d9", marginTop: 4 }}>📷 {t.photos.length} photo{t.photos.length !== 1 ? "s" : ""}</div>}
+            {t.diagramUrl && <a href={t.diagramUrl} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} style={{ display: "inline-block", fontSize: 12, fontWeight: 700, color: "#fff", background: "#7fb069", padding: "4px 10px", borderRadius: 7, textDecoration: "none", marginTop: 6 }}>🔗 Planting diagram</a>}
             {t.notes && <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 4, fontStyle: "italic" }}>📝 {t.notes}</div>}
             {isDone && (
               <div style={{ fontSize: 11, color: "#4a7a35", marginTop: 4 }}>

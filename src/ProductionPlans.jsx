@@ -501,12 +501,19 @@ async function createManagerTask(sb, { title, description, items, planId, houseI
   const dow = (utc.getUTCDay() + 6) % 7; utc.setUTCDate(utc.getUTCDate() - dow + 3);
   const firstThu = new Date(Date.UTC(utc.getUTCFullYear(), 0, 4));
   const wkNum = 1 + Math.round(((utc - firstThu) / 86400000 - 3 + ((firstThu.getUTCDay() + 6) % 7)) / 7);
+  // If any item is a combo (carries a planting_layout), publish its diagram and attach the
+  // no-login share link so the task can pull it up / text it to the crew.
+  let diagram_url = null;
+  const comboItem = (items || []).find(i => i.planting_layout && (i.planting_layout.plants || i.planting_layout.dots || i.planting_layout.rings));
+  if (comboItem) {
+    try { diagram_url = await shareComboDiagram({ planting_layout: comboItem.planting_layout, item_name: comboItem.item_name || comboItem.item }, planId, comboItem.item_name || comboItem.item); } catch { diagram_url = null; }
+  }
   return sb.from("manager_tasks").insert([{
     id: crypto.randomUUID(), title,
     week_number: wkNum, year: utc.getUTCFullYear(),
     description: ((description || "").trim() ? description.trim() + "\n\n" : "") + "Items: " + itemList,
     bench_numbers: benches, house_id: houseId || null, plan_id: planId,
-    target_date: targetDate || null, team: team || null,
+    target_date: targetDate || null, team: team || null, diagram_url,
     status: "pending", created_by: "Production Plan",
   }]);
 }
@@ -5215,7 +5222,7 @@ function HouseDrilldown({ houseName, houses, planId, onClose }) {
   const [fq, setFq] = useState("");
   const [fwk, setFwk] = useState("");
   function toggleSel(id) { setSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; }); }
-  const toItems = list => list.map(r => ({ item: r.item_name || r.variety?.variety || "item", bench: r.bench?.code }));
+  const toItems = list => list.map(r => ({ item: r.item_name || r.variety?.variety || "item", bench: r.bench?.code, planting_layout: r.planting_layout || null, item_name: r.item_name || null }));
 
   useEffect(() => {
     if (!sb) return;
