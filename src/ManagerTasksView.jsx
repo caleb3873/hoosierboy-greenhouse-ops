@@ -15,6 +15,7 @@ import { ReceivingWeekSummary, aggregateFallReceivingForWeek } from "./Receiving
 import { useFallProgramItems } from "./supabase";
 import { getCurrentWeek } from "./shared";
 import { NotificationBanner } from "./PushNotifications";
+import { SpecialMessagePopup, TaskSpecialMessageBanner } from "./SpecialMessages";
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
 
@@ -876,6 +877,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
             {(t.photos || []).length > 0 && <div style={{ fontSize: 11, color: "#4a90d9", marginTop: 4 }}>📷 {t.photos.length} photo{t.photos.length !== 1 ? "s" : ""}</div>}
             {t.diagramUrl && <a href={t.diagramUrl} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} style={{ display: "inline-block", fontSize: 12, fontWeight: 700, color: "#fff", background: "#7fb069", padding: "4px 10px", borderRadius: 7, textDecoration: "none", marginTop: 6 }}>🔗 Planting diagram</a>}
             {t.notes && <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 4, fontStyle: "italic" }}>📝 {t.notes}</div>}
+            <TaskSpecialMessageBanner task={t} />
             {isDone && (
               <div style={{ fontSize: 11, color: "#4a7a35", marginTop: 4 }}>
                 ✓ {t.completedBy} — {formatTime(t.completedAt)}
@@ -945,6 +947,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
   return (
     <div style={{ ...FONT, minHeight: "100vh", background: "#f2f5ef", paddingBottom: 100 }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
+      <SpecialMessagePopup />
       <style>{`
         @media (max-width: 640px) {
           .mtv-header-title { font-size: 18px !important; }

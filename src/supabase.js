@@ -341,6 +341,7 @@ export const useEmployeeAttendance = () => useTable("employee_attendance", { ord
 export const useHiringCandidates = () => useTable("hiring_candidates", { orderBy: "created_at", ascending: false, localKey: "gh_hiring_candidates_v1" });
 export const useVacationRequests = () => useTable("vacation_requests", { orderBy: "start_date", ascending: true, localKey: "gh_vacation_requests_v1" });
 export const useAnnouncements = () => useTable("announcements", { orderBy: "created_at", ascending: false, localKey: "gh_announcements_v1" });
+export const useSpecialMessages = () => useTable("special_messages", { orderBy: "created_at", ascending: false, localKey: "gh_special_messages_v1" });
 export const useHrMessages = () => useTable("hr_messages", { orderBy: "sent_at", ascending: false, localKey: "gh_hr_messages_v1" });
 export const useDriverAvailability = () => useTable("driver_availability", { orderBy: "available_date", ascending: true, localKey: "gh_driver_availability_v1" });
 export const useDriverRequests = () => useTable("driver_requests", { orderBy: "delivery_date", ascending: true, localKey: "gh_driver_requests_v1" });
