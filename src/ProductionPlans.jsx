@@ -569,6 +569,84 @@ function TaskComposer({ items, planId, houseId, onClose }) {
   );
 }
 
+// Suggestion → review → accept loop on the Notes page: anyone proposes a change; the owner
+// accepts (which flags the item as a tracked fix-next-year note) or declines.
+function SuggestionsSection({ plan, onAccepted }) {
+  const sb = getSupabase();
+  const [list, setList] = useState([]);
+  const [items, setItems] = useState([]);
+  const [by, setBy] = useState("");
+  const [item, setItem] = useState("");
+  const [text, setText] = useState("");
+  const [tick, setTick] = useState(0);
+  useEffect(() => { (async () => {
+    if (!sb) return;
+    const { data: s } = await sb.from("plan_suggestions").select("*").eq("plan_id", plan.id).order("created_at", { ascending: false });
+    setList(s || []);
+    const { data: it } = await sb.from("scheduled_crops").select("item_name").eq("plan_id", plan.id).not("item_name", "is", null);
+    setItems([...new Set((it || []).map(r => r.item_name))].sort());
+  })(); }, [sb, plan.id, tick]);
+  async function add() {
+    if (!sb || !text.trim()) return;
+    await sb.from("plan_suggestions").insert({ plan_id: plan.id, item_name: item.trim() || null, suggested_by: by.trim() || "Anonymous", suggestion: text.trim(), status: "pending" });
+    setText(""); setItem(""); setTick(t => t + 1);
+  }
+  async function review(s, status) {
+    if (!sb) return;
+    await sb.from("plan_suggestions").update({ status, reviewed_at: new Date().toISOString() }).eq("id", s.id);
+    if (status === "accepted" && s.item_name) {
+      const { data: rows } = await sb.from("scheduled_crops").select("id,improvement_note").eq("plan_id", plan.id).eq("item_name", s.item_name).eq("is_combo_component", false);
+      for (const r of rows || []) {
+        const tag = `[${s.suggested_by}] ${s.suggestion}`;
+        if (!(r.improvement_note || "").includes(tag)) await sb.from("scheduled_crops").update({ improvement_note: (r.improvement_note ? r.improvement_note + " " : "") + tag }).eq("id", r.id);
+      }
+      onAccepted?.();
+    }
+    setTick(t => t + 1);
+  }
+  const pending = list.filter(s => s.status === "pending");
+  const reviewed = list.filter(s => s.status !== "pending");
+  const inp = { padding: "7px 9px", border: `1px solid ${COLORS.border}`, borderRadius: 8, fontFamily: "inherit", fontSize: 13 };
+  return (
+    <div style={{ background: "#f7faf3", border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 14, marginBottom: 8 }}>
+      <div style={{ fontSize: 13, fontWeight: 800, color: COLORS.dark, marginBottom: 8 }}>💡 Suggested changes <span style={{ color: COLORS.muted, fontWeight: 400 }}>· anyone proposes, you review &amp; accept</span></div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-start", marginBottom: 10 }}>
+        <input placeholder="Your name" value={by} onChange={e => setBy(e.target.value)} style={{ ...inp, width: 120 }} />
+        <input list="sg-items" placeholder="Item / basket (optional)" value={item} onChange={e => setItem(e.target.value)} style={{ ...inp, width: 200 }} />
+        <datalist id="sg-items">{items.map(n => <option key={n} value={n} />)}</datalist>
+        <textarea placeholder="Suggested change (e.g. swap red cali → coral; move plant date +1 wk)" value={text} onChange={e => setText(e.target.value)} rows={1} style={{ ...inp, flex: 1, minWidth: 200, resize: "vertical" }} />
+        <button onClick={add} disabled={!text.trim()} style={{ background: COLORS.light, color: "#fff", border: "none", borderRadius: 8, padding: "8px 14px", fontWeight: 700, cursor: text.trim() ? "pointer" : "default", fontFamily: "inherit" }}>+ Suggest</button>
+      </div>
+      {pending.length === 0 ? <div style={{ fontSize: 12, color: COLORS.muted }}>No pending suggestions.</div> : (
+        <div style={{ display: "grid", gap: 8 }}>
+          {pending.map(s => (
+            <div key={s.id} style={{ background: "#fff", border: `1px solid ${COLORS.border}`, borderLeft: "4px solid #e89a3a", borderRadius: 8, padding: "8px 10px" }}>
+              <div style={{ fontSize: 13, color: COLORS.text }}>{s.suggestion}</div>
+              <div style={{ fontSize: 11, color: COLORS.muted, marginTop: 3 }}>— {s.suggested_by || "Anonymous"}{s.item_name ? ` · ${s.item_name}` : ""}</div>
+              <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+                <button onClick={() => review(s, "accepted")} style={{ background: COLORS.dark, color: "#fff", border: "none", borderRadius: 7, padding: "5px 12px", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>✓ Accept{s.item_name ? " → flag item" : ""}</button>
+                <button onClick={() => review(s, "declined")} style={{ background: "#fff", color: COLORS.red, border: `1px solid ${COLORS.red}`, borderRadius: 7, padding: "5px 12px", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>✗ Decline</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {reviewed.length > 0 && (
+        <details style={{ marginTop: 8 }}>
+          <summary style={{ cursor: "pointer", fontSize: 12, color: COLORS.muted, fontWeight: 700 }}>{reviewed.length} reviewed</summary>
+          <div style={{ display: "grid", gap: 4, marginTop: 6 }}>
+            {reviewed.map(s => (
+              <div key={s.id} style={{ fontSize: 12, color: COLORS.muted }}>
+                <span style={{ color: s.status === "accepted" ? COLORS.light : COLORS.red, fontWeight: 700 }}>{s.status === "accepted" ? "✓ accepted" : "✗ declined"}</span> — {s.suggestion} <span style={{ opacity: 0.7 }}>({s.suggested_by}{s.item_name ? ` · ${s.item_name}` : ""})</span>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}
+
 // Facility-wide review: every item flagged with a 🚩 fix-next-year note, grouped by recipe.
 function ReviewNotesTab({ plan }) {
   const sb = getSupabase();
@@ -606,6 +684,8 @@ function ReviewNotesTab({ plan }) {
         </div>
         <input placeholder="Search notes…" value={search} onChange={e => setSearch(e.target.value)} style={{ padding: "8px 10px", border: `1px solid ${COLORS.border}`, borderRadius: 8, fontFamily: "inherit", minWidth: 200 }} />
       </div>
+      <SuggestionsSection plan={plan} onAccepted={() => setTick(t => t + 1)} />
+      <div style={{ fontSize: 13, fontWeight: 800, color: COLORS.dark, margin: "18px 0 8px" }}>🚩 Flagged items ({groups.length})</div>
       {loading ? <div style={{ color: COLORS.muted }}>Loading…</div> : filtered.length === 0 ? (
         <div style={{ color: COLORS.muted, padding: 24, textAlign: "center", background: COLORS.card, borderRadius: 10, border: `1px solid ${COLORS.border}` }}>No flagged items. Open any item in <b>🗺 By Bench</b> and use the "🚩 Fix-next-year note" box — it'll show up here for the whole facility.</div>
       ) : (
