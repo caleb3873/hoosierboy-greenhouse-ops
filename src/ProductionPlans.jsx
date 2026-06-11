@@ -5336,14 +5336,14 @@ function ItemDetail({ row, onClose, onTask, planId }) {
             <BasketDesigner layout={layout} plantNames={combo.map(c => `${c.v?.crop_name || ""} ${c.v?.variety || ""}`.trim()).filter(Boolean)}
               onSave={async (l) => {
                 const sb = getSupabase();
-                if (!sb) { window.alert("No database connection — not saved."); return; }
-                // Save to EVERY combo with this same name in the plan (same recipe → same diagram).
-                let q = sb.from("scheduled_crops").update({ planting_layout: l }).eq("is_combo_component", false).eq("item_name", row.item_name);
-                if (planId) q = q.eq("plan_id", planId);
-                const { data, error } = await q.select("id");
+                if (!sb || !row?.id) { window.alert("Not saved — no connection."); return; }
+                // Always write THIS row by id (can't miss), then sync the whole recipe by name.
+                const { error } = await sb.from("scheduled_crops").update({ planting_layout: l }).eq("id", row.id);
                 if (error) { window.alert("Save failed: " + error.message); return; }
-                setLayout(l); setEditLayout(false);
-                window.alert(`Saved ✓  (${data?.length || 0} basket${(data?.length || 0) === 1 ? "" : "s"} named "${row.item_name}")`);
+                let n = 1;
+                if (row.item_name && planId) { const { data } = await sb.from("scheduled_crops").update({ planting_layout: l }).eq("item_name", row.item_name).eq("plan_id", planId).eq("is_combo_component", false).select("id"); n = data?.length || 1; }
+                row.planting_layout = l; setLayout(l); setEditLayout(false); // mutate cached row so it shows on reopen
+                window.alert(`Saved ✓  (${n} basket${n === 1 ? "" : "s"})`);
               }}
               onClose={() => setEditLayout(false)} />
           ) : (
