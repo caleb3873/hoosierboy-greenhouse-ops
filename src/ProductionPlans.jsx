@@ -317,6 +317,7 @@ const ACQ_LABEL = {
 const PLAN_TABS = [
   { id: "dashboard", label: "📊 Dashboard" },
   { id: "bench",     label: "🗺 By Bench" },
+  { id: "review",    label: "🚩 Notes" },
   { id: "variety",   label: "🌱 By Variety" },
   { id: "week",      label: "📅 By Plant Week" },
   { id: "tasks",     label: "✓ Tasks" },
@@ -457,6 +458,7 @@ function PlanDashboard({ plan, initialTab }) {
             <DashboardTab pl={pl} planId={plan.id} houses={houses} housesProfit={housesProfit} onHouseClick={setDrilldown} drilldown={drilldown} setDrilldown={setDrilldown} />
           )}
           {hasData && tab === "bench"     && <BenchTab plan={plan} houses={houses} housesProfit={housesProfit} drilldown={drilldown} setDrilldown={setDrilldown} />}
+          {hasData && tab === "review"    && <ReviewNotesTab plan={plan} />}
           {hasData && tab === "variety"   && <VarietyTab planId={plan.id} />}
           {hasData && tab === "week"      && <WeekTab planId={plan.id} />}
           {tab === "tasks"     && <PlanTasks planId={plan.id} />}
@@ -563,6 +565,63 @@ function TaskComposer({ items, planId, houseId, onClose }) {
         <button onClick={save} disabled={saving || !title.trim()} style={{ background: COLORS.light, color: "#fff", border: "none", borderRadius: 8, padding: "8px 16px", fontWeight: 700, cursor: (saving || !title.trim()) ? "default" : "pointer", fontFamily: "inherit" }}>{saving ? "Saving…" : "Create task"}</button>
         <button onClick={onClose} style={{ background: "transparent", border: `1px solid ${COLORS.border}`, color: COLORS.muted, borderRadius: 8, padding: "8px 16px", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
       </div>
+    </div>
+  );
+}
+
+// Facility-wide review: every item flagged with a 🚩 fix-next-year note, grouped by recipe.
+function ReviewNotesTab({ plan }) {
+  const sb = getSupabase();
+  const [groups, setGroups] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [tick, setTick] = useState(0);
+  useEffect(() => { (async () => {
+    if (!sb) { setLoading(false); return; }
+    const { data: sc } = await sb.from("scheduled_crops").select("id,item_name,variety_id,bench_id,improvement_note,plant_week").eq("plan_id", plan.id).not("improvement_note", "is", null);
+    const benchIds = [...new Set((sc || []).map(r => r.bench_id).filter(Boolean))];
+    const { data: benches } = benchIds.length ? await sb.from("benches").select("id,code,zone_label").in("id", benchIds).limit(2000) : { data: [] };
+    const vIds = [...new Set((sc || []).map(r => r.variety_id).filter(Boolean))];
+    const { data: vars } = vIds.length ? await sb.from("variety_library").select("id,variety,crop_name").in("id", vIds) : { data: [] };
+    const bmap = {}; (benches || []).forEach(b => { bmap[b.id] = b; });
+    const vmap = {}; (vars || []).forEach(v => { vmap[v.id] = v; });
+    const g = {};
+    (sc || []).forEach(r => {
+      const v = vmap[r.variety_id]; const item = r.item_name || (v ? `${v.crop_name} ${v.variety}` : "item");
+      const key = item + "||" + (r.improvement_note || "");
+      if (!g[key]) g[key] = { item, note: r.improvement_note, houses: new Set(), benches: new Set(), ids: [], itemName: r.item_name };
+      const b = bmap[r.bench_id]; if (b?.zone_label) g[key].houses.add(b.zone_label); if (b?.code) g[key].benches.add(b.code); g[key].ids.push(r.id);
+    });
+    setGroups(Object.values(g).map(x => ({ ...x, houses: [...x.houses].sort(), benches: [...x.benches] })).sort((a, b) => a.item.localeCompare(b.item)));
+    setLoading(false);
+  })(); }, [sb, plan.id, tick]);
+  async function saveNote(grp, val) { let q = sb.from("scheduled_crops").update({ improvement_note: val.trim() || null }); if (grp.itemName) q = q.eq("item_name", grp.itemName).eq("plan_id", plan.id); else q = q.in("id", grp.ids); await q; setTick(t => t + 1); }
+  const filtered = groups.filter(g => !search || (g.item + " " + g.note + " " + g.houses.join(" ")).toLowerCase().includes(search.toLowerCase()));
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
+        <div>
+          <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 22, color: COLORS.dark }}>🚩 Fix-next-year notes</div>
+          <div style={{ fontSize: 12, color: COLORS.muted }}>Every item across the facility flagged for improvement — your punch-list when building next year's plan. {groups.length} flagged.</div>
+        </div>
+        <input placeholder="Search notes…" value={search} onChange={e => setSearch(e.target.value)} style={{ padding: "8px 10px", border: `1px solid ${COLORS.border}`, borderRadius: 8, fontFamily: "inherit", minWidth: 200 }} />
+      </div>
+      {loading ? <div style={{ color: COLORS.muted }}>Loading…</div> : filtered.length === 0 ? (
+        <div style={{ color: COLORS.muted, padding: 24, textAlign: "center", background: COLORS.card, borderRadius: 10, border: `1px solid ${COLORS.border}` }}>No flagged items. Open any item in <b>🗺 By Bench</b> and use the "🚩 Fix-next-year note" box — it'll show up here for the whole facility.</div>
+      ) : (
+        <div style={{ display: "grid", gap: 10 }}>
+          {filtered.map((g, i) => (
+            <div key={i} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderLeft: "4px solid #d94f3d", borderRadius: 10, padding: 14 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                <div style={{ fontWeight: 800, color: COLORS.dark }}>{g.item}</div>
+                <div style={{ fontSize: 11, color: COLORS.muted }}>{g.houses.join(" · ")}{g.benches.length ? ` · ${g.benches.length} bench${g.benches.length === 1 ? "" : "es"}` : ""}</div>
+              </div>
+              <textarea defaultValue={g.note} onBlur={e => { if ((e.target.value || "") !== (g.note || "")) saveNote(g, e.target.value); }} rows={2} style={{ width: "100%", boxSizing: "border-box", marginTop: 8, padding: "7px 9px", border: `1px solid ${COLORS.border}`, borderRadius: 8, fontFamily: "inherit", fontSize: 13, resize: "vertical" }} />
+              <button onClick={() => { if (window.confirm("Resolve & clear this note?")) saveNote(g, ""); }} style={{ marginTop: 6, background: "#fff", color: COLORS.light, border: `1px solid ${COLORS.light}`, borderRadius: 7, padding: "5px 12px", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>✓ Resolve</button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -5063,7 +5122,14 @@ function ItemDetail({ row, onClose, onTask, planId }) {
   const [cp, setCp] = useState([]);
   const [layout, setLayout] = useState(row?.planting_layout || null);
   const [editLayout, setEditLayout] = useState(false);
-  useEffect(() => { setLayout(row?.planting_layout || null); setEditLayout(false); }, [row?.id, row?.planting_layout]);
+  const [impNote, setImpNote] = useState(row?.improvement_note || "");
+  useEffect(() => { setLayout(row?.planting_layout || null); setEditLayout(false); setImpNote(row?.improvement_note || ""); }, [row?.id, row?.planting_layout, row?.improvement_note]);
+  async function saveImpNote(val) {
+    const sb = getSupabase(); if (!sb || !row) return;
+    let q = sb.from("scheduled_crops").update({ improvement_note: val.trim() || null });
+    if (row.item_name && planId) q = q.eq("item_name", row.item_name).eq("plan_id", planId); else q = q.eq("id", row.id);
+    await q; row.improvement_note = val.trim() || null;
+  }
   const srcId = row?.variety?.culture_source_id;
   useEffect(() => {
     const cc = getCultureClient(); if (!cc) return;
@@ -5117,6 +5183,11 @@ function ItemDetail({ row, onClose, onTask, planId }) {
       <div style={{ margin: "10px 0", display: "flex", gap: 10, alignItems: "center" }}>
         <button onClick={onTask} style={{ background: COLORS.dark, color: "#fff", border: "none", borderRadius: 8, padding: "7px 14px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 13 }}>＋ Create task</button>
         {pdf && <a href={pdf} target="_blank" rel="noreferrer" style={{ fontSize: 13, fontWeight: 700, color: "#fff", background: COLORS.light, padding: "7px 12px", borderRadius: 8, textDecoration: "none" }}>📄 Grower guide ↗</a>}
+      </div>
+      <div style={{ borderTop: `1px solid ${COLORS.border}`, paddingTop: 10, marginBottom: 10 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: "#c0392b", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>🚩 Fix-next-year note</div>
+        <textarea value={impNote} onChange={e => setImpNote(e.target.value)} onBlur={e => { if ((e.target.value || "") !== (row.improvement_note || "")) saveImpNote(e.target.value); }} rows={2} placeholder="e.g. Don't use ipomoea in this basket next year — wasn't compatible. Flags this item across the facility for review." style={{ width: "100%", boxSizing: "border-box", padding: "7px 9px", border: `1px solid ${impNote ? "#d94f3d" : COLORS.border}`, borderRadius: 8, fontFamily: "inherit", fontSize: 13, resize: "vertical", background: impNote ? "#fdf1ef" : "#fff" }} />
+        {row.item_name && <div style={{ fontSize: 10, color: COLORS.muted, marginTop: 3 }}>Applies to all "{row.item_name}" across the facility.</div>}
       </div>
       {layout && (
         <div style={{ borderTop: `1px solid ${COLORS.border}`, paddingTop: 10, marginBottom: 10 }}>
@@ -5234,7 +5305,7 @@ function HouseDrilldown({ houseName, houses, planId, onClose }) {
         .select("id,bench_id,variety_id,qty_pots,qty_plants_ordered,direct_cost_total,revenue,gross_profit,plant_week")
         .eq("plan_id", planId).in("bench_id", benchIds);
       const ids = (pl || []).map(r => r.id);
-      const { data: sc } = ids.length ? await sb.from("scheduled_crops").select("id,item_name,is_combo_component,combo_parent_id,planting_layout,notes").in("id", ids) : { data: [] };
+      const { data: sc } = ids.length ? await sb.from("scheduled_crops").select("id,item_name,is_combo_component,combo_parent_id,planting_layout,notes,improvement_note").in("id", ids) : { data: [] };
       const { data: vars } = await sb.from("variety_library").select("id,variety,breeder,culture_source_id");
 
       setRows((pl || []).map(r => {
@@ -5247,6 +5318,7 @@ function HouseDrilldown({ houseName, houses, planId, onClose }) {
           is_combo_component: scr?.is_combo_component,
           planting_layout: scr?.planting_layout,
           notes: scr?.notes,
+          improvement_note: scr?.improvement_note,
         };
       }).sort((a,b) => (a.bench?.position || 0) - (b.bench?.position || 0)));
     })();
@@ -5366,9 +5438,11 @@ function HouseDrilldown({ houseName, houses, planId, onClose }) {
                   <div style={{ fontWeight: 600, cursor: "pointer", color: COLORS.dark, display: "flex", alignItems: "center", gap: 6 }} onClick={() => setDetail(r)} title="Open item details + culture">
                     {r.planting_layout && <span style={{ background: "#6a4fb0", color: "#fff", fontSize: 9, fontWeight: 800, padding: "1px 6px", borderRadius: 8, letterSpacing: 0.5, flexShrink: 0 }}>COMBO</span>}
                     {/flagged to drop/i.test(r.notes || "") && <span style={{ background: "#d94f3d", color: "#fff", fontSize: 9, fontWeight: 800, padding: "1px 6px", borderRadius: 8, letterSpacing: 0.5, flexShrink: 0 }}>⚠ DROP</span>}
+                    {r.improvement_note && <span title={r.improvement_note} style={{ flexShrink: 0 }}>🚩</span>}
                     <span>{r.item_name || r.variety?.variety || "—"}</span>
                   </div>
                   {r.variety?.variety && <div style={{ color: COLORS.muted, fontSize: 11 }}>{r.variety.variety}{r.variety.breeder ? ` · ${r.variety.breeder}` : ""}</div>}
+                  {r.improvement_note && <div style={{ color: "#c0392b", fontSize: 11, marginTop: 2, fontWeight: 600 }}>🚩 {r.improvement_note}</div>}
                 </td>
                 <td style={{...td, textAlign:"right"}}>{r.qty_pots}</td>
                 <td style={{...td, textAlign:"right"}}>{r.qty_plants_ordered}</td>
