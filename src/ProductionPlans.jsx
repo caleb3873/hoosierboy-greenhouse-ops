@@ -637,7 +637,7 @@ function BenchTab({ plan, houses, housesProfit, drilldown, setDrilldown }) {
   useEffect(() => {
     if (!sb || !plan?.id) return;
     (async () => {
-      const { data: scd } = await sb.from("scheduled_crops").select("id,item_name,plant_week,bench_id,variety_id,qty_pots,is_combo_component").eq("plan_id", plan.id);
+      const { data: scd } = await sb.from("scheduled_crops").select("id,item_name,plant_week,bench_id,variety_id,qty_pots,is_combo_component,improvement_note").eq("plan_id", plan.id);
       const benchIds = [...new Set((scd || []).map(r => r.bench_id).filter(Boolean))];
       const varIds = [...new Set((scd || []).map(r => r.variety_id).filter(Boolean))];
       const { data: bdata } = benchIds.length ? await sb.from("benches").select("id,code,zone_label").in("id", benchIds) : { data: [] };
@@ -645,10 +645,12 @@ function BenchTab({ plan, houses, housesProfit, drilldown, setDrilldown }) {
       setAll((scd || []).map(r => {
         const b = (bdata || []).find(x => x.id === r.bench_id);
         const v = (vdata || []).find(x => x.id === r.variety_id);
-        return { id: r.id, item: r.item_name, plant_week: r.plant_week, bench: b?.code, house: b?.zone_label, variety: v?.variety, crop: v?.crop_name, is_combo_component: r.is_combo_component };
+        return { id: r.id, item: r.item_name, plant_week: r.plant_week, bench: b?.code, house: b?.zone_label, variety: v?.variety, crop: v?.crop_name, is_combo_component: r.is_combo_component, improvement_note: r.improvement_note };
       }));
     })();
   }, [sb, plan?.id]);
+  // Houses (zone_labels) that have at least one item flagged with a fix-next-year note.
+  const flaggedHouses = useMemo(() => new Set(all.filter(r => r.improvement_note && r.house).map(r => r.house)), [all]);
 
   const weeks = wk.split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
   const active = !!(q.trim() || weeks.length);
@@ -676,7 +678,7 @@ function BenchTab({ plan, houses, housesProfit, drilldown, setDrilldown }) {
         {active && <button onClick={() => { setQ(""); setWk(""); setSel(new Set()); setTaskItems(null); }} style={{ background: "transparent", border: "none", color: COLORS.muted, cursor: "pointer" }}>clear</button>}
       </div>
 
-      <PropertyMap houses={houses} housesProfit={housesProfit} onHouseClick={setDrilldown} highlight={active ? matchCounts : null} />
+      <PropertyMap houses={houses} housesProfit={housesProfit} onHouseClick={setDrilldown} highlight={active ? matchCounts : null} flaggedHouses={flaggedHouses} />
 
       {active && (
         <div style={{ background: COLORS.card, border: `2px solid ${COLORS.dark}`, borderRadius: 10, padding: 14 }}>
@@ -4804,7 +4806,7 @@ function CostBreakdown({ pl }) {
 // Each house = a rectangle positioned by layout_x/y, sized by width_ft/length_ft.
 // Color = profit density (gross_profit / sq_ft).
 const SCALE = 0.6;  // px per ft — controls overall diagram size
-function PropertyMap({ houses, housesProfit, onHouseClick, highlight }) {
+function PropertyMap({ houses, housesProfit, onHouseClick, highlight, flaggedHouses }) {
   if (!houses?.length) return null;
   const bluff   = houses.filter(h => h.location === "Bluff Road");
   const sprague = houses.filter(h => h.location === "Sprague Road");
@@ -4836,8 +4838,8 @@ function PropertyMap({ houses, housesProfit, onHouseClick, highlight }) {
         Dimensions are <strong>estimates</strong> — corrections welcome.
       </div>
       <div style={{ display: "grid", gridTemplateColumns: `${bb.w*SCALE+20}px ${sb.w*SCALE+20}px`, gap: 24, overflowX: "auto" }}>
-        <PropertySVG label="Bluff Road"   buildings={bluff}   bounds={bb} profitFor={profitForHouse} onHouseClick={onHouseClick} highlight={highlight} />
-        <PropertySVG label="Sprague Road" buildings={sprague} bounds={sb} profitFor={profitForHouse} onHouseClick={onHouseClick} highlight={highlight} />
+        <PropertySVG label="Bluff Road"   buildings={bluff}   bounds={bb} profitFor={profitForHouse} onHouseClick={onHouseClick} highlight={highlight} flaggedHouses={flaggedHouses} />
+        <PropertySVG label="Sprague Road" buildings={sprague} bounds={sb} profitFor={profitForHouse} onHouseClick={onHouseClick} highlight={highlight} flaggedHouses={flaggedHouses} />
       </div>
 
       {/* Color legend */}
@@ -4857,7 +4859,7 @@ function PropertyMap({ houses, housesProfit, onHouseClick, highlight }) {
   );
 }
 
-function PropertySVG({ label, buildings, bounds, profitFor, onHouseClick, highlight }) {
+function PropertySVG({ label, buildings, bounds, profitFor, onHouseClick, highlight, flaggedHouses }) {
   return (
     <div>
       <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 6, color: COLORS.dark }}>{label}</div>
@@ -4890,7 +4892,8 @@ function PropertySVG({ label, buildings, bounds, profitFor, onHouseClick, highli
                 <circle cx={x + w - 7} cy={y + 7} r={7.5} fill="#e89a3a" stroke="#fff" strokeWidth={1} style={{ pointerEvents: "none" }} />
                 <text x={x + w - 7} y={y + 7} textAnchor="middle" dominantBaseline="central" style={{ fontSize: 9, fontWeight: 800, fill: "#fff", pointerEvents: "none" }}>{hl}</text>
               </>) : null}
-              <title>{b.name} · {b.width_ft}×{b.length_ft} ft{profitDensity != null ? ` · $${profitDensity.toFixed(2)}/sqft` : ""}{hl ? ` · ${hl} match(es)` : ""}</title>
+              {flaggedHouses?.has(b.name) && <text x={x + 8} y={y + 9} textAnchor="middle" dominantBaseline="central" style={{ fontSize: 11, pointerEvents: "none" }}>🚩</text>}
+              <title>{b.name} · {b.width_ft}×{b.length_ft} ft{profitDensity != null ? ` · $${profitDensity.toFixed(2)}/sqft` : ""}{hl ? ` · ${hl} match(es)` : ""}{flaggedHouses?.has(b.name) ? " · 🚩 has fix-next-year notes" : ""}</title>
             </g>
           );
         })}
@@ -5123,12 +5126,17 @@ function ItemDetail({ row, onClose, onTask, planId }) {
   const [layout, setLayout] = useState(row?.planting_layout || null);
   const [editLayout, setEditLayout] = useState(false);
   const [impNote, setImpNote] = useState(row?.improvement_note || "");
-  useEffect(() => { setLayout(row?.planting_layout || null); setEditLayout(false); setImpNote(row?.improvement_note || ""); }, [row?.id, row?.planting_layout, row?.improvement_note]);
+  const [noteStatus, setNoteStatus] = useState("");
+  useEffect(() => { setLayout(row?.planting_layout || null); setEditLayout(false); setImpNote(row?.improvement_note || ""); setNoteStatus(""); }, [row?.id, row?.planting_layout, row?.improvement_note]);
   async function saveImpNote(val) {
-    const sb = getSupabase(); if (!sb || !row) return;
-    let q = sb.from("scheduled_crops").update({ improvement_note: val.trim() || null });
-    if (row.item_name && planId) q = q.eq("item_name", row.item_name).eq("plan_id", planId); else q = q.eq("id", row.id);
-    await q; row.improvement_note = val.trim() || null;
+    const sb = getSupabase(); if (!sb || !row?.id) return;
+    const v = (val || "").trim() || null;
+    setNoteStatus("saving…");
+    // Always write this exact row by id (can't miss), then sync the rest of the recipe.
+    const { error } = await sb.from("scheduled_crops").update({ improvement_note: v }).eq("id", row.id);
+    if (error) { setNoteStatus(""); window.alert("Note save failed: " + error.message); return; }
+    if (row.item_name && planId) await sb.from("scheduled_crops").update({ improvement_note: v }).eq("item_name", row.item_name).eq("plan_id", planId);
+    row.improvement_note = v; setNoteStatus("Saved ✓");
   }
   const srcId = row?.variety?.culture_source_id;
   useEffect(() => {
@@ -5186,8 +5194,13 @@ function ItemDetail({ row, onClose, onTask, planId }) {
       </div>
       <div style={{ borderTop: `1px solid ${COLORS.border}`, paddingTop: 10, marginBottom: 10 }}>
         <div style={{ fontSize: 11, fontWeight: 700, color: "#c0392b", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>🚩 Fix-next-year note</div>
-        <textarea value={impNote} onChange={e => setImpNote(e.target.value)} onBlur={e => { if ((e.target.value || "") !== (row.improvement_note || "")) saveImpNote(e.target.value); }} rows={2} placeholder="e.g. Don't use ipomoea in this basket next year — wasn't compatible. Flags this item across the facility for review." style={{ width: "100%", boxSizing: "border-box", padding: "7px 9px", border: `1px solid ${impNote ? "#d94f3d" : COLORS.border}`, borderRadius: 8, fontFamily: "inherit", fontSize: 13, resize: "vertical", background: impNote ? "#fdf1ef" : "#fff" }} />
-        {row.item_name && <div style={{ fontSize: 10, color: COLORS.muted, marginTop: 3 }}>Applies to all "{row.item_name}" across the facility.</div>}
+        <textarea value={impNote} onChange={e => { setImpNote(e.target.value); setNoteStatus(""); }} onBlur={e => { if ((e.target.value || "") !== (row.improvement_note || "")) saveImpNote(e.target.value); }} rows={2} placeholder="e.g. Don't use ipomoea in this basket next year — wasn't compatible. Flags this item across the facility for review." style={{ width: "100%", boxSizing: "border-box", padding: "7px 9px", border: `1px solid ${impNote ? "#d94f3d" : COLORS.border}`, borderRadius: 8, fontFamily: "inherit", fontSize: 13, resize: "vertical", background: impNote ? "#fdf1ef" : "#fff" }} />
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 6 }}>
+          <button onClick={() => saveImpNote(impNote)} style={{ background: "#d94f3d", color: "#fff", border: "none", borderRadius: 7, padding: "6px 14px", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>💾 Save note</button>
+          {impNote && <button onClick={() => { setImpNote(""); saveImpNote(""); }} style={{ background: "#fff", color: COLORS.muted, border: `1px solid ${COLORS.border}`, borderRadius: 7, padding: "6px 12px", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Clear</button>}
+          {noteStatus && <span style={{ fontSize: 12, color: noteStatus === "Saved ✓" ? COLORS.light : COLORS.muted, fontWeight: 700 }}>{noteStatus}</span>}
+          {row.item_name && <span style={{ fontSize: 10, color: COLORS.muted, marginLeft: "auto" }}>Applies to all "{row.item_name}" facility-wide</span>}
+        </div>
       </div>
       {layout && (
         <div style={{ borderTop: `1px solid ${COLORS.border}`, paddingTop: 10, marginBottom: 10 }}>
