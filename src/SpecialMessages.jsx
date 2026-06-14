@@ -25,6 +25,7 @@ export function SpecialMessagePopup() {
   const { displayName } = useAuth();
   const [unseen, setUnseen] = useState([]);
   const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
   const checkedRef = useRef(false);
   useEffect(() => {
     if (checkedRef.current || !rows) return;
@@ -34,11 +35,15 @@ export function SpecialMessagePopup() {
   }, [rows, displayName]);
   async function gotIt() {
     const sb = getSupabase();
-    if (sb) for (const m of unseen) {
-      const d = [...(m.dismissedBy || []), displayName].filter(Boolean);
-      await sb.from("special_messages").update({ dismissed_by: d }).eq("id", m.id);
-    }
-    setOpen(false);
+    setSaving(true);
+    try {
+      if (sb) for (const m of unseen) {
+        const d = [...(m.dismissedBy || []), displayName].filter(Boolean);
+        const { error } = await sb.from("special_messages").update({ dismissed_by: d }).eq("id", m.id);
+        if (error) throw error;
+      }
+      setOpen(false);
+    } catch (e) { setSaving(false); window.alert("Couldn't dismiss the message — try again. (" + (e.message || e) + ")"); }
   }
   if (!open || !unseen.length) return null;
   const urgent = unseen.some(m => m.urgent);
@@ -56,7 +61,7 @@ export function SpecialMessagePopup() {
               <div style={{ fontSize: 14, color: "#1e2d1a", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{m.body}</div>
             </div>
           ))}
-          <button onClick={gotIt} style={{ marginTop: 14, width: "100%", background: "#1e2d1a", color: "#c8e6b8", border: "none", borderRadius: 10, padding: "12px", fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>Got it</button>
+          <button onClick={gotIt} disabled={saving} style={{ marginTop: 14, width: "100%", background: "#1e2d1a", color: "#c8e6b8", border: "none", borderRadius: 10, padding: "12px", fontSize: 15, fontWeight: 800, cursor: saving ? "default" : "pointer", opacity: saving ? 0.7 : 1, fontFamily: "inherit" }}>{saving ? "Saving…" : "Got it"}</button>
         </div>
       </div>
     </div>
