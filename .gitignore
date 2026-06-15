@@ -16,3 +16,6 @@ scripts/phones.json
 
 # Data-Integrity Sentinel local state (per-run, not shared)
 scripts/.sentinel-state.json
+
+# Culture-link proposals (local review artifact)
+scripts/culture-link-proposals.json
