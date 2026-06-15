@@ -1099,8 +1099,8 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
                   <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
                     <span style={{ fontSize: 28 }}>★</span>
                     <div>
-                      <div style={{ fontSize: 17, fontWeight: 800, color: "#1e2d1a" }}>Fill Out Evaluation</div>
-                      <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2 }}>Submit employee review · employer feedback</div>
+                      <div style={{ fontSize: 17, fontWeight: 800, color: "#1e2d1a" }}>Employer / Self Evaluation</div>
+                      <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2 }}>Share feedback about your work experience</div>
                     </div>
                   </div>
                 </div>
@@ -1192,8 +1192,8 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
                 {isManager && (
                   <div className="hub-card" onClick={() => setCurrentView("evaluations")} style={{ borderTopColor: "#d18b35", borderTopWidth: 4 }}>
                     <div className="hub-card-emoji">★</div>
-                    <div className="hub-card-title">{canViewAllEvaluations ? "Evaluations" : "Fill Out Evaluation"}</div>
-                    <div className="hub-card-sub">{canViewAllEvaluations ? "View all reviews · feedback · follow-up" : "Submit employee review · employer feedback"}</div>
+                    <div className="hub-card-title">{canViewAllEvaluations ? "Evaluations" : "Employer / Self Evaluation"}</div>
+                    <div className="hub-card-sub">{canViewAllEvaluations ? "Employee reviews · self feedback · follow-up" : "Share feedback about your work experience"}</div>
                   </div>
                 )}
 

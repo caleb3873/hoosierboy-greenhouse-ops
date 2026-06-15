@@ -25,6 +25,10 @@ const JSONB_KEYS = new Set([
   "signed_invoice_photos","signedInvoicePhotos",
   "alerts",
   "action_items","actionItems",
+  "manager_ratings","managerRatings",
+  "employer_ratings","employerRatings",
+  "employer_responses_en","employerResponsesEn",
+  "manager_responses_translated","managerResponsesTranslated",
 ]);
 
 // Convert snake_case DB row to camelCase app object
@@ -56,7 +60,7 @@ function toSnake(obj) {
       SNAKE_OVERRIDES[k] || k.replace(/([A-Z])/g, "_$1").toLowerCase(),
       // Don't recurse into jsonb fields — keep them as-is
       typeof v === "object" && v !== null && !Array.isArray(v) &&
-        !["varieties","indoorAssignments","outsideAssignments","zones","sections","stages","items","spacing","details","priceHistory","inventoryHistory","formatConfig","availability","benchNumbers"].includes(k)
+        !["varieties","indoorAssignments","outsideAssignments","zones","sections","stages","items","spacing","details","priceHistory","inventoryHistory","formatConfig","availability","benchNumbers","managerRatings","employerRatings"].includes(k)
         ? toSnake(v)
         : v,
     ])
@@ -65,7 +69,7 @@ function toSnake(obj) {
 
 // ── GENERIC TABLE HOOK ────────────────────────────────────────────────────────
 // useTable("crop_runs") → { rows, loading, error, insert, update, remove, refresh }
-export function useTable(tableName, { orderBy = "created_at", ascending = false, localKey = null } = {}) {
+export function useTable(tableName, { orderBy = "created_at", ascending = false, localKey = null, enabled = true } = {}) {
   const [rows, setRows]       = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState(null);
@@ -76,6 +80,10 @@ export function useTable(tableName, { orderBy = "created_at", ascending = false,
 
   // Load from localStorage fallback if no Supabase
   useEffect(() => {
+    if (!enabled) {
+      setLoading(false);
+      return;
+    }
     if (!hasDb && localKey) {
       try {
         const stored = JSON.parse(localStorage.getItem(localKey) || "[]");
@@ -83,11 +91,11 @@ export function useTable(tableName, { orderBy = "created_at", ascending = false,
       } catch {}
       setLoading(false);
     }
-  }, [hasDb, localKey]);
+  }, [hasDb, localKey, enabled]);
 
   // Fetch from Supabase
   const refresh = useCallback(async () => {
-    if (!db) return;
+    if (!db || !enabled) return;
     setLoading(true);
     setError(null);
     try {
@@ -102,16 +110,16 @@ export function useTable(tableName, { orderBy = "created_at", ascending = false,
     } finally {
       if (mounted.current) setLoading(false);
     }
-  }, [db, tableName, orderBy, ascending]);
+  }, [db, tableName, orderBy, ascending, enabled]);
 
   useEffect(() => {
-    if (hasDb) refresh();
+    if (hasDb && enabled) refresh();
     return () => { mounted.current = false; };
-  }, [hasDb, refresh]);
+  }, [hasDb, refresh, enabled]);
 
   // Real-time subscription
   useEffect(() => {
-    if (!db) return;
+    if (!db || !enabled) return;
     const channel = db
       .channel(`rt-${tableName}`)
       .on("postgres_changes", { event: "*", schema: "public", table: tableName }, () => {
@@ -119,7 +127,7 @@ export function useTable(tableName, { orderBy = "created_at", ascending = false,
       })
       .subscribe();
     return () => db.removeChannel(channel);
-  }, [db, tableName, refresh]);
+  }, [db, tableName, refresh, enabled]);
 
   const insert = useCallback(async (row) => {
     const { id, ...rest } = row;
@@ -303,6 +311,17 @@ export const useFallProgramItems = () => useTable("fall_program_items", { orderB
 
 // Manager tasks (voice-created tasks)
 export const useManagerTasks = () => useTable("manager_tasks", { orderBy: "priority", localKey: "gh_manager_tasks_v1" });
+export const useEmployeeEvaluations = ({ loadRows = true } = {}) => useTable("employee_evaluations", {
+  orderBy: "review_date",
+  ascending: false,
+  localKey: "gh_employee_evaluations_v1",
+  enabled: loadRows,
+});
+export const useEvaluationAssignments = () => useTable("evaluation_assignments", {
+  orderBy: "employee_name",
+  ascending: true,
+  localKey: "gh_evaluation_assignments_v1",
+});
 export const useInventoryLots = () => useTable("inventory_lots", { orderBy: "updated_at", ascending: false, localKey: "gh_inventory_lots_v1" });
 export const useInventoryLocationNotes = () => useTable("inventory_location_notes", { orderBy: "updated_at", ascending: false, localKey: "gh_inventory_location_notes_v1" });
 export const useReferenceDocs = () => useTable("reference_docs", { orderBy: "sort_order", ascending: true, localKey: "gh_reference_docs_v1" });

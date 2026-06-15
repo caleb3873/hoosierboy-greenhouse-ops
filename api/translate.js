@@ -13,7 +13,7 @@ module.exports = async (req, res) => {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
   if (!ANTHROPIC_KEY) return res.status(500).json({ error: "ANTHROPIC_API_KEY not configured" });
 
-  const { texts, target } = req.body || {};
+  const { texts, target, context } = req.body || {};
   if (!Array.isArray(texts) || texts.length === 0) return res.status(400).json({ error: "texts (array) required" });
   if (!target) return res.status(400).json({ error: "target required" });
 
@@ -22,7 +22,7 @@ module.exports = async (req, res) => {
 
   // Build a simple numbered prompt — Claude returns a JSON array
   const joined = texts.map((t, i) => `${i + 1}. ${t}`).join("\n");
-  const prompt = `Translate the following short greenhouse-operations task strings into ${langName}. Preserve plant names (e.g. Calibrachoa, Petunia) as-is. Keep translations concise and informal but professional. Return ONLY a JSON array of the translated strings in the same order, nothing else.\n\n${joined}`;
+  const prompt = `Translate the following ${context === "evaluation" ? "employee evaluation questions or responses" : "greenhouse-operations task strings"} into ${langName}. Preserve names and plant names as-is. Use clear, respectful workplace language and preserve the speaker's meaning without adding or removing concerns. Return ONLY a JSON array of the translated strings in the same order, nothing else.\n\n${joined}`;
 
   try {
     const resp = await fetch("https://api.anthropic.com/v1/messages", {

@@ -261,6 +261,95 @@ CREATE TRIGGER grower_profiles_updated_at
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 -- ============================================================
+-- EMPLOYEE EVALUATIONS
+-- ============================================================
+CREATE TABLE employee_evaluations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  employee_id UUID,
+  employee_name TEXT NOT NULL,
+  employee_role TEXT,
+  department TEXT,
+  evaluator_name TEXT NOT NULL,
+  review_year INTEGER NOT NULL,
+  review_date DATE NOT NULL DEFAULT CURRENT_DATE,
+  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'completed')),
+  manager_status TEXT NOT NULL DEFAULT 'pending' CHECK (manager_status IN ('pending', 'draft', 'completed')),
+  employee_status TEXT NOT NULL DEFAULT 'pending' CHECK (employee_status IN ('pending', 'completed')),
+  manager_ratings JSONB NOT NULL DEFAULT '{}'::jsonb,
+  strengths TEXT,
+  improvement_areas TEXT,
+  goals TEXT,
+  manager_support TEXT,
+  attendance_notes TEXT,
+  employer_ratings JSONB NOT NULL DEFAULT '{}'::jsonb,
+  employee_likes TEXT,
+  employee_concerns TEXT,
+  management_feedback TEXT,
+  requested_changes TEXT,
+  employee_goals TEXT,
+  follow_up_date DATE,
+  follow_up_notes TEXT,
+  manager_acknowledged BOOLEAN NOT NULL DEFAULT FALSE,
+  employee_acknowledged BOOLEAN NOT NULL DEFAULT FALSE,
+  manager_acknowledged_at TIMESTAMPTZ,
+  employee_acknowledged_at TIMESTAMPTZ,
+  completed_at TIMESTAMPTZ,
+  manager_completed_at TIMESTAMPTZ,
+  employee_submitted_at TIMESTAMPTZ,
+  assigned_manager_name TEXT,
+  response_language TEXT NOT NULL DEFAULT 'en' CHECK (response_language IN ('en', 'es', 'my')),
+  employer_responses_en JSONB NOT NULL DEFAULT '{}'::jsonb,
+  manager_responses_translated JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (employee_name, review_year)
+);
+
+ALTER TABLE employee_evaluations ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow all access to employee_evaluations"
+  ON employee_evaluations FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON employee_evaluations TO anon, authenticated;
+
+CREATE TRIGGER employee_evaluations_updated_at
+  BEFORE UPDATE ON employee_evaluations
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+CREATE INDEX idx_employee_evaluations_year
+  ON employee_evaluations (review_year DESC, employee_name);
+
+-- ============================================================
+-- EVALUATION ASSIGNMENTS
+-- ============================================================
+CREATE TABLE evaluation_assignments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  review_year INTEGER NOT NULL,
+  employee_name TEXT NOT NULL,
+  employee_role TEXT,
+  employee_department TEXT,
+  employee_language TEXT NOT NULL DEFAULT 'en'
+    CHECK (employee_language IN ('en', 'es', 'my')),
+  manager_name TEXT NOT NULL,
+  assigned_by TEXT NOT NULL,
+  assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (review_year, employee_name)
+);
+
+ALTER TABLE evaluation_assignments ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow all access to evaluation_assignments"
+  ON evaluation_assignments FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+GRANT SELECT, INSERT, UPDATE, DELETE ON evaluation_assignments TO anon, authenticated;
+
+CREATE TRIGGER evaluation_assignments_updated_at
+  BEFORE UPDATE ON evaluation_assignments
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+CREATE INDEX idx_evaluation_assignments_manager
+  ON evaluation_assignments (review_year DESC, manager_name);
+
+-- ============================================================
 -- WATERING PLANS
 -- ============================================================
 CREATE TABLE watering_plans (

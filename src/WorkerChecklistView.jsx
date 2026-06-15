@@ -8,6 +8,7 @@ import { VacationRequestModal, OutThisWeekBanner } from "./Vacation";
 import { AnnouncementBanner, AnnouncementPopup, useAnnouncementPopup } from "./Announcements";
 import InventoryView from "./InventoryView";
 import ReferenceDocs from "./ReferenceDocs";
+import Evaluations from "./Evaluations";
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
 const GREEN_DARK = "#1e2d1a";
@@ -33,11 +34,15 @@ function formatTime(iso) {
 export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenTaskCreator }) {
   const [showInventory, setShowInventory] = useState(false);
   const [showRefDocs, setShowRefDocs] = useState(false);
+  const [showEvaluation, setShowEvaluation] = useState(false);
   if (showInventory) {
     return <InventoryView onBack={() => setShowInventory(false)} />;
   }
   if (showRefDocs) {
     return <ReferenceDocs onBack={() => setShowRefDocs(false)} />;
+  }
+  if (showEvaluation) {
+    return <Evaluations selfOnly onBack={() => setShowEvaluation(false)} />;
   }
   return <WorkerChecklistViewInner
     onSwitchMode={onSwitchMode}
@@ -45,10 +50,11 @@ export default function WorkerChecklistView({ onSwitchMode, onBackToApp, onOpenT
     onOpenTaskCreator={onOpenTaskCreator}
     onOpenInventory={() => setShowInventory(true)}
     onOpenRefDocs={() => setShowRefDocs(true)}
+    onOpenEvaluation={() => setShowEvaluation(true)}
   />;
 }
 
-function WorkerChecklistViewInner({ onSwitchMode, onBackToApp, onOpenTaskCreator, onOpenInventory, onOpenRefDocs }) {
+function WorkerChecklistViewInner({ onSwitchMode, onBackToApp, onOpenTaskCreator, onOpenInventory, onOpenRefDocs, onOpenEvaluation }) {
   const { rows: tasks, upsert, refresh } = useManagerTasks();
   const { rows: brehobItems, update: updateBrehob } = useBrehobItems();
   const { displayName, growerProfile } = useAuth();
@@ -200,6 +206,7 @@ function WorkerChecklistViewInner({ onSwitchMode, onBackToApp, onOpenTaskCreator
       claim: "Claim Task", markDone: "Mark Done", release: "Release", mine: "MINE",
       suggestTask: "Suggest Task", signOut: "Sign out",
       today: "Today", tomorrow: "Tomorrow", dayAfter: "Day After", weekly: "This Week",
+      evaluation: "Self Evaluation",
     },
     es: {
       hi: "Hola", thisWeek: "Tareas de esta semana", toDo: "Por hacer", done: "Hechas",
@@ -207,6 +214,7 @@ function WorkerChecklistViewInner({ onSwitchMode, onBackToApp, onOpenTaskCreator
       claim: "Tomar tarea", markDone: "Marcar hecha", release: "Liberar", mine: "MÍA",
       suggestTask: "Sugerir tarea", signOut: "Salir",
       today: "Hoy", tomorrow: "Mañana", dayAfter: "Pasado mañana", weekly: "Esta semana",
+      evaluation: "Autoevaluación",
     },
     my: {
       hi: "မင်္ဂလာပါ", thisWeek: "ဤအပတ်လုပ်ငန်းများ", toDo: "လုပ်ရန်", done: "ပြီးပြီ",
@@ -214,6 +222,7 @@ function WorkerChecklistViewInner({ onSwitchMode, onBackToApp, onOpenTaskCreator
       claim: "လုပ်ငန်းယူပါ", markDone: "ပြီးပြီဟုသတ်မှတ်ပါ", release: "ပြန်ပေးပါ", mine: "ကျွန်တော်",
       suggestTask: "လုပ်ငန်းအကြံပြုပါ", signOut: "ထွက်ပါ",
       today: "ယနေ့", tomorrow: "မနက်ဖြန်", dayAfter: "သန်ဘက်ခါ", weekly: "ဤအပတ်",
+      evaluation: "ကိုယ်တိုင် အကဲဖြတ်ချက်",
     },
   }[lang] || {
     hi: "Hi", thisWeek: "This Week's Tasks", toDo: "To Do", done: "Done",
@@ -221,6 +230,7 @@ function WorkerChecklistViewInner({ onSwitchMode, onBackToApp, onOpenTaskCreator
     claim: "Claim Task", markDone: "Mark Done", release: "Release", mine: "MINE",
     suggestTask: "Suggest Task", signOut: "Sign out",
     today: "Today", tomorrow: "Tomorrow", dayAfter: "Day After", weekly: "This Week",
+    evaluation: "Self Evaluation",
   };
 
   async function appendToTask({ note, photo, rating }) {
@@ -394,6 +404,9 @@ function WorkerChecklistViewInner({ onSwitchMode, onBackToApp, onOpenTaskCreator
           </button>
           <button onClick={() => setShowVacationForm(true)} style={{ background: "#c8e6b8", border: "none", color: GREEN_DARK, padding: "6px 12px", borderRadius: 6, cursor: "pointer", fontWeight: 800, ...FONT }}>
             🌴 Vacation
+          </button>
+          <button onClick={onOpenEvaluation} style={{ background: "#e8c77b", border: "none", color: GREEN_DARK, padding: "6px 12px", borderRadius: 6, cursor: "pointer", fontWeight: 800, ...FONT }}>
+            ★ {t_ui.evaluation}
           </button>
           {onBackToApp && (
             <button onClick={onBackToApp} style={{ background: GREEN, border: "none", color: GREEN_DARK, padding: "6px 12px", borderRadius: 6, cursor: "pointer", fontWeight: 800, ...FONT }}>
