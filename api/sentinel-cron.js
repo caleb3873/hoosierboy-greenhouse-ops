@@ -11,8 +11,8 @@ const { createClient } = require("@supabase/supabase-js");
 const { runSentinel, renderHtml, COMPLETED_PLANS_DEFAULT } = require("./_sentinel-core");
 
 const RESEND_KEY = process.env.RESEND_API_KEY;
-const FROM = "Plan Sentinel <ops@hoosierboy.com>";
-const FROM_FALLBACK = "Plan Sentinel <onboarding@resend.dev>"; // used if hoosierboy.com isn't verified in Resend
+const FROM = "Plan Sentinel <ops@schlegelgreenhouse.com>"; // schlegelgreenhouse.com is the verified Resend domain
+const FROM_FALLBACK = "Plan Sentinel <onboarding@resend.dev>"; // safety net only
 const TO = process.env.SENTINEL_EMAIL_TO || "caleb@schlegelgreenhouse.com";
 const SUPABASE_URL = process.env.REACT_APP_SUPABASE_URL;
 const SUPABASE_KEY = process.env.REACT_APP_SUPABASE_ANON_KEY;
