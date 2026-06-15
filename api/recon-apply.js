@@ -48,20 +48,31 @@ async function applyFromPlan(sb, p, edits) {
   const byVar = new Map();
   for (const u of updates) { const k = u.variety || u.id; if (!byVar.has(k)) byVar.set(k, []); byVar.get(k).push(u); }
 
-  let patched = 0, cancelled = 0, inserted = 0, deleted = 0;
+  // Current production qty per affected row — so we can cap production at the
+  // newly-confirmed supply (never pot/tag more than you'll receive). Reduce-only.
+  const ids = updates.map(u => u.id);
+  const cur = ids.length ? ((await sb.from(T).select("id,qty").in("id", ids)).data || []) : [];
+  const qtyById = new Map(cur.map(r => [r.id, Number(r.qty) || 0]));
+
+  let patched = 0, cancelled = 0, inserted = 0, deleted = 0, cappedQty = 0;
   for (const [variety, rows] of byVar) {
     if (cancelVarieties.has(variety)) {
-      for (const r of rows) { await sb.from(T).update({ status: "CANCELLED" }).eq("id", r.id); cancelled++; }
+      for (const r of rows) { await sb.from(T).update({ status: "CANCELLED", qty: 0 }).eq("id", r.id); cancelled++; }
       continue;
     }
     const total = varietyTotals[variety] != null ? Math.max(0, parseInt(varietyTotals[variety]) || 0) : rows.reduce((s, r) => s + (r.ord_qty || 0), 0);
     const splits = splitEven(total, rows.length);
-    for (let i = 0; i < rows.length; i++) { const patch = { ord_qty: splits[i] }; if (rows[i].clearStatus) patch.status = null; await sb.from(T).update(patch).eq("id", rows[i].id); patched++; }
+    for (let i = 0; i < rows.length; i++) {
+      const patch = { ord_qty: splits[i] };
+      if (rows[i].clearStatus) patch.status = null;
+      if ((qtyById.get(rows[i].id) || 0) > splits[i]) { patch.qty = splits[i]; cappedQty++; } // production can't exceed confirmed supply
+      await sb.from(T).update(patch).eq("id", rows[i].id); patched++;
+    }
   }
   for (const id of cancellations) { await sb.from(T).update({ status: "CANCELLED" }).eq("id", id); cancelled++; }
   for (const id of deletes) { await sb.from(T).delete().eq("id", id); deleted++; }
   if (!dropInserts && inserts.length) { await sb.from(T).insert(inserts); inserted += inserts.length; }
-  return { patched, cancelled, inserted, deleted };
+  return { patched, cancelled, inserted, deleted, cappedQty };
 }
 
 module.exports = async (req, res) => {
@@ -95,7 +106,7 @@ module.exports = async (req, res) => {
     } catch (_) {}
     await sb.from("recon_proposals").update({ status: "applied", applied_at: new Date().toISOString(), applied_result: { ...result, edits: edits || null, verify } }).eq("id", id);
     if (isApi) return res.status(200).json({ ok: true, ...result, verify });
-    return res.status(200).send(page(`✅ Applied order ${esc(p.order_number)}`, `<p>${result.patched} updated · ${result.cancelled} cancelled · ${result.inserted} new.</p><p style="color:#3a4a34;">${esc(verify)}</p>`));
+    return res.status(200).send(page(`✅ Applied order ${esc(p.order_number)}`, `<p>${result.patched} updated · ${result.cancelled} cancelled · ${result.inserted} new${result.cappedQty ? ` · ${result.cappedQty} production capped to supply` : ""}.</p><p style="color:#3a4a34;">${esc(verify)}</p>`));
   } catch (e) {
     return isApi ? res.status(500).json({ error: String(e.message || e) }) : res.status(500).send(page("Error", `<p>${esc(e.message || e)}</p>`));
   }

@@ -41,7 +41,7 @@ export default function ReconApprovalInbox({ compact = false, hideWhenEmpty = fa
       const r = await fetch("/api/recon-apply", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: prop.id, edits: { varietyTotals, cancelVarieties } }) });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || "Apply failed");
-      setDone(d => ({ ...d, [prop.id]: `✅ Applied — ${j.patched} updated · ${j.cancelled} cancelled${j.inserted ? ` · ${j.inserted} new` : ""}. ${j.verify || ""}` }));
+      setDone(d => ({ ...d, [prop.id]: `✅ Applied — ${j.patched} updated · ${j.cancelled} cancelled${j.inserted ? ` · ${j.inserted} new` : ""}${j.cappedQty ? ` · ${j.cappedQty} production capped to supply` : ""}. ${j.verify || ""}` }));
     } catch (e2) { window.alert("Couldn't apply: " + (e2.message || e2)); }
     finally { setBusy(b => ({ ...b, [prop.id]: null })); }
   }
