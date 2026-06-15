@@ -13,3 +13,6 @@ agent-harness/
 
 # Test artifacts containing staff PII (phone numbers, etc.)
 scripts/phones.json
+
+# Data-Integrity Sentinel local state (per-run, not shared)
+scripts/.sentinel-state.json
