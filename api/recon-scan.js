@@ -39,11 +39,41 @@ function summarizeRisk(changes) {
   return { counts: c, flags };
 }
 
+// Extract one PDF in dry-run and save a 'proposed' row → { proposal } or { skip }.
+async function proposeOne(sb, base, orderNumber, storagePath) {
+  try {
+    const resp = await fetch(`${base}/api/import-receiving-pdf`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ orderNumber, storagePath, dryRun: true }),
+    });
+    const dry = await resp.json().catch(() => ({}));
+    if (!resp.ok) return { skip: { storagePath, orderNumber, reason: dry.error || `extract ${resp.status}` } };
+    const risk = summarizeRisk(dry.changes);
+    const token = crypto.randomUUID();
+    const { data: ins, error: insErr } = await sb.from("recon_proposals").insert({
+      order_number: orderNumber, storage_path: storagePath, status: "proposed",
+      extracted: dry.extracted || null, changes: dry.changes || [], risk, approve_token: token,
+    }).select("id").single();
+    if (insErr) return { skip: { storagePath, orderNumber, reason: "save: " + insErr.message } };
+    return { proposal: { id: ins.id, orderNumber, storagePath, changes: dry.changes || [], risk, token } };
+  } catch (e) { return { skip: { storagePath, orderNumber, reason: String(e.message || e) } }; }
+}
+
 // Returns { disabled? , proposals:[{id,orderNumber,storagePath,changes,risk,token}], skipped:[], scanned }
-async function runReconScan({ base, all = false }) {
+// opts.order → target a single order (bypasses recency; reuses an existing pending proposal). For testing/manual.
+async function runReconScan({ base, all = false, order = null }) {
   if (!process.env.ANTHROPIC_API_KEY) return { disabled: true, reason: "ANTHROPIC_API_KEY not configured", proposals: [], skipped: [], scanned: 0 };
   if (!SERVICE_KEY || !SUPABASE_URL) return { disabled: true, reason: "Supabase service creds not configured", proposals: [], skipped: [], scanned: 0 };
   const sb = createClient(SUPABASE_URL, SERVICE_KEY);
+
+  if (order) { // targeted single-order mode
+    const storagePath = `${order}.pdf`;
+    const { data: ex } = await sb.from("recon_proposals").select("*").eq("storage_path", storagePath).in("status", ["proposed", "applied"]).order("created_at", { ascending: false }).limit(1).maybeSingle();
+    if (ex && ex.status === "applied") return { proposals: [], skipped: [{ storagePath, reason: "already applied " + ex.applied_at }], scanned: 1, reused: true };
+    if (ex) return { proposals: [{ id: ex.id, orderNumber: ex.order_number, storagePath, changes: ex.changes, risk: ex.risk, token: ex.approve_token }], skipped: [], scanned: 1, reused: true };
+    const r = await proposeOne(sb, base, String(order), storagePath);
+    return { proposals: r.proposal ? [r.proposal] : [], skipped: r.skip ? [r.skip] : [], scanned: 1 };
+  }
 
   const { data: files, error } = await sb.storage.from(BUCKET).list("", { limit: 1000, sortBy: { column: "created_at", order: "desc" } });
   if (error) return { error: "list bucket: " + error.message, proposals: [], skipped: [], scanned: 0 };
@@ -55,26 +85,11 @@ async function runReconScan({ base, all = false }) {
 
   const proposals = [], skipped = [];
   for (const f of pdfs) {
-    const storagePath = f.name;
-    if (seen.has(storagePath)) continue;
+    if (seen.has(f.name)) continue;
     const orderNumber = deriveOrderNumber(f.name);
-    if (!orderNumber) { skipped.push({ storagePath, reason: "no order number in filename" }); continue; }
-    try {
-      const resp = await fetch(`${base}/api/import-receiving-pdf`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ orderNumber, storagePath, dryRun: true }),
-      });
-      const dry = await resp.json().catch(() => ({}));
-      if (!resp.ok) { skipped.push({ storagePath, orderNumber, reason: dry.error || `extract ${resp.status}` }); continue; }
-      const risk = summarizeRisk(dry.changes);
-      const token = crypto.randomUUID();
-      const { data: ins, error: insErr } = await sb.from("recon_proposals").insert({
-        order_number: orderNumber, storage_path: storagePath, status: "proposed",
-        extracted: dry.extracted || null, changes: dry.changes || [], risk, approve_token: token,
-      }).select("id").single();
-      if (insErr) { skipped.push({ storagePath, orderNumber, reason: "save: " + insErr.message }); continue; }
-      proposals.push({ id: ins.id, orderNumber, storagePath, changes: dry.changes || [], risk, token });
-    } catch (e) { skipped.push({ storagePath, orderNumber, reason: String(e.message || e) }); }
+    if (!orderNumber) { skipped.push({ storagePath: f.name, reason: "no order number in filename" }); continue; }
+    const r = await proposeOne(sb, base, orderNumber, f.name);
+    if (r.proposal) proposals.push(r.proposal); else skipped.push(r.skip);
   }
   return { proposals, skipped, scanned: pdfs.length };
 }
@@ -82,7 +97,8 @@ async function runReconScan({ base, all = false }) {
 module.exports = async (req, res) => {
   if (process.env.CRON_SECRET) { if ((req.headers.authorization || "") !== `Bearer ${process.env.CRON_SECRET}`) return res.status(401).json({ error: "unauthorized" }); }
   try {
-    const r = await runReconScan({ base: `https://${req.headers.host}`, all: !!(req.query && req.query.all === "1") });
+    const q = req.query || {};
+    const r = await runReconScan({ base: `https://${req.headers.host}`, all: q.all === "1", order: q.order || null });
     return res.status(200).json(r);
   } catch (e) { return res.status(500).json({ error: String(e.message || e) }); }
 };
