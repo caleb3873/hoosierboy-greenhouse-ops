@@ -12,6 +12,7 @@ const { runSentinel, renderHtml, COMPLETED_PLANS_DEFAULT } = require("./_sentine
 
 const RESEND_KEY = process.env.RESEND_API_KEY;
 const FROM = "Plan Sentinel <ops@hoosierboy.com>";
+const FROM_FALLBACK = "Plan Sentinel <onboarding@resend.dev>"; // used if hoosierboy.com isn't verified in Resend
 const TO = process.env.SENTINEL_EMAIL_TO || "caleb@schlegelgreenhouse.com";
 const SUPABASE_URL = process.env.REACT_APP_SUPABASE_URL;
 const SUPABASE_KEY = process.env.REACT_APP_SUPABASE_ANON_KEY;
@@ -39,14 +40,21 @@ module.exports = async (req, res) => {
     if (dry) return res.status(200).json({ ok: true, sent: false, subject, scope: report.scope, counts, findings: report.findings.length });
     if (!RESEND_KEY) return res.status(500).json({ error: "RESEND_API_KEY not configured" });
 
-    const resp = await fetch("https://api.resend.com/emails", {
+    const send = from => fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: { Authorization: `Bearer ${RESEND_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ from: FROM, to: TO, subject, html }),
+      body: JSON.stringify({ from, to: TO, subject, html }),
     });
-    const out = await resp.json().catch(() => ({}));
+    let usedFrom = FROM;
+    let resp = await send(FROM);
+    let out = await resp.json().catch(() => ({}));
+    if (!resp.ok) { // domain likely unverified — retry from Resend's sandbox sender
+      usedFrom = FROM_FALLBACK;
+      resp = await send(FROM_FALLBACK);
+      out = await resp.json().catch(() => ({}));
+    }
     if (!resp.ok) return res.status(502).json({ error: "Resend failed", detail: out });
-    return res.status(200).json({ ok: true, sent: true, to: TO, subject, counts, id: out.id });
+    return res.status(200).json({ ok: true, sent: true, to: TO, from: usedFrom, subject, counts, id: out.id });
   } catch (e) {
     return res.status(500).json({ error: String(e && e.message || e) });
   }
