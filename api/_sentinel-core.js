@@ -361,9 +361,24 @@ function cultureBody(link) {
   }
   return b;
 }
-function renderEmailHtml({ sentinel, recon, link }) {
+function proposalsBody(proposals) {
+  if (!proposals || !proposals.length) return null; // section omitted entirely when nothing to approve
+  let b = `<p style="margin:0 0 8px;color:#1e2d1a;"><b>${proposals.length}</b> new acknowledgement PDF(s) ready to apply — review &amp; approve:</p>`;
+  for (const p of proposals) {
+    const c = (p.risk && p.risk.counts) || {};
+    const flags = ((p.risk && p.risk.flags) || []).map(f => `<div style="color:#d94f3d;font-size:13px;">⚠ ${esc(f)}</div>`).join("");
+    b += `<div style="border:1px solid #e0e8d8;border-radius:8px;padding:10px 12px;margin:0 0 10px;">
+      <div style="font-weight:700;">Order ${esc(p.orderNumber)} <span style="color:#7a8c74;font-weight:400;font-size:13px;">${esc(p.storagePath)}</span></div>
+      <div style="font-size:13px;color:#3a4a34;">${c.updated || 0} updated · ${c.cancelled || 0} cancelled · ${c.inserted || 0} new</div>${flags}
+      <a href="${esc(p.approveUrl)}" style="display:inline-block;margin-top:8px;background:#1e2d1a;color:#c8e6b8;text-decoration:none;padding:8px 16px;border-radius:6px;font-weight:700;font-size:14px;">Review &amp; approve →</a>
+    </div>`;
+  }
+  return b;
+}
+function renderEmailHtml({ sentinel, recon, link, proposals }) {
   const counts = { error: 0, warn: 0 }; sentinel.findings.forEach(f => { if (counts[f.severity] != null) counts[f.severity]++; });
   const chip = (n, c, lbl) => `<span style="display:inline-block;background:${c};color:#fff;border-radius:12px;padding:2px 10px;font-size:13px;font-weight:700;margin-right:6px;">${n} ${lbl}</span>`;
+  const pBody = proposalsBody(proposals);
   return `
   <div style="font-family:Arial,sans-serif;max-width:660px;margin:0 auto;padding:24px;background:#f2f5ef;">
     <div style="background:#1e2d1a;color:#c8e6b8;padding:18px 22px;border-radius:10px 10px 0 0;">
@@ -371,11 +386,12 @@ function renderEmailHtml({ sentinel, recon, link }) {
       <div style="font-size:22px;font-weight:800;margin-top:4px;">🛰 Daily ops check</div>
     </div>
     <div style="background:#fff;padding:22px;border-radius:0 0 10px 10px;font-size:15px;color:#1e2d1a;line-height:1.55;">
-      <p style="margin:0 0 14px;">${chip(counts.error, "#d94f3d", "plan must-fix")}${chip(counts.warn, "#e89a3a", "plan look")}${chip(recon ? recon.mismatched : "—", "#7a8c74", "order gaps")}${chip(link ? link.tiers.HIGH.length : "—", "#7fb069", "links ready")}</p>
+      <p style="margin:0 0 14px;">${chip(counts.error, "#d94f3d", "plan must-fix")}${chip(counts.warn, "#e89a3a", "plan look")}${chip(recon ? recon.mismatched : "—", "#7a8c74", "order gaps")}${pBody ? chip(proposals.length, "#5a7d3a", "to approve") : ""}${chip(link ? link.tiers.HIGH.length : "—", "#7fb069", "links ready")}</p>
+      ${pBody ? sectionWrap("📥 Supplier acknowledgements to approve (B)", pBody) : ""}
       ${sectionWrap("📋 Plan readiness (A)", sentinelBody(sentinel))}
       ${sectionWrap("📦 Order reconciliation (B)", reconBody(recon))}
       ${sectionWrap("🔗 Culture-guide links (C)", cultureBody(link))}
-      <p style="margin-top:22px;color:#7a8c74;font-size:12px;">Read-only report. Watched plans: edit <code>COMPLETED_PLANS_DEFAULT</code> in api/_sentinel-core.js.</p>
+      <p style="margin-top:22px;color:#7a8c74;font-size:12px;">Read-only report except approvals you click. Watched plans: edit <code>COMPLETED_PLANS_DEFAULT</code> in api/_sentinel-core.js.</p>
     </div>
   </div>`;
 }
