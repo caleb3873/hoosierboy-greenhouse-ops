@@ -363,6 +363,67 @@ function availabilityBody(a) {
 }
 
 // =====================================================================================
+// BROKER OUTREACH — for orders the supplier under-confirmed, draft a chase email to the
+// order's broker + suggest a higher-graded alternate broker to backfill. Read-only
+// (drafts only; api/broker-email.js actually sends, and only when YOU trigger it).
+// =====================================================================================
+async function runBrokerOutreach(sb) {
+  const fpR = await fetchAll(sb, "fall_program_items", "order_number,variety,ord_qty,qty,ppp,broker,status");
+  if (fpR.error) throw new Error("read fall_program_items: " + fpR.error);
+  const bpR = await fetchAll(sb, "broker_profiles", "name,rep_name,rep_email,rep_phone,grade_overall");
+  const profiles = bpR.error ? [] : (bpR.data || []);
+  const matchBroker = nm => { if (!nm) return null; const u = nm.toUpperCase().trim(); return profiles.find(p => p.name && (p.name.toUpperCase().includes(u) || u.includes(p.name.toUpperCase()))) || null; };
+  const altBroker = exclude => profiles.filter(p => p.rep_email && (!exclude || p.name !== exclude.name)).sort((a, b) => (Number(b.grade_overall) || 0) - (Number(a.grade_overall) || 0))[0] || null;
+
+  const orders = new Map();
+  for (const r of fpR.data) {
+    if (!r.order_number || INACTIVE_FALL.has(r.status)) continue;
+    const o = orders.get(r.order_number) || { broker: r.broker, byVar: new Map() };
+    const v = o.byVar.get(r.variety) || { ordered: 0, confirmed: 0 };
+    v.ordered += num(r.ord_qty) || 0; v.confirmed += (num(r.qty) || 0) * (num(r.ppp) || 1);
+    o.byVar.set(r.variety, v); orders.set(r.order_number, o);
+  }
+  const out = [];
+  for (const [order, o] of orders) {
+    const shorts = [...o.byVar.entries()].map(([variety, v]) => ({ variety, ...v, short: v.ordered - v.confirmed })).filter(s => s.short > 0).sort((a, b) => b.short - a.short);
+    if (!shorts.length) continue;
+    const broker = matchBroker(o.broker), alt = altBroker(broker);
+    const totalShort = shorts.reduce((s, x) => s + x.short, 0);
+    const lines = shorts.map(s => `  • ${s.variety}: ordered ${s.ordered}, confirmed ${s.confirmed} (short ${s.short})`).join("\n");
+    const draftSubject = `Order ${order} — shortage follow-up (${shorts.length} ${shorts.length === 1 ? "variety" : "varieties"}, ${totalShort} short)`;
+    const draftBody = `Hi ${broker?.rep_name || "there"},\n\nOn our order ${order}, the confirmation came up short of what we ordered on:\n\n${lines}\n\nCan you confirm whether more are coming, expedite, or suggest a substitute we can use? We need these to complete production. Thank you.\n\n— Schlegel Greenhouse`;
+    out.push({ order, brokerName: o.broker, broker: broker ? { name: broker.name, rep: broker.rep_name, email: broker.rep_email, phone: broker.rep_phone } : null, shorts, totalShort, alternate: alt ? { name: alt.name, rep: alt.rep_name, email: alt.rep_email, grade: alt.grade_overall } : null, draftSubject, draftBody });
+  }
+  return { orders: out.sort((a, b) => b.totalShort - a.totalShort) };
+}
+function renderBrokerOutreachText(b) {
+  if (!b.orders.length) return "No orders with a supplier shortfall to chase. ✅";
+  const L = [`${b.orders.length} order(s) with a supplier shortfall to chase:`, ""];
+  for (const o of b.orders) {
+    L.push(`📨 Order ${o.order} — ${o.brokerName || "?"}${o.broker ? ` (${o.broker.rep} ${o.broker.email})` : " (no contact on file)"} — ${o.totalShort} short across ${o.shorts.length}`);
+    o.shorts.slice(0, 6).forEach(s => L.push(`     ${s.variety}: short ${s.short} (ordered ${s.ordered}, confirmed ${s.confirmed})`));
+    if (o.shorts.length > 6) L.push(`     …and ${o.shorts.length - 6} more`);
+    if (o.alternate) L.push(`     ↳ alternate: ${o.alternate.name} (${o.alternate.rep}, grade ${o.alternate.grade}) — ${o.alternate.email}`);
+    L.push(`     send: /api/broker-email?order=${o.order}`);
+    L.push("");
+  }
+  return L.join("\n");
+}
+function brokerBody(b) {
+  if (!b) return `<p style="color:#7a8c74;">(couldn't run)</p>`;
+  if (!b.orders.length) return `<p style="color:#1e2d1a;">✅ No supplier shortfalls to chase.</p>`;
+  let body = "";
+  b.orders.slice(0, 6).forEach(o => {
+    body += `<div style="border:1px solid #e0e8d8;border-radius:8px;padding:10px 12px;margin:0 0 10px;">
+      <div style="font-weight:700;color:#1e2d1a;">Order ${esc(o.order)} — ${esc(o.brokerName || "?")} ${o.broker ? `<span style="color:#7a8c74;font-weight:400;font-size:13px;">${esc(o.broker.rep)} · ${esc(o.broker.email)}</span>` : `<span style="color:#d94f3d;font-size:13px;">no contact on file</span>`}</div>
+      <div style="font-size:13px;color:#3a4a34;">${o.totalShort} short across ${o.shorts.length}: ${esc(o.shorts.slice(0, 4).map(s => `${s.variety} −${s.short}`).join(", "))}${o.shorts.length > 4 ? "…" : ""}</div>
+      ${o.alternate ? `<div style="font-size:13px;color:#3a4a34;">↳ backfill option: <b>${esc(o.alternate.name)}</b> (grade ${esc(o.alternate.grade)}) — ${esc(o.alternate.email)}</div>` : ""}</div>`;
+  });
+  if (b.orders.length > 6) body += `<p style="color:#7a8c74;font-size:13px;">…and ${b.orders.length - 6} more — run <code>node scripts/broker-outreach.mjs</code> for all drafts.</p>`;
+  return body;
+}
+
+// =====================================================================================
 // Combined morning email — Plan readiness (A) + Order reconciliation (B) + Culture links (C).
 // recon/link may be null (failed or skipped) → that section shows a note instead.
 // =====================================================================================
@@ -423,7 +484,7 @@ function proposalsBody(proposals) {
   }
   return b;
 }
-function renderEmailHtml({ sentinel, recon, link, proposals, avail }) {
+function renderEmailHtml({ sentinel, recon, link, proposals, avail, broker }) {
   const counts = { error: 0, warn: 0 }; sentinel.findings.forEach(f => { if (counts[f.severity] != null) counts[f.severity]++; });
   const chip = (n, c, lbl) => `<span style="display:inline-block;background:${c};color:#fff;border-radius:12px;padding:2px 10px;font-size:13px;font-weight:700;margin-right:6px;">${n} ${lbl}</span>`;
   const pBody = proposalsBody(proposals);
@@ -437,6 +498,7 @@ function renderEmailHtml({ sentinel, recon, link, proposals, avail }) {
       <p style="margin:0 0 14px;">${chip(counts.error, "#d94f3d", "plan must-fix")}${chip(avail ? avail.short.length : "—", "#d94f3d", "plant shortfalls")}${chip(recon ? recon.mismatched : "—", "#7a8c74", "order gaps")}${pBody ? chip(proposals.length, "#5a7d3a", "to approve") : ""}${chip(link ? link.tiers.HIGH.length : "—", "#7fb069", "links ready")}</p>
       ${pBody ? sectionWrap("📥 Supplier acknowledgements to approve (B)", pBody) : ""}
       ${sectionWrap("🌱 Plant availability — do we have the plants? (B)", availabilityBody(avail))}
+      ${broker ? sectionWrap("📨 Shortages to chase — broker outreach (B)", brokerBody(broker)) : ""}
       ${sectionWrap("📋 Plan readiness (A)", sentinelBody(sentinel))}
       ${sectionWrap("📦 Order reconciliation (B)", reconBody(recon))}
       ${sectionWrap("🔗 Culture-guide links (C)", cultureBody(link))}
@@ -451,5 +513,6 @@ module.exports = {
   runOrderRecon, renderReconText,
   runCultureLink, classifyLink, renderCultureText,
   runPlantAvailability, renderAvailabilityText,
+  runBrokerOutreach, renderBrokerOutreachText,
   renderEmailHtml,
 };
