@@ -391,7 +391,7 @@ async function runBrokerOutreach(sb) {
     const totalShort = shorts.reduce((s, x) => s + x.short, 0);
     const lines = shorts.map(s => `  • ${s.variety}: ordered ${s.ordered}, confirmed ${s.confirmed} (short ${s.short})`).join("\n");
     const draftSubject = `Order ${order} — shortage follow-up (${shorts.length} ${shorts.length === 1 ? "variety" : "varieties"}, ${totalShort} short)`;
-    const draftBody = `Hi ${broker?.rep_name || "there"},\n\nOn our order ${order}, the confirmation came up short of what we ordered on:\n\n${lines}\n\nCan you confirm whether more are coming, expedite, or suggest a substitute we can use? We need these to complete production. Thank you.\n\n— Schlegel Greenhouse`;
+    const draftBody = `Hi ${broker?.rep_name || "there"},\n\nOn our order ${order}, the confirmation came up short of what we ordered on:\n\n${lines}\n\nCan you confirm whether more are coming, expedite, or suggest a like-for-like substitute (same crop type — e.g. a mum for a mum)? We need these to complete production. Thank you.\n\n— Schlegel Greenhouse`;
     out.push({ order, brokerName: o.broker, broker: broker ? { name: broker.name, rep: broker.rep_name, email: broker.rep_email, phone: broker.rep_phone } : null, shorts, totalShort, alternate: alt ? { name: alt.name, rep: alt.rep_name, email: alt.rep_email, grade: alt.grade_overall } : null, draftSubject, draftBody });
   }
   return { orders: out.sort((a, b) => b.totalShort - a.totalShort) };

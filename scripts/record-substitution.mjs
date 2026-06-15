@@ -29,7 +29,8 @@ if (error) { console.error("read failed:", error.message); process.exit(1); }
 const subRows = rows.filter(r => (r.variety || "").toUpperCase().includes(substitute.toUpperCase()));
 const origRows = rows.filter(r => (r.variety || "").toUpperCase().includes(original.toUpperCase()));
 
-console.log(`🔁 Substitution on order ${order}: "${substitute}" replaces "${original}"\n`);
+console.log(`🔁 Substitution on order ${order}: "${substitute}" replaces "${original}"`);
+console.log(`   ⚠ Like-for-like: Fall/Winter subs must be the same crop type (a mum for a mum). Spring has more flexibility.\n`);
 console.log(`Substitute rows (${subRows.length}) → set substituted_from="${original.toUpperCase()}":`);
 subRows.forEach(r => console.log(`   ${r.variety} (qty ${r.qty}, ord ${r.ord_qty})`));
 console.log(`\nOriginal rows (${origRows.length}) → CANCELLED, qty 0 (don't pot/tag):`);
