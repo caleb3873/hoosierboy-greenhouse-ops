@@ -222,6 +222,8 @@ module.exports = async (req, res) => {
         target.forEach((r, idx) => updates.push({
           id: r.id,
           ord_qty: splits[idx],
+          variety: v,           // (additive) lets the approval UI group/edit by variety
+          was: r.ord_qty,       // (additive) current value, for the diff display
           // If this row was cancelled (likely from a prior bad run that
           // couldn't match the name) but now matches, un-cancel it.
           clearStatus: r.status === "CANCELLED",
@@ -275,7 +277,9 @@ module.exports = async (req, res) => {
     }
 
     if (dryRun) {
-      return res.status(200).json({ ok: true, orderNumber, dryRun: true, extracted, changes });
+      // (additive) also return the resolved row-level write plan so an approval UI
+      // can let the user edit per-row quantities and apply by id — no re-extraction.
+      return res.status(200).json({ ok: true, orderNumber, dryRun: true, extracted, changes, plan: { updates, cancellations, inserts, deletes } });
     }
 
     // 5. Apply changes

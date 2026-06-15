@@ -2,6 +2,7 @@ import { useState, useRef, useMemo } from "react";
 import { useCropRuns, useFallProgramItems, useReceivingLines, useReceivingOrders, useBrokerProfiles, getSupabase } from "./supabase";
 import { useAuth } from "./Auth";
 import { getCurrentWeek } from "./shared";
+import ReconApprovalInbox from "./ReconApprovalInbox";
 
 // ── CONSTANTS ─────────────────────────────────────────────────────────────────
 const STORAGE_KEY = "gh_receiving_v1"; // { [weekKey]: { receiverName, packingSlipPhoto, lines: { [lineKey]: { status, actualQty, note, claimPhoto, claimNote, receivedBy, receivedAt } }, plannerNotes } }
@@ -1216,6 +1217,7 @@ export function PlannerReceiving() {
 
   return (
     <div>
+      <div style={{ marginBottom: 16 }}><ReconApprovalInbox /></div>
       <div style={{ display: "flex", borderBottom: "1.5px solid #e0ead8", marginBottom: 20 }}>
         {[["plants","🌱 Young Plants"],["containers","🪴 Containers"],["soil","🌿 Soil / Media"]].map(([id, lbl]) => (
           <button key={id} onClick={() => setRecTab(id)} style={TAB_STYLE(recTab === id)}>{lbl}</button>

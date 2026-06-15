@@ -16,6 +16,8 @@ import { useFallProgramItems } from "./supabase";
 import { getCurrentWeek } from "./shared";
 import { NotificationBanner } from "./PushNotifications";
 import { SpecialMessagePopup, TaskSpecialMessageBanner } from "./SpecialMessages";
+import ReconApprovalInbox from "./ReconApprovalInbox";
+import Evaluations from "./Evaluations";
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
 
@@ -180,7 +182,8 @@ export function formatTargetDate(iso) {
 // ══════════════════════════════════════════════════════════════════════════════
 export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateGrowing = true, defaultCategory, isAsstManager = false }) {
   const { rows: tasks, upsert, remove, refresh } = useManagerTasks();
-  const { displayName, isAdmin, growerProfile } = useAuth();
+  const { displayName, isAdmin, isManager, growerProfile } = useAuth();
+  const canViewAllEvaluations = growerProfile?.code === "9999999";
 
   // Human-readable label for a category code, used on the asst-manager hub
   // "Tasks" card subtitle ("My Tasks · Production · Done").
@@ -948,6 +951,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
     <div style={{ ...FONT, minHeight: "100vh", background: "#f2f5ef", paddingBottom: 100 }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
       <SpecialMessagePopup />
+      <div style={{ maxWidth: 760, margin: "0 auto", padding: "12px 14px 0" }}><ReconApprovalInbox hideWhenEmpty compact /></div>
       <style>{`
         @media (max-width: 640px) {
           .mtv-header-title { font-size: 18px !important; }
@@ -1090,6 +1094,16 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
                   <div className="hub-card-title" style={{ fontSize: 15 }}>Message Trish</div>
                   <div className="hub-card-sub">HR · questions</div>
                 </div>
+
+                <div className="hub-card" onClick={() => setCurrentView("evaluations")} style={{ gridColumn: "span 2", borderTopColor: "#d18b35", borderTopWidth: 4, padding: 18 }}>
+                  <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
+                    <span style={{ fontSize: 28 }}>★</span>
+                    <div>
+                      <div style={{ fontSize: 17, fontWeight: 800, color: "#1e2d1a" }}>Fill Out Evaluation</div>
+                      <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2 }}>Submit employee review · employer feedback</div>
+                    </div>
+                  </div>
+                </div>
               </div>
             ) : (
               /* ── FULL MANAGER HUB — unchanged ── */
@@ -1174,6 +1188,14 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
                   <div className="hub-card-sub">{canApproveVacation ? "Approve · request · view" : "Request time off"}</div>
                   {canApproveVacation && pendingVacations.length > 0 && <span className="hub-card-badge warn">{pendingVacations.length} pending</span>}
                 </div>
+
+                {isManager && (
+                  <div className="hub-card" onClick={() => setCurrentView("evaluations")} style={{ borderTopColor: "#d18b35", borderTopWidth: 4 }}>
+                    <div className="hub-card-emoji">★</div>
+                    <div className="hub-card-title">{canViewAllEvaluations ? "Evaluations" : "Fill Out Evaluation"}</div>
+                    <div className="hub-card-sub">{canViewAllEvaluations ? "View all reviews · feedback · follow-up" : "Submit employee review · employer feedback"}</div>
+                  </div>
+                )}
 
                 {/* Message Trish */}
                 <div className="hub-card"
@@ -1654,6 +1676,10 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
 
       {currentView === "reference-docs" && (
         <ReferenceDocs onBack={() => setCurrentView("hub")} />
+      )}
+
+      {currentView === "evaluations" && isManager && (
+        <Evaluations onBack={() => setCurrentView("hub")} />
       )}
 
       {/* ── TODAY / THIS WEEK (any manager) ────────────────────────────── */}

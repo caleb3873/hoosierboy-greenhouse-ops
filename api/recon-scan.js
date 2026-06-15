@@ -52,7 +52,7 @@ async function proposeOne(sb, base, orderNumber, storagePath) {
     const token = crypto.randomUUID();
     const { data: ins, error: insErr } = await sb.from("recon_proposals").insert({
       order_number: orderNumber, storage_path: storagePath, status: "proposed",
-      extracted: dry.extracted || null, changes: dry.changes || [], risk, approve_token: token,
+      extracted: dry.extracted || null, changes: dry.changes || [], plan: dry.plan || null, risk, approve_token: token,
     }).select("id").single();
     if (insErr) return { skip: { storagePath, orderNumber, reason: "save: " + insErr.message } };
     return { proposal: { id: ins.id, orderNumber, storagePath, changes: dry.changes || [], risk, token } };
