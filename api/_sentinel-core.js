@@ -66,16 +66,19 @@ const CHECKS = [
 ];
 
 // Supabase caps a select at 1000 rows — page or the checker has blind spots.
-async function fetchAll(sb, table, columns) {
+async function fetchAll(sb, table, columns, filter) {
   const out = []; const PAGE = 1000;
   for (let from = 0; ; from += PAGE) {
-    const { data, error } = await sb.from(table).select(columns).range(from, from + PAGE - 1);
+    let q = sb.from(table).select(columns).range(from, from + PAGE - 1);
+    if (filter) q = filter(q);
+    const { data, error } = await q;
     if (error) return { error: error.message };
     out.push(...data);
     if (data.length < PAGE) break;
   }
   return { data: out };
 }
+const esc = s => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 // Run every check against a Supabase client; returns a structured report. Read-only.
 async function runSentinel(sb, scope = COMPLETED_PLANS_DEFAULT) {
@@ -211,4 +214,176 @@ function renderHtml(report) {
   </div>`;
 }
 
-module.exports = { CHECKS, runSentinel, renderText, renderHtml, collapse, COMPLETED_PLANS_DEFAULT };
+// =====================================================================================
+// LOOP B — Supplier order reconciliation (read-only): per order_number, ordered vs confirmed.
+// =====================================================================================
+async function runOrderRecon(sb) {
+  const r = await fetchAll(sb, "fall_program_items", "order_number,variety,status,qty,ord_qty,ppp,extras");
+  if (r.error) throw new Error("read fall_program_items: " + r.error);
+  const orders = new Map();
+  for (const row of r.data.filter(x => x.order_number)) {
+    const o = orders.get(row.order_number) || { ordered: 0, confirmed: 0, extras: 0, lines: 0, cancelled: 0, shortages: new Map() };
+    o.lines++;
+    if (INACTIVE_FALL.has(row.status)) { if (row.status === "CANCELLED") o.cancelled++; orders.set(row.order_number, o); continue; }
+    const ordered = num(row.ord_qty) || 0;
+    const confirmed = (num(row.qty) || 0) * (num(row.ppp) || 1);
+    o.ordered += ordered; o.confirmed += confirmed; o.extras += num(row.extras) || 0;
+    if (ordered > 0 && confirmed < ordered) { // collapse bench rows per variety
+      const e = o.shortages.get(row.variety) || { ordered: 0, confirmed: 0 };
+      e.ordered += ordered; e.confirmed += confirmed; o.shortages.set(row.variety, e);
+    }
+    orders.set(row.order_number, o);
+  }
+  const list = [...orders.entries()].map(([order, o]) => ({
+    order, ordered: o.ordered, confirmed: o.confirmed, extras: o.extras, lines: o.lines, cancelled: o.cancelled,
+    delta: o.ordered - o.confirmed,
+    shortages: [...o.shortages.entries()].map(([variety, s]) => ({ variety, ...s, short: s.ordered - s.confirmed })).sort((a, b) => b.short - a.short),
+  })).sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+  return { orders: list, mismatched: list.filter(o => o.delta !== 0).length };
+}
+
+function renderReconText(recon) {
+  const L = [`${recon.orders.length} order(s) · ${recon.mismatched} with an ordered≠confirmed gap`, ""];
+  for (const o of recon.orders) {
+    const flag = o.delta > 0 ? "🔴 SHORT" : o.delta < 0 ? "🟡 OVER" : "✅";
+    L.push(`${flag}  Order ${o.order}  —  ordered ${o.ordered} · confirmed ${o.confirmed}${o.delta ? ` · delta ${o.delta > 0 ? "+" : ""}${o.delta}` : ""}${o.cancelled ? ` · ${o.cancelled} cancelled` : ""}${o.extras ? ` · ${o.extras} extras` : ""}  (${o.lines} lines)`);
+    o.shortages.slice(0, 8).forEach(s => L.push(`        ↳ ${s.variety}: ordered ${s.ordered}, confirmed ${s.confirmed} (short ${s.short})`));
+    if (o.shortages.length > 8) L.push(`        ↳ …and ${o.shortages.length - 8} more short varieties`);
+  }
+  return L.join("\n");
+}
+
+// =====================================================================================
+// LOOP C — Culture-guide link matching (deterministic genus + series + color).
+// =====================================================================================
+const cNorm = s => (s || "").toUpperCase().replace(/[™®]/g, "").replace(/\bSERIES\b/g, " ").replace(/[^A-Z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+const cToks = s => cNorm(s).split(" ").filter(w => w.length > 2);
+const cOverlap = (need, hay) => { const h = new Set(hay); const got = need.filter(t => h.has(t)); return need.length ? got.length / need.length : 0; };
+
+function classifyLink(v, candidates) {
+  const vTokens = cToks([v.series, v.variety].filter(Boolean).join(" "));
+  let best = null;
+  for (const c of candidates) {
+    const seriesT = cToks(c.series_name), varT = cToks(c.series_variety);
+    const exact = cNorm([c.series_name, c.series_variety].join(" ")) === cNorm([v.series, v.variety].filter(Boolean).join(" "));
+    const varScore = cOverlap(varT, vTokens), seriesScore = cOverlap(seriesT, vTokens);
+    const viable = exact || seriesScore > 0; // series must appear — color-only overlap is a false match
+    const score = exact ? 2 : seriesScore * 0.6 + varScore * 0.4;
+    if (viable && (!best || score > best.score)) best = { c, score, exact, varScore, seriesScore };
+  }
+  if (!best) return { tier: "NONE", best: null };
+  let tier;
+  if (best.exact || (best.seriesScore >= 0.5 && best.varScore >= 1)) tier = "HIGH";
+  else if (best.seriesScore >= 0.5 && best.varScore >= 0.5) tier = "MEDIUM";
+  else tier = "NONE";
+  return { tier, best };
+}
+
+async function runCultureLink(mainSb, cultureSb) {
+  const u = await fetchAll(mainSb, "variety_library", "id,crop_name,series,variety,breeder", q => q.is("culture_source_id", null));
+  if (u.error) throw new Error("read variety_library: " + u.error);
+  const g = await fetchAll(cultureSb, "culture_guides_public", "id,crop_name,series_name,series_variety,breeder_name");
+  if (g.error) throw new Error("read culture_guides_public: " + g.error);
+  const byCrop = new Map();
+  for (const guide of g.data) { const k = cNorm(guide.crop_name); if (!byCrop.has(k)) byCrop.set(k, []); byCrop.get(k).push(guide); }
+  const tiers = { HIGH: [], MEDIUM: [], NONE: [] };
+  for (const v of u.data) {
+    const candidates = byCrop.get(cNorm(v.crop_name)) || [];
+    const { tier, best } = candidates.length ? classifyLink(v, candidates) : { tier: "NONE", best: null };
+    tiers[tier].push({
+      variety_id: v.id, label: `${v.crop_name} ${v.variety}`,
+      match: best ? `${best.c.crop_name} ${best.c.series_name || ""} ${best.c.series_variety || ""}`.replace(/\s+/g, " ").trim() : null,
+      culture_id: best ? best.c.id : null,
+    });
+  }
+  return { tiers, unlinked: u.data.length, guides: g.data.length };
+}
+
+function renderCultureText(link) {
+  const L = [`${link.unlinked} unlinked varieties · ${link.guides} culture guides`, ""];
+  const show = (tier, icon, note) => {
+    const list = link.tiers[tier]; if (!list.length) return;
+    L.push(`${icon} ${tier} — ${list.length} (${note})`);
+    list.slice(0, 25).forEach(p => L.push(`     ${p.label}${p.match ? `  →  ${p.match}` : ""}`));
+    if (list.length > 25) L.push(`     …and ${list.length - 25} more`);
+    L.push("");
+  };
+  show("HIGH", "🟢", "series + every color token align — confirm, then --apply");
+  show("MEDIUM", "🟡", "series matches, color partial — review");
+  show("NONE", "⚪", "no confident match — genus missing OR series names differ");
+  return L.join("\n");
+}
+
+// =====================================================================================
+// Combined morning email — Plan readiness (A) + Order reconciliation (B) + Culture links (C).
+// recon/link may be null (failed or skipped) → that section shows a note instead.
+// =====================================================================================
+function sectionWrap(title, inner) {
+  return `<h3 style="color:#1e2d1a;border-bottom:2px solid #7fb069;padding-bottom:4px;margin:24px 0 10px;">${esc(title)}</h3>${inner}`;
+}
+function sentinelBody(report) {
+  if (!report.findings.length) return `<p style="color:#1e2d1a;">✅ Everything in scope is complete and structurally sound.</p>`;
+  let b = `<p style="margin:0 0 10px;color:#7a8c74;font-size:13px;">Scope: <b>${esc(report.scope.join(", "))}</b> (${report.inScopeCount} items)</p>`;
+  for (const [cat, heading] of SECTIONS) {
+    const byCheck = groupByCheck(report.findings.filter(f => f.category === cat));
+    const ids = Object.keys(byCheck).sort((a, b) => sevOrder[byCheck[a][0].severity] - sevOrder[byCheck[b][0].severity]);
+    if (!ids.length) continue;
+    b += `<div style="font-weight:700;color:#3a4a34;margin:8px 0 4px;">${esc(heading)}</div>`;
+    for (const id of ids) {
+      const g = byCheck[id], rows = collapse(g), dot = g[0].severity === "error" ? "🔴" : "🟡";
+      b += `<div style="margin:0 0 8px;"><div style="color:#1e2d1a;">${dot} ${esc(g[0].desc)} — ${g.length}</div><ul style="margin:2px 0 0;padding-left:22px;color:#3a4a34;font-size:14px;">`;
+      rows.slice(0, 40).forEach(c => { b += `<li>${esc(c.detail)}${c.count > 1 ? ` <b>×${c.count}</b>` : ""}</li>`; });
+      if (rows.length > 40) b += `<li>…and ${rows.length - 40} more</li>`;
+      b += `</ul></div>`;
+    }
+  }
+  return b;
+}
+function reconBody(recon) {
+  if (!recon) return `<p style="color:#7a8c74;">(couldn't run — see logs)</p>`;
+  if (!recon.mismatched) return `<p style="color:#1e2d1a;">✅ All ${recon.orders.length} orders reconcile (ordered = confirmed).</p>`;
+  let b = `<p style="margin:0 0 6px;color:#1e2d1a;">${recon.mismatched} of ${recon.orders.length} orders have an ordered≠confirmed gap:</p><ul style="margin:0;padding-left:22px;color:#3a4a34;font-size:14px;">`;
+  recon.orders.filter(o => o.delta !== 0).slice(0, 20).forEach(o => {
+    const dot = o.delta > 0 ? "🔴" : "🟡";
+    b += `<li>${dot} <b>Order ${esc(o.order)}</b> — ordered ${o.ordered}, confirmed ${o.confirmed} (${o.delta > 0 ? "short " + o.delta : "over " + (-o.delta)})${o.shortages.length ? `; top short: ${esc(o.shortages[0].variety)} −${o.shortages[0].short}` : ""}</li>`;
+  });
+  b += `</ul>`;
+  return b;
+}
+function cultureBody(link) {
+  if (!link) return `<p style="color:#7a8c74;">(skipped — culture DB credentials not configured)</p>`;
+  const h = link.tiers.HIGH, m = link.tiers.MEDIUM;
+  let b = `<p style="margin:0 0 6px;color:#1e2d1a;"><b>${h.length}</b> confident (HIGH) · ${m.length} to review (MEDIUM) · ${link.tiers.NONE.length} no match, of ${link.unlinked} unlinked.</p>`;
+  if (h.length) {
+    b += `<div style="color:#3a4a34;font-size:14px;">Confident links (run <code>node scripts/culture-link.mjs --apply</code> to write):<ul style="margin:2px 0 0;padding-left:22px;">`;
+    h.slice(0, 25).forEach(p => { b += `<li>${esc(p.label)} → ${esc(p.match)}</li>`; });
+    b += `</ul></div>`;
+  }
+  return b;
+}
+function renderEmailHtml({ sentinel, recon, link }) {
+  const counts = { error: 0, warn: 0 }; sentinel.findings.forEach(f => { if (counts[f.severity] != null) counts[f.severity]++; });
+  const chip = (n, c, lbl) => `<span style="display:inline-block;background:${c};color:#fff;border-radius:12px;padding:2px 10px;font-size:13px;font-weight:700;margin-right:6px;">${n} ${lbl}</span>`;
+  return `
+  <div style="font-family:Arial,sans-serif;max-width:660px;margin:0 auto;padding:24px;background:#f2f5ef;">
+    <div style="background:#1e2d1a;color:#c8e6b8;padding:18px 22px;border-radius:10px 10px 0 0;">
+      <div style="font-size:13px;letter-spacing:1px;color:#7fb069;text-transform:uppercase;font-weight:700;">Schlegel Greenhouse · Ops Sentinel</div>
+      <div style="font-size:22px;font-weight:800;margin-top:4px;">🛰 Daily ops check</div>
+    </div>
+    <div style="background:#fff;padding:22px;border-radius:0 0 10px 10px;font-size:15px;color:#1e2d1a;line-height:1.55;">
+      <p style="margin:0 0 14px;">${chip(counts.error, "#d94f3d", "plan must-fix")}${chip(counts.warn, "#e89a3a", "plan look")}${chip(recon ? recon.mismatched : "—", "#7a8c74", "order gaps")}${chip(link ? link.tiers.HIGH.length : "—", "#7fb069", "links ready")}</p>
+      ${sectionWrap("📋 Plan readiness (A)", sentinelBody(sentinel))}
+      ${sectionWrap("📦 Order reconciliation (B)", reconBody(recon))}
+      ${sectionWrap("🔗 Culture-guide links (C)", cultureBody(link))}
+      <p style="margin-top:22px;color:#7a8c74;font-size:12px;">Read-only report. Watched plans: edit <code>COMPLETED_PLANS_DEFAULT</code> in api/_sentinel-core.js.</p>
+    </div>
+  </div>`;
+}
+
+module.exports = {
+  CHECKS, COMPLETED_PLANS_DEFAULT, collapse,
+  runSentinel, renderText, renderHtml,
+  runOrderRecon, renderReconText,
+  runCultureLink, classifyLink, renderCultureText,
+  renderEmailHtml,
+};
