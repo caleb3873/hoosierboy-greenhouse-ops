@@ -315,6 +315,54 @@ function renderCultureText(link) {
 }
 
 // =====================================================================================
+// PLANT AVAILABILITY (read-only): production (Σqty = pots/tags) vs supply (Σord_qty).
+// Flags varieties producing more than supply covers; substitution-aware.
+// =====================================================================================
+const PA_REMOVED = new Set(["CANCELLED", "NOT NEEDED"]);
+const nkv = s => String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, ""); // aggressive name key
+async function runPlantAvailability(sb) {
+  const r = await fetchAll(sb, "fall_program_items", "variety,qty,ord_qty,status,substituted_from");
+  if (r.error) throw new Error("read fall_program_items: " + r.error);
+  const byVar = new Map(), subs = [], removed = new Map();
+  for (const row of r.data) {
+    if (!row.variety) continue;
+    if (row.substituted_from) subs.push({ replaces: row.substituted_from, qty: num(row.qty) || 0 });
+    if (PA_REMOVED.has(row.status)) { const e = removed.get(row.variety) || { ordered: 0 }; e.ordered += num(row.ord_qty) || 0; removed.set(row.variety, e); continue; }
+    const e = byVar.get(row.variety) || { production: 0, supply: 0 }; e.production += num(row.qty) || 0; e.supply += num(row.ord_qty) || 0; byVar.set(row.variety, e);
+  }
+  const coverFor = new Map();
+  for (const s of subs) coverFor.set(nkv(s.replaces), (coverFor.get(nkv(s.replaces)) || 0) + s.qty);
+  const short = [...byVar.entries()].map(([variety, e]) => ({ variety, ...e, gap: e.production - e.supply, cover: coverFor.get(nkv(variety)) || 0 }))
+    .filter(o => o.gap > 0).sort((a, b) => b.gap - a.gap);
+  const uncoveredRemoved = [...removed.entries()].filter(([v]) => !coverFor.get(nkv(v))).map(([variety, e]) => ({ variety, ordered: e.ordered }));
+  return { short, subs: subs.length, uncoveredRemoved, totalVarieties: byVar.size };
+}
+function renderAvailabilityText(a) {
+  const L = [`${a.totalVarieties} varieties · ${a.short.length} producing more than supply`, ""];
+  a.short.forEach(o => L.push(`   ${o.variety}: plan ${o.production} · supply ${o.supply} · short ${o.gap}${o.cover ? ` (sub +${o.cover})` : ""}`));
+  if (a.uncoveredRemoved.length) { L.push("", "Cancelled/shorted, NO substitute:"); a.uncoveredRemoved.forEach(o => L.push(`   ${o.variety} (was ${o.ordered})`)); }
+  return L.join("\n");
+}
+function availabilityBody(a) {
+  if (!a) return `<p style="color:#7a8c74;">(couldn't run)</p>`;
+  if (!a.short.length && !a.uncoveredRemoved.length) return `<p style="color:#1e2d1a;">✅ Every variety's production fits its supply.</p>`;
+  let b = "";
+  if (a.short.length) {
+    b += `<p style="margin:0 0 4px;color:#1e2d1a;"><b>${a.short.length}</b> varieties plan to pot/tag more than supply covers:</p><ul style="margin:0;padding-left:22px;color:#3a4a34;font-size:14px;">`;
+    a.short.slice(0, 15).forEach(o => { b += `<li>${esc(o.variety)} — plan ${o.production}, supply ${o.supply}, <b style="color:#d94f3d;">short ${o.gap}</b>${o.cover ? ` (sub +${o.cover})` : ""}</li>`; });
+    if (a.short.length > 15) b += `<li>…and ${a.short.length - 15} more</li>`;
+    b += `</ul>`;
+  }
+  if (a.uncoveredRemoved.length) {
+    b += `<p style="margin:8px 0 4px;color:#1e2d1a;">Shorted/cancelled with <b>no substitute</b>:</p><ul style="margin:0;padding-left:22px;color:#3a4a34;font-size:14px;">`;
+    a.uncoveredRemoved.slice(0, 15).forEach(o => { b += `<li>${esc(o.variety)} (was ordered ${o.ordered})</li>`; });
+    if (a.uncoveredRemoved.length > 15) b += `<li>…and ${a.uncoveredRemoved.length - 15} more</li>`;
+    b += `</ul>`;
+  }
+  return b;
+}
+
+// =====================================================================================
 // Combined morning email — Plan readiness (A) + Order reconciliation (B) + Culture links (C).
 // recon/link may be null (failed or skipped) → that section shows a note instead.
 // =====================================================================================
@@ -375,7 +423,7 @@ function proposalsBody(proposals) {
   }
   return b;
 }
-function renderEmailHtml({ sentinel, recon, link, proposals }) {
+function renderEmailHtml({ sentinel, recon, link, proposals, avail }) {
   const counts = { error: 0, warn: 0 }; sentinel.findings.forEach(f => { if (counts[f.severity] != null) counts[f.severity]++; });
   const chip = (n, c, lbl) => `<span style="display:inline-block;background:${c};color:#fff;border-radius:12px;padding:2px 10px;font-size:13px;font-weight:700;margin-right:6px;">${n} ${lbl}</span>`;
   const pBody = proposalsBody(proposals);
@@ -386,8 +434,9 @@ function renderEmailHtml({ sentinel, recon, link, proposals }) {
       <div style="font-size:22px;font-weight:800;margin-top:4px;">🛰 Daily ops check</div>
     </div>
     <div style="background:#fff;padding:22px;border-radius:0 0 10px 10px;font-size:15px;color:#1e2d1a;line-height:1.55;">
-      <p style="margin:0 0 14px;">${chip(counts.error, "#d94f3d", "plan must-fix")}${chip(counts.warn, "#e89a3a", "plan look")}${chip(recon ? recon.mismatched : "—", "#7a8c74", "order gaps")}${pBody ? chip(proposals.length, "#5a7d3a", "to approve") : ""}${chip(link ? link.tiers.HIGH.length : "—", "#7fb069", "links ready")}</p>
+      <p style="margin:0 0 14px;">${chip(counts.error, "#d94f3d", "plan must-fix")}${chip(avail ? avail.short.length : "—", "#d94f3d", "plant shortfalls")}${chip(recon ? recon.mismatched : "—", "#7a8c74", "order gaps")}${pBody ? chip(proposals.length, "#5a7d3a", "to approve") : ""}${chip(link ? link.tiers.HIGH.length : "—", "#7fb069", "links ready")}</p>
       ${pBody ? sectionWrap("📥 Supplier acknowledgements to approve (B)", pBody) : ""}
+      ${sectionWrap("🌱 Plant availability — do we have the plants? (B)", availabilityBody(avail))}
       ${sectionWrap("📋 Plan readiness (A)", sentinelBody(sentinel))}
       ${sectionWrap("📦 Order reconciliation (B)", reconBody(recon))}
       ${sectionWrap("🔗 Culture-guide links (C)", cultureBody(link))}
@@ -401,5 +450,6 @@ module.exports = {
   runSentinel, renderText, renderHtml,
   runOrderRecon, renderReconText,
   runCultureLink, classifyLink, renderCultureText,
+  runPlantAvailability, renderAvailabilityText,
   renderEmailHtml,
 };

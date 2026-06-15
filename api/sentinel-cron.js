@@ -11,7 +11,7 @@
 //   /api/sentinel-cron?dry=1      → run + return JSON, DO NOT send email (test)
 // ---------------------------------------------------------------------------
 const { createClient } = require("@supabase/supabase-js");
-const { runSentinel, runOrderRecon, runCultureLink, renderEmailHtml, COMPLETED_PLANS_DEFAULT } = require("./_sentinel-core");
+const { runSentinel, runOrderRecon, runCultureLink, runPlantAvailability, renderEmailHtml, COMPLETED_PLANS_DEFAULT } = require("./_sentinel-core");
 const { runReconScan } = require("./recon-scan");
 
 const RESEND_KEY = process.env.RESEND_API_KEY;
@@ -35,8 +35,9 @@ module.exports = async (req, res) => {
 
     // A — always. B/C — degrade gracefully so one failing loop can't kill the email.
     const sentinel = await runSentinel(sb, COMPLETED_PLANS_DEFAULT);
-    let recon = null, link = null, proposals = [];
+    let recon = null, link = null, proposals = [], avail = null;
     try { recon = await runOrderRecon(sb); } catch (e) { console.error("recon failed:", e.message); }
+    try { avail = await runPlantAvailability(sb); } catch (e) { console.error("availability failed:", e.message); }
     if (CULTURE_URL && CULTURE_KEY) {
       try { link = await runCultureLink(sb, createClient(CULTURE_URL, CULTURE_KEY)); } catch (e) { console.error("culture-link failed:", e.message); }
     }
@@ -49,13 +50,14 @@ module.exports = async (req, res) => {
     const counts = { error: 0, warn: 0 };
     sentinel.findings.forEach(f => { if (counts[f.severity] != null) counts[f.severity]++; });
     const bits = [`${counts.error} must-fix`, `${counts.warn} look`];
+    if (avail) bits.push(`${avail.short.length} plant shortfalls`);
     if (recon) bits.push(`${recon.mismatched} order gaps`);
     if (proposals.length) bits.push(`${proposals.length} to approve`);
     if (link) bits.push(`${link.tiers.HIGH.length} links ready`);
     const subject = `🛰 Daily ops check: ${bits.join(" · ")}`;
-    const html = renderEmailHtml({ sentinel, recon, link, proposals });
+    const html = renderEmailHtml({ sentinel, recon, link, proposals, avail });
 
-    const summary = { scope: sentinel.scope, plan: counts, orderGaps: recon ? recon.mismatched : null, toApprove: proposals.length, linksReady: link ? link.tiers.HIGH.length : null };
+    const summary = { scope: sentinel.scope, plan: counts, plantShortfalls: avail ? avail.short.length : null, orderGaps: recon ? recon.mismatched : null, toApprove: proposals.length, linksReady: link ? link.tiers.HIGH.length : null };
     if (dry) return res.status(200).json({ ok: true, sent: false, subject, ...summary });
     if (!RESEND_KEY) return res.status(500).json({ error: "RESEND_API_KEY not configured" });
 
