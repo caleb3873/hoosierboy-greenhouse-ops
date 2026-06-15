@@ -37,9 +37,12 @@ plant-availability view shows any remaining shortfalls to chase.
 
 5. **Edit if it's a substitution.** Adjust the numbers in the inbox: set the
    shorted variety to its confirmed amount (or cancel it) and bump the substitute.
-   *(Current limit: the inbox edits the ordered quantity; the formal
-   substitution link — `substituted_from` — is recorded separately for now. Jot the
-   substitution in the row note so it's documented.)*
+   Then **record the substitution** so production & tags follow it:
+   `node scripts/record-substitution.mjs <order> "<Substitute>" "<Original>" --apply`
+   — this stamps `substituted_from`, cancels + zeroes the original, and plant-
+   availability nets the coverage.
+   **Like-for-like rule:** sub same crop for same crop (a mum for a mum). **Fall/Winter
+   = strict;** Spring has a little more flexibility.
 
 6. **Approve & apply.** Clicking "✓ Approve & apply" writes the confirmed
    quantities, **caps production (`qty`) to the confirmed supply** (so you won't
@@ -49,10 +52,18 @@ plant-availability view shows any remaining shortfalls to chase.
 
 7. **Check plant availability.** Run `node scripts/plant-availability.mjs` (or read
    the morning email's "🌱 Plant availability" section). Any variety still
-   **producing more than supply** and **not covered by a substitute** → source it
-   elsewhere (broker) or cut the production.
+   **producing more than supply** and **not covered by a substitute** → chase it (step 8).
 
-8. **Pot & tag off the corrected numbers.** Because production now matches confirmed
+8. **Chase the broker for uncovered shorts.** Run `node scripts/broker-outreach.mjs`
+   (or read the email's "📨 Shortages to chase" section). For each shorted order it
+   gives you the broker's contact, a ready draft asking for more / a like-for-like
+   substitute, and a **higher-graded alternate broker** to backfill. To send:
+   `https://ops.hoosierboy.com/api/broker-email?order=<n>` previews it; POST sends it.
+   *(Caveat: external delivery needs the Resend domain verified — until then a send
+   reaches you, so copy/send the draft manually.)* When the broker offers a sub,
+   record it with step 5's command.
+
+9. **Pot & tag off the corrected numbers.** Because production now matches confirmed
    supply, your tag counts and pot fills are accurate — print the substitute's tags
    (not the shorted variety's) in the right quantity.
 
@@ -74,15 +85,15 @@ plant-availability view shows any remaining shortfalls to chase.
 
 ## What's automatic vs. you vs. not-yet-built
 
-- **Automatic:** the scan, Claude extraction, proposal creation, the daily email,
-  the production-cap-on-approve, and the availability flagging.
-- **You:** approve (the human gate), edit substitution quantities, and decide what
-  to do about uncovered shorts.
-- **Not yet built (next ideas):** a one-click "mark as substitution" control in the
-  inbox; **broker outreach** to chase/backfill uncovered shorts (email the order's
-  broker, or an alternate from `what_they_sell` + reliability grades — the DGI→D S
-  Cole pattern); tag-print integration (tags = the confirmed `qty`, printed manually
-  for now).
+- **Automatic:** the scan, Claude extraction, proposal creation, the daily email
+  (incl. plant-availability + shortages-to-chase), the production-cap-on-approve, the
+  availability flagging, and the broker-outreach drafts + alternate-broker suggestion.
+- **You:** approve (the human gate), edit substitution quantities, record substitutions
+  (`record-substitution.mjs`), and send/copy the broker drafts.
+- **Not yet built:** a one-click "mark substitution" + "send broker email" button *in*
+  the inbox UI (today: a command / the API endpoint); tag-print integration (tags =
+  the confirmed `qty`, printed manually for now); Resend domain verification so broker
+  emails reach the broker directly.
 
 ---
 
@@ -94,4 +105,7 @@ plant-availability view shows any remaining shortfalls to chase.
 | Approve / edit proposals | ManagerTasksView (phone) or Planner → Receiving (desktop) |
 | "Do we have the plants?" | `node scripts/plant-availability.mjs` |
 | Per-order ordered-vs-confirmed | `node scripts/order-recon.mjs <n>` |
-| Daily summary | the 7am "🛰 Daily ops check" email |
+| Broker chase drafts (all / one) | `node scripts/broker-outreach.mjs [<n>]` |
+| Preview / send a broker email | `GET /api/broker-email?order=<n>` / POST to send |
+| Record a substitution | `node scripts/record-substitution.mjs <order> "<Sub>" "<Orig>" --apply` |
+| Daily summary | the 7am "🛰 Daily ops check" email (6 sections) |
