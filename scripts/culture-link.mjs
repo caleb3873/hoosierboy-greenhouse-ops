@@ -9,7 +9,8 @@
 // review and apply them. The "verifier" here = the confidence rule: a proposal
 // is only HIGH when the genus matches AND the variety/color tokens line up.
 //
-// Run:  node scripts/culture-link.mjs
+// Run:  node scripts/culture-link.mjs            (read-only — proposes only)
+//       node scripts/culture-link.mjs --apply    (writes culture_source_id for HIGH matches)
 // ---------------------------------------------------------------------------
 import { createClient } from "@supabase/supabase-js";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -101,6 +102,28 @@ async function run() {
 
   writeFileSync(OUT, JSON.stringify(tiers, null, 2));
   console.log(`Proposals saved → scripts/culture-link-proposals.json  (review before any apply)`);
+
+  if (!process.argv.includes("--apply")) {
+    if (tiers.HIGH.length) console.log(`\n💡 Re-run with --apply to write culture_source_id for the ${tiers.HIGH.length} HIGH match(es).`);
+    return;
+  }
+
+  // ---- WRITE (promotion to apply-with-gate) ----
+  // Only HIGH matches, only where culture_source_id is still null (idempotent + safe),
+  // then re-read to VERIFY the write landed. Reversible: set culture_source_id back to null.
+  console.log(`\n✍️  --apply: linking ${tiers.HIGH.length} HIGH match(es)…`);
+  let done = 0, failed = 0;
+  for (const p of tiers.HIGH) {
+    const { error } = await main.from("variety_library")
+      .update({ culture_source_id: p.culture_id }).eq("id", p.variety_id).is("culture_source_id", null);
+    if (error) { failed++; console.log(`   ✖ ${p.label}: ${error.message}`); }
+    else { done++; console.log(`   ✓ ${p.label}  →  ${p.match}`); }
+  }
+  const ids = tiers.HIGH.map(p => p.variety_id);
+  const { data: check } = await main.from("variety_library").select("id,culture_source_id").in("id", ids);
+  const linked = (check || []).filter(r => r.culture_source_id).length;
+  console.log(`\nWrote ${done}, failed ${failed}.  ✅ Verify: ${linked}/${ids.length} HIGH varieties now linked.`);
+  if (linked !== ids.length) console.log(`⚠ Mismatch — re-run read-only to inspect.`);
 }
 
 run().catch(e => { console.error("Linker crashed:", e); process.exit(1); });
