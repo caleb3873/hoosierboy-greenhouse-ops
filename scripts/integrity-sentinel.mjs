@@ -96,20 +96,20 @@ const CHECKS = [
     id: "sc-bad-week", table: "scheduled_crops", severity: "warn",
     desc: "plant_week or ship_week missing or out of 1–53 range",
     run: ({ sc }) => sc.filter(r => { const p = num(r.plant_week), s = num(r.ship_week); return (p === null || p < 1 || p > 53) || (s === null || s < 1 || s > 53); })
-      .map(r => ({ key: r.id, detail: `"${r.item_name || r.id}" plant_wk=${r.plant_week} ship_wk=${r.ship_week}` })),
+      .map(r => ({ key: r.id, detail: `${r.item_name} [${r._plan}] — plant_wk=${r.plant_week} ship_wk=${r.ship_week}` })),
   },
   {
     id: "sc-bad-qty", table: "scheduled_crops", severity: "error",
     desc: "Standalone/parent row has qty_pots ≤ 0 or ppp ≤ 0 (combo components excluded — their pots live on the parent)",
     // Combo components legitimately carry qty_pots=0; the pot count is on the parent. Only flag rows that should own a count.
     run: ({ sc }) => sc.filter(r => !r.combo_parent_id && !r.is_combo_component && ((num(r.qty_pots) !== null && num(r.qty_pots) <= 0) || (num(r.ppp) !== null && num(r.ppp) <= 0)))
-      .map(r => ({ key: r.id, detail: `"${r.item_name || r.color || r.id}" pots=${r.qty_pots} ppp=${r.ppp}` })),
+      .map(r => ({ key: r.id, detail: `${r.item_name} [${r._plan}] — pots=${r.qty_pots} ppp=${r.ppp}` })),
   },
   {
     id: "sc-shortage", table: "scheduled_crops", severity: "warn",
     desc: "Ordered plants > 0 but confirmed = 0 (supplier shortage — won't be plantable)",
     run: ({ sc }) => sc.filter(r => num(r.qty_plants_ordered) > 0 && num(r.qty_plants_confirmed) === 0)
-      .map(r => ({ key: r.id, detail: `"${r.item_name || r.id}" ordered ${r.qty_plants_ordered}, confirmed 0` })),
+      .map(r => ({ key: r.id, detail: `${r.item_name} [${r._plan}] — ordered ${r.qty_plants_ordered}, confirmed 0` })),
   },
 
   // ---- fall_program_items (supplier orders + bench plan) ----
@@ -149,12 +149,13 @@ async function main() {
   console.log("🛰  Data-Integrity Sentinel (read-only)\n");
 
   // Prefetch every dataset once; checks operate on these in memory.
-  const [scR, fpR, contR, varR, benchR] = await Promise.all([
+  const [scR, fpR, contR, varR, benchR, planR] = await Promise.all([
     fetchAll("scheduled_crops", "id,plan_id,variety_id,container_id,bench_id,combo_parent_id,is_combo_component,qty_pots,ppp,qty_plants_ordered,qty_plants_confirmed,plant_week,ship_week,status,item_name,color"),
     fetchAll("fall_program_items", "id,order_number,variety,status,qty,ord_qty,ppp,extras,container_id,soil_mix_id,year,ship_week"),
     fetchAll("containers", "id"),
-    fetchAll("variety_library", "id"),
+    fetchAll("variety_library", "id,crop_name,variety"),
     fetchAll("benches", "id"),
+    fetchAll("production_plans", "id,name"),
   ]);
 
   // Defensive: if a reference table can't be read (RLS/missing), skip the checks
@@ -166,6 +167,15 @@ async function main() {
   if (contR.error) skipped.push("containers (orphan-container checks)");
   if (varR.error) skipped.push("variety_library (orphan-variety check)");
   if (benchR.error) skipped.push("benches (orphan-bench check)");
+
+  // Make every row's label human-readable for the report — UUIDs are useless to a grower.
+  const varName = new Map((varR.data || []).map(v => [v.id, [v.crop_name, v.variety].filter(Boolean).join(" ").trim()]));
+  const planName = new Map((planR.data || []).map(p => [p.id, p.name]));
+  for (const r of sc) {
+    r.item_name = r.item_name || varName.get(r.variety_id) || r.color || `row ${r.id.slice(0, 8)}`;
+    r._plan = planName.get(r.plan_id) || "—";
+  }
+  for (const r of fp) r._label = (r.variety || "").trim() || `row ${r.id.slice(0, 8)}`;
 
   const ctx = {
     sc, fp,
