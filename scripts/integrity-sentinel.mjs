@@ -1,20 +1,32 @@
 // integrity-sentinel.mjs — Data-Integrity Sentinel (READ-ONLY)
 // ---------------------------------------------------------------------------
-// Loop-engineering candidate "A": a deterministic checker over the production
-// data. It reads the DB, runs a registry of invariant checks, and prints a
-// human-readable findings report. It WRITES NOTHING to the database — its only
-// side effect is a local state file (scripts/.sentinel-state.json) so it can
-// tell you what's NEW vs. already-known vs. RESOLVED since the last run.
+// A deterministic checker over the production plans. It reads the DB, runs a
+// registry of checks, and prints a human-readable findings report. It WRITES
+// NOTHING to the database — its only side effect is a local state file
+// (scripts/.sentinel-state.json) so it can tell you what's NEW vs. already-known
+// vs. RESOLVED since the last run.
 //
-// Why read-only first: in loop engineering the verifier is the bottleneck. This
-// is the one place the checker can be 100% trustworthy (pure arithmetic / set
-// math, no LLM guessing), so it's the safe first rung. Later loops that WRITE
-// can reuse these exact invariants as their pre-apply gate.
+// Two kinds of checks:
+//   • READINESS  — for plans you've finished entering: is each item actually
+//     ready to grow & sell? (has a supplier order, sale price, container, weeks)
+//   • STRUCTURAL — can this data even exist safely? (orphan refs, bad combos,
+//     negative qtys, status drift) — a quiet safety net.
+//
+// SCOPE: readiness/structural plan checks only run on plans YOU mark as "done
+// being planned" — see COMPLETED_PLANS below. (fall_program_items is always
+// checked as a background safety net, but stays silent unless something breaks.)
 //
 // Run:  node scripts/integrity-sentinel.mjs
+//       node scripts/integrity-sentinel.mjs "Winter 2026" "Spring 2027"   (override scope)
 // ---------------------------------------------------------------------------
 import { createClient } from "@supabase/supabase-js";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
+
+// >>> THE MANUAL CONTROL <<<
+// Add a plan here the day you finish entering it. Only plans in this list get
+// held to the full readiness checklist. Override per-run by passing plan names
+// as command-line arguments.
+const COMPLETED_PLANS = ["Winter 2026"];
 
 const env = Object.fromEntries(
   readFileSync(new URL("../.env.local", import.meta.url), "utf8")
@@ -49,187 +61,204 @@ const INACTIVE_FALL = new Set(["CANCELLED", "NEVER USED", "NOT NEEDED", "UNCLAIM
 
 const idSet = rows => new Set((rows || []).map(r => r.id));
 const num = v => (v === null || v === undefined || v === "" ? null : Number(v));
+const badWeek = w => { const n = num(w); return n === null || n < 1 || n > 53; };
 
-// --- The check registry. Each check is independent, deterministic, and returns
-// --- an array of findings. Severity: error (likely corruption) | warn
-// --- (suspicious, look) | info (notable, not wrong). Keep checks HIGH-confidence
-// --- — a noisy checker gets muted, which kills the loop.
+// --- The check registry. Each check is independent and deterministic. Severity:
+// --- error (must fix) | warn (look) | info. category: readiness | structural.
+// --- Keep checks HIGH-confidence — a noisy checker gets muted, which kills it.
 const CHECKS = [
-  // ---- scheduled_crops (the production plan) ----
+  // ===== READINESS — "is this finished item actually ready to grow & sell?" =====
+  // (runs only on COMPLETED_PLANS rows)
   {
-    id: "combo-orphan", table: "scheduled_crops", severity: "error",
-    desc: "Combo child points at a parent row that doesn't exist",
-    run: ({ sc, scIds }) => sc.filter(r => r.combo_parent_id && !scIds.has(r.combo_parent_id))
-      .map(r => ({ key: r.id, detail: `"${r.item_name || r.color || r.id}" → missing parent ${r.combo_parent_id}` })),
+    id: "need-order", category: "readiness", table: "scheduled_crops", severity: "error",
+    desc: "No supplier order — nothing ordered to grow this item",
+    run: ({ sc }) => sc.filter(r => !(num(r.qty_plants_ordered) > 0))
+      .map(r => ({ key: r.id, detail: `${r.item_name} [${r._plan}]` })),
   },
   {
-    id: "combo-cross-plan", table: "scheduled_crops", severity: "error",
-    desc: "Combo child and its parent are in different plans",
-    run: ({ sc, scById }) => sc.filter(r => r.combo_parent_id && scById.get(r.combo_parent_id) && scById.get(r.combo_parent_id).plan_id !== r.plan_id)
-      .map(r => ({ key: r.id, detail: `"${r.item_name || r.id}" plan ${r.plan_id} ≠ parent plan ${scById.get(r.combo_parent_id).plan_id}` })),
+    id: "need-price", category: "readiness", table: "scheduled_crops", severity: "warn",
+    desc: "No sale price set",
+    run: ({ sc }) => sc.filter(r => !(num(r.sale_price_per_pot) > 0))
+      .map(r => ({ key: r.id, detail: `${r.item_name} [${r._plan}]` })),
   },
   {
-    id: "combo-flag-mismatch", table: "scheduled_crops", severity: "warn",
-    desc: "Has combo_parent_id but is_combo_component is not true (or vice-versa)",
-    run: ({ sc }) => sc.filter(r => !!r.combo_parent_id !== !!r.is_combo_component)
-      .map(r => ({ key: r.id, detail: `"${r.item_name || r.id}" parent=${!!r.combo_parent_id} flag=${!!r.is_combo_component}` })),
+    id: "need-container", category: "readiness", table: "scheduled_crops", severity: "error",
+    desc: "No container/pot assigned",
+    run: ({ sc }) => sc.filter(r => !r.container_id)
+      .map(r => ({ key: r.id, detail: `${r.item_name} [${r._plan}]` })),
   },
   {
-    id: "sc-orphan-variety", table: "scheduled_crops", severity: "error",
-    desc: "variety_id doesn't resolve to a variety_library row",
-    run: ({ sc, varIds }) => varIds && sc.filter(r => r.variety_id && !varIds.has(r.variety_id))
-      .map(r => ({ key: r.id, detail: `"${r.item_name || r.id}" → missing variety ${r.variety_id}` })),
-  },
-  {
-    id: "sc-orphan-bench", table: "scheduled_crops", severity: "error",
-    desc: "bench_id doesn't resolve to a benches row",
-    run: ({ sc, benchIds }) => benchIds && sc.filter(r => r.bench_id && !benchIds.has(r.bench_id))
-      .map(r => ({ key: r.id, detail: `"${r.item_name || r.id}" → missing bench ${r.bench_id}` })),
-  },
-  {
-    id: "sc-orphan-container", table: "scheduled_crops", severity: "error",
-    desc: "container_id doesn't resolve to a containers row",
-    run: ({ sc, contIds }) => contIds && sc.filter(r => r.container_id && !contIds.has(r.container_id))
-      .map(r => ({ key: r.id, detail: `"${r.item_name || r.id}" → missing container ${r.container_id}` })),
-  },
-  {
-    id: "sc-bad-week", table: "scheduled_crops", severity: "warn",
-    desc: "plant_week or ship_week missing or out of 1–53 range",
-    run: ({ sc }) => sc.filter(r => { const p = num(r.plant_week), s = num(r.ship_week); return (p === null || p < 1 || p > 53) || (s === null || s < 1 || s > 53); })
+    id: "need-weeks", category: "readiness", table: "scheduled_crops", severity: "error",
+    desc: "Plant week or ship week not scheduled (must be 1–53)",
+    run: ({ sc }) => sc.filter(r => badWeek(r.plant_week) || badWeek(r.ship_week))
       .map(r => ({ key: r.id, detail: `${r.item_name} [${r._plan}] — plant_wk=${r.plant_week} ship_wk=${r.ship_week}` })),
   },
   {
-    id: "sc-bad-qty", table: "scheduled_crops", severity: "error",
-    desc: "Standalone/parent row has qty_pots ≤ 0 or ppp ≤ 0 (combo components excluded — their pots live on the parent)",
-    // Combo components legitimately carry qty_pots=0; the pot count is on the parent. Only flag rows that should own a count.
-    run: ({ sc }) => sc.filter(r => !r.combo_parent_id && !r.is_combo_component && ((num(r.qty_pots) !== null && num(r.qty_pots) <= 0) || (num(r.ppp) !== null && num(r.ppp) <= 0)))
-      .map(r => ({ key: r.id, detail: `${r.item_name} [${r._plan}] — pots=${r.qty_pots} ppp=${r.ppp}` })),
-  },
-  {
-    id: "sc-shortage", table: "scheduled_crops", severity: "warn",
-    desc: "Ordered plants > 0 but confirmed = 0 (supplier shortage — won't be plantable)",
+    id: "shortage", category: "readiness", table: "scheduled_crops", severity: "warn",
+    desc: "Ordered > 0 but supplier confirmed 0 (won't be plantable)",
     run: ({ sc }) => sc.filter(r => num(r.qty_plants_ordered) > 0 && num(r.qty_plants_confirmed) === 0)
       .map(r => ({ key: r.id, detail: `${r.item_name} [${r._plan}] — ordered ${r.qty_plants_ordered}, confirmed 0` })),
   },
 
-  // ---- fall_program_items (supplier orders + bench plan) ----
+  // ===== STRUCTURAL — "can this data exist safely?" (runs on COMPLETED_PLANS rows) =====
   {
-    id: "fp-orphan-container", table: "fall_program_items", severity: "error",
+    id: "sc-bad-qty", category: "structural", table: "scheduled_crops", severity: "error",
+    desc: "Standalone/parent item has qty_pots ≤ 0 or ppp ≤ 0 (combo components excluded)",
+    run: ({ sc }) => sc.filter(r => !r.combo_parent_id && !r.is_combo_component && ((num(r.qty_pots) !== null && num(r.qty_pots) <= 0) || (num(r.ppp) !== null && num(r.ppp) <= 0)))
+      .map(r => ({ key: r.id, detail: `${r.item_name} [${r._plan}] — pots=${r.qty_pots} ppp=${r.ppp}` })),
+  },
+  {
+    id: "combo-orphan", category: "structural", table: "scheduled_crops", severity: "error",
+    desc: "Combo component points at a parent that doesn't exist",
+    run: ({ sc, scIds }) => sc.filter(r => r.combo_parent_id && !scIds.has(r.combo_parent_id))
+      .map(r => ({ key: r.id, detail: `${r.item_name} [${r._plan}] → missing parent ${r.combo_parent_id}` })),
+  },
+  {
+    id: "combo-cross-plan", category: "structural", table: "scheduled_crops", severity: "error",
+    desc: "Combo component and its parent are in different plans",
+    run: ({ sc, scById }) => sc.filter(r => r.combo_parent_id && scById.get(r.combo_parent_id) && scById.get(r.combo_parent_id).plan_id !== r.plan_id)
+      .map(r => ({ key: r.id, detail: `${r.item_name} [${r._plan}] — parent in a different plan` })),
+  },
+  {
+    id: "combo-flag-mismatch", category: "structural", table: "scheduled_crops", severity: "warn",
+    desc: "combo_parent_id and is_combo_component disagree",
+    run: ({ sc }) => sc.filter(r => !!r.combo_parent_id !== !!r.is_combo_component)
+      .map(r => ({ key: r.id, detail: `${r.item_name} [${r._plan}] — parent=${!!r.combo_parent_id} flag=${!!r.is_combo_component}` })),
+  },
+  {
+    id: "sc-orphan-variety", category: "structural", table: "scheduled_crops", severity: "error",
+    desc: "variety_id doesn't resolve to a variety_library row",
+    run: ({ sc, varIds }) => varIds && sc.filter(r => r.variety_id && !varIds.has(r.variety_id))
+      .map(r => ({ key: r.id, detail: `${r.item_name} [${r._plan}] → missing variety ${r.variety_id}` })),
+  },
+  {
+    id: "sc-orphan-bench", category: "structural", table: "scheduled_crops", severity: "error",
+    desc: "bench_id doesn't resolve to a benches row",
+    run: ({ sc, benchIds }) => benchIds && sc.filter(r => r.bench_id && !benchIds.has(r.bench_id))
+      .map(r => ({ key: r.id, detail: `${r.item_name} [${r._plan}] → missing bench ${r.bench_id}` })),
+  },
+  {
+    id: "sc-orphan-container", category: "structural", table: "scheduled_crops", severity: "error",
     desc: "container_id doesn't resolve to a containers row",
+    run: ({ sc, contIds }) => contIds && sc.filter(r => r.container_id && !contIds.has(r.container_id))
+      .map(r => ({ key: r.id, detail: `${r.item_name} [${r._plan}] → missing container ${r.container_id}` })),
+  },
+
+  // ===== STRUCTURAL — fall_program_items (always checked, background safety net) =====
+  {
+    id: "fp-orphan-container", category: "structural", table: "fall_program_items", severity: "error",
+    desc: "Fall Program: container_id doesn't resolve to a containers row",
     run: ({ fp, contIds }) => contIds && fp.filter(r => r.container_id && !contIds.has(r.container_id))
-      .map(r => ({ key: r.id, detail: `"${r.variety || r.id}" (ord ${r.order_number}) → missing container ${r.container_id}` })),
+      .map(r => ({ key: r.id, detail: `"${r._label}" (ord ${r.order_number}) → missing container ${r.container_id}` })),
   },
   {
-    id: "fp-neg-qty", table: "fall_program_items", severity: "error",
-    desc: "Negative qty / ord_qty / extras, or ppp ≤ 0",
+    id: "fp-neg-qty", category: "structural", table: "fall_program_items", severity: "error",
+    desc: "Fall Program: negative qty / ord_qty / extras, or ppp ≤ 0",
     run: ({ fp }) => fp.filter(r => num(r.qty) < 0 || num(r.ord_qty) < 0 || num(r.extras) < 0 || (num(r.ppp) !== null && num(r.ppp) <= 0))
-      .map(r => ({ key: r.id, detail: `"${r.variety || r.id}" qty=${r.qty} ord=${r.ord_qty} extras=${r.extras} ppp=${r.ppp}` })),
+      .map(r => ({ key: r.id, detail: `"${r._label}" qty=${r.qty} ord=${r.ord_qty} extras=${r.extras} ppp=${r.ppp}` })),
   },
   {
-    id: "fp-active-no-variety", table: "fall_program_items", severity: "warn",
-    desc: "Active row (not cancelled/unused) has no variety name",
-    run: ({ fp }) => fp.filter(r => !INACTIVE_FALL.has(r.status) && !(r.variety || "").trim())
-      .map(r => ({ key: r.id, detail: `row ${r.id} (ord ${r.order_number}, status ${r.status || "—"})` })),
-  },
-  {
-    id: "fp-active-no-qty", table: "fall_program_items", severity: "warn",
-    desc: "Active row on an order has neither qty nor ord_qty (nothing to plant or order)",
+    id: "fp-active-no-qty", category: "structural", table: "fall_program_items", severity: "warn",
+    desc: "Fall Program: active row on an order has neither qty nor ord_qty",
     run: ({ fp }) => fp.filter(r => !INACTIVE_FALL.has(r.status) && r.order_number && num(r.qty) === null && num(r.ord_qty) === null)
-      .map(r => ({ key: r.id, detail: `"${r.variety || r.id}" (ord ${r.order_number})` })),
+      .map(r => ({ key: r.id, detail: `"${r._label}" (ord ${r.order_number})` })),
   },
   {
-    id: "fp-unknown-status", table: "fall_program_items", severity: "warn",
-    desc: "Status value outside the known vocabulary (data drift)",
+    id: "fp-unknown-status", category: "structural", table: "fall_program_items", severity: "warn",
+    desc: "Fall Program: status value outside the known vocabulary (data drift)",
     run: ({ fp }) => fp.filter(r => !KNOWN_FALL_STATUS.has(r.status))
-      .map(r => ({ key: r.id, detail: `"${r.variety || r.id}" status="${r.status}"` })),
+      .map(r => ({ key: r.id, detail: `"${r._label}" status="${r.status}"` })),
   },
 ];
 
 async function main() {
+  const scope = process.argv.slice(2).length ? process.argv.slice(2) : COMPLETED_PLANS;
   console.log("🛰  Data-Integrity Sentinel (read-only)\n");
 
-  // Prefetch every dataset once; checks operate on these in memory.
   const [scR, fpR, contR, varR, benchR, planR] = await Promise.all([
-    fetchAll("scheduled_crops", "id,plan_id,variety_id,container_id,bench_id,combo_parent_id,is_combo_component,qty_pots,ppp,qty_plants_ordered,qty_plants_confirmed,plant_week,ship_week,status,item_name,color"),
-    fetchAll("fall_program_items", "id,order_number,variety,status,qty,ord_qty,ppp,extras,container_id,soil_mix_id,year,ship_week"),
+    fetchAll("scheduled_crops", "id,plan_id,variety_id,container_id,bench_id,combo_parent_id,is_combo_component,qty_pots,ppp,qty_plants_ordered,qty_plants_confirmed,sale_price_per_pot,plant_week,ship_week,status,item_name,color"),
+    fetchAll("fall_program_items", "id,order_number,variety,status,qty,ord_qty,ppp,extras,container_id,year"),
     fetchAll("containers", "id"),
     fetchAll("variety_library", "id,crop_name,variety"),
     fetchAll("benches", "id"),
     fetchAll("production_plans", "id,name"),
   ]);
 
-  // Defensive: if a reference table can't be read (RLS/missing), skip the checks
-  // that need it rather than crash or false-flag. Degrade gracefully.
   const skipped = [];
-  const sc = scR.data || []; const fp = fpR.data || [];
+  const allSc = scR.data || []; const fp = fpR.data || [];
   if (scR.error) { console.error("✖ could not read scheduled_crops:", scR.error); process.exit(1); }
   if (fpR.error) { console.error("✖ could not read fall_program_items:", fpR.error); process.exit(1); }
-  if (contR.error) skipped.push("containers (orphan-container checks)");
-  if (varR.error) skipped.push("variety_library (orphan-variety check)");
-  if (benchR.error) skipped.push("benches (orphan-bench check)");
+  if (contR.error) skipped.push("containers"); if (varR.error) skipped.push("variety_library"); if (benchR.error) skipped.push("benches");
 
-  // Make every row's label human-readable for the report — UUIDs are useless to a grower.
+  // Human-readable labels — UUIDs are useless to a grower.
   const varName = new Map((varR.data || []).map(v => [v.id, [v.crop_name, v.variety].filter(Boolean).join(" ").trim()]));
   const planName = new Map((planR.data || []).map(p => [p.id, p.name]));
-  for (const r of sc) {
+  for (const r of allSc) {
     r.item_name = r.item_name || varName.get(r.variety_id) || r.color || `row ${r.id.slice(0, 8)}`;
     r._plan = planName.get(r.plan_id) || "—";
   }
   for (const r of fp) r._label = (r.variety || "").trim() || `row ${r.id.slice(0, 8)}`;
 
+  // SCOPE: plan checks see only rows in the completed-plan list. Reference maps
+  // (scIds/scById) stay global so combo-parent lookups still resolve.
+  const sc = allSc.filter(r => scope.includes(r._plan));
   const ctx = {
     sc, fp,
-    scIds: idSet(sc), scById: new Map(sc.map(r => [r.id, r])),
+    scIds: idSet(allSc), scById: new Map(allSc.map(r => [r.id, r])),
     contIds: contR.error ? null : idSet(contR.data),
     varIds: varR.error ? null : idSet(varR.data),
     benchIds: benchR.error ? null : idSet(benchR.data),
   };
-  console.log(`Scanned ${sc.length} scheduled_crops rows · ${fp.length} fall_program_items rows`);
-  if (skipped.length) console.log(`⚠ skipped checks (couldn't read): ${skipped.join(", ")}`);
-  console.log("");
 
-  // Run every check; tag each finding with its check id + severity.
+  const allPlanNames = [...new Set(allSc.map(r => r._plan))];
+  const missingScope = scope.filter(p => !allPlanNames.includes(p));
+  console.log(`In scope: ${scope.join(", ")}  →  ${sc.length} item(s)   (edit COMPLETED_PLANS or pass plan names as args)`);
+  if (missingScope.length) console.log(`⚠ no rows found for: ${missingScope.join(", ")}  (known plans: ${allPlanNames.join(", ")})`);
+  console.log(`Fall Program safety net: ${fp.length} rows checked\n`);
+  if (skipped.length) console.log(`⚠ skipped checks (couldn't read): ${skipped.join(", ")}\n`);
+
   const findings = [];
   for (const c of CHECKS) {
-    const hits = (c.run(ctx) || []);
-    for (const h of hits) findings.push({ check: c.id, table: c.table, severity: c.severity, desc: c.desc, ...h });
+    for (const h of (c.run(ctx) || [])) findings.push({ check: c.id, category: c.category, severity: c.severity, desc: c.desc, ...h });
   }
 
-  // Diff against last run's snapshot → NEW / persisting / RESOLVED.
+  // Diff against last run → NEW / RESOLVED.
   const fid = f => `${f.check}::${f.key}`;
   const prev = existsSync(STATE_PATH) ? JSON.parse(readFileSync(STATE_PATH, "utf8")) : { findings: [] };
   const prevIds = new Set(prev.findings.map(fid));
-  const nowIds = new Set(findings.map(fid));
   const isNew = f => !prevIds.has(fid(f));
+  const nowIds = new Set(findings.map(fid));
   const resolved = prev.findings.filter(f => !nowIds.has(fid(f)));
-
-  // Report — newest/worst first; group by check.
-  const order = { error: 0, warn: 1, info: 2 };
-  const byCheck = {};
-  for (const f of findings) (byCheck[f.check] ||= []).push(f);
-  const checkIds = Object.keys(byCheck).sort((a, b) => order[byCheck[a][0].severity] - order[byCheck[b][0].severity]);
 
   const counts = { error: 0, warn: 0, info: 0 };
   findings.forEach(f => counts[f.severity]++);
   const newCount = findings.filter(isNew).length;
 
   if (!findings.length) {
-    console.log("✅ No invariant violations found. Plan data is clean.");
+    console.log("✅ Everything in scope is complete and structurally sound.\n");
   } else {
-    console.log(`Found ${findings.length} finding(s): ${counts.error} error · ${counts.warn} warn · ${counts.info} info  (${newCount} new since last run)\n`);
-    for (const id of checkIds) {
-      const group = byCheck[id];
-      const icon = group[0].severity === "error" ? "🔴" : group[0].severity === "warn" ? "🟡" : "🔵";
-      console.log(`${icon} [${id}] ${group[0].desc} — ${group.length} row(s)`);
-      group.slice(0, 12).forEach(f => console.log(`     ${isNew(f) ? "🆕 " : "   "}${f.detail}`));
-      if (group.length > 12) console.log(`     …and ${group.length - 12} more`);
-      console.log("");
+    console.log(`Found ${findings.length}: ${counts.error} 🔴 must-fix · ${counts.warn} 🟡 look · ${counts.info} 🔵 info   (${newCount} new since last run)\n`);
+    const order = { error: 0, warn: 1, info: 2 };
+    const sections = [["readiness", "📋 READINESS — finished items missing required info"], ["structural", "🧬 STRUCTURAL — data that can't exist safely"]];
+    for (const [cat, heading] of sections) {
+      const byCheck = {};
+      for (const f of findings.filter(f => f.category === cat)) (byCheck[f.check] ||= []).push(f);
+      const ids = Object.keys(byCheck).sort((a, b) => order[byCheck[a][0].severity] - order[byCheck[b][0].severity]);
+      if (!ids.length) continue;
+      console.log(`──── ${heading} ────`);
+      for (const id of ids) {
+        const g = byCheck[id];
+        const icon = g[0].severity === "error" ? "🔴" : g[0].severity === "warn" ? "🟡" : "🔵";
+        console.log(`${icon} ${g[0].desc} — ${g.length} item(s)`);
+        g.slice(0, 12).forEach(f => console.log(`     ${isNew(f) ? "🆕 " : "   "}${f.detail}`));
+        if (g.length > 12) console.log(`     …and ${g.length - 12} more`);
+        console.log("");
+      }
     }
   }
   if (resolved.length) console.log(`✔ ${resolved.length} finding(s) RESOLVED since last run.\n`);
 
-  // Persist snapshot (the loop's memory). NOT committed to git — it's per-run state.
-  writeFileSync(STATE_PATH, JSON.stringify({ ranAt: new Date().toISOString(), findings }, null, 2));
+  writeFileSync(STATE_PATH, JSON.stringify({ ranAt: new Date().toISOString(), scope, findings }, null, 2));
   console.log("State saved → scripts/.sentinel-state.json");
 }
 
