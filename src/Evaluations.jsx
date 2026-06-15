@@ -722,17 +722,14 @@ export default function Evaluations({ onBack, selfOnly = false }) {
     const copy = SELF_COPY[language] || SELF_COPY.en;
     return (
       <div style={{ minHeight: "100vh", background: COLORS.bg, fontFamily: "'DM Sans','Segoe UI',sans-serif", paddingBottom: 90 }}>
-        <PageHeader title={copy.title} subtitle={LANGUAGE_LABELS[language]} onBack={onBack} />
+        <PageHeader
+          title={!selfOnly && myAssignments.length > 0 ? "Evaluations" : copy.title}
+          subtitle={!selfOnly && myAssignments.length > 0 ? `${myAssignments.length} employee review${myAssignments.length !== 1 ? "s" : ""} assigned to you` : LANGUAGE_LABELS[language]}
+          onBack={onBack}
+        />
         <div style={{ padding: 14 }}>
-          <button onClick={startSelfEvaluation}
-            style={{ width: "100%", textAlign: "left", background: "#fff", border: `1.5px solid ${COLORS.border}`, borderTop: `5px solid ${COLORS.green}`, borderRadius: 14, padding: 18, fontFamily: "inherit", cursor: "pointer", marginBottom: 14 }}>
-            <div style={{ fontSize: 20, fontWeight: 900, color: COLORS.dark }}>{copy.title}</div>
-            <div style={{ fontSize: 13, color: COLORS.muted, lineHeight: 1.45, marginTop: 6 }}>{copy.subtitle}</div>
-            <div style={{ fontSize: 12, fontWeight: 900, color: "#467335", marginTop: 12 }}>{copy.submit} →</div>
-          </button>
-
           {!selfOnly && myAssignments.length > 0 && (
-            <Section title="Employees Assigned to You" subtitle="Only employees assigned by Paul appear here.">
+            <Section title="Employee Reviews Assigned to You" subtitle="Open an employee below to complete and submit their review.">
               {myAssignments.map(assignment => (
                 <button key={assignment.id} onClick={() => startAssignedEvaluation(assignment)}
                   style={{ width: "100%", textAlign: "left", background: "#f8faf6", border: `1.5px solid ${COLORS.border}`, borderRadius: 11, padding: 13, marginBottom: 8, fontFamily: "inherit", cursor: "pointer" }}>
@@ -750,6 +747,13 @@ export default function Evaluations({ onBack, selfOnly = false }) {
               ))}
             </Section>
           )}
+
+          <button onClick={startSelfEvaluation}
+            style={{ width: "100%", textAlign: "left", background: "#fff", border: `1.5px solid ${COLORS.border}`, borderTop: `5px solid ${COLORS.green}`, borderRadius: 14, padding: 18, fontFamily: "inherit", cursor: "pointer", marginBottom: 14 }}>
+            <div style={{ fontSize: 20, fontWeight: 900, color: COLORS.dark }}>{copy.title}</div>
+            <div style={{ fontSize: 13, color: COLORS.muted, lineHeight: 1.45, marginTop: 6 }}>{copy.subtitle}</div>
+            <div style={{ fontSize: 12, fontWeight: 900, color: "#467335", marginTop: 12 }}>{copy.submit} →</div>
+          </button>
         </div>
       </div>
     );

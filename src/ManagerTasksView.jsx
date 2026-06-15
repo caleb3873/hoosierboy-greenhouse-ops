@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from "react";
-import { useManagerTasks, useVacationRequests, useAnnouncements, useHrMessages, useBrehobItems, useFloorCodes2, useDriverRequests, getSupabase } from "./supabase";
+import { useManagerTasks, useVacationRequests, useAnnouncements, useHrMessages, useBrehobItems, useFloorCodes2, useDriverRequests, useEvaluationAssignments, getSupabase } from "./supabase";
 import { VacationRequestModal, OutThisWeekBanner, VacationRequestsInboxModal, isVacationApprover } from "./Vacation";
 import { AnnouncementBanner, AnnouncementComposerModal, AnnouncementPopup, useAnnouncementPopup, canPostAnnouncement } from "./Announcements";
 import { HrComposeModal, HrInbox, isHrInboxOwner } from "./HrMessages";
@@ -184,6 +184,10 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
   const { rows: tasks, upsert, remove, refresh } = useManagerTasks();
   const { displayName, isAdmin, isManager, growerProfile } = useAuth();
   const canViewAllEvaluations = growerProfile?.code === "9999999";
+  const { rows: evaluationAssignments } = useEvaluationAssignments();
+  const assignedEvaluationCount = useMemo(() => (evaluationAssignments || []).filter(row =>
+    Number(row.reviewYear) === new Date().getFullYear() && row.managerName === displayName
+  ).length, [evaluationAssignments, displayName]);
 
   // Human-readable label for a category code, used on the asst-manager hub
   // "Tasks" card subtitle ("My Tasks · Production · Done").
@@ -1099,10 +1103,15 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
                   <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
                     <span style={{ fontSize: 28 }}>★</span>
                     <div>
-                      <div style={{ fontSize: 17, fontWeight: 800, color: "#1e2d1a" }}>Employer / Self Evaluation</div>
-                      <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2 }}>Share feedback about your work experience</div>
+                      <div style={{ fontSize: 17, fontWeight: 800, color: "#1e2d1a" }}>
+                        {assignedEvaluationCount > 0 ? "Employee Reviews" : "Employer / Self Evaluation"}
+                      </div>
+                      <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2 }}>
+                        {assignedEvaluationCount > 0 ? `${assignedEvaluationCount} assigned · plus your self evaluation` : "Share feedback about your work experience"}
+                      </div>
                     </div>
                   </div>
+                  {assignedEvaluationCount > 0 && <span className="hub-card-badge warn">{assignedEvaluationCount} assigned</span>}
                 </div>
               </div>
             ) : (
@@ -1192,8 +1201,17 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
                 {isManager && (
                   <div className="hub-card" onClick={() => setCurrentView("evaluations")} style={{ borderTopColor: "#d18b35", borderTopWidth: 4 }}>
                     <div className="hub-card-emoji">★</div>
-                    <div className="hub-card-title">{canViewAllEvaluations ? "Evaluations" : "Employer / Self Evaluation"}</div>
-                    <div className="hub-card-sub">{canViewAllEvaluations ? "Employee reviews · self feedback · follow-up" : "Share feedback about your work experience"}</div>
+                    <div className="hub-card-title">
+                      {canViewAllEvaluations ? "Evaluations" : assignedEvaluationCount > 0 ? "Employee Reviews" : "Employer / Self Evaluation"}
+                    </div>
+                    <div className="hub-card-sub">
+                      {canViewAllEvaluations
+                        ? "Employee reviews · self feedback · follow-up"
+                        : assignedEvaluationCount > 0
+                          ? `${assignedEvaluationCount} assigned · plus your self evaluation`
+                          : "Share feedback about your work experience"}
+                    </div>
+                    {!canViewAllEvaluations && assignedEvaluationCount > 0 && <span className="hub-card-badge warn">{assignedEvaluationCount} assigned</span>}
                   </div>
                 )}
 
