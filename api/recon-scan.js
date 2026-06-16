@@ -61,7 +61,9 @@ async function proposeOne(sb, base, orderNumber, storagePath) {
 
 // Returns { disabled? , proposals:[{id,orderNumber,storagePath,changes,risk,token}], skipped:[], scanned }
 // opts.order → target a single order (bypasses recency; reuses an existing pending proposal). For testing/manual.
+const RECON_PAUSED = true; // PAUSED 2026-06-16 — was re-extracting bucket PDFs daily (cost). Flip to false to re-enable.
 async function runReconScan({ base, all = false, order = null }) {
+  if (RECON_PAUSED) return { disabled: true, reason: "recon-scan paused (cost control)", proposals: [], skipped: [], scanned: 0 };
   if (!process.env.ANTHROPIC_API_KEY) return { disabled: true, reason: "ANTHROPIC_API_KEY not configured", proposals: [], skipped: [], scanned: 0 };
   if (!SERVICE_KEY || !SUPABASE_URL) return { disabled: true, reason: "Supabase service creds not configured", proposals: [], skipped: [], scanned: 0 };
   const sb = createClient(SUPABASE_URL, SERVICE_KEY);
