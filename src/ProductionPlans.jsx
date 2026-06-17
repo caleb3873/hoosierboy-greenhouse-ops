@@ -1355,29 +1355,51 @@ function PropagationTab({ plan }) {
     if (!sb) return;
     (async () => {
       const { data: sc } = await sb.from("scheduled_crops")
-        .select("id,variety_id,prop_method,prop_tray_size,ship_week,ship_year,qty_pots,item_name,bench_id")
-        .eq("plan_id", plan.id).eq("is_combo_component", false);
+        .select("id,variety_id,prop_method,prop_tray_size,ship_week,ship_year,qty_pots,qty_plants_ordered,ppp,container_id,item_name,is_combo_component,bench_id")
+        .eq("plan_id", plan.id);
       const prop = (sc || []).filter(r => r.prop_tray_size && String(r.prop_tray_size).trim() && /^(URC|CALL|SEED)/i.test(r.prop_method || ""));
       const vids = [...new Set(prop.map(r => r.variety_id).filter(Boolean))];
       const { data: vars } = vids.length ? await sb.from("variety_library").select("id,crop_name,variety,breeder,culture_source_id").in("id", vids) : { data: [] };
       const vmap = Object.fromEntries((vars || []).map(v => [v.id, v]));
+      const cids = [...new Set(prop.map(r => r.container_id).filter(Boolean))];
+      const { data: conts } = cids.length ? await sb.from("containers").select("id,name,diameter_in").in("id", cids) : { data: [] };
+      const contMap = Object.fromEntries((conts || []).map(c => [c.id, c]));
+      const potLabel = cid => { const c = contMap[cid]; if (!c) return "?"; const d = c.diameter_in ? `${+c.diameter_in}"` : (c.name || "?"); return /basket|hanging|coco|\bhb\b/i.test(c.name || "") ? `${d} HB` : d; };
       const csids = [...new Set((vars || []).map(v => v.culture_source_id).filter(Boolean))];
       const cmap = {}; const cc = getCultureClient();
       if (cc && csids.length) for (let i = 0; i < csids.length; i += 100) { const { data: cg } = await cc.from("culture_guides_public").select("id,propagation_details,culture_details").in("id", csids.slice(i, i + 100)); (cg || []).forEach(g => { const cdt = g.culture_details || {}; cmap[g.id] = { pd: g.propagation_details || {}, pdf: cdt["Culture Guide PDF"] || cdt["Culture Guide PDF (Origin)"] || null }; }); }
-      setRows(prop.map(r => {
-        const v = vmap[r.variety_id] || {}; const ce = v.culture_source_id ? (cmap[v.culture_source_id] || {}) : {}; const pd = ce.pd || {};
-        const size = +r.prop_tray_size || 0; const usable = size === 105 ? 100 : (size || 1);
-        const md = pd.days_in_mist ?? pd.days_with_mist ?? null;
-        return {
-          id: r.id, crop: v.crop_name || "", variety: v.variety || "", breeder: v.breeder || "", item: r.item_name, bench_id: r.bench_id,
-          week: r.ship_week, year: r.ship_year, weekKey: r.ship_week != null ? `${r.ship_year}·wk${String(r.ship_week).padStart(2, "0")}` : "—",
-          cell: size, trays: Math.ceil((+r.qty_pots || 0) / usable), plugs: +r.qty_pots || 0,
-          prio: STICKING_PRIORITY[v.crop_name] || 9,
-          mistDays: /^geranium/i.test(v.crop_name || "") ? "no (in-house)" : md, needsMist: /^geranium/i.test(v.crop_name || "") ? false : mistNeed(md),
-          hormone: realHormone(pd.rooting_hormone || pd.hormone), fungicide: pd.fungicide || "", pinch: pd.propagation_pinch || pd.pinch || "", tips: pd.key_tips || "",
-          pgr: pd.plug_pgr || "", pd, pdf: ce.pdf || null,
-          callused: /^call/i.test(r.prop_method || ""),
-        };
+      // Aggregate by VARIETY + ship-week + cell → one clickable variety row carrying every destination it feeds.
+      const agg = {};
+      for (const r of prop) {
+        const v = vmap[r.variety_id] || {};
+        const size = +r.prop_tray_size || 0;
+        const plants = (+r.qty_pots || +r.qty_plants_ordered || 0);
+        const ppp = +r.ppp || 1; const pots = ppp ? Math.round(plants / ppp) : plants;
+        const weekKey = r.ship_week != null ? `${r.ship_year}·wk${String(r.ship_week).padStart(2, "0")}` : "—";
+        const key = `${r.variety_id}|${weekKey}|${size}`;
+        if (!agg[key]) {
+          const ce = v.culture_source_id ? (cmap[v.culture_source_id] || {}) : {}; const pd = ce.pd || {};
+          const md = pd.days_in_mist ?? pd.days_with_mist ?? null;
+          agg[key] = {
+            id: key, crop: v.crop_name || "", variety: v.variety || "", breeder: v.breeder || "",
+            week: r.ship_week, year: r.ship_year, weekKey, cell: size, plants: 0, dests: [],
+            prio: STICKING_PRIORITY[v.crop_name] || 9,
+            mistDays: /^geranium/i.test(v.crop_name || "") ? "no (in-house)" : md, needsMist: /^geranium/i.test(v.crop_name || "") ? false : mistNeed(md),
+            hormone: realHormone(pd.rooting_hormone || pd.hormone), fungicide: pd.fungicide || "", pinch: pd.propagation_pinch || pd.pinch || "", tips: pd.key_tips || "",
+            pgr: pd.plug_pgr || "", pd, pdf: ce.pdf || null, callused: false,
+          };
+        }
+        const a = agg[key]; a.plants += plants;
+        a.dests.push({ item: r.item_name, pot: potLabel(r.container_id), isCombo: !!r.is_combo_component, ppp, pots, plants });
+        if (/^call/i.test(r.prop_method || "")) a.callused = true;
+      }
+      setRows(Object.values(agg).map(a => {
+        const usable = a.cell === 105 ? 100 : (a.cell || 1);
+        a.trays = Math.ceil(a.plants / usable); a.plugs = a.plants;
+        const pots = [...new Set(a.dests.map(d => (d.isCombo ? `${d.pot} combo` : d.pot)))];
+        a.forLabel = pots.slice(0, 3).join(" · ") + (pots.length > 3 ? ` +${pots.length - 3}` : "");
+        a.dests.sort((x, y) => y.plants - x.plants);
+        return a;
       }));
     })();
   }, [sb, plan.id]);
@@ -1410,6 +1432,7 @@ function PropagationTab({ plan }) {
         <span onClick={() => setDetail(r)} title="Open propagation card" style={{ fontWeight: 600, color: COLORS.dark, cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted" }}>{r.crop} <span style={{ color: COLORS.muted, fontWeight: 400 }}>{r.variety}</span></span>
         {r.callused && <span style={{ marginLeft: 6, background: "#e89a3a", color: "#fff", fontSize: 9, fontWeight: 800, padding: "1px 6px", borderRadius: 8 }} title="Callused — shorter rooting window">CALLUSED</span>}
         {r.pdf && <span title="Grower guide PDF available — click to open" style={{ marginLeft: 6 }}>📄</span>}
+        {r.forLabel && <span onClick={() => setDetail(r)} title={(r.dests || []).map(d => `${d.pot}${d.isCombo ? " combo" : " finished"} — ${d.ppp}/pot × ${d.pots} pots = ${d.plants}`).join("\n")} style={{ marginLeft: 8, background: "#eef3e9", color: "#4a6b3a", fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 8, cursor: "pointer" }}>▸ for {r.forLabel}</span>}
       </td>
       <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{r.trays}</td>
       <td style={td}>{r.needsMist === true ? <span style={{ color: "#2e7d9e" }}>💦 {mistLabel(r.mistDays)}</span> : r.needsMist === false ? <span style={{ color: COLORS.muted }}>🌵 dry</span> : <span style={{ color: "#c8d0c0" }}>—</span>}</td>
@@ -1485,6 +1508,16 @@ function PropCard({ row, onClose }) {
       {row.pdf
         ? <a href={row.pdf} target="_blank" rel="noreferrer" style={{ display: "inline-block", marginTop: 10, padding: "8px 14px", background: COLORS.dark, color: "#fff", borderRadius: 8, fontWeight: 700, fontSize: 13, textDecoration: "none" }}>📄 View / download grower guide (PDF) ↗</a>
         : <div style={{ marginTop: 10, fontSize: 12, color: COLORS.muted }}>No grower-guide PDF linked for this variety.</div>}
+      {row.dests && row.dests.length > 0 && (<><div style={sec}>Where it goes · {row.plugs} plants ({row.trays} trays of {row.cell}-cell)</div>
+        <div style={{ display: "grid", gap: 4 }}>
+          {row.dests.map((d, i) => (
+            <div key={i} style={{ fontSize: 12, background: "#f7faf4", borderRadius: 7, padding: "6px 9px", display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" }}>
+              <span><strong>{d.pot}</strong>{d.isCombo ? " combo" : " finished"} <span style={{ color: COLORS.muted }}>{d.item}</span></span>
+              <span style={{ color: COLORS.muted, whiteSpace: "nowrap" }}>{d.ppp}/pot × {d.pots} = <strong>{d.plants}</strong></span>
+            </div>
+          ))}
+        </div>
+        <div style={{ fontSize: 11, color: COLORS.muted, marginTop: 6 }}>Ordering: {row.plugs} plants across {row.dests.length} destination{row.dests.length > 1 ? "s" : ""}. If a combo calls for {Math.max(...row.dests.map(d => d.ppp))}/pot, dropping to fewer cuts the order — judge viability per combo.</div></>)}
       {treat.length > 0 && (<><div style={sec}>Treatments</div>
         <div style={{ display: "grid", gap: 6 }}>{treat.map(([l, v], i) => <div key={i} style={{ fontSize: 13, background: "#f3f8ee", borderRadius: 8, padding: "7px 10px" }}><strong>{l}:</strong> {String(v)}</div>)}</div></>)}
       {det.length > 0 && (<><div style={sec}>Propagation</div>
