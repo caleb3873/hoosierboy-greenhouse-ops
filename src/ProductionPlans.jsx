@@ -1156,9 +1156,15 @@ function PlugOrdersTab({ plan }) {
   useEffect(() => {
     if (!sb) return;
     (async () => {
-      const { data: sc } = await sb.from("scheduled_crops")
-        .select("id,variety_id,container_id,qty_pots,ppp,qty_plants_ordered,plant_week,plant_year,item_name,prop_method")
-        .eq("plan_id", plan.id).eq("is_combo_component", false);
+      let sc = [];
+      for (let from = 0; ; from += 1000) {   // paginate (PostgREST 1000-row cap) + include combo components
+        const { data } = await sb.from("scheduled_crops")
+          .select("id,variety_id,container_id,qty_pots,ppp,qty_plants_ordered,plant_week,plant_year,item_name,prop_method,is_combo_component")
+          .eq("plan_id", plan.id).range(from, from + 999);
+        if (!data || !data.length) break;
+        sc = sc.concat(data);
+        if (data.length < 1000) break;
+      }
       const plugs = (sc || []).filter(r => (r.prop_method || "").toUpperCase().startsWith("PLUG"));
       const vids = [...new Set(plugs.map(r => r.variety_id).filter(Boolean))];
       const cids = [...new Set(plugs.map(r => r.container_id).filter(Boolean))];
@@ -1172,8 +1178,9 @@ function PlugOrdersTab({ plan }) {
   if (!rows.length) return <div style={{ padding: 20, color: COLORS.muted }}>No plug-grown items in this plan yet (pansies, violas, etc.).</div>;
 
   const compute = (r) => {
-    const f = flats[r.id] != null ? +flats[r.id] : (+r.qty_pots || 0);
     const ppp = +r.ppp || 1;
+    const base = (+r.qty_pots || 0) > 0 ? +r.qty_pots : Math.round((+r.qty_plants_ordered || 0) / ppp);  // combo components carry the count in qty_plants_ordered (qty_pots=0)
+    const f = flats[r.id] != null ? +flats[r.id] : base;
     const need = Math.round(f * ppp);
     const dest = plugDest(r.c, r.item_name);
     const defSize = /cool wave/i.test(r.item_name || "") ? "285" : "288";
@@ -1200,8 +1207,8 @@ function PlugOrdersTab({ plan }) {
   async function save() {
     setSaving(true);
     const updates = computed.filter(x => flats[x.r.id] != null);
-    for (const x of updates) await sb.from("scheduled_crops").update({ qty_pots: x.f, qty_plants_ordered: x.need }).eq("id", x.r.id);
-    setRows(rs => rs.map(r => { const u = updates.find(x => x.r.id === r.id); return u ? { ...r, qty_pots: u.f, qty_plants_ordered: u.need } : r; }));
+    for (const x of updates) await sb.from("scheduled_crops").update(x.r.is_combo_component ? { qty_plants_ordered: x.need } : { qty_pots: x.f, qty_plants_ordered: x.need }).eq("id", x.r.id);
+    setRows(rs => rs.map(r => { const u = updates.find(x => x.r.id === r.id); return u ? { ...r, qty_plants_ordered: u.need, ...(r.is_combo_component ? {} : { qty_pots: u.f }) } : r; }));
     setFlats({}); setSaving(false);
   }
 
@@ -1559,15 +1566,28 @@ function MaterialsTab({ plan }) {
   useEffect(() => {
     if (!sb) return;
     (async () => {
-      const { data: sc } = await sb.from("scheduled_crops")
-        .select("variety_id,container_id,qty_pots,qty_plants_ordered,liner_unit_cost,soil_mix_id,is_combo_component,combo_parent_id,prop_method,prop_tray_size,ship_week,ship_year,plant_week,plant_year")
-        .eq("plan_id", plan.id);
+      let sc = [];
+      for (let from = 0; ; from += 1000) {   // paginate — PostgREST 1000-row cap
+        const { data } = await sb.from("scheduled_crops")
+          .select("id,variety_id,container_id,qty_pots,ppp,qty_plants_ordered,liner_unit_cost,soil_mix_id,is_combo_component,combo_parent_id,prop_method,prop_tray_size,ship_week,ship_year,plant_week,plant_year")
+          .eq("plan_id", plan.id).range(from, from + 999);
+        if (!data || !data.length) break;
+        sc = sc.concat(data);
+        if (data.length < 1000) break;
+      }
+      const parentIds = new Set((sc || []).filter(r => r.is_combo_component && r.combo_parent_id).map(r => r.combo_parent_id));
       const { data: vars } = await sb.from("variety_library").select("id,crop_name,variety,breeder");
       const { data: containers } = await sb.from("containers").select("id,sku,name,cost_per_unit,units_per_case,qty_per_pallet,fill_volume_cu_ft,default_ring_id,primary_supplier");
       const { data: soils } = await sb.from("soil_mixes").select("id,name,vendor,cost_per_bag,fluffed_volume,bag_size,bags_per_pallet,cost_per_cf,cf_per_truck,cost_per_truck,origin");
       const { data: inputs } = await sb.from("program_inputs").select("*").eq("year", plan.year);
-      const { data: yearRows } = await sb.from("scheduled_crops")
-        .select("qty_pots,is_combo_component,combo_parent_id,container_id,plant_year");
+      let yearRows = [];
+      for (let from = 0; ; from += 1000) {
+        const { data } = await sb.from("scheduled_crops")
+          .select("qty_pots,is_combo_component,combo_parent_id,container_id,plant_year").range(from, from + 999);
+        if (!data || !data.length) break;
+        yearRows = yearRows.concat(data);
+        if (data.length < 1000) break;
+      }
 
       const linerRows = []; const byPot = {}, byRing = {};
       let totalSoilCuFt = 0;
@@ -1581,13 +1601,15 @@ function MaterialsTab({ plan }) {
         const c = containers.find(x => x.id === r.container_id);
         const ring = c?.default_ring_id ? containers.find(x => x.id === c.default_ring_id) : null;
 
-        if (v && v.crop_name !== "Combo" && (+r.qty_plants_ordered || 0) > 0) {
+        const isParent = !r.is_combo_component && parentIds.has(r.id);
+        const orderQty = (+r.qty_plants_ordered || 0) > 0 ? (+r.qty_plants_ordered || 0) : (isParent ? 0 : (+r.qty_pots || 0) * (+r.ppp || 1));
+        if (v && v.crop_name !== "Combo" && orderQty > 0) {
           const isCutting = /^(URC|CALL)/i.test(r.prop_method || "");
           linerRows.push({
             section: isCutting ? "cuttings" : "liners",
             vid: v.id, name: `${v.crop_name || ""} ${v.variety || ""}`.trim(), breeder: v.breeder,
-            qty: +r.qty_plants_ordered || 0,
-            cost: (+r.qty_plants_ordered || 0) * (+r.liner_unit_cost || 0),
+            qty: orderQty,
+            cost: orderQty * (+r.liner_unit_cost || 0),
             weekKey: r.ship_week != null ? `${r.ship_year}·wk${String(r.ship_week).padStart(2, "0")}` : "Unscheduled",
           });
         }
