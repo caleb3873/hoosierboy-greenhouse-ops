@@ -1443,7 +1443,7 @@ function PropagationTab({ plan }) {
   const itemTable = items => (
     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
       <thead><tr><th style={th}></th><th style={th}>Crop / variety</th><th style={{ ...th, textAlign: "right" }}>Trays</th><th style={th}>Mist</th><th style={{ ...th, textAlign: "right" }}>Prio</th><th style={th}>Treatments (prop)</th></tr></thead>
-      <tbody>{[...items].sort((a, b) => a.prio - b.prio).map(r => <ItemRow key={r.id} r={r} />)}</tbody>
+      <tbody>{[...items].sort((a, b) => (a.prio - b.prio) || `${a.crop} ${a.variety}`.localeCompare(`${b.crop} ${b.variety}`)).map(r => <ItemRow key={r.id} r={r} />)}</tbody>
     </table>
   );
 
@@ -1462,21 +1462,24 @@ function PropagationTab({ plan }) {
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
         {sizes.map(s => <BigSoilStat key={s} icon="🌱" value={sizeTotals[s].toLocaleString()} label={`${s}-cell trays (total)`} />)}
         <BigSoilStat icon="📋" value={shown.reduce((a, r) => a + r.trays, 0).toLocaleString()} label="total prop trays" />
+        <BigSoilStat icon="🌿" value={shown.reduce((a, r) => a + (r.plugs || 0), 0).toLocaleString()} label="total plants" />
       </div>
 
       {/* WEEK ▸ SIZE dropdowns */}
       {weekKeys.map(wk => {
         const w = byWeek[wk]; const wSizes = Object.keys(w).map(Number).sort((a, b) => a - b);
         const wItems = wSizes.reduce((a, s) => a + w[s].length, 0);
+        const wPlants = wSizes.reduce((a, s) => a + w[s].reduce((x, r) => x + (r.plugs || 0), 0), 0);
+        const wTrays = wSizes.reduce((a, s) => a + sumTrays(w[s]), 0);
         return (
           <details key={wk} style={{ border: `1px solid ${COLORS.border}`, borderRadius: 10, background: COLORS.card }}>
             <summary style={{ cursor: "pointer", padding: "10px 14px", fontWeight: 800, color: COLORS.dark }}>
-              📅 {wk} · {wItems} items · {wSizes.map(s => `${s}-cell: ${sumTrays(w[s])} trays`).join("  ·  ")}
+              📅 {wk} · {wItems} items · <strong style={{ color: "#2e5c1e" }}>{wPlants.toLocaleString()} plants</strong> · {wTrays} trays · <span style={{ fontWeight: 400, color: COLORS.muted, fontSize: 12 }}>{wSizes.map(s => `${s}-cell: ${sumTrays(w[s])}`).join("  ·  ")}</span>
             </summary>
             <div style={{ padding: "0 10px 10px" }}>
               {wSizes.map(s => (
                 <details key={s} style={{ borderTop: `1px solid ${COLORS.border}` }}>
-                  <summary style={{ cursor: "pointer", padding: "8px 8px", fontWeight: 700, color: COLORS.text, fontSize: 13 }}>🔲 {s}-cell · {sumTrays(w[s])} trays · {w[s].length} items</summary>
+                  <summary style={{ cursor: "pointer", padding: "8px 8px", fontWeight: 700, color: COLORS.text, fontSize: 13 }}>🔲 {s}-cell · {w[s].reduce((x, r) => x + (r.plugs || 0), 0).toLocaleString()} plants · {sumTrays(w[s])} trays · {w[s].length} items</summary>
                   {itemTable(w[s])}
                 </details>
               ))}
