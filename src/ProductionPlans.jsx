@@ -1354,9 +1354,15 @@ function PropagationTab({ plan }) {
   useEffect(() => {
     if (!sb) return;
     (async () => {
-      const { data: sc } = await sb.from("scheduled_crops")
-        .select("id,variety_id,prop_method,prop_tray_size,ship_week,ship_year,qty_pots,qty_plants_ordered,ppp,container_id,item_name,is_combo_component,bench_id")
-        .eq("plan_id", plan.id);
+      let sc = [];
+      for (let from = 0; ; from += 1000) {   // paginate — PostgREST caps at 1000/req; plan has more rows
+        const { data } = await sb.from("scheduled_crops")
+          .select("id,variety_id,prop_method,prop_tray_size,ship_week,ship_year,qty_pots,qty_plants_ordered,ppp,container_id,item_name,is_combo_component,bench_id")
+          .eq("plan_id", plan.id).range(from, from + 999);
+        if (!data || !data.length) break;
+        sc = sc.concat(data);
+        if (data.length < 1000) break;
+      }
       const prop = (sc || []).filter(r => r.prop_tray_size && String(r.prop_tray_size).trim() && /^(URC|CALL|SEED)/i.test(r.prop_method || ""));
       const vids = [...new Set(prop.map(r => r.variety_id).filter(Boolean))];
       const { data: vars } = vids.length ? await sb.from("variety_library").select("id,crop_name,variety,breeder,culture_source_id").in("id", vids) : { data: [] };
