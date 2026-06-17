@@ -1344,6 +1344,10 @@ const STICKING_PRIORITY = {
   Verbena: 2, Erysimum: 2, Arctotis: 2, Phlox: 2, Salvia: 2, Strobilanthes: 2, Evolvulus: 2, Diascia: 2, Calceolaria: 2, Pericallis: 2, Begonia: 2, Bacopa: 2, Sutera: 2, Calibrachoa: 2, Coleus: 2, Gomphrena: 2, Impatiens: 2, Nemesia: 2, Muehlenbeckia: 2, Osteospermum: 2, Perilla: 2, Petunia: 2, Petchoa: 2,
   Alternanthera: 3, Angelonia: 3, Bidens: 3, Brachyscome: 3, Bracteantha: 3, Cuphea: 3, Helichrysum: 3, Iresine: 3, Lamium: 3, Nierembergia: 3, Scaevola: 3, Torenia: 3, Celosia: 3, Gaura: 3, Hebe: 3,
   Mecardonia: 4, Glechoma: 4, Lysimachia: 4, Vinca: 4, Ajuga: 4, Sanvitalia: 4, Sedum: 4,
+  Cyperus: 1, Juncus: 1, Aptenia: 1, Dorotheanthus: 1, Dracaena: 1,
+  Sunpatiens: 2, "New Guinea Impatiens": 2, Supercal: 2, Argyranthemum: 2, Felicia: 2, Gerbera: 2,
+  Acalypha: 3, Didelta: 3, Artemesia: 3, Pentas: 3,
+  Setcreasea: 4, Tradescantia: 4, Ivy: 4, Peperomia: 4, Heuchera: 4, Oxalis: 4, Caladium: 4, Calla: 4, Callas: 4, Canna: 4, Fern: 4,
 };
 const PRIO_COLOR = { 1: "#d94f3d", 2: "#e89a3a", 3: "#7fb069", 4: "#7a8c74", 9: "#c8d0c0" };
 
@@ -1447,7 +1451,8 @@ function PropagationTab({ plan }) {
         {r.pdf && <span title="Grower guide PDF available — click to open" style={{ marginLeft: 6 }}>📄</span>}
         {r.forLabel && <span onClick={() => setDetail(r)} title="Click to see where it goes" style={{ marginLeft: 8, background: "#eef3e9", color: "#4a6b3a", fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 8, cursor: "pointer" }}>▸ for {r.forLabel}</span>}
       </td>
-      <td style={{ ...td, textAlign: "right", fontWeight: 700, cursor: "help" }} title={(r.dests || []).map(d => `${d.pot}${d.isCombo ? " combo" : " finished"} — ${d.ppp}/pot × ${d.pots} pots = ${d.plants}`).join("\n")}>{r.trays}</td>
+      <td style={{ ...td, textAlign: "right", fontWeight: 700, color: "#2e5c1e" }} title={(r.dests || []).map(d => `${d.pot}${d.isCombo ? " combo" : " finished"} — ${d.ppp}/pot × ${d.pots} pots = ${d.plants}`).join("\n")}>{(r.plugs || 0).toLocaleString()}</td>
+      <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{r.trays}</td>
       <td style={td}>{r.needsMist === true ? <span style={{ color: "#2e7d9e" }}>💦 {mistLabel(r.mistDays)}</span> : r.needsMist === false ? <span style={{ color: COLORS.muted }}>🌵 dry</span> : <span style={{ color: "#c8d0c0" }}>—</span>}</td>
       <td style={{ ...td, textAlign: "right" }}><span style={{ background: PRIO_COLOR[r.prio], color: "#fff", fontWeight: 800, fontSize: 11, padding: "1px 7px", borderRadius: 8 }}>{r.prio === 9 ? "?" : "P" + r.prio}</span></td>
       <td style={{ ...td, fontSize: 11, color: COLORS.muted }} title={r.tips || ""}>{r.hormone ? `🧴 ${r.hormone}  ` : ""}{r.fungicide ? `🛡 ${r.fungicide}  ` : ""}{r.pgr ? `📏 ${r.pgr}  ` : ""}{r.pinch ? `✂️ ${r.pinch}` : ""}{!r.hormone && !r.fungicide && !r.pgr && !r.pinch ? "—" : ""}</td>
