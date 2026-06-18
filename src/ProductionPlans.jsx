@@ -324,6 +324,7 @@ const PLAN_TABS = [
   { id: "materials", label: "📦 Materials" },
   { id: "prop",      label: "🌱 Propagation" },
   { id: "plugs",     label: "🧮 Plug Orders" },
+  { id: "sales",     label: "📈 Sales vs Plan" },
   { id: "orders",    label: "📋 Orders" },
   { id: "inputs",    label: "⚙ Inputs" },
   { id: "pricing",   label: "💰 Pricing" },
@@ -465,6 +466,7 @@ function PlanDashboard({ plan, initialTab }) {
           {hasData && tab === "materials" && <MaterialsTab plan={plan} />}
           {hasData && tab === "prop"      && <PropagationTab plan={plan} />}
           {hasData && tab === "plugs"     && <PlugOrdersTab plan={plan} />}
+          {hasData && tab === "sales"     && <SalesVsPlanTab plan={plan} />}
           {hasData && tab === "orders"    && <OrdersTab plan={plan} />}
           {hasData && tab === "inputs"    && <InputsTab plan={plan} />}
           {hasData && tab === "pricing"   && <PricingTab plan={plan} />}
@@ -1170,21 +1172,34 @@ function PlugOrdersTab({ plan }) {
       const cids = [...new Set(plugs.map(r => r.container_id).filter(Boolean))];
       const { data: vars } = vids.length ? await sb.from("variety_library").select("id,crop_name,variety").in("id", vids) : { data: [] };
       const { data: cons } = cids.length ? await sb.from("containers").select("id,sku,name").in("id", cids) : { data: [] };
-      setRows(plugs.map(r => ({ ...r, v: (vars || []).find(x => x.id === r.variety_id), c: (cons || []).find(x => x.id === r.container_id) })));
+      const vmap = Object.fromEntries((vars || []).map(v => [v.id, v]));
+      const cmap = Object.fromEntries((cons || []).map(c => [c.id, c]));
+      // CONSOLIDATE like the Propagation page: one row per variety + plant-week + destination, summing the order across every bench/record it appears on.
+      const agg = {};
+      for (const r of plugs) {
+        const v = vmap[r.variety_id]; const c = cmap[r.container_id];
+        const ppp = +r.ppp || 1;
+        const base = (+r.qty_pots || 0) > 0 ? +r.qty_pots : Math.round((+r.qty_plants_ordered || 0) / ppp);  // combo components carry the count in qty_plants_ordered (qty_pots=0)
+        const dest = plugDest(c, r.item_name);
+        const key = `${r.variety_id}|${r.plant_year}|${r.plant_week}|${dest}`;
+        if (!agg[key]) agg[key] = { key, v, c, dest, ppp, item_name: r.item_name, plant_week: r.plant_week, plant_year: r.plant_year, base: 0, recs: [] };
+        agg[key].base += base;
+        agg[key].recs.push({ id: r.id, base, ppp, isCombo: !!r.is_combo_component });
+      }
+      setRows(Object.values(agg));
     })();
   }, [sb, plan.id]);
 
   if (!rows) return <div style={{ padding: 20, color: COLORS.muted }}>Loading…</div>;
   if (!rows.length) return <div style={{ padding: 20, color: COLORS.muted }}>No plug-grown items in this plan yet (pansies, violas, etc.).</div>;
 
-  const compute = (r) => {
-    const ppp = +r.ppp || 1;
-    const base = (+r.qty_pots || 0) > 0 ? +r.qty_pots : Math.round((+r.qty_plants_ordered || 0) / ppp);  // combo components carry the count in qty_plants_ordered (qty_pots=0)
-    const f = flats[r.id] != null ? +flats[r.id] : base;
+  const compute = (g) => {
+    const ppp = g.ppp || 1;
+    const f = flats[g.key] != null ? +flats[g.key] : g.base;
     const need = Math.round(f * ppp);
-    const dest = plugDest(r.c, r.item_name);
-    const defSize = /cool wave/i.test(r.item_name || "") ? "285" : "288";
-    const size = sizes[r.id] || defSize;
+    const dest = g.dest;
+    const defSize = /cool wave/i.test(g.item_name || "") ? "285" : "288";
+    const size = sizes[g.key] || defSize;
     const cfg = PLUG_SIZES[size] || PLUG_SIZES["288"];
     const cnt = plugUsable(size, dest);
     const trays = cnt ? Math.ceil(need / cnt) : 0;
@@ -1195,10 +1210,10 @@ function PlugOrdersTab({ plan }) {
     return { f, ppp, need, dest, size, cnt, trays, received, extras, cost, flag };
   };
 
-  const computed = rows.map(r => ({ r, ...compute(r) }))
-    .sort((a, b) => `${a.r.v?.crop_name} ${a.r.v?.variety}`.localeCompare(`${b.r.v?.crop_name} ${b.r.v?.variety}`));
+  const computed = rows.map(g => ({ g, ...compute(g) }))
+    .sort((a, b) => `${a.g.v?.crop_name} ${a.g.v?.variety}`.localeCompare(`${b.g.v?.crop_name} ${b.g.v?.variety}`));
   const byWeek = {};
-  computed.forEach(x => { const k = `${x.r.plant_year}·wk${x.r.plant_week}`; (byWeek[k] = byWeek[k] || []).push(x); });
+  computed.forEach(x => { const k = `${x.g.plant_year}·wk${x.g.plant_week}`; (byWeek[k] = byWeek[k] || []).push(x); });
   const weeks = Object.keys(byWeek).sort();
   const grand = computed.reduce((a, x) => ({ trays: a.trays + x.trays, extras: a.extras + x.extras, cost: a.cost + x.cost }), { trays: 0, extras: 0, cost: 0 });
   const flagged = computed.filter(x => x.flag).length;
@@ -1206,10 +1221,22 @@ function PlugOrdersTab({ plan }) {
 
   async function save() {
     setSaving(true);
-    const updates = computed.filter(x => flats[x.r.id] != null);
-    for (const x of updates) await sb.from("scheduled_crops").update(x.r.is_combo_component ? { qty_plants_ordered: x.need } : { qty_pots: x.f, qty_plants_ordered: x.need }).eq("id", x.r.id);
-    setRows(rs => rs.map(r => { const u = updates.find(x => x.r.id === r.id); return u ? { ...r, qty_plants_ordered: u.need, ...(r.is_combo_component ? {} : { qty_pots: u.f }) } : r; }));
-    setFlats({}); setSaving(false);
+    const updates = computed.filter(x => flats[x.g.key] != null);
+    for (const x of updates) {
+      // distribute the consolidated flats back across the underlying bench records ∝ their original share (largest-remainder → exact sum)
+      const recs = x.g.recs; const totalBase = recs.reduce((a, r) => a + r.base, 0) || recs.length;
+      const floored = recs.map(r => Math.floor(x.f * ((r.base || 1) / totalBase)));
+      let rem = x.f - floored.reduce((a, b) => a + b, 0);
+      const order = recs.map((r, i) => [i, x.f * ((r.base || 1) / totalBase) - floored[i]]).sort((a, b) => b[1] - a[1]);
+      for (let j = 0; j < rem && order.length; j++) floored[order[j % order.length][0]]++;
+      for (let i = 0; i < recs.length; i++) {
+        const rec = recs[i]; const fl = floored[i]; const need = Math.round(fl * (rec.ppp || 1));
+        await sb.from("scheduled_crops").update(rec.isCombo ? { qty_plants_ordered: need } : { qty_pots: fl, qty_plants_ordered: need }).eq("id", rec.id);
+        rec.base = fl;
+      }
+      x.g.base = x.f;
+    }
+    setRows(rs => [...rs]); setFlats({}); setSaving(false);
   }
 
   const numIn = { width: 56, padding: "3px 5px", border: `1px solid ${COLORS.border}`, borderRadius: 5, fontSize: 13, textAlign: "right" };
@@ -1243,16 +1270,16 @@ function PlugOrdersTab({ plan }) {
               </tr></thead>
               <tbody>
                 {ws.map(x => (
-                  <tr key={x.r.id} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
-                    <td style={td}><span style={{ fontWeight: 600 }}>{x.r.v?.crop_name} {x.r.v?.variety}</span></td>
+                  <tr key={x.g.key} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
+                    <td style={td}><span style={{ fontWeight: 600 }} title={x.g.recs.length > 1 ? `${x.g.recs.length} bench records consolidated into this plug order` : undefined}>{x.g.v?.crop_name} {x.g.v?.variety}</span>{x.g.recs.length > 1 ? <span style={{ color: COLORS.muted, fontWeight: 400, fontSize: 11 }}> ·{x.g.recs.length}×</span> : null}</td>
                     <td style={{ ...td, fontSize: 11, color: COLORS.muted }}>{x.dest}</td>
                     <td style={td}>
-                      <select value={x.size} onChange={e => setSizes(s => ({ ...s, [x.r.id]: e.target.value }))} style={{ fontSize: 12, padding: "2px 4px", border: `1px solid ${COLORS.border}`, borderRadius: 5 }}>
+                      <select value={x.size} onChange={e => setSizes(s => ({ ...s, [x.g.key]: e.target.value }))} style={{ fontSize: 12, padding: "2px 4px", border: `1px solid ${COLORS.border}`, borderRadius: 5 }}>
                         {Object.keys(PLUG_SIZES).map(k => <option key={k} value={k}>{k}</option>)}
                       </select>
                     </td>
                     <td style={{ ...td, textAlign: "right" }}>
-                      <input type="number" min="0" value={x.f} onChange={e => setFlats(s => ({ ...s, [x.r.id]: e.target.value === "" ? 0 : Math.max(0, +e.target.value) }))} style={numIn} />
+                      <input type="number" min="0" value={x.f} onChange={e => setFlats(s => ({ ...s, [x.g.key]: e.target.value === "" ? 0 : Math.max(0, +e.target.value) }))} style={numIn} />
                     </td>
                     <td style={{ ...td, textAlign: "right", color: COLORS.muted }}>{x.need.toLocaleString()}</td>
                     <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{x.trays}</td>
@@ -1266,6 +1293,110 @@ function PlugOrdersTab({ plan }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// ── Sales vs Plan tab ─────────────────────────────────────────────────────────
+// 2026 actual sales (sales_totals + sales_weekly) matched to this plan's finished
+// items via the sales_sku_map crosswalk → sell-through, lost sales, demand timing.
+function SalesVsPlanTab({ plan }) {
+  const sb = getSupabase();
+  const [rows, setRows] = useState(null);
+  const [season, setSeason] = useState(null);
+  const [sortBy, setSortBy] = useState("lost");
+  const [filt, setFilt] = useState("all");
+  useEffect(() => {
+    if (!sb) return;
+    const COMPONENT = /\bVINE\b|\bIVY\b|HEDERA|MU[EH]+LENBECKIA|CAREX/i;
+    (async () => {
+      const page = async (tbl, sel, eq) => { let out = []; for (let f = 0; ; f += 1000) { let q = sb.from(tbl).select(sel).range(f, f + 999); if (eq) q = q.eq(eq[0], eq[1]); const { data } = await q; if (!data || !data.length) break; out = out.concat(data); if (data.length < 1000) break; } return out; };
+      const xw = await page("sales_sku_map", "sku,plan_item_name");
+      const skuToItem = {}; xw.forEach(x => { if (x.plan_item_name) skuToItem[x.sku] = x.plan_item_name; });
+      const tot = await page("sales_totals", "sku,units,revenue,avg_price");
+      const wk = await page("sales_weekly", "sku,wk,units,revenue");
+      const sc = await page("scheduled_crops", "item_name,qty_pots,ship_week", ["plan_id", plan.id]);
+      const weeks = [...new Set(wk.map(w => +w.wk))].sort((a, b) => a - b);
+      const wIdx = Object.fromEntries(weeks.map((w, i) => [w, i]));
+      const planByItem = {}, shipByItem = {};
+      for (const r of sc) { if (!(+r.qty_pots > 0) || COMPONENT.test(r.item_name)) continue; planByItem[r.item_name] = (planByItem[r.item_name] || 0) + +r.qty_pots; if (r.ship_week != null) shipByItem[r.item_name] = Math.min(shipByItem[r.item_name] ?? 999, +r.ship_week); }
+      const sold = {}, rev = {}, prc = {}, prn = {}, wkly = {};
+      for (const t of tot) { const it = skuToItem[t.sku]; if (!it) continue; sold[it] = (sold[it] || 0) + +t.units; rev[it] = (rev[it] || 0) + +t.revenue; prc[it] = (prc[it] || 0) + +t.avg_price; prn[it] = (prn[it] || 0) + 1; }
+      for (const w of wk) { const it = skuToItem[w.sku]; if (!it) continue; (wkly[it] = wkly[it] || Array(weeks.length).fill(0))[wIdx[+w.wk]] += +w.units; }
+      const seasonRev = Array(weeks.length).fill(0); for (const w of wk) seasonRev[wIdx[+w.wk]] += +w.revenue;
+      const out = [];
+      for (const it of Object.keys(planByItem)) {
+        const planned = planByItem[it], s = sold[it] || 0, price = prn[it] ? prc[it] / prn[it] : 0;
+        const wkA = wkly[it] || Array(weeks.length).fill(0);
+        const peak = wkA.some(x => x > 0) ? weeks[wkA.indexOf(Math.max(...wkA))] : null;
+        out.push({ item: it, planned, sold: s, st: planned ? s / planned : 0, lost: s < planned ? Math.round((planned - s) * price) : 0, rev: Math.round(rev[it] || 0), wk: wkA, peak, ship: shipByItem[it] ?? null, status: s >= planned ? "HIT" : (s === 0 ? "NOSALE" : "SHORT") });
+      }
+      setRows(out); setSeason({ weeks, seasonRev });
+    })();
+  }, [sb, plan.id]);
+  if (!rows) return <div style={{ padding: 20, color: COLORS.muted }}>Loading sales vs plan…</div>;
+  if (!rows.length) return <div style={{ padding: 20, color: COLORS.muted }}>No matched sales yet — the SKU crosswalk (sales_sku_map) is empty for this plan's items.</div>;
+  const spark = a => { const m = Math.max(...a) || 1; return a.map(v => " ▁▂▃▄▅▆▇█"[Math.round(v / m * 8)]).join(""); };
+  const tPlanned = rows.reduce((a, r) => a + r.planned, 0), tSold = rows.reduce((a, r) => a + r.sold, 0);
+  const tLost = rows.reduce((a, r) => a + r.lost, 0), tRev = rows.reduce((a, r) => a + r.rev, 0);
+  const maxR = Math.max(...season.seasonRev, 1); const pkWk = season.weeks[season.seasonRev.indexOf(maxR)];
+  const shown = rows.filter(r => filt === "all" ? true : filt === "short" ? r.status === "SHORT" : r.status === "HIT")
+    .sort((a, b) => sortBy === "lost" ? b.lost - a.lost : sortBy === "st" ? a.st - b.st : sortBy === "rev" ? b.rev - a.rev : b.sold - a.sold);
+  return (
+    <div style={{ display: "grid", gap: 14 }}>
+      <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "12px 14px", fontSize: 12, color: COLORS.muted }}>
+        2026 actual sales vs this plan, matched by SKU crosswalk. <strong>Sell-through</strong> = sold ÷ planned · <strong>Lost $</strong> = (planned − sold) × price on short items · demand sparkline = weekly units (wk{season.weeks[0]}–wk{season.weeks[season.weeks.length - 1]}).
+      </div>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+        <RevStat label="Sell-through" value={tPlanned ? Math.round(tSold / tPlanned * 100) + "%" : "—"} accent={COLORS.dark} />
+        <RevStat label="Lost sales" value={fmtMoney(tLost)} accent={COLORS.red} />
+        <RevStat label="2026 revenue (matched)" value={fmtMoney(tRev)} accent={COLORS.light} />
+        <RevStat label="Demand peak" value={"wk" + pkWk} accent={COLORS.dark} />
+      </div>
+      <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "14px 16px" }}>
+        <div style={{ fontWeight: 800, color: COLORS.dark, marginBottom: 10 }}>📈 Season revenue by week (2026)</div>
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 4, height: 150, borderBottom: `2px solid ${COLORS.border}` }}>
+          {season.seasonRev.map((v, i) => (
+            <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end" }} title={`wk${season.weeks[i]}: ${fmtMoney(v)}`}>
+              <div style={{ width: "76%", height: Math.max(2, v / maxR * 132), background: season.weeks[i] === pkWk ? COLORS.dark : COLORS.light, borderRadius: "3px 3px 0 0" }} />
+            </div>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 4, marginTop: 3 }}>{season.weeks.map(w => <div key={w} style={{ flex: 1, fontSize: 9, color: COLORS.muted, textAlign: "center" }}>{w}</div>)}</div>
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", fontSize: 12 }}>
+        {["all", "short", "hit"].map(f => <button key={f} onClick={() => setFilt(f)} style={{ padding: "6px 12px", borderRadius: 16, fontWeight: 700, cursor: "pointer", border: `1px solid ${filt === f ? COLORS.light : COLORS.border}`, background: filt === f ? COLORS.light : "#fff", color: filt === f ? "#fff" : COLORS.text }}>{f === "all" ? "All" : f === "short" ? "🔴 Short" : "🟢 Sold out"}</button>)}
+        <span style={{ marginLeft: 8, color: COLORS.muted }}>sort:</span>
+        {[["lost", "Lost $"], ["st", "Sell-through"], ["rev", "Revenue"], ["sold", "Units"]].map(([k, l]) => <button key={k} onClick={() => setSortBy(k)} style={{ padding: "6px 10px", borderRadius: 16, fontSize: 11, fontWeight: 700, cursor: "pointer", border: `1px solid ${sortBy === k ? COLORS.dark : COLORS.border}`, background: sortBy === k ? COLORS.dark : "#fff", color: sortBy === k ? "#fff" : COLORS.text }}>{l}</button>)}
+        <span style={{ marginLeft: "auto", color: COLORS.muted }}>{shown.length} items</span>
+      </div>
+      <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, overflow: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <thead><tr>
+            <th style={th}>Item</th><th style={{ ...th, textAlign: "right" }}>Planned</th><th style={{ ...th, textAlign: "right" }}>Sold</th>
+            <th style={{ ...th, textAlign: "right" }}>Sell-thru</th><th style={th}>Status</th><th style={{ ...th, textAlign: "right" }}>Lost $</th>
+            <th style={{ ...th, textAlign: "right" }}>2026 $</th><th style={th}>Demand (wk{season.weeks[0]}–{season.weeks[season.weeks.length - 1]})</th><th style={th}>Timing</th>
+          </tr></thead>
+          <tbody>
+            {shown.slice(0, 500).map((r, i) => {
+              const late = r.ship != null && r.peak != null && r.ship > r.peak;
+              return (
+                <tr key={i} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
+                  <td style={{ ...td, fontWeight: 600 }}>{r.item}</td>
+                  <td style={{ ...td, textAlign: "right" }}>{r.planned.toLocaleString()}</td>
+                  <td style={{ ...td, textAlign: "right" }}>{r.sold.toLocaleString()}</td>
+                  <td style={{ ...td, textAlign: "right", fontWeight: 700, color: r.st >= 1 ? "#2e7d32" : r.st < 0.6 ? COLORS.red : COLORS.text }}>{Math.round(r.st * 100)}%</td>
+                  <td style={td}><span style={{ fontSize: 10, fontWeight: 800, padding: "1px 6px", borderRadius: 8, color: "#fff", background: r.status === "HIT" ? "#5e9c4a" : r.status === "NOSALE" ? "#c8d0c0" : "#e89a3a" }}>{r.status}</span></td>
+                  <td style={{ ...td, textAlign: "right", fontWeight: 700, color: r.lost > 0 ? COLORS.red : COLORS.muted }}>{r.lost ? fmtMoney(r.lost) : "—"}</td>
+                  <td style={{ ...td, textAlign: "right", color: COLORS.muted }}>{fmtMoney(r.rev)}</td>
+                  <td style={{ ...td, fontFamily: "monospace", color: "#4a6b3a", letterSpacing: 1 }} title={r.peak ? `peak wk${r.peak}` : "no weekly sales"}>{spark(r.wk)}{r.peak ? <span style={{ color: COLORS.muted, fontSize: 10, letterSpacing: 0 }}> wk{r.peak}</span> : null}</td>
+                  <td style={td}>{r.ship != null && r.peak != null ? <span style={{ fontSize: 11, fontWeight: 700, color: late ? COLORS.red : "#2e7d32" }} title={`finishes ~wk${r.ship}, demand peaks wk${r.peak}`}>{late ? `⚠ wk${r.ship}→${r.peak}` : `✓ wk${r.ship}`}</span> : <span style={{ color: "#c8d0c0" }}>—</span>}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -1351,6 +1482,18 @@ const STICKING_PRIORITY = {
 };
 const PRIO_COLOR = { 1: "#d94f3d", 2: "#e89a3a", 3: "#7fb069", 4: "#7a8c74", 9: "#c8d0c0" };
 
+// Cutting DIFFICULTY by crop — 1 = easy/fast, 2 = average, 3 = hard/slow. Weights the prop-load
+// chart so harder crops count for more labor. (Caleb-ranked; default = average until set.)
+const STICKING_DIFFICULTY = {
+  // 1 = easy / fast (Caleb-ranked 2026-06-18)
+  Geranium: 1, Sunpatiens: 1, Dahlia: 1, Ipomoea: 1, "New Guinea Impatiens": 1, Osteospermum: 1, Scaevola: 1, Cyperus: 1, Tradescantia: 1, Peperomia: 1, Dorotheanthus: 1, Setcreasea: 1, Bracteantha: 1, Aptenia: 1, Argyranthemum: 1, Didelta: 1,
+  // 3 = hard / slow
+  Calibrachoa: 3, Zinnia: 3, Muehlenbeckia: 3, Cuphea: 3, Bidens: 3, Bacopa: 3, Diascia: 3, Acalypha: 3, Lobelia: 3, Lobularia: 3, Marigold: 3, Nemesia: 3, Oxalis: 3,
+  // everything else (Ivy, Begonia, Petunia, Verbena, Coleus, Lantana, Lysimachia, Vinca, Angelonia, Salvia, Fuchsia, Portulaca, Torenia, Plectranthus, Ageratum, Petchoa, Ajuga, Alternanthera, Artemesia, Calendula, Felicia, Gaura, Heliotrope, Heuchera, Phlox, Sanvitalia, Double Impatiens, …) defaults to 2 = average
+};
+const DIFF_DEFAULT = 2;
+const DIFF_COLOR = { 1: "#7fb069", 2: "#e89a3a", 3: "#d94f3d" };
+
 // Propagation schedule — prop-stage items sorted date → cell size → sticking priority,
 // split by misting need (culture days_in_mist), with treatment recs + task creation.
 function PropagationTab({ plan }) {
@@ -1361,6 +1504,8 @@ function PropagationTab({ plan }) {
   const [sel, setSel] = useState(() => new Set());
   const [taskItems, setTaskItems] = useState(null);
   const [detail, setDetail] = useState(null);
+  const [labor, setLabor] = useState({ rate: "", crew: "", hrs: "40", lead: "2" }); // sticks/person-hr, crew size, hrs/person/wk, onboarding-lead wks — fill in once known
+  const [weightByDiff, setWeightByDiff] = useState(false);
 
   useEffect(() => {
     if (!sb) return;
@@ -1368,7 +1513,7 @@ function PropagationTab({ plan }) {
       let sc = [];
       for (let from = 0; ; from += 1000) {   // paginate — PostgREST caps at 1000/req; plan has more rows
         const { data } = await sb.from("scheduled_crops")
-          .select("id,variety_id,prop_method,prop_tray_size,ship_week,ship_year,qty_pots,qty_plants_ordered,ppp,container_id,item_name,is_combo_component,bench_id")
+          .select("id,variety_id,prop_method,prop_tray_size,ship_week,ship_year,plant_week,plant_year,qty_pots,qty_plants_ordered,ppp,container_id,item_name,is_combo_component,bench_id")
           .eq("plan_id", plan.id).range(from, from + 999);
         if (!data || !data.length) break;
         sc = sc.concat(data);
@@ -1377,7 +1522,7 @@ function PropagationTab({ plan }) {
       const prop = (sc || []).filter(r => r.prop_tray_size && String(r.prop_tray_size).trim() && /^(URC|CALL|SEED)/i.test(r.prop_method || ""));
       const vids = [...new Set(prop.map(r => r.variety_id).filter(Boolean))];
       let vars = [];   // chunk the .in() — a single lookup of hundreds of UUIDs overflows the URL and returns nothing
-      for (let i = 0; i < vids.length; i += 150) { const { data } = await sb.from("variety_library").select("id,crop_name,variety,breeder,culture_source_id").in("id", vids.slice(i, i + 150)); if (data) vars = vars.concat(data); }
+      for (let i = 0; i < vids.length; i += 150) { const { data } = await sb.from("variety_library").select("id,crop_name,variety,breeder,culture_source_id,culture_guide_url,care_profile").in("id", vids.slice(i, i + 150)); if (data) vars = vars.concat(data); }
       const vmap = Object.fromEntries(vars.map(v => [v.id, v]));
       const cids = [...new Set(prop.map(r => r.container_id).filter(Boolean))];
       const { data: conts } = cids.length ? await sb.from("containers").select("id,name,diameter_in").in("id", cids) : { data: [] };
@@ -1404,11 +1549,11 @@ function PropagationTab({ plan }) {
             prio: STICKING_PRIORITY[v.crop_name] || 9,
             mistDays: /^geranium/i.test(v.crop_name || "") ? "no (in-house)" : md, needsMist: /^geranium/i.test(v.crop_name || "") ? false : mistNeed(md),
             hormone: realHormone(pd.rooting_hormone || pd.hormone), fungicide: pd.fungicide || "", pinch: pd.propagation_pinch || pd.pinch || "", tips: pd.key_tips || "",
-            pgr: pd.plug_pgr || "", pd, pdf: ce.pdf || null, callused: false, method: r.prop_method,
+            pgr: pd.plug_pgr || "", pd, pdf: ce.pdf || v.culture_guide_url || ((v.care_profile || {})["Culture Guide PDF"]) || null, callused: false, method: r.prop_method,
           };
         }
         const a = agg[key]; a.plants += plants;
-        a.dests.push({ item: r.item_name, pot: potLabel(r.container_id), isCombo: !!r.is_combo_component, ppp, pots, plants });
+        a.dests.push({ item: r.item_name, pot: potLabel(r.container_id), isCombo: !!r.is_combo_component, ppp, pots, plants, plantWk: r.plant_week, plantYr: r.plant_year });
         if (/^call/i.test(r.prop_method || "")) a.callused = true;
       }
       setRows(Object.values(agg).map(a => {
@@ -1443,16 +1588,32 @@ function PropagationTab({ plan }) {
   const weekKeys = Object.keys(byWeek).sort();
   const sumTrays = arr => arr.reduce((a, r) => a + r.trays, 0);
 
+  // Weekly sticking load (labor-planning chart). units = difficulty-weighted (Σ plants × crop 1–3 rank).
+  const weekLoad = weekKeys.map(wk => {
+    const items = Object.values(byWeek[wk]).flat();
+    const plants = items.reduce((a, r) => a + (r.plugs || 0), 0);
+    const trays = items.reduce((a, r) => a + r.trays, 0);
+    const units = items.reduce((a, r) => a + (r.plugs || 0) * (STICKING_DIFFICULTY[r.crop] || DIFF_DEFAULT), 0);
+    return { wk, plants, trays, units, vars: items.length };
+  });
+  const rate = +labor.rate || 0, crew = +labor.crew || 0, hrs = +labor.hrs || 0, lead = +labor.lead || 0;
+  const laborOn = rate > 0 && hrs > 0;
+  const capacity = laborOn && crew > 0 ? crew * hrs * rate : 0;   // cuttings/wk a base crew can stick
+  weekLoad.forEach(w => { w.people = laborOn ? Math.ceil(w.plants / (rate * hrs)) : null; w.over = capacity > 0 && w.plants > capacity; });
+  const loadMax = Math.max(1, ...weekLoad.map(w => (weightByDiff ? w.units : w.plants)));
+  const firstOver = capacity > 0 ? weekLoad.find(w => w.over) : null;
+  const miniIn = { width: 64, padding: "3px 6px", border: `1px solid ${COLORS.border}`, borderRadius: 5, fontSize: 12 };
+
   const ItemRow = ({ r }) => (
     <tr style={{ borderBottom: `1px solid ${COLORS.border}`, background: sel.has(r.id) ? "#eef5e7" : "transparent" }}>
       <td style={td}><input type="checkbox" checked={sel.has(r.id)} onChange={() => toggle(r.id)} /></td>
       <td style={td}>
         <span title="Propagation form" style={{ background: /^SEED/i.test(r.method || "") ? "#5e9c4a" : (/^CALL/i.test(r.method || "") ? "#e89a3a" : "#3a7ab0"), color: "#fff", fontSize: 9, fontWeight: 800, padding: "1px 6px", borderRadius: 8, marginRight: 7 }}>{/^CALL/i.test(r.method || "") ? "CALLUSED" : (/^SEED/i.test(r.method || "") ? "SEED" : "URC")}</span>
         <span onClick={() => setDetail(r)} title="Open propagation card" style={{ fontWeight: 600, color: COLORS.dark, cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted" }}>{r.crop} <span style={{ color: COLORS.muted, fontWeight: 400 }}>{r.variety}</span></span>
-        {r.pdf && <span title="Grower guide PDF available — click to open" style={{ marginLeft: 6 }}>📄</span>}
-        {r.forLabel && <span onClick={() => setDetail(r)} title={"Finishes in — exact items:\n" + [...new Set((r.dests || []).map(d => d.item))].join("\n")} style={{ marginLeft: 8, background: "#eef3e9", color: "#4a6b3a", fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 8, cursor: "pointer" }}>▸ {r.forLabel}</span>}
+        {r.pdf && <span onClick={() => window.open(r.pdf, "_blank")} title="Grower guide PDF — click to open" style={{ marginLeft: 6, cursor: "pointer" }}>📄</span>}
+        {r.forLabel && <span onClick={() => setDetail(r)} title={"Finishes in (plant week):\n" + [...new Set((r.dests || []).map(d => `${d.item}${d.plantWk != null ? ` — plant wk${String(d.plantWk).padStart(2, "0")}` : ""}`))].join("\n")} style={{ marginLeft: 8, background: "#eef3e9", color: "#4a6b3a", fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 8, cursor: "pointer" }}>▸ {r.forLabel}</span>}
       </td>
-      <td style={{ ...td, textAlign: "right", fontWeight: 700, color: "#2e5c1e" }} title={(r.dests || []).map(d => `${d.pot}${d.isCombo ? " combo" : " finished"} — ${d.ppp}/pot × ${d.pots} pots = ${d.plants}`).join("\n")}>{(r.plugs || 0).toLocaleString()}</td>
+      <td style={{ ...td, textAlign: "right", fontWeight: 700, color: "#2e5c1e" }} title={(r.dests || []).map(d => `${d.pot}${d.isCombo ? " combo" : " finished"} — ${d.ppp}/pot × ${d.pots} pots = ${d.plants}${d.plantWk != null ? ` · plant wk${String(d.plantWk).padStart(2, "0")}${d.plantYr ? " '" + String(d.plantYr).slice(2) : ""}` : ""}`).join("\n")}>{(r.plugs || 0).toLocaleString()}</td>
       <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{r.trays}</td>
       <td style={td}>{r.needsMist === true ? <span style={{ color: "#2e7d9e" }}>💦 {mistLabel(r.mistDays)}</span> : r.needsMist === false ? <span style={{ color: COLORS.muted }}>🌵 dry</span> : <span style={{ color: "#c8d0c0" }}>—</span>}</td>
       <td style={{ ...td, textAlign: "right" }}><span style={{ background: PRIO_COLOR[r.prio], color: "#fff", fontWeight: 800, fontSize: 11, padding: "1px 7px", borderRadius: 8 }}>{r.prio === 9 ? "?" : "P" + r.prio}</span></td>
@@ -1482,6 +1643,39 @@ function PropagationTab({ plan }) {
         {sizes.map(s => <BigSoilStat key={s} icon="🌱" value={sizeTotals[s].toLocaleString()} label={`${s}-cell trays (total)`} />)}
         <BigSoilStat icon="📋" value={shown.reduce((a, r) => a + r.trays, 0).toLocaleString()} label="total prop trays" />
         <BigSoilStat icon="🌿" value={shown.reduce((a, r) => a + (r.plugs || 0), 0).toLocaleString()} label="total plants" />
+      </div>
+
+      {/* WEEKLY STICKING LOAD — labor-planning chart (bones; fill labor inputs once known) */}
+      <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "14px 16px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+          <div style={{ fontWeight: 800, color: COLORS.dark }}>🌱 Sticking load by week {weightByDiff ? <span style={{ fontSize: 11, color: COLORS.muted, fontWeight: 400 }}>(difficulty-weighted)</span> : null}</div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 12, color: COLORS.muted }}>
+            <label style={{ display: "flex", gap: 4, alignItems: "center", cursor: "pointer" }}><input type="checkbox" checked={weightByDiff} onChange={e => setWeightByDiff(e.target.checked)} /> weight by difficulty</label>
+            <span>· labor (optional):</span>
+            <input placeholder="sticks/hr" value={labor.rate} onChange={e => setLabor(l => ({ ...l, rate: e.target.value }))} style={miniIn} />
+            <input placeholder="crew" value={labor.crew} onChange={e => setLabor(l => ({ ...l, crew: e.target.value }))} style={miniIn} />
+            <input placeholder="hrs/wk" value={labor.hrs} onChange={e => setLabor(l => ({ ...l, hrs: e.target.value }))} style={miniIn} />
+          </div>
+        </div>
+        {laborOn && firstOver ? <div style={{ fontSize: 12, color: COLORS.red, fontWeight: 700, marginBottom: 8 }}>⚠ Load passes your {crew}-person crew at {firstOver.wk.replace("·", " ")} — staff up by then{lead ? ` (start onboarding ~${lead} wk earlier)` : ""}.</div> : null}
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 170, borderBottom: `2px solid ${COLORS.border}`, position: "relative" }}>
+          {capacity > 0 && !weightByDiff ? <div title={`base-crew capacity ≈ ${Math.round(capacity).toLocaleString()} / wk`} style={{ position: "absolute", left: 0, right: 0, bottom: Math.min(capacity / loadMax, 1) * 150, borderTop: `2px dashed ${COLORS.red}`, zIndex: 1, pointerEvents: "none" }} /> : null}
+          {weekLoad.map(w => {
+            const val = weightByDiff ? w.units : w.plants;
+            const h = Math.max(2, (val / loadMax) * 150);
+            const col = capacity > 0 ? (w.over ? COLORS.red : COLORS.light) : COLORS.light;
+            return (
+              <div key={w.wk} style={{ flex: 1, minWidth: 18, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end" }} title={`${w.wk}\n${w.plants.toLocaleString()} cuttings · ${w.trays} trays · ${w.vars} varieties${w.people != null ? `\n≈ ${w.people} people` : ""}`}>
+                {w.people != null ? <div style={{ fontSize: 9, fontWeight: 700, color: COLORS.muted }}>{w.people}</div> : null}
+                <div style={{ width: "76%", height: h, background: col, borderRadius: "3px 3px 0 0" }} />
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ display: "flex", gap: 3, marginTop: 3 }}>
+          {weekLoad.map(w => <div key={w.wk} style={{ flex: 1, minWidth: 18, fontSize: 9, color: COLORS.muted, textAlign: "center", whiteSpace: "nowrap", overflow: "hidden" }}>{w.wk.replace(/^\d+·wk/, "w").replace("—", "?")}</div>)}
+        </div>
+        <div style={{ fontSize: 11, color: COLORS.muted, marginTop: 8 }}>Bars = cuttings/seeds stuck per week. Add <strong>sticks/hr</strong> + <strong>crew</strong> and each bar shows <strong>people needed</strong>, a capacity line appears, and the first over-capacity week is flagged as your staff-up point. "Weight by difficulty" scales each crop by its 1–3 rank.</div>
       </div>
 
       {/* WEEK ▸ SIZE dropdowns */}
@@ -5339,7 +5533,7 @@ function ItemDetail({ row, onClose, onTask, planId }) {
   const cd = guide?.culture_details || {};
   const DEDICATED = /potential pest|potential disease|growth regulator/i;
   const entries = Object.keys(cd).filter(k => /pgr|warning|water|temp|finish|pinch|exposure|bloom|media|habit|propagation|ph|ec|fertil/i.test(k) && !DEDICATED.test(k) && cd[k] && String(cd[k]).trim());
-  const pdf = cd["Culture Guide PDF"] || cd["Culture Guide PDF (Origin)"] || guide?.pdf_url;
+  const pdf = cd["Culture Guide PDF"] || cd["Culture Guide PDF (Origin)"] || guide?.pdf_url || row?.variety?.culture_guide_url || ((row?.variety?.care_profile || {})["Culture Guide PDF"]);
   const pests = splitTerms(cd["Potential Pests"]);
   const diseases = splitTerms(cd["Potential Diseases"]);
   const pgr = cd["Growth Regulators"] || cd["Growth Regulator"] || cd["PGR"] || cd["PGRs"];
