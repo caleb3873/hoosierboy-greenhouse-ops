@@ -1376,8 +1376,9 @@ function PropagationTab({ plan }) {
       }
       const prop = (sc || []).filter(r => r.prop_tray_size && String(r.prop_tray_size).trim() && /^(URC|CALL|SEED)/i.test(r.prop_method || ""));
       const vids = [...new Set(prop.map(r => r.variety_id).filter(Boolean))];
-      const { data: vars } = vids.length ? await sb.from("variety_library").select("id,crop_name,variety,breeder,culture_source_id").in("id", vids) : { data: [] };
-      const vmap = Object.fromEntries((vars || []).map(v => [v.id, v]));
+      let vars = [];   // chunk the .in() — a single lookup of hundreds of UUIDs overflows the URL and returns nothing
+      for (let i = 0; i < vids.length; i += 150) { const { data } = await sb.from("variety_library").select("id,crop_name,variety,breeder,culture_source_id").in("id", vids.slice(i, i + 150)); if (data) vars = vars.concat(data); }
+      const vmap = Object.fromEntries(vars.map(v => [v.id, v]));
       const cids = [...new Set(prop.map(r => r.container_id).filter(Boolean))];
       const { data: conts } = cids.length ? await sb.from("containers").select("id,name,diameter_in").in("id", cids) : { data: [] };
       const contMap = Object.fromEntries((conts || []).map(c => [c.id, c]));
@@ -1403,7 +1404,7 @@ function PropagationTab({ plan }) {
             prio: STICKING_PRIORITY[v.crop_name] || 9,
             mistDays: /^geranium/i.test(v.crop_name || "") ? "no (in-house)" : md, needsMist: /^geranium/i.test(v.crop_name || "") ? false : mistNeed(md),
             hormone: realHormone(pd.rooting_hormone || pd.hormone), fungicide: pd.fungicide || "", pinch: pd.propagation_pinch || pd.pinch || "", tips: pd.key_tips || "",
-            pgr: pd.plug_pgr || "", pd, pdf: ce.pdf || null, callused: false,
+            pgr: pd.plug_pgr || "", pd, pdf: ce.pdf || null, callused: false, method: r.prop_method,
           };
         }
         const a = agg[key]; a.plants += plants;
@@ -1446,10 +1447,10 @@ function PropagationTab({ plan }) {
     <tr style={{ borderBottom: `1px solid ${COLORS.border}`, background: sel.has(r.id) ? "#eef5e7" : "transparent" }}>
       <td style={td}><input type="checkbox" checked={sel.has(r.id)} onChange={() => toggle(r.id)} /></td>
       <td style={td}>
+        <span title="Propagation form" style={{ background: /^SEED/i.test(r.method || "") ? "#5e9c4a" : (/^CALL/i.test(r.method || "") ? "#e89a3a" : "#3a7ab0"), color: "#fff", fontSize: 9, fontWeight: 800, padding: "1px 6px", borderRadius: 8, marginRight: 7 }}>{/^CALL/i.test(r.method || "") ? "CALLUSED" : (/^SEED/i.test(r.method || "") ? "SEED" : "URC")}</span>
         <span onClick={() => setDetail(r)} title="Open propagation card" style={{ fontWeight: 600, color: COLORS.dark, cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted" }}>{r.crop} <span style={{ color: COLORS.muted, fontWeight: 400 }}>{r.variety}</span></span>
-        {r.callused && <span style={{ marginLeft: 6, background: "#e89a3a", color: "#fff", fontSize: 9, fontWeight: 800, padding: "1px 6px", borderRadius: 8 }} title="Callused — shorter rooting window">CALLUSED</span>}
         {r.pdf && <span title="Grower guide PDF available — click to open" style={{ marginLeft: 6 }}>📄</span>}
-        {r.forLabel && <span onClick={() => setDetail(r)} title="Click to see where it goes" style={{ marginLeft: 8, background: "#eef3e9", color: "#4a6b3a", fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 8, cursor: "pointer" }}>▸ for {r.forLabel}</span>}
+        {r.forLabel && <span onClick={() => setDetail(r)} title={"Finishes in — exact items:\n" + [...new Set((r.dests || []).map(d => d.item))].join("\n")} style={{ marginLeft: 8, background: "#eef3e9", color: "#4a6b3a", fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 8, cursor: "pointer" }}>▸ {r.forLabel}</span>}
       </td>
       <td style={{ ...td, textAlign: "right", fontWeight: 700, color: "#2e5c1e" }} title={(r.dests || []).map(d => `${d.pot}${d.isCombo ? " combo" : " finished"} — ${d.ppp}/pot × ${d.pots} pots = ${d.plants}`).join("\n")}>{(r.plugs || 0).toLocaleString()}</td>
       <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{r.trays}</td>
@@ -1460,7 +1461,7 @@ function PropagationTab({ plan }) {
   );
   const itemTable = items => (
     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-      <thead><tr><th style={th}></th><th style={th}>Crop / variety</th><th style={{ ...th, textAlign: "right" }}>Trays</th><th style={th}>Mist</th><th style={{ ...th, textAlign: "right" }}>Prio</th><th style={th}>Treatments (prop)</th></tr></thead>
+      <thead><tr><th style={th}></th><th style={th}>Form · Variety · Finishes in</th><th style={{ ...th, textAlign: "right" }}>Plants</th><th style={{ ...th, textAlign: "right" }}>Trays</th><th style={th}>Mist</th><th style={{ ...th, textAlign: "right" }}>Prio</th><th style={th}>Treatments (prop)</th></tr></thead>
       <tbody>{[...items].sort((a, b) => (a.prio - b.prio) || `${a.crop} ${a.variety}`.localeCompare(`${b.crop} ${b.variety}`)).map(r => <ItemRow key={r.id} r={r} />)}</tbody>
     </table>
   );
