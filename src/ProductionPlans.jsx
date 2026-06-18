@@ -365,9 +365,15 @@ function PlanDashboard({ plan, initialTab }) {
     if (!sb) return;
     setLoading(true);
     (async () => {
-      const { data: rows } = await sb.from("v_scheduled_crops_pl")
-        .select("liner_cost,pot_cost,soil_cost,ring_cost,direct_cost_total,revenue,gross_profit,bench_id,qty_pots,is_combo_component,combo_parent_id")
-        .eq("plan_id", plan.id);
+      let rows = [];
+      for (let from = 0; ; from += 1000) {   // paginate — PostgREST caps at 1000/req; plan P&L exceeds it
+        const { data } = await sb.from("v_scheduled_crops_pl")
+          .select("liner_cost,pot_cost,soil_cost,ring_cost,direct_cost_total,revenue,gross_profit,bench_id,qty_pots,is_combo_component,combo_parent_id")
+          .eq("plan_id", plan.id).range(from, from + 999);
+        if (!data || !data.length) break;
+        rows = rows.concat(data);
+        if (data.length < 1000) break;
+      }
 
       const totals = (rows || []).reduce((acc, r) => ({
         liner:    acc.liner    + (+r.liner_cost   || 0),
@@ -382,15 +388,13 @@ function PlanDashboard({ plan, initialTab }) {
       totals.margin = totals.revenue ? totals.profit / totals.revenue * 100 : null;
       setPL(totals);
 
-      // Per-bench → per-house profit
-      const { data: br } = await sb.from("v_scheduled_crops_pl")
-        .select("bench_id,direct_cost_total,revenue,gross_profit")
-        .eq("plan_id", plan.id);
-      const benchIds = [...new Set((br || []).map(r => r.bench_id).filter(Boolean))];
-      const { data: bench } = benchIds.length ? await sb.from("benches").select("id,zone_label").in("id", benchIds) : { data: [] };
+      // Per-bench → per-house profit (reuse the paginated rows)
+      const benchIds = [...new Set(rows.map(r => r.bench_id).filter(Boolean))];
+      let bench = [];   // chunk the .in() — hundreds of bench UUIDs overflow the URL
+      for (let i = 0; i < benchIds.length; i += 150) { const { data } = await sb.from("benches").select("id,zone_label").in("id", benchIds.slice(i, i + 150)); if (data) bench = bench.concat(data); }
       const byHouse = {};
-      for (const r of (br || [])) {
-        const b = (bench || []).find(x => x.id === r.bench_id);
+      for (const r of rows) {
+        const b = bench.find(x => x.id === r.bench_id);
         const house = b?.zone_label || "—";
         if (!byHouse[house]) byHouse[house] = { house, cost:0, revenue:0, profit:0 };
         byHouse[house].cost    += +r.direct_cost_total || 0;
