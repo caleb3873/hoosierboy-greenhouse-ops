@@ -1320,11 +1320,16 @@ function plannedItems(qtyPots, ppp, ppu) {
   return ppp >= ppu ? qtyPots : Math.max(1, Math.round(qtyPots / ppu));
 }
 const sizeTokenForItem = n => (String(n || "").trim().match(/^(HB\s*\d+"?|\d+(?:\.\d+)?"|1801[LS]?|FIBER|POT|MARKET|BOWL|[A-Za-z]+)/) || ["—"])[0].toUpperCase();
+// Selling out before peak demand = a real lost sale; selling out as the season ends isn't.
+// Main-season items: cutoff at Mother's Day (wk 19). Early-spring items (pansy etc., which peak
+// by end of March) cut off ~2nd-to-last week of March (wk 13). (2026 sales data runs wk 9–24.)
+const MD_CUTOFF_WK = 19, EARLY_CUTOFF_WK = 13, EARLY_PEAK_WK = 13;
 function SalesVsPlanTab({ plan }) {
   const sb = getSupabase();
   const [rows, setRows] = useState(null);
   const [season, setSeason] = useState(null);
-  const [sortBy, setSortBy] = useState("lost");
+  const [sortCol, setSortCol] = useState("lostEst");
+  const [sortDir, setSortDir] = useState("desc");
   const [filt, setFilt] = useState("all");
   const [query, setQuery] = useState("");
   const [sizeFilt, setSizeFilt] = useState("all");
@@ -1366,7 +1371,16 @@ function SalesVsPlanTab({ plan }) {
         const wkA = wkly[it] || Array(weeks.length).fill(0);
         const peak = wkA.some(x => x > 0) ? weeks[wkA.indexOf(Math.max(...wkA))] : null;
         const pItems = plannedItems(planned, pppByItem[it], ppuByItem[it]);
-        out.push({ item: it, size: sizeTokenForItem(it), converted: pItems !== planned, planRaw: planned, planned: pItems, sold: s, st: pItems ? s / pItems : 0, lost: s < pItems ? Math.round((pItems - s) * price) : 0, rev: Math.round(rev[it] || 0), wk: wkA, peak, ship: shipByItem[it] ?? null, status: s >= pItems ? "HIT" : (s === 0 ? "NOSALE" : "SHORT") });
+        // overplanned $ = grew more than sold (cut-back candidates)
+        const over = s < pItems ? Math.round((pItems - s) * price) : 0;
+        // sold-out-early = a real lost sale: sold everything AND ran out before the season's cutoff.
+        const saleIdx = wkA.map((u, i) => u > 0 ? i : -1).filter(i => i >= 0);
+        const firstWk = saleIdx.length ? weeks[saleIdx[0]] : null;
+        const lastWk = saleIdx.length ? weeks[saleIdx[saleIdx.length - 1]] : null;
+        const cutoff = (peak != null && peak <= EARLY_PEAK_WK) ? EARLY_CUTOFF_WK : MD_CUTOFF_WK;
+        const soldOut = s >= pItems && pItems > 0 && lastWk != null && lastWk < cutoff;
+        const lostEst = soldOut ? Math.round((s / Math.max(1, lastWk - firstWk + 1)) * (cutoff - lastWk) * price) : 0;
+        out.push({ item: it, size: sizeTokenForItem(it), converted: pItems !== planned, planRaw: planned, planned: pItems, sold: s, st: pItems ? s / pItems : 0, over, lostEst, soldOut, cutoff, lastWk, rev: Math.round(rev[it] || 0), wk: wkA, peak, ship: shipByItem[it] ?? null, status: soldOut ? "SOLDOUT" : s >= pItems ? "HIT" : (s === 0 ? "NOSALE" : "SHORT") });
       }
       setRows(out); setSeason({ weeks, seasonRev });
     })();
@@ -1378,23 +1392,34 @@ function SalesVsPlanTab({ plan }) {
   const dPlanned = r => basis === "raw" ? r.planRaw : r.planned;
   const dSold = r => r.sold;
   const tPlanned = rows.reduce((a, r) => a + dPlanned(r), 0), tSold = rows.reduce((a, r) => a + dSold(r), 0);
-  const tLost = rows.reduce((a, r) => a + r.lost, 0), tRev = rows.reduce((a, r) => a + r.rev, 0);
+  const tOver = rows.reduce((a, r) => a + r.over, 0), tLostEst = rows.reduce((a, r) => a + r.lostEst, 0), tRev = rows.reduce((a, r) => a + r.rev, 0);
+  const soldOutCount = rows.filter(r => r.soldOut).length;
   const maxR = Math.max(...season.seasonRev, 1); const pkWk = season.weeks[season.seasonRev.indexOf(maxR)];
   const sizes = ["all", ...Array.from(new Set(rows.map(r => r.size))).sort()];
   const q = query.trim().toLowerCase();
-  const shown = rows.filter(r => (filt === "all" ? true : filt === "short" ? r.status === "SHORT" : r.status === "HIT")
+  const sortVal = { item: r => r.item, planned: r => dPlanned(r), sold: r => r.sold, st: r => r.st, status: r => r.status, over: r => r.over, lostEst: r => r.lostEst, rev: r => r.rev, peak: r => r.peak ?? 99 };
+  const clickSort = c => { if (c === sortCol) setSortDir(d => d === "asc" ? "desc" : "asc"); else { setSortCol(c); setSortDir(c === "item" ? "asc" : "desc"); } };
+  // sticky + clickable column header (table lives in its own scroll viewport so it pins at top:0)
+  const stickyTh = { ...th, position: "sticky", top: 0, zIndex: 11, background: "#eef3e8" };
+  const SortHdr = ({ col, label, align }) => (
+    <th onClick={() => clickSort(col)} style={{ ...stickyTh, textAlign: align || "left", cursor: "pointer", whiteSpace: "nowrap", userSelect: "none" }}>
+      {label}{sortCol === col ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
+    </th>
+  );
+  const shown = rows.filter(r => (filt === "all" ? true : filt === "over" ? r.status === "SHORT" : filt === "soldout" ? r.soldOut : r.status === "HIT")
       && (sizeFilt === "all" || r.size === sizeFilt)
       && (!q || r.item.toLowerCase().includes(q)))
-    .sort((a, b) => sortBy === "lost" ? b.lost - a.lost : sortBy === "st" ? a.st - b.st : sortBy === "rev" ? b.rev - a.rev : b.sold - a.sold);
+    .sort((a, b) => { const va = (sortVal[sortCol] || sortVal.lostEst)(a), vb = (sortVal[sortCol] || sortVal.lostEst)(b); const c = typeof va === "string" ? va.localeCompare(vb) : (va - vb); return sortDir === "asc" ? c : -c; });
   return (
     <div style={{ display: "grid", gap: 14 }}>
       <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "12px 14px", fontSize: 12, color: COLORS.muted }}>
-        2026 actual sales vs this plan, matched by SKU crosswalk. <strong>Sell-through</strong> = sold ÷ planned · <strong>Lost $</strong> = (planned − sold) × price on short items · demand sparkline = weekly units (wk{season.weeks[0]}–wk{season.weeks[season.weeks.length - 1]}). Compares <strong>item quantity</strong> (qty_pots) to sold units — ppp isn't used (it only drives plant/order counts). A few items entered in individual pots (marked <span style={{ fontWeight: 700, color: COLORS.muted }}>⤵</span>) are shown in their sold pack (flat/case) to match sales.
+        2026 actual sales vs this plan (item quantity = qty_pots, matched by SKU crosswalk). <strong style={{ color: COLORS.amber }}>Overplanned&nbsp;$</strong> = (planned − sold) × price where you grew more than sold (cut-back candidates). <strong style={{ color: COLORS.red }}>Lost sales&nbsp;$</strong> = est. missed revenue on items that <em>sold out before their season's cutoff</em> (main season wk&nbsp;{MD_CUTOFF_WK} / Mother's Day; early-spring &amp; pansies wk&nbsp;{EARLY_CUTOFF_WK}, ~end of March) — grow-more candidates. <strong>2026 sales</strong> = these items' real revenue. Items entered in pots (marked <span style={{ fontWeight: 700, color: COLORS.muted }}>⤵</span>) shown in their sold pack.
       </div>
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
         <RevStat label="Sell-through" value={tPlanned ? Math.round(tSold / tPlanned * 100) + "%" : "—"} accent={COLORS.dark} />
-        <RevStat label="Lost sales" value={fmtMoney(tLost)} accent={COLORS.red} />
-        <RevStat label="2026 revenue (matched)" value={fmtMoney(tRev)} accent={COLORS.light} />
+        <RevStat label="Overplanned $" value={fmtMoney(tOver)} accent={COLORS.amber} />
+        <RevStat label={`Lost sales · ${soldOutCount} sold out`} value={fmtMoney(tLostEst)} accent={COLORS.red} />
+        <RevStat label="2026 sales · these items" value={fmtMoney(tRev)} accent={COLORS.light} />
         <RevStat label="Demand peak" value={"wk" + pkWk} accent={COLORS.dark} />
       </div>
       <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "14px 16px" }}>
@@ -1415,33 +1440,40 @@ function SalesVsPlanTab({ plan }) {
           style={{ padding: "7px 10px", borderRadius: 16, border: `1px solid ${sizeFilt !== "all" ? COLORS.light : COLORS.border}`, fontSize: 12, fontFamily: "inherit", background: "#fff", color: COLORS.text, cursor: "pointer" }}>
           {sizes.map(s => <option key={s} value={s}>{s === "all" ? "All sizes" : s}</option>)}
         </select>
-        {["all", "short", "hit"].map(f => <button key={f} onClick={() => setFilt(f)} style={{ padding: "6px 12px", borderRadius: 16, fontWeight: 700, cursor: "pointer", border: `1px solid ${filt === f ? COLORS.light : COLORS.border}`, background: filt === f ? COLORS.light : "#fff", color: filt === f ? "#fff" : COLORS.text }}>{f === "all" ? "All" : f === "short" ? "🔴 Short" : "🟢 Sold out"}</button>)}
-        <span style={{ marginLeft: 8, color: COLORS.muted }}>sort:</span>
-        {[["lost", "Lost $"], ["st", "Sell-through"], ["rev", "Revenue"], ["sold", "Volume"]].map(([k, l]) => <button key={k} onClick={() => setSortBy(k)} style={{ padding: "6px 10px", borderRadius: 16, fontSize: 11, fontWeight: 700, cursor: "pointer", border: `1px solid ${sortBy === k ? COLORS.dark : COLORS.border}`, background: sortBy === k ? COLORS.dark : "#fff", color: sortBy === k ? "#fff" : COLORS.text }}>{l}</button>)}
+        {[["all", "All"], ["over", "🟠 Overplanned"], ["soldout", "🔴 Sold out early"], ["hit", "🟢 Hit"]].map(([f, l]) => <button key={f} onClick={() => setFilt(f)} style={{ padding: "6px 12px", borderRadius: 16, fontWeight: 700, cursor: "pointer", border: `1px solid ${filt === f ? COLORS.light : COLORS.border}`, background: filt === f ? COLORS.light : "#fff", color: filt === f ? "#fff" : COLORS.text }}>{l}</button>)}
         <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ color: COLORS.muted }} title="Item quantity = qty_pots (what sells). As-entered shows the raw plan number before pot→pack conversion.">units:</span>
           {[["pots", "Item qty"], ["raw", "As entered"]].map(([k, l]) => <button key={k} onClick={() => setBasis(k)} style={{ padding: "6px 10px", borderRadius: 16, fontSize: 11, fontWeight: 700, cursor: "pointer", border: `1px solid ${basis === k ? COLORS.dark : COLORS.border}`, background: basis === k ? COLORS.dark : "#fff", color: basis === k ? "#fff" : COLORS.text }}>{l}</button>)}
           <span style={{ color: COLORS.muted, marginLeft: 4 }}>{shown.length} items</span>
         </span>
       </div>
-      <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, overflow: "auto" }}>
+      <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, overflow: "auto", maxHeight: "72vh" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead><tr>
-            <th style={th}>Item</th><th style={{ ...th, textAlign: "right" }}>Planned</th><th style={{ ...th, textAlign: "right" }}>Sold</th>
-            <th style={{ ...th, textAlign: "right" }}>Sell-thru</th><th style={th}>Status</th><th style={{ ...th, textAlign: "right" }}>Lost $</th>
-            <th style={{ ...th, textAlign: "right" }}>2026 $</th><th style={th}>Demand (wk{season.weeks[0]}–{season.weeks[season.weeks.length - 1]})</th><th style={th}>Timing</th>
+            <SortHdr col="item" label="Item" />
+            <SortHdr col="planned" label="Planned" align="right" />
+            <SortHdr col="sold" label="Sold" align="right" />
+            <SortHdr col="st" label="Sell-thru" align="right" />
+            <SortHdr col="status" label="Status" />
+            <SortHdr col="over" label="Over $" align="right" />
+            <SortHdr col="lostEst" label="Lost $" align="right" />
+            <SortHdr col="rev" label="2026 $" align="right" />
+            <SortHdr col="peak" label={`Demand (wk${season.weeks[0]}–${season.weeks[season.weeks.length - 1]})`} />
+            <th style={stickyTh}>Timing</th>
           </tr></thead>
           <tbody>
             {shown.slice(0, 500).map((r, i) => {
               const late = r.ship != null && r.peak != null && r.ship > r.peak;
+              const badge = r.status === "SOLDOUT" ? { bg: COLORS.red, t: "SOLD OUT" } : r.status === "HIT" ? { bg: "#5e9c4a", t: "HIT" } : r.status === "NOSALE" ? { bg: "#c8d0c0", t: "NOSALE" } : { bg: COLORS.amber, t: "OVER" };
               return (
                 <tr key={i} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
                   <td style={{ ...td, fontWeight: 600 }}>{r.item}{r.converted && <span title="entered in individual pots — shown in the sold pack (flat/case) to match sales" style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: COLORS.muted }}>⤵</span>}</td>
                   <td style={{ ...td, textAlign: "right" }}>{dPlanned(r).toLocaleString()}</td>
                   <td style={{ ...td, textAlign: "right" }}>{dSold(r).toLocaleString()}</td>
                   <td style={{ ...td, textAlign: "right", fontWeight: 700, color: r.st >= 1 ? "#2e7d32" : r.st < 0.6 ? COLORS.red : COLORS.text }}>{Math.round(r.st * 100)}%</td>
-                  <td style={td}><span style={{ fontSize: 10, fontWeight: 800, padding: "1px 6px", borderRadius: 8, color: "#fff", background: r.status === "HIT" ? "#5e9c4a" : r.status === "NOSALE" ? "#c8d0c0" : "#e89a3a" }}>{r.status}</span></td>
-                  <td style={{ ...td, textAlign: "right", fontWeight: 700, color: r.lost > 0 ? COLORS.red : COLORS.muted }}>{r.lost ? fmtMoney(r.lost) : "—"}</td>
+                  <td style={td}><span title={r.status === "SOLDOUT" ? `sold out wk${r.lastWk} (before wk${r.cutoff} cutoff) — grow more` : ""} style={{ fontSize: 10, fontWeight: 800, padding: "1px 6px", borderRadius: 8, color: "#fff", background: badge.bg }}>{badge.t}</span></td>
+                  <td style={{ ...td, textAlign: "right", fontWeight: 700, color: r.over > 0 ? COLORS.amber : COLORS.muted }}>{r.over ? fmtMoney(r.over) : "—"}</td>
+                  <td style={{ ...td, textAlign: "right", fontWeight: 700, color: r.lostEst > 0 ? COLORS.red : COLORS.muted }}>{r.lostEst ? fmtMoney(r.lostEst) : "—"}</td>
                   <td style={{ ...td, textAlign: "right", color: COLORS.muted }}>{fmtMoney(r.rev)}</td>
                   <td style={{ ...td, fontFamily: "monospace", color: "#4a6b3a", letterSpacing: 1 }} title={r.peak ? `peak wk${r.peak}` : "no weekly sales"}>{spark(r.wk)}{r.peak ? <span style={{ color: COLORS.muted, fontSize: 10, letterSpacing: 0 }}> wk{r.peak}</span> : null}</td>
                   <td style={td}>{r.ship != null && r.peak != null ? <span style={{ fontSize: 11, fontWeight: 700, color: late ? COLORS.red : "#2e7d32" }} title={`finishes ~wk${r.ship}, demand peaks wk${r.peak}`}>{late ? `⚠ wk${r.ship}→${r.peak}` : `✓ wk${r.ship}`}</span> : <span style={{ color: "#c8d0c0" }}>—</span>}</td>
