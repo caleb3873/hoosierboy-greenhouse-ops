@@ -326,6 +326,7 @@ const PLAN_TABS = [
   { id: "plugs",     label: "🧮 Plug Orders" },
   { id: "sales",     label: "📈 Sales vs Plan" },
   { id: "orders",    label: "📋 Orders" },
+  { id: "sourcing",  label: "🧭 Sourcing" },
   { id: "inputs",    label: "⚙ Inputs" },
   { id: "pricing",   label: "💰 Pricing" },
   { id: "items",     label: "📑 Items" },
@@ -452,7 +453,7 @@ function PlanDashboard({ plan, initialTab }) {
         </>
       ) : (
         <>
-          {!hasData && tab !== "tasks" && (
+          {!hasData && tab !== "tasks" && tab !== "sourcing" && (
             <div style={{ background: COLORS.card, border: `1px dashed ${COLORS.border}`, borderRadius: 10, padding: 40, textAlign: "center", color: COLORS.muted }}>
               <div style={{ fontSize: 24, marginBottom: 8 }}>📋</div>
               <div>No scheduled crops yet for <strong>{plan.name}</strong>.</div>
@@ -472,6 +473,7 @@ function PlanDashboard({ plan, initialTab }) {
           {hasData && tab === "plugs"     && <PlugOrdersTab plan={plan} />}
           {hasData && tab === "sales"     && <SalesVsPlanTab plan={plan} />}
           {hasData && tab === "orders"    && <OrdersTab plan={plan} />}
+          {tab === "sourcing"  && <SourcingTab plan={plan} />}
           {hasData && tab === "inputs"    && <InputsTab plan={plan} />}
           {hasData && tab === "pricing"   && <PricingTab plan={plan} />}
           {hasData && tab === "items"     && <ItemsTab plan={plan} />}
@@ -1304,12 +1306,28 @@ function PlugOrdersTab({ plan }) {
 // ── Sales vs Plan tab ─────────────────────────────────────────────────────────
 // 2026 actual sales (sales_totals + sales_weekly) matched to this plan's finished
 // items via the sales_sku_map crosswalk → sell-through, lost sales, demand timing.
+// Pots can sell in multi-packs, and plan vs sales aren't always in the same unit:
+//  • 4.5" → flat of 10; plan qty is ALSO in flats (both sides ×10 → finished pots)
+//  • 6.5" → case of 6 when case-priced (>$20); plan qty is in individual POTS (mismatch!)
+//  • everything else → individual on both sides
+// caseSizeForItem = pots per SOLD unit (price-aware) · planMultForItem = pots per PLAN unit.
+const caseSizeForItem = (n, price) => {
+  const s = String(n || "");
+  if (/^\s*4\.5"/.test(s)) return 10;
+  if (/^\s*6\.5"/.test(s) && price > 20) return 6;
+  return 1;
+};
+const planMultForItem = n => (/^\s*4\.5"/.test(String(n || "")) ? 10 : 1);
+const sizeTokenForItem = n => (String(n || "").trim().match(/^(HB\s*\d+"?|\d+(?:\.\d+)?"|1801[LS]?|FIBER|POT|MARKET|BOWL|[A-Za-z]+)/) || ["—"])[0].toUpperCase();
 function SalesVsPlanTab({ plan }) {
   const sb = getSupabase();
   const [rows, setRows] = useState(null);
   const [season, setSeason] = useState(null);
   const [sortBy, setSortBy] = useState("lost");
   const [filt, setFilt] = useState("all");
+  const [query, setQuery] = useState("");
+  const [sizeFilt, setSizeFilt] = useState("all");
+  const [basis, setBasis] = useState("pots"); // "pots" = normalized finished pots · "raw" = as-entered units
   useEffect(() => {
     if (!sb) return;
     const COMPONENT = /\bVINE\b|\bIVY\b|HEDERA|MU[EH]+LENBECKIA|CAREX/i;
@@ -1333,7 +1351,9 @@ function SalesVsPlanTab({ plan }) {
         const planned = planByItem[it], s = sold[it] || 0, price = prn[it] ? prc[it] / prn[it] : 0;
         const wkA = wkly[it] || Array(weeks.length).fill(0);
         const peak = wkA.some(x => x > 0) ? weeks[wkA.indexOf(Math.max(...wkA))] : null;
-        out.push({ item: it, planned, sold: s, st: planned ? s / planned : 0, lost: s < planned ? Math.round((planned - s) * price) : 0, rev: Math.round(rev[it] || 0), wk: wkA, peak, ship: shipByItem[it] ?? null, status: s >= planned ? "HIT" : (s === 0 ? "NOSALE" : "SHORT") });
+        const cs = caseSizeForItem(it, price), pm = planMultForItem(it);
+        const plannedPots = planned * pm, soldPots = s * cs, pricePerPot = cs ? price / cs : price;
+        out.push({ item: it, size: sizeTokenForItem(it), caseSize: cs, planMult: pm, planned, sold: s, plannedPots, soldPots, st: plannedPots ? soldPots / plannedPots : 0, lost: soldPots < plannedPots ? Math.round((plannedPots - soldPots) * pricePerPot) : 0, rev: Math.round(rev[it] || 0), wk: wkA, peak, ship: shipByItem[it] ?? null, status: soldPots >= plannedPots ? "HIT" : (s === 0 ? "NOSALE" : "SHORT") });
       }
       setRows(out); setSeason({ weeks, seasonRev });
     })();
@@ -1341,15 +1361,22 @@ function SalesVsPlanTab({ plan }) {
   if (!rows) return <div style={{ padding: 20, color: COLORS.muted }}>Loading sales vs plan…</div>;
   if (!rows.length) return <div style={{ padding: 20, color: COLORS.muted }}>No matched sales yet — the SKU crosswalk (sales_sku_map) is empty for this plan's items.</div>;
   const spark = a => { const m = Math.max(...a) || 1; return a.map(v => " ▁▂▃▄▅▆▇█"[Math.round(v / m * 8)]).join(""); };
-  const tPlanned = rows.reduce((a, r) => a + r.planned, 0), tSold = rows.reduce((a, r) => a + r.sold, 0);
+  // sell-through (r.st) is ALWAYS computed in normalized finished pots; basis only changes display
+  const dPlanned = r => basis === "raw" ? r.planned : r.plannedPots;
+  const dSold = r => basis === "raw" ? r.sold : r.soldPots;
+  const tPlanned = rows.reduce((a, r) => a + dPlanned(r), 0), tSold = rows.reduce((a, r) => a + dSold(r), 0);
   const tLost = rows.reduce((a, r) => a + r.lost, 0), tRev = rows.reduce((a, r) => a + r.rev, 0);
   const maxR = Math.max(...season.seasonRev, 1); const pkWk = season.weeks[season.seasonRev.indexOf(maxR)];
-  const shown = rows.filter(r => filt === "all" ? true : filt === "short" ? r.status === "SHORT" : r.status === "HIT")
-    .sort((a, b) => sortBy === "lost" ? b.lost - a.lost : sortBy === "st" ? a.st - b.st : sortBy === "rev" ? b.rev - a.rev : b.sold - a.sold);
+  const sizes = ["all", ...Array.from(new Set(rows.map(r => r.size))).sort()];
+  const q = query.trim().toLowerCase();
+  const shown = rows.filter(r => (filt === "all" ? true : filt === "short" ? r.status === "SHORT" : r.status === "HIT")
+      && (sizeFilt === "all" || r.size === sizeFilt)
+      && (!q || r.item.toLowerCase().includes(q)))
+    .sort((a, b) => sortBy === "lost" ? b.lost - a.lost : sortBy === "st" ? a.st - b.st : sortBy === "rev" ? b.rev - a.rev : b.soldPots - a.soldPots);
   return (
     <div style={{ display: "grid", gap: 14 }}>
       <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "12px 14px", fontSize: 12, color: COLORS.muted }}>
-        2026 actual sales vs this plan, matched by SKU crosswalk. <strong>Sell-through</strong> = sold ÷ planned · <strong>Lost $</strong> = (planned − sold) × price on short items · demand sparkline = weekly units (wk{season.weeks[0]}–wk{season.weeks[season.weeks.length - 1]}).
+        2026 actual sales vs this plan, matched by SKU crosswalk. <strong>Sell-through</strong> = sold ÷ planned · <strong>Lost $</strong> = (planned − sold) × price on short items · demand sparkline = weekly units (wk{season.weeks[0]}–wk{season.weeks[season.weeks.length - 1]}). Multi-packs are normalized to <strong>finished pots</strong>: <strong>4.5"</strong> flat of 10 (×10), <strong>6.5"</strong> case of 6 when case-priced &gt;$20 (×6). Sell-through is always computed on finished pots — so a 6.5" planned in pots vs sold in cases still reconciles. Flip <strong>units → As entered</strong> to see raw flats/cases.
       </div>
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
         <RevStat label="Sell-through" value={tPlanned ? Math.round(tSold / tPlanned * 100) + "%" : "—"} accent={COLORS.dark} />
@@ -1369,10 +1396,20 @@ function SalesVsPlanTab({ plan }) {
         <div style={{ display: "flex", gap: 4, marginTop: 3 }}>{season.weeks.map(w => <div key={w} style={{ flex: 1, fontSize: 9, color: COLORS.muted, textAlign: "center" }}>{w}</div>)}</div>
       </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", fontSize: 12 }}>
+        <input value={query} onChange={e => setQuery(e.target.value)} placeholder="🔍 Search item…"
+          style={{ padding: "7px 11px", borderRadius: 16, border: `1px solid ${COLORS.border}`, fontSize: 12.5, fontFamily: "inherit", width: 200, boxSizing: "border-box" }} />
+        <select value={sizeFilt} onChange={e => setSizeFilt(e.target.value)}
+          style={{ padding: "7px 10px", borderRadius: 16, border: `1px solid ${sizeFilt !== "all" ? COLORS.light : COLORS.border}`, fontSize: 12, fontFamily: "inherit", background: "#fff", color: COLORS.text, cursor: "pointer" }}>
+          {sizes.map(s => <option key={s} value={s}>{s === "all" ? "All sizes" : s}</option>)}
+        </select>
         {["all", "short", "hit"].map(f => <button key={f} onClick={() => setFilt(f)} style={{ padding: "6px 12px", borderRadius: 16, fontWeight: 700, cursor: "pointer", border: `1px solid ${filt === f ? COLORS.light : COLORS.border}`, background: filt === f ? COLORS.light : "#fff", color: filt === f ? "#fff" : COLORS.text }}>{f === "all" ? "All" : f === "short" ? "🔴 Short" : "🟢 Sold out"}</button>)}
         <span style={{ marginLeft: 8, color: COLORS.muted }}>sort:</span>
-        {[["lost", "Lost $"], ["st", "Sell-through"], ["rev", "Revenue"], ["sold", "Units"]].map(([k, l]) => <button key={k} onClick={() => setSortBy(k)} style={{ padding: "6px 10px", borderRadius: 16, fontSize: 11, fontWeight: 700, cursor: "pointer", border: `1px solid ${sortBy === k ? COLORS.dark : COLORS.border}`, background: sortBy === k ? COLORS.dark : "#fff", color: sortBy === k ? "#fff" : COLORS.text }}>{l}</button>)}
-        <span style={{ marginLeft: "auto", color: COLORS.muted }}>{shown.length} items</span>
+        {[["lost", "Lost $"], ["st", "Sell-through"], ["rev", "Revenue"], ["sold", "Volume"]].map(([k, l]) => <button key={k} onClick={() => setSortBy(k)} style={{ padding: "6px 10px", borderRadius: 16, fontSize: 11, fontWeight: 700, cursor: "pointer", border: `1px solid ${sortBy === k ? COLORS.dark : COLORS.border}`, background: sortBy === k ? COLORS.dark : "#fff", color: sortBy === k ? "#fff" : COLORS.text }}>{l}</button>)}
+        <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ color: COLORS.muted }} title="Finished pots normalizes flats (4.5&quot;×10) &amp; cases (6.5&quot;×6) so every size compares honestly. As-entered shows raw flats/cases/pots.">units:</span>
+          {[["pots", "Finished pots"], ["raw", "As entered"]].map(([k, l]) => <button key={k} onClick={() => setBasis(k)} style={{ padding: "6px 10px", borderRadius: 16, fontSize: 11, fontWeight: 700, cursor: "pointer", border: `1px solid ${basis === k ? COLORS.dark : COLORS.border}`, background: basis === k ? COLORS.dark : "#fff", color: basis === k ? "#fff" : COLORS.text }}>{l}</button>)}
+          <span style={{ color: COLORS.muted, marginLeft: 4 }}>{shown.length} items</span>
+        </span>
       </div>
       <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, overflow: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
@@ -1386,9 +1423,9 @@ function SalesVsPlanTab({ plan }) {
               const late = r.ship != null && r.peak != null && r.ship > r.peak;
               return (
                 <tr key={i} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
-                  <td style={{ ...td, fontWeight: 600 }}>{r.item}</td>
-                  <td style={{ ...td, textAlign: "right" }}>{r.planned.toLocaleString()}</td>
-                  <td style={{ ...td, textAlign: "right" }}>{r.sold.toLocaleString()}</td>
+                  <td style={{ ...td, fontWeight: 600 }}>{r.item}{r.caseSize > 1 && <span title={`sold as a flat of ${r.caseSize}`} style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: COLORS.muted }}>×{r.caseSize}</span>}</td>
+                  <td style={{ ...td, textAlign: "right" }}>{dPlanned(r).toLocaleString()}</td>
+                  <td style={{ ...td, textAlign: "right" }}>{dSold(r).toLocaleString()}</td>
                   <td style={{ ...td, textAlign: "right", fontWeight: 700, color: r.st >= 1 ? "#2e7d32" : r.st < 0.6 ? COLORS.red : COLORS.text }}>{Math.round(r.st * 100)}%</td>
                   <td style={td}><span style={{ fontSize: 10, fontWeight: 800, padding: "1px 6px", borderRadius: 8, color: "#fff", background: r.status === "HIT" ? "#5e9c4a" : r.status === "NOSALE" ? "#c8d0c0" : "#e89a3a" }}>{r.status}</span></td>
                   <td style={{ ...td, textAlign: "right", fontWeight: 700, color: r.lost > 0 ? COLORS.red : COLORS.muted }}>{r.lost ? fmtMoney(r.lost) : "—"}</td>
@@ -4705,6 +4742,260 @@ function ChartLegend({ series }) {
           <span style={{ color: COLORS.text, fontWeight: 600 }}>{s.name}</span>
         </div>
       ))}
+    </div>
+  );
+}
+
+// ── Sourcing tab — cross-broker price comparison + per-supplier broker choice ─
+// Data comes from broker_prices (parsed from Ball/EHR/Express quote workbooks via
+// scripts/parse_broker_quotes.js). Landed cost = plant + royalty + freight (no tag),
+// with EHR's negotiated volume-tier + discount baked in. Match grain: supplier → form → variety.
+const SRC_SEASON = "2026-2027";
+const SRC_BROKERS = ["Ball", "EHR", "Express"];
+const SRC_SUPPLIER_LABEL = {
+  Dummen: "Dümmen Orange", Danziger: "Danziger", Darwin: "Darwin Perennials",
+  Syngenta: "Syngenta", Beekenkamp: "Beekenkamp", PlantSource: "Plant Source Int'l",
+  QualityCuttings: "Quality Cuttings", GreenCircle: "Green Circle Growers",
+  Raker: "Raker-Roberta's", Pell: "Pell", Walters: "Walters Gardens",
+  CreekHill: "Creek Hill", EmeraldCoast: "Emerald Coast", GardenSolutions: "Garden Solutions",
+  Hishtil: "Hishtil",
+};
+const SRC_FORM_LABEL = {
+  urc: "URC · unrooted", callused: "Callused", liner: "Liner", plug: "Plug",
+  rooted: "Rooted cutting", bareroot: "Bareroot", prefinished: "Prefinished",
+  urc_autostix: "URC · AutoStix", other: "Other",
+};
+const SRC_BROKER_NOTE = {
+  Ball: "Best online ordering · exclusive Ball & Selecta genetics · no interest until June · rep less responsive",
+  EHR: "Very responsive local rep · best for precision crops (mums, poinsettias) · calls early on shortages",
+  Express: "Strong on foliage · exclusives via the Van Wingerden network · newer relationship",
+};
+const srcSup = s => SRC_SUPPLIER_LABEL[s] || s;
+const srcFormLabel = f => SRC_FORM_LABEL[f] || f || "—";
+function srcBrokerColor(b) { return b === "Ball" ? "#1976d2" : b === "EHR" ? "#3d7a2f" : "#c8791a"; }
+function srcGradeFor(broker, profiles) {
+  const re = broker === "Ball" ? /ball/i : broker === "EHR" ? /ehr/i : /express/i;
+  const p = (profiles || []).find(x => re.test(x.name || ""));
+  const g = p && p.grade_overall != null ? parseFloat(p.grade_overall) : null;
+  return g && g > 0 ? g : null;
+}
+const money = v => (v == null ? "—" : "$" + Number(v).toFixed(4));
+
+function SourcingTab({ plan }) {
+  const sb = getSupabase();
+  const [suppliers, setSuppliers]   = useState(null);
+  const [profiles, setProfiles]     = useState([]);
+  const [selections, setSelections] = useState({}); // supplier -> selected_broker
+  const [expanded, setExpanded]     = useState(null);
+  const [detail, setDetail]         = useState({}); // supplier -> rows
+  const [detailBusy, setDetailBusy] = useState(false);
+  const [search, setSearch]         = useState("");
+
+  useEffect(() => {
+    if (!sb) return;
+    sb.from("v_sourcing_suppliers").select("*").then(({ data }) =>
+      setSuppliers((data || []).slice().sort((a, b) => (b.comparable_count || 0) - (a.comparable_count || 0) || (b.variety_count || 0) - (a.variety_count || 0))));
+    sb.from("broker_profiles").select("name,grade_overall,rep_name").then(({ data }) => setProfiles(data || []));
+    sb.from("sourcing_selections").select("*").eq("season", SRC_SEASON).then(({ data }) => {
+      const m = {}; (data || []).forEach(s => { if (s.form_class === "*") m[s.supplier] = s.selected_broker; });
+      setSelections(m);
+    });
+  }, [sb]);
+
+  async function pick(supplier, broker) {
+    setSelections(prev => ({ ...prev, [supplier]: prev[supplier] === broker ? null : broker }));
+    const chosen = selections[supplier] === broker ? null : broker;
+    await sb.from("sourcing_selections").upsert(
+      { supplier, form_class: "*", season: SRC_SEASON, selected_broker: chosen, updated_at: new Date().toISOString() },
+      { onConflict: "supplier,form_class,season" });
+  }
+
+  async function loadDetail(supplier) {
+    if (detail[supplier]) return;
+    setDetailBusy(true);
+    const out = [];
+    for (let f = 0; ; f += 1000) {
+      const { data } = await sb.from("v_sourcing_prices")
+        .select("form_class,variety_key,variety,crop,broker,landed,has_excl")
+        .eq("supplier", supplier).range(f, f + 999);
+      if (!data || !data.length) break;
+      out.push(...data);
+      if (data.length < 1000) break;
+    }
+    setDetail(prev => ({ ...prev, [supplier]: out }));
+    setDetailBusy(false);
+  }
+  function toggle(supplier) {
+    setSearch("");
+    if (expanded === supplier) setExpanded(null);
+    else { setExpanded(supplier); loadDetail(supplier); }
+  }
+
+  if (suppliers == null) return <div style={{ padding: 40, color: COLORS.muted, fontFamily: "'DM Sans',sans-serif" }}>Loading broker pricing…</div>;
+
+  const competitive = suppliers.filter(s => (s.comparable_count || 0) > 0);
+  const single = suppliers.filter(s => (s.comparable_count || 0) === 0);
+  const totalComparable = competitive.reduce((n, s) => n + (s.comparable_count || 0), 0);
+
+  return (
+    <div style={{ fontFamily: "'DM Sans','Segoe UI',sans-serif", color: COLORS.text }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12, marginBottom: 14 }}>
+        <div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: COLORS.dark }}>🧭 Sourcing — broker price comparison</div>
+          <div style={{ fontSize: 13, color: COLORS.muted, maxWidth: 680, marginTop: 4 }}>
+            Same genetics, different brokers. Landed cost = plant + royalty + freight (EHR volume-tier &amp; your negotiated discounts applied).
+            Pick the broker for each <strong>supplier program</strong> — that choice is what should drive your plan pricing.
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <SrcStat label="Suppliers" value={suppliers.length} />
+          <SrcStat label="Comparable lanes" value={totalComparable} color={COLORS.light} />
+          <SrcStat label="Exclusives" value={single.length} color={COLORS.amber} />
+        </div>
+      </div>
+
+      <SrcSectionTitle>Where you can shop brokers</SrcSectionTitle>
+      {competitive.map(s => (
+        <SrcSupplierCard key={s.supplier} s={s} profiles={profiles}
+          selected={selections[s.supplier]} onPick={pick}
+          expanded={expanded === s.supplier} onToggle={() => toggle(s.supplier)}
+          detail={detail[s.supplier]} detailBusy={detailBusy && expanded === s.supplier}
+          search={search} setSearch={setSearch} />
+      ))}
+
+      <SrcSectionTitle>Single-source (exclusive — only one broker quotes these)</SrcSectionTitle>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(220px,1fr))", gap: 8 }}>
+        {single.map(s => {
+          const only = (s.brokers || [])[0];
+          return (
+            <div key={s.supplier} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderLeft: `4px solid ${srcBrokerColor(only)}`, borderRadius: 10, padding: "10px 12px" }}>
+              <div style={{ fontWeight: 700, color: COLORS.dark }}>{srcSup(s.supplier)}</div>
+              <div style={{ fontSize: 12, color: COLORS.muted, marginTop: 2 }}>{s.variety_count} varieties · only via <span style={{ color: srcBrokerColor(only), fontWeight: 700 }}>{only}</span></div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function SrcStat({ label, value, color }) {
+  return (
+    <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "8px 14px", textAlign: "center", minWidth: 74 }}>
+      <div style={{ fontSize: 20, fontWeight: 800, color: color || COLORS.dark }}>{value}</div>
+      <div style={{ fontSize: 10, color: COLORS.muted, textTransform: "uppercase", letterSpacing: .5 }}>{label}</div>
+    </div>
+  );
+}
+function SrcSectionTitle({ children }) {
+  return <div style={{ fontSize: 12, fontWeight: 800, color: COLORS.muted, textTransform: "uppercase", letterSpacing: .8, margin: "20px 0 8px" }}>{children}</div>;
+}
+
+function SrcSupplierCard({ s, profiles, selected, onPick, expanded, onToggle, detail, detailBusy, search, setSearch }) {
+  const brokers = (s.brokers || []).filter(b => SRC_BROKERS.includes(b));
+  const rec = s.rec_broker;
+  return (
+    <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 12, marginBottom: 8, overflow: "hidden" }}>
+      <div onClick={onToggle} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", cursor: "pointer", flexWrap: "wrap" }}>
+        <div style={{ fontSize: 13, color: COLORS.muted, width: 14 }}>{expanded ? "▾" : "▸"}</div>
+        <div style={{ minWidth: 160 }}>
+          <div style={{ fontWeight: 800, color: COLORS.dark, fontSize: 16 }}>{srcSup(s.supplier)}</div>
+          <div style={{ fontSize: 11.5, color: COLORS.muted }}>{s.variety_count} varieties · {s.comparable_count} comparable</div>
+        </div>
+        {rec && (
+          <div style={{ background: "#eef6e7", border: `1px solid ${COLORS.light}`, borderRadius: 20, padding: "3px 10px", fontSize: 12, color: COLORS.dark }}>
+            ⭐ Cheapest most often: <strong style={{ color: srcBrokerColor(rec) }}>{rec}</strong>
+            {s.avg_spread_pct != null && <span style={{ color: COLORS.muted }}> · avg {s.avg_spread_pct}% spread</span>}
+          </div>
+        )}
+        <div style={{ flex: 1 }} />
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }} onClick={e => e.stopPropagation()}>
+          <span style={{ fontSize: 11, color: COLORS.muted }}>Buy through:</span>
+          {brokers.map(b => {
+            const on = selected === b;
+            const grade = srcGradeFor(b, profiles);
+            return (
+              <button key={b} onClick={() => onPick(s.supplier, b)} title={SRC_BROKER_NOTE[b]}
+                style={{
+                  border: `1.5px solid ${on ? srcBrokerColor(b) : COLORS.border}`,
+                  background: on ? srcBrokerColor(b) : "#fff", color: on ? "#fff" : COLORS.text,
+                  borderRadius: 8, padding: "5px 11px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+                }}>
+                {on ? "✓ " : ""}{b}{grade ? <span style={{ opacity: .7, fontWeight: 400 }}> ★{grade}</span> : null}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      {expanded && <SrcDetail detail={detail} detailBusy={detailBusy} selected={selected} search={search} setSearch={setSearch} />}
+    </div>
+  );
+}
+
+function SrcDetail({ detail, detailBusy, selected, search, setSearch }) {
+  if (detailBusy || !detail) return <div style={{ padding: 16, color: COLORS.muted, fontSize: 13 }}>Loading varieties…</div>;
+  // group to one row per form|variety with each broker's landed price
+  const groups = {};
+  for (const r of detail) {
+    const k = r.form_class + "|" + r.variety_key;
+    if (!groups[k]) groups[k] = { form: r.form_class, key: r.variety_key, variety: r.variety, crop: r.crop, excl: false, prices: {} };
+    if (groups[k].prices[r.broker] == null || r.landed < groups[k].prices[r.broker]) groups[k].prices[r.broker] = r.landed;
+    if (r.has_excl) groups[k].excl = true;
+  }
+  let rows = Object.values(groups);
+  const q = search.trim().toLowerCase();
+  if (q) rows = rows.filter(r => (r.variety || "").toLowerCase().includes(q) || (r.crop || "").toLowerCase().includes(q));
+  // multi-broker (comparable) first, then alpha
+  rows.sort((a, b) => Object.keys(b.prices).length - Object.keys(a.prices).length || (a.variety || "").localeCompare(b.variety || ""));
+  const total = rows.length;
+  const CAP = 400;
+  const shown = rows.slice(0, CAP);
+  // which form classes appear
+  const byForm = {};
+  for (const r of shown) (byForm[r.form] = byForm[r.form] || []).push(r);
+
+  return (
+    <div style={{ borderTop: `1px solid ${COLORS.border}`, padding: "10px 14px 16px", background: "#fcfdfb" }}>
+      <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Filter varieties…"
+        style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${COLORS.border}`, fontSize: 13, fontFamily: "inherit", marginBottom: 10, width: 240, boxSizing: "border-box" }} />
+      {Object.entries(byForm).map(([form, list]) => (
+        <div key={form} style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 12, fontWeight: 800, color: COLORS.muted, margin: "6px 0 4px" }}>{srcFormLabel(form)} <span style={{ fontWeight: 400 }}>({list.length})</span></div>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+            <thead>
+              <tr style={{ textAlign: "left", color: COLORS.muted }}>
+                <th style={{ padding: "4px 8px", fontWeight: 700 }}>Variety</th>
+                {SRC_BROKERS.map(b => (
+                  <th key={b} style={{ padding: "4px 8px", textAlign: "right", fontWeight: 700, color: srcBrokerColor(b), background: selected === b ? "#eef6e7" : "transparent" }}>{b}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {list.map((r, i) => {
+                const present = SRC_BROKERS.filter(b => r.prices[b] != null);
+                const lo = Math.min(...present.map(b => r.prices[b]));
+                return (
+                  <tr key={i} style={{ borderTop: `1px solid ${COLORS.border}` }}>
+                    <td style={{ padding: "4px 8px", color: COLORS.text }}>{r.variety}{r.excl && <span title="exclusive" style={{ marginLeft: 6, fontSize: 10, color: COLORS.amber }}>◆</span>}</td>
+                    {SRC_BROKERS.map(b => {
+                      const v = r.prices[b];
+                      const cheapest = v != null && v === lo && present.length > 1;
+                      return (
+                        <td key={b} style={{
+                          padding: "4px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums",
+                          background: selected === b ? "#eef6e7" : cheapest ? "#dcedc8" : "transparent",
+                          fontWeight: cheapest ? 800 : 400, color: v == null ? "#cbd5c0" : COLORS.text,
+                        }}>{v == null ? "—" : money(v)}</td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ))}
+      {total > CAP && <div style={{ fontSize: 12, color: COLORS.muted, marginTop: 4 }}>Showing first {CAP} of {total} — use the filter to narrow.</div>}
     </div>
   );
 }
