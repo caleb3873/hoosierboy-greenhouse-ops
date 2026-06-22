@@ -1310,17 +1310,14 @@ function PlugOrdersTab({ plan }) {
 //  • 4.5" → flat of 10; plan qty is ALSO in flats (both sides ×10 → finished pots)
 //  • 6.5" → case of 6 when case-priced (>$20); plan qty is in individual POTS (mismatch!)
 //  • everything else → individual on both sides
-// Put plan & sold on the same basis using the plan row's own ppp / plants_per_unit (data-driven,
-// not hardcoded by size):
-//  • single-plant pots (4.5", 6.5", POT, 8"…): order-quantity basis — planned = qty_pots × ppp,
-//    sold = units × plants_per_unit (4.5" flat = 10, 6.5" case = 6, single pot = 1). qty_pots is
-//    stored as flats for some 4.5" (ppp=10) and as pots for others (ppp=1); × ppp normalizes both.
-//  • multi-plant baskets/combos (ppp>1 & plants_per_unit≤1, e.g. HB / FIBER): compare in finished
-//    units — qty_pots × ppp would be plants while sold is in baskets, so don't multiply either side.
-function unitMults(ppp, ppu) {
+// Sales compares ITEM QUANTITY (sellable units) to sold units — ppp is irrelevant here (ppp only
+// drives plant/order counts: order qty = qty_pots × ppp). qty_pots IS the item quantity. The one
+// wrinkle: a few 4.5"/6.5" are entered in individual pots while their sales are recorded in the
+// sold pack (flat / case) — detectable as ppp < plants_per_unit — so divide those by the pack size
+// (plants_per_unit) to land in the same sellable unit the sales use. Never multiply by ppp.
+function plannedItems(qtyPots, ppp, ppu) {
   ppp = +ppp || 1; ppu = +ppu || 1;
-  if (ppp > 1 && ppu <= 1) return { planMult: 1, soldMult: 1 };
-  return { planMult: ppp, soldMult: ppu };
+  return ppp >= ppu ? qtyPots : Math.max(1, Math.round(qtyPots / ppu));
 }
 const sizeTokenForItem = n => (String(n || "").trim().match(/^(HB\s*\d+"?|\d+(?:\.\d+)?"|1801[LS]?|FIBER|POT|MARKET|BOWL|[A-Za-z]+)/) || ["—"])[0].toUpperCase();
 function SalesVsPlanTab({ plan }) {
@@ -1368,9 +1365,8 @@ function SalesVsPlanTab({ plan }) {
         const planned = planByItem[it], s = sold[it] || 0, price = prn[it] ? prc[it] / prn[it] : 0;
         const wkA = wkly[it] || Array(weeks.length).fill(0);
         const peak = wkA.some(x => x > 0) ? weeks[wkA.indexOf(Math.max(...wkA))] : null;
-        const { planMult, soldMult } = unitMults(pppByItem[it], ppuByItem[it]);
-        const plannedPots = planned * planMult, soldPots = s * soldMult, pricePerPot = soldMult ? price / soldMult : price;
-        out.push({ item: it, size: sizeTokenForItem(it), caseSize: soldMult, planMult, planned, sold: s, plannedPots, soldPots, st: plannedPots ? soldPots / plannedPots : 0, lost: soldPots < plannedPots ? Math.round((plannedPots - soldPots) * pricePerPot) : 0, rev: Math.round(rev[it] || 0), wk: wkA, peak, ship: shipByItem[it] ?? null, status: soldPots >= plannedPots ? "HIT" : (s === 0 ? "NOSALE" : "SHORT") });
+        const pItems = plannedItems(planned, pppByItem[it], ppuByItem[it]);
+        out.push({ item: it, size: sizeTokenForItem(it), converted: pItems !== planned, planRaw: planned, planned: pItems, sold: s, st: pItems ? s / pItems : 0, lost: s < pItems ? Math.round((pItems - s) * price) : 0, rev: Math.round(rev[it] || 0), wk: wkA, peak, ship: shipByItem[it] ?? null, status: s >= pItems ? "HIT" : (s === 0 ? "NOSALE" : "SHORT") });
       }
       setRows(out); setSeason({ weeks, seasonRev });
     })();
@@ -1378,9 +1374,9 @@ function SalesVsPlanTab({ plan }) {
   if (!rows) return <div style={{ padding: 20, color: COLORS.muted }}>Loading sales vs plan…</div>;
   if (!rows.length) return <div style={{ padding: 20, color: COLORS.muted }}>No matched sales yet — the SKU crosswalk (sales_sku_map) is empty for this plan's items.</div>;
   const spark = a => { const m = Math.max(...a) || 1; return a.map(v => " ▁▂▃▄▅▆▇█"[Math.round(v / m * 8)]).join(""); };
-  // sell-through (r.st) is ALWAYS computed in normalized finished pots; basis only changes display
-  const dPlanned = r => basis === "raw" ? r.planned : r.plannedPots;
-  const dSold = r => basis === "raw" ? r.sold : r.soldPots;
+  // sell-through compares item quantity to sold units; "raw" shows the as-entered qty_pots
+  const dPlanned = r => basis === "raw" ? r.planRaw : r.planned;
+  const dSold = r => r.sold;
   const tPlanned = rows.reduce((a, r) => a + dPlanned(r), 0), tSold = rows.reduce((a, r) => a + dSold(r), 0);
   const tLost = rows.reduce((a, r) => a + r.lost, 0), tRev = rows.reduce((a, r) => a + r.rev, 0);
   const maxR = Math.max(...season.seasonRev, 1); const pkWk = season.weeks[season.seasonRev.indexOf(maxR)];
@@ -1389,11 +1385,11 @@ function SalesVsPlanTab({ plan }) {
   const shown = rows.filter(r => (filt === "all" ? true : filt === "short" ? r.status === "SHORT" : r.status === "HIT")
       && (sizeFilt === "all" || r.size === sizeFilt)
       && (!q || r.item.toLowerCase().includes(q)))
-    .sort((a, b) => sortBy === "lost" ? b.lost - a.lost : sortBy === "st" ? a.st - b.st : sortBy === "rev" ? b.rev - a.rev : b.soldPots - a.soldPots);
+    .sort((a, b) => sortBy === "lost" ? b.lost - a.lost : sortBy === "st" ? a.st - b.st : sortBy === "rev" ? b.rev - a.rev : b.sold - a.sold);
   return (
     <div style={{ display: "grid", gap: 14 }}>
       <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "12px 14px", fontSize: 12, color: COLORS.muted }}>
-        2026 actual sales vs this plan, matched by SKU crosswalk. <strong>Sell-through</strong> = sold ÷ planned · <strong>Lost $</strong> = (planned − sold) × price on short items · demand sparkline = weekly units (wk{season.weeks[0]}–wk{season.weeks[season.weeks.length - 1]}). Plan &amp; sold are put on one basis from each item's <strong>ppp</strong> &amp; <strong>plants&#8209;per&#8209;unit</strong>: single pots use the order quantity (planned = qty_pots×ppp, sold = units×pack&nbsp;size — 4.5" flat 10, 6.5" case 6), baskets/combos compare in finished units. Flip <strong>units → As entered</strong> to see raw counts.
+        2026 actual sales vs this plan, matched by SKU crosswalk. <strong>Sell-through</strong> = sold ÷ planned · <strong>Lost $</strong> = (planned − sold) × price on short items · demand sparkline = weekly units (wk{season.weeks[0]}–wk{season.weeks[season.weeks.length - 1]}). Compares <strong>item quantity</strong> (qty_pots) to sold units — ppp isn't used (it only drives plant/order counts). A few items entered in individual pots (marked <span style={{ fontWeight: 700, color: COLORS.muted }}>⤵</span>) are shown in their sold pack (flat/case) to match sales.
       </div>
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
         <RevStat label="Sell-through" value={tPlanned ? Math.round(tSold / tPlanned * 100) + "%" : "—"} accent={COLORS.dark} />
@@ -1423,8 +1419,8 @@ function SalesVsPlanTab({ plan }) {
         <span style={{ marginLeft: 8, color: COLORS.muted }}>sort:</span>
         {[["lost", "Lost $"], ["st", "Sell-through"], ["rev", "Revenue"], ["sold", "Volume"]].map(([k, l]) => <button key={k} onClick={() => setSortBy(k)} style={{ padding: "6px 10px", borderRadius: 16, fontSize: 11, fontWeight: 700, cursor: "pointer", border: `1px solid ${sortBy === k ? COLORS.dark : COLORS.border}`, background: sortBy === k ? COLORS.dark : "#fff", color: sortBy === k ? "#fff" : COLORS.text }}>{l}</button>)}
         <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{ color: COLORS.muted }} title="Finished units puts plan &amp; sold on one basis from each item's ppp/plants-per-unit. As-entered shows raw counts.">units:</span>
-          {[["pots", "Finished pots"], ["raw", "As entered"]].map(([k, l]) => <button key={k} onClick={() => setBasis(k)} style={{ padding: "6px 10px", borderRadius: 16, fontSize: 11, fontWeight: 700, cursor: "pointer", border: `1px solid ${basis === k ? COLORS.dark : COLORS.border}`, background: basis === k ? COLORS.dark : "#fff", color: basis === k ? "#fff" : COLORS.text }}>{l}</button>)}
+          <span style={{ color: COLORS.muted }} title="Item quantity = qty_pots (what sells). As-entered shows the raw plan number before pot→pack conversion.">units:</span>
+          {[["pots", "Item qty"], ["raw", "As entered"]].map(([k, l]) => <button key={k} onClick={() => setBasis(k)} style={{ padding: "6px 10px", borderRadius: 16, fontSize: 11, fontWeight: 700, cursor: "pointer", border: `1px solid ${basis === k ? COLORS.dark : COLORS.border}`, background: basis === k ? COLORS.dark : "#fff", color: basis === k ? "#fff" : COLORS.text }}>{l}</button>)}
           <span style={{ color: COLORS.muted, marginLeft: 4 }}>{shown.length} items</span>
         </span>
       </div>
@@ -1440,7 +1436,7 @@ function SalesVsPlanTab({ plan }) {
               const late = r.ship != null && r.peak != null && r.ship > r.peak;
               return (
                 <tr key={i} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
-                  <td style={{ ...td, fontWeight: 600 }}>{r.item}{r.caseSize > 1 && <span title={`sold in packs of ${r.caseSize}`} style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: COLORS.muted }}>×{r.caseSize}</span>}</td>
+                  <td style={{ ...td, fontWeight: 600 }}>{r.item}{r.converted && <span title="entered in individual pots — shown in the sold pack (flat/case) to match sales" style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: COLORS.muted }}>⤵</span>}</td>
                   <td style={{ ...td, textAlign: "right" }}>{dPlanned(r).toLocaleString()}</td>
                   <td style={{ ...td, textAlign: "right" }}>{dSold(r).toLocaleString()}</td>
                   <td style={{ ...td, textAlign: "right", fontWeight: 700, color: r.st >= 1 ? "#2e7d32" : r.st < 0.6 ? COLORS.red : COLORS.text }}>{Math.round(r.st * 100)}%</td>
