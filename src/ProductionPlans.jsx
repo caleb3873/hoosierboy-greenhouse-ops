@@ -1337,11 +1337,22 @@ function SalesVsPlanTab({ plan }) {
       const skuToItem = {}; xw.forEach(x => { if (x.plan_item_name) skuToItem[x.sku] = x.plan_item_name; });
       const tot = await page("sales_totals", "sku,units,revenue,avg_price");
       const wk = await page("sales_weekly", "sku,wk,units,revenue");
-      const sc = await page("scheduled_crops", "item_name,qty_pots,ship_week", ["plan_id", plan.id]);
+      const sc = await page("scheduled_crops", "id,item_name,qty_pots,ship_week,combo_parent_id,is_combo_component", ["plan_id", plan.id]);
       const weeks = [...new Set(wk.map(w => +w.wk))].sort((a, b) => a - b);
       const wIdx = Object.fromEntries(weeks.map((w, i) => [w, i]));
+      // A combo basket = one finished unit (multiple plants on a row are for ONE basket, not many).
+      // Count finished baskets, not plants. When an item has true combo-parent rows (rows that own
+      // components), only those count — any sibling non-parent "basket" rows are duplicate phantoms
+      // (e.g. mix baskets entered once per color bench) and would over-count the finished total.
+      const parentIds = new Set(sc.map(r => r.combo_parent_id).filter(Boolean));
+      const itemsWithParents = new Set(sc.filter(r => parentIds.has(r.id)).map(r => r.item_name));
       const planByItem = {}, shipByItem = {};
-      for (const r of sc) { if (!(+r.qty_pots > 0) || COMPONENT.test(r.item_name)) continue; planByItem[r.item_name] = (planByItem[r.item_name] || 0) + +r.qty_pots; if (r.ship_week != null) shipByItem[r.item_name] = Math.min(shipByItem[r.item_name] ?? 999, +r.ship_week); }
+      for (const r of sc) {
+        if (!(+r.qty_pots > 0) || r.is_combo_component || COMPONENT.test(r.item_name)) continue;
+        if (itemsWithParents.has(r.item_name) && !parentIds.has(r.id)) continue; // drop phantom duplicate basket rows
+        planByItem[r.item_name] = (planByItem[r.item_name] || 0) + +r.qty_pots;
+        if (r.ship_week != null) shipByItem[r.item_name] = Math.min(shipByItem[r.item_name] ?? 999, +r.ship_week);
+      }
       const sold = {}, rev = {}, prc = {}, prn = {}, wkly = {};
       for (const t of tot) { const it = skuToItem[t.sku]; if (!it) continue; sold[it] = (sold[it] || 0) + +t.units; rev[it] = (rev[it] || 0) + +t.revenue; prc[it] = (prc[it] || 0) + +t.avg_price; prn[it] = (prn[it] || 0) + 1; }
       for (const w of wk) { const it = skuToItem[w.sku]; if (!it) continue; (wkly[it] = wkly[it] || Array(weeks.length).fill(0))[wIdx[+w.wk]] += +w.units; }
