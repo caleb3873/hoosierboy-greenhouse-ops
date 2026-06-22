@@ -1588,8 +1588,13 @@ function PropagationTab({ plan }) {
       for (const r of prop) {
         const v = vmap[r.variety_id] || {};
         const size = +r.prop_tray_size || 0;
-        const plants = (+r.qty_pots || +r.qty_plants_ordered || 0);
-        const ppp = +r.ppp || 1; const pots = ppp ? Math.round(plants / ppp) : plants;
+        const ppp = +r.ppp || 1;
+        // Plants = the ORDER QUANTITY (cuttings/seeds to stick). qty_plants_ordered is the
+        // authoritative figure from the sheet; where it isn't filled in, compute it as
+        // pots/flats × ppp — the same need calc the Plug Orders tab uses (qty_pots holds
+        // the flat/pot count; combo components carry their count in qty_plants_ordered).
+        const plants = (+r.qty_plants_ordered || 0) > 0 ? +r.qty_plants_ordered : (+r.qty_pots || 0) * ppp;
+        const pots = (+r.qty_pots || 0) > 0 ? +r.qty_pots : Math.round((+r.qty_plants_ordered || 0) / ppp);
         const weekKey = r.ship_week != null ? `${r.ship_year}·wk${String(r.ship_week).padStart(2, "0")}` : "—";
         const key = `${r.variety_id}|${weekKey}|${size}`;
         if (!agg[key]) {
@@ -1665,7 +1670,7 @@ function PropagationTab({ plan }) {
         {r.pdf && <span onClick={() => window.open(r.pdf, "_blank")} title="Grower guide PDF — click to open" style={{ marginLeft: 6, cursor: "pointer" }}>📄</span>}
         {r.forLabel && <span onClick={() => setDetail(r)} title={"Finishes in (plant week):\n" + [...new Set((r.dests || []).map(d => `${d.item}${d.plantWk != null ? ` — plant wk${String(d.plantWk).padStart(2, "0")}` : ""}`))].join("\n")} style={{ marginLeft: 8, background: "#eef3e9", color: "#4a6b3a", fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 8, cursor: "pointer" }}>▸ {r.forLabel}</span>}
       </td>
-      <td style={{ ...td, textAlign: "right", fontWeight: 700, color: "#2e5c1e" }} title={(r.dests || []).map(d => `${d.pot}${d.isCombo ? " combo" : " finished"} — ${d.ppp}/pot × ${d.pots} pots = ${d.plants}${d.plantWk != null ? ` · plant wk${String(d.plantWk).padStart(2, "0")}${d.plantYr ? " '" + String(d.plantYr).slice(2) : ""}` : ""}`).join("\n")}>{(r.plugs || 0).toLocaleString()}</td>
+      <td style={{ ...td, textAlign: "right", fontWeight: 700, color: "#2e5c1e" }} title={(r.dests || []).map(d => `${d.pot}${d.isCombo ? " combo" : " finished"} — ${d.plants.toLocaleString()} to order · ${d.pots.toLocaleString()} pots${d.plantWk != null ? ` · plant wk${String(d.plantWk).padStart(2, "0")}${d.plantYr ? " '" + String(d.plantYr).slice(2) : ""}` : ""}`).join("\n")}>{(r.plugs || 0).toLocaleString()}</td>
       <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{r.trays}</td>
       <td style={td}>{r.needsMist === true ? <span style={{ color: "#2e7d9e" }}>💦 {mistLabel(r.mistDays)}</span> : r.needsMist === false ? <span style={{ color: COLORS.muted }}>🌵 dry</span> : <span style={{ color: "#c8d0c0" }}>—</span>}</td>
       <td style={{ ...td, textAlign: "right" }}><span style={{ background: PRIO_COLOR[r.prio], color: "#fff", fontWeight: 800, fontSize: 11, padding: "1px 7px", borderRadius: 8 }}>{r.prio === 9 ? "?" : "P" + r.prio}</span></td>
