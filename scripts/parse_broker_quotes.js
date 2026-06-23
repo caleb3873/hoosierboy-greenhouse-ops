@@ -31,10 +31,11 @@ const S = v => String(v == null ? '' : v).trim();
 // so e.g. Ball "Thyme cit Lemon" and EHR "THYMUS CITRIODORUS LEMON" both reduce to "thyme lemon".
 const SPECIES = /^(millefolium|reptans|spurium|didyma|dubium|hybrida|hybrid|aurantiaca|cordata|interspecific|x|sp|spp|species|officinalis|off|vulgaris|vul|angustifolia|angust|ang|dracunculus|drac|citriodorus|citriodora|citrata|citri|cit|intermedia|inter|piperita|pip|spicata|suaveolens|serpyllum|serp|praecox|amygdaloides|amy|lindheimeri|lind|nobilis|stoechas|st|douglasii|doug|montana|mastichina|pulegioides|herba|barona|elegans|arvensis|fruticosa|abrotanum|arborescens|canariensis|canary|pseudolanuginosus|pseudolanugin|hederacea|bonariensis|diffusa|odoratum|rebaudiana|chamaecyparissus|viridis|incisa|clinopodioides|europaea|ovata)$/;
 // Genus synonyms — canonicalize botanical & common to one token (Ball uses common, EHR often botanical)
-const GENUS_SYN = { mentha: 'mint', thymus: 'thyme', salvia: 'sage', laurus: 'bay', ocimum: 'basil', rosmarinus: 'rosemary', satureja: 'savory', origanum: 'oregano', lippia: 'lemonverbena', aloysia: 'lemonverbena', helichrysum: 'curry', helichr: 'curry', chamaemelum: 'chamomile', coriandrum: 'coriander', majorana: 'marjoram', pelargonium: 'geranium' };
-// Series/word abbreviations brokers use (EHR "Cas." for Danziger's Cascadias petunia series) →
-// expand so the abbreviated listing matches the full one (and collapses EHR's internal duplicate).
-const WORD_SYN = { cas: 'cascadias' };
+const GENUS_SYN = { mentha: 'mint', thymus: 'thyme', salvia: 'sage', laurus: 'bay', ocimum: 'basil', rosmarinus: 'rosemary', satureja: 'savory', origanum: 'oregano', lippia: 'lemonverbena', aloysia: 'lemonverbena', helichrysum: 'curry', helichr: 'curry', chamaemelum: 'chamomile', coriandrum: 'coriander', majorana: 'marjoram', pelargonium: 'geranium', lavendula: 'lavandula' };
+// Series/word abbreviations & typos brokers use → expand so the abbreviated listing matches the
+// full one (and collapses internal duplicates). cas=Cascadias, com=Compact, bic=Bicolor,
+// bestie=Besties (plural). NOT comp/vig (Compact vs Vigorous) or mega/nano — those are real diffs.
+const WORD_SYN = { cas: 'cascadias', com: 'compact', bic: 'bicolor', bestie: 'besties' };
 function tidy(s) {
   s = ' ' + String(s).toLowerCase() + ' ';
   s = s.replace(/[`'´‘’"*]/g, ' ').replace(/[™®℠]/g, ' ').replace(/#/g, ' ');
