@@ -32,6 +32,9 @@ const S = v => String(v == null ? '' : v).trim();
 const SPECIES = /^(millefolium|reptans|spurium|didyma|dubium|hybrida|hybrid|aurantiaca|cordata|interspecific|x|sp|spp|species|officinalis|off|vulgaris|vul|angustifolia|angust|ang|dracunculus|drac|citriodorus|citriodora|citrata|citri|cit|intermedia|inter|piperita|pip|spicata|suaveolens|serpyllum|serp|praecox|amygdaloides|amy|lindheimeri|lind|nobilis|stoechas|st|douglasii|doug|montana|mastichina|pulegioides|herba|barona|elegans|arvensis|fruticosa|abrotanum|arborescens|canariensis|canary|pseudolanuginosus|pseudolanugin|hederacea|bonariensis|diffusa|odoratum|rebaudiana|chamaecyparissus|viridis|incisa|clinopodioides|europaea|ovata)$/;
 // Genus synonyms — canonicalize botanical & common to one token (Ball uses common, EHR often botanical)
 const GENUS_SYN = { mentha: 'mint', thymus: 'thyme', salvia: 'sage', laurus: 'bay', ocimum: 'basil', rosmarinus: 'rosemary', satureja: 'savory', origanum: 'oregano', lippia: 'lemonverbena', aloysia: 'lemonverbena', helichrysum: 'curry', helichr: 'curry', chamaemelum: 'chamomile', coriandrum: 'coriander', majorana: 'marjoram', pelargonium: 'geranium' };
+// Series/word abbreviations brokers use (EHR "Cas." for Danziger's Cascadias petunia series) →
+// expand so the abbreviated listing matches the full one (and collapses EHR's internal duplicate).
+const WORD_SYN = { cas: 'cascadias' };
 function tidy(s) {
   s = ' ' + String(s).toLowerCase() + ' ';
   s = s.replace(/[`'´‘’"*]/g, ' ').replace(/[™®℠]/g, ' ').replace(/#/g, ' ');
@@ -73,8 +76,8 @@ function makeKey(crop, botanical, varietyName) {
   if (!genus && w.length) genus = canon(w.shift());
   // drop a leading repeated/synonym genus and any species epithets, leaving genus + cultivar
   while (w.length && (canon(w[0]) === genus || w[0] === genus || SPECIES.test(w[0]))) w.shift();
-  // sort cultivar words so word-order differences ("blue dark" vs "dark blue") still match
-  w = w.filter(x => x).sort();
+  // expand series abbreviations, then sort cultivar words ("blue dark" == "dark blue")
+  w = w.map(x => WORD_SYN[x] || x).filter(x => x).sort();
   return (genus + (w.length ? ' ' + w.join(' ') : '')).trim();
 }
 const genusOf = (crop, botanical, variety) => tidy((botanical || crop || variety || '').split(/\s+/)[0] || '');
