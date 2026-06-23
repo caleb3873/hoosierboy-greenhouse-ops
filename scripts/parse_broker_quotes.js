@@ -58,7 +58,12 @@ function classForm(raw) {
   return 'other';
 }
 function makeKey(crop, botanical, varietyName) {
-  let genus = tidy((botanical || crop || '').split(/\s+/)[0] || '');
+  // Ball prefixes herbs with a 2-letter line code ("HE Basil Coldasil", "OR Bay Laurel") — strip it
+  varietyName = String(varietyName || '').replace(/^\s*(HE|OR)\s+/, '');
+  // strip a leading generic category word from the crop so it isn't used as the genus
+  // ("HERB BASIL" -> "BASIL", "HERB" -> "") — Ball tags Hishtil herbs this way
+  const cropClean = String(crop || '').trim().replace(/^(herbs?|perennials?|annuals?|grass(es)?|vegetables?|veg|tropicals?|foliage|edibles?)\b\s*/i, '');
+  let genus = tidy((botanical || cropClean || '').split(/\s+/)[0] || '');
   let w = tidy(varietyName).split(' ').filter(Boolean);
   while (w.length > 1 && (w[0] === genus || SPECIES.test(w[0]))) w.shift();
   if (!genus && w.length) genus = w.shift();
