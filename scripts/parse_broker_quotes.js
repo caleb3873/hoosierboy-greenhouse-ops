@@ -82,6 +82,7 @@ function makeKey(crop, botanical, varietyName) {
   return (genus + (w.length ? ' ' + w.join(' ') : '')).trim();
 }
 const genusOf = (crop, botanical, variety) => tidy((botanical || crop || variety || '').split(/\s+/)[0] || '');
+const titleCase = s => String(s).toLowerCase().replace(/\b([a-z])/g, c => c.toUpperCase());
 
 // ---------- breeder from filename ----------
 function breederFromName(fn) {
@@ -237,11 +238,18 @@ function parseFile(broker, file) {
       const rawForm = cForm >= 0 ? S(r[cForm]) : '';
       const formClass = classForm(rawForm);
       const vkey = makeKey(cropV, botanical, variety);
-      const cleanVariety = variety.replace(/^\s*(HE|OR)\s+/, '').replace(/#/g, '').replace(/\s+/g, ' ').trim();
+      const cleanVariety = variety.replace(/^\s*(HE|OR)\s+/, '').replace(/[#®™℠*]/g, '').replace(/\s+/g, ' ').trim();
+      // Consistent display name "Genus Series Cultivar" — canonical genus prefixed, the variety's
+      // own word order kept so the series leads (e.g. "Calibrachoa Lia Spark Pink"); drop a leading
+      // genus the broker already included so it isn't doubled.
+      const gtok = vkey.split(' ')[0] || '';
+      const fw = tidy(cleanVariety).split(' ')[0] || '';
+      const cult = (fw && (GENUS_SYN[fw] || fw) === gtok) ? cleanVariety.split(/\s+/).slice(1).join(' ') : cleanVariety;
+      const display = titleCase((gtok + ' ' + cult).replace(/\s+/g, ' ').trim());
       out.push({
         broker, supplier: breeder, breeder, sheet: sn, form: rawForm, formClass,
         crop: cropV || botanical || variety.split(' ')[0],
-        botanical, variety: cleanVariety,
+        botanical, variety: display, rawVariety: cleanVariety,
         listPrice: +(+listPrice).toFixed(5),
         landed: +(+landed).toFixed(5),
         royalty: roy, freight: frt,
