@@ -1,0 +1,10 @@
+{
+  "_comment": "Persistent manual variety aliases for cross-broker matches the automatic rules can't catch (e.g. one broker appends a color the other omits). Key = a broker's cleaned variety name lowercased (HE/OR code, #/(R)/TM, and -CC/-URC suffix already removed); value = the canonical name to use instead. Reapplied on every parse run, so add a line once and it persists every year. To find new ones: node scripts/find_unmatched.js",
+
+  "karma amanda violet white bicolor": "Karma Amanda",
+  "karma amora bright scarlet": "Karma Amora",
+  "karma caroline coral pink": "Karma Caroline",
+  "karma irene red orange": "Karma Irene",
+  "karma naomi mahogany-red": "Karma Naomi",
+  "karma sangria pink yellow bicolor": "Karma Sangria"
+}

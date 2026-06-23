@@ -5,6 +5,9 @@
  */
 const XLSX = require('../node_modules/xlsx');
 const fs = require('fs');
+const path = require('path');
+// Persistent manual variety aliases (scripts/broker_aliases.json) — reapplied every run.
+const ALIASES = (() => { try { const a = JSON.parse(fs.readFileSync(path.join(__dirname, 'broker_aliases.json'), 'utf8')); delete a._comment; const o = {}; for (const k in a) o[k.toLowerCase()] = a[k]; return o; } catch { return {}; } })();
 
 const QUOTE_DIRS = {
   Ball:    "/Users/caleb/Desktop/Ball Quotes",
@@ -38,6 +41,9 @@ const GENUS_SYN = { mentha: 'mint', thymus: 'thyme', salvia: 'sage', laurus: 'ba
 const WORD_SYN = { cas: 'cascadias', com: 'compact', bic: 'bicolor', bestie: 'besties' };
 function tidy(s) {
   s = ' ' + String(s).toLowerCase() + ' ';
+  // transliterate accents so "Café" == "Cafe" (one broker uses é, another writes "Cafe'")
+  s = s.replace(/[áàâäãå]/g, 'a').replace(/[éèêë]/g, 'e').replace(/[íìîï]/g, 'i').replace(/[óòôöõ]/g, 'o').replace(/[úùûü]/g, 'u').replace(/ñ/g, 'n').replace(/ç/g, 'c');
+  s = s.replace(/\bw\//g, ' ').replace(/\bwith\b/g, ' ');   // "Pink W/Eye" == "Pink With Eye" == "Pink Eye"
   s = s.replace(/[`'´‘’"*]/g, ' ').replace(/[™®℠]/g, ' ').replace(/#/g, ' ');
   s = s.replace(/\bpp\s?\d+\b/g, ' ').replace(/\bppaf\b/g, ' ').replace(/\bcpbr\s?\d+\b/g, ' ')
        .replace(/\beu\s?\d*\b/g, ' ').replace(/\bp\.?p\.?a\.?f\.?\b/g, ' ');
@@ -237,10 +243,14 @@ function parseFile(broker, file) {
 
       const rawForm = cForm >= 0 ? S(r[cForm]) : '';
       const formClass = classForm(rawForm);
-      const vkey = makeKey(cropV, botanical, variety);
-      const cleanVariety = variety.replace(/^\s*(HE|OR)\s+/, '').replace(/[#®™℠*]/g, '')
+      let cleanVariety = variety.replace(/^\s*(HE|OR)\s+/, '').replace(/[#®™℠*]/g, '')
         .replace(/\s*-\s*(urc|cc|rc|tc)\b\.?/gi, '')   // drop Express form suffix "-CC"/"-URC" from the display
         .replace(/\s+/g, ' ').trim();
+      // Persistent manual aliases for one-off naming differences a broker can't normalize away —
+      // e.g. EHR appends color to named dahlias ("Karma Amanda Violet White Bicolor") while Express
+      // has just "Karma Amanda". Maintained in scripts/broker_aliases.json; reapplied every run.
+      cleanVariety = ALIASES[cleanVariety.toLowerCase()] || cleanVariety;
+      const vkey = makeKey(cropV, botanical, cleanVariety);
       // Consistent display name "Genus Series Cultivar" — canonical genus prefixed, the variety's
       // own word order kept so the series leads (e.g. "Calibrachoa Lia Spark Pink"); drop a leading
       // genus the broker already included so it isn't doubled.
