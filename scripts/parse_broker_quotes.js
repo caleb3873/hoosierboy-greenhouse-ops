@@ -238,7 +238,9 @@ function parseFile(broker, file) {
       const rawForm = cForm >= 0 ? S(r[cForm]) : '';
       const formClass = classForm(rawForm);
       const vkey = makeKey(cropV, botanical, variety);
-      const cleanVariety = variety.replace(/^\s*(HE|OR)\s+/, '').replace(/[#®™℠*]/g, '').replace(/\s+/g, ' ').trim();
+      const cleanVariety = variety.replace(/^\s*(HE|OR)\s+/, '').replace(/[#®™℠*]/g, '')
+        .replace(/\s*-\s*(urc|cc|rc|tc)\b\.?/gi, '')   // drop Express form suffix "-CC"/"-URC" from the display
+        .replace(/\s+/g, ' ').trim();
       // Consistent display name "Genus Series Cultivar" — canonical genus prefixed, the variety's
       // own word order kept so the series leads (e.g. "Calibrachoa Lia Spark Pink"); drop a leading
       // genus the broker already included so it isn't doubled.
