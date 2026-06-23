@@ -46,8 +46,9 @@ function tidy(s) {
 function classForm(raw) {
   const f = String(raw || '').toLowerCase();
   if (/cell tray|mega tray|\bplug\b|\d+\s*cell/.test(f)) return 'plug';
-  if (/\blin\b|liner|\blin\s|^lin/.test(f)) return 'liner';
-  if (/bareroot|\bbrt\b|bare root|eye\b/.test(f)) return 'bareroot';
+  // Ball "Lin 72" and EHR-AED "72 C.P." (cell plug) are the same cell liner — same class so they match
+  if (/\blin\b|liner|\blin\s|^lin|\d+\s*c\.?\s*p\.?\b|\bc\.?\s*p\.?\b/.test(f)) return 'liner';
+  if (/bareroot|\bbrt\b|\bbr\b|bare ?root|eye\b/.test(f)) return 'bareroot';
   if (/pref/.test(f)) return 'prefinished';
   if (/autostix|astix|basewell|as\d/.test(f)) return 'urc_autostix';
   if (/callus|\bcal\b|\bcc\b/.test(f)) return 'callused';
@@ -83,6 +84,8 @@ function breederFromName(fn) {
   if (/garden solution/.test(f)) return 'GardenSolutions';
   if (/plant source|psi0/.test(f)) return 'PlantSource';
   if (/quality cutting|hma0/.test(f)) return 'QualityCuttings';
+  if (/kientzler/.test(f)) return 'Kientzler';
+  if (/pell/.test(f)) return 'Pell';
   return fn.replace(/\.xlsx?$/i, '').slice(0, 16);
 }
 
@@ -119,17 +122,43 @@ function tierCols(hdr) {
   return out;
 }
 
+// Read any quote file into [{name, rows-of-cells}]. Handles real .xlsx/.xls via XLSX, and the
+// EHR "AED Quote .xls" files which are actually MHTML (Excel Single File Web Page) — decode the
+// quoted-printable MIME parts and pull each <table> out as a sheet.
+function readMhtml(raw) {
+  const deQP = s => s.replace(/=\r?\n/g, '').replace(/=([0-9A-Fa-f]{2})/g, (m, h) => String.fromCharCode(parseInt(h, 16)));
+  const bm = raw.match(/boundary="?(-{2,}=_NextPart_[^"\r\n]+)"?/i);
+  const parts = bm ? raw.split('--' + bm[1]) : [raw];
+  const sheets = [];
+  for (const p of parts) {
+    const i = p.indexOf('\r\n\r\n'); const html = deQP(i >= 0 ? p.slice(i + 4) : p);
+    if (!/<table/i.test(html)) continue;
+    const rows = []; const trRe = /<tr[\s\S]*?<\/tr>/gi; let m;
+    while ((m = trRe.exec(html))) {
+      const cells = [...m[0].matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map(c =>
+        c[1].replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&#?\w+;/g, ' ').replace(/\s+/g, ' ').trim());
+      if (cells.some(x => x)) rows.push(cells);
+    }
+    if (rows.length) sheets.push({ name: 'sheet' + sheets.length, rows });
+  }
+  return sheets;
+}
+function readSheets(file) {
+  const buf = fs.readFileSync(file);
+  if (/MIME-Version|=_NextPart_/.test(buf.toString('latin1', 0, 400))) return readMhtml(buf.toString('latin1'));
+  const wb = XLSX.readFile(file);
+  return wb.SheetNames.map(n => ({ name: n, rows: XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, blankrows: false, defval: '' }) }));
+}
+
 function parseFile(broker, file) {
   const sourceFile = file.split('/').pop();
   const breeder = breederFromName(sourceFile);
-  const wb = XLSX.readFile(file);
+  const sheets = readSheets(file);
   const out = [];
-  const cands = broker === 'Ball' ? ['Price List - Detail']
-              : broker === 'Express' ? ['IN']
-              : wb.SheetNames.filter(s => !EXCLUDE_SHEET.test(s));
-  for (const sn of cands) {
-    const ws = wb.Sheets[sn]; if (!ws) continue;
-    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, blankrows: false, defval: '' });
+  const cands = broker === 'Ball' ? sheets.filter(s => s.name === 'Price List - Detail')
+              : broker === 'Express' ? sheets.filter(s => s.name === 'IN')
+              : sheets.filter(s => !EXCLUDE_SHEET.test(s.name));
+  for (const { name: sn, rows } of cands) {
     const hr = findHeader(rows); if (hr < 0) continue;
     const hdr = rows[hr].map(S);
     const find = (...res) => { for (const re of res) for (let i = 0; i < hdr.length; i++) if (re.test(hdr[i].toLowerCase())) return i; return -1; };
@@ -141,6 +170,7 @@ function parseFile(broker, file) {
     const cRoy  = find(/royalty/, /license fee\s*$/);
     const cFrt  = find(/freight dtd usa/, /freight price/, /^freight$/);
     const cTotal= find(/^total price/, /no tag unit price includes frt/);
+    const cAed  = find(/^v1 eod$/, /^v1$/);   // EHR AED quotes: V1 EOD = early-order unit price
     const cExcl = find(/exclusiv/);
     const tiers = tierCols(hdr);
     if (cVar < 0) continue;
@@ -156,7 +186,11 @@ function parseFile(broker, file) {
       const frt = cFrt >= 0 ? num(r[cFrt]) : null;
       let landed = null, listPrice = null;
 
-      if (tiers.length) {
+      if (cAed >= 0) {
+        // EHR AED perennial quotes: landed = V1 EOD price + per-unit royalty (no freight column)
+        const p = num(r[cAed]); if (p == null || p <= 0) continue;
+        listPrice = p; landed = p + (roy || 0);
+      } else if (tiers.length) {
         // tier-priced (mostly EHR). pick Schlegel's volume level.
         const want = term ? term.volume : 1;
         let pick = tiers.find(t => t.level === want) || tiers[0];
@@ -177,7 +211,7 @@ function parseFile(broker, file) {
         if (broker === 'EHR' && term) landed = (listPrice + (broker === 'EHR' && cTotal < 0 ? 0 : 0)) * (1 - term.discount) + (cTotal < 0 ? 0 : 0) || landed;
       }
       // EHR single-price discount (non-tier path): apply discount to plant portion
-      if (broker === 'EHR' && !tiers.length && term) {
+      if (broker === 'EHR' && !tiers.length && cAed < 0 && term) {
         const plant = (cBase >= 0 ? num(r[cBase]) : listPrice) || 0;
         landed = plant * (1 - term.discount) + (frt || 0);
       }
@@ -206,14 +240,26 @@ function parseFile(broker, file) {
 }
 
 // ---------- run ----------
+// Dedup re-downloaded copies: same quote (PQ number, else base name minus a " (1)" suffix) →
+// keep only the NEWEST file by mtime, so an updated re-download supersedes the old one.
+function dedupKey(fn) {
+  const pq = fn.match(/PQ\d{4,}/i);
+  if (pq) return pq[0].toUpperCase();
+  return fn.replace(/\s*\(\d+\)(?=\.xlsx?$)/i, '').replace(/\.xlsx?$/i, '').toLowerCase().trim();
+}
 let all = [];
-const counts = {};
+const counts = {}, dropped = [];
 for (const [broker, dir] of Object.entries(QUOTE_DIRS)) {
-  for (const fn of fs.readdirSync(dir).filter(x => /\.xlsx?$/i.test(x) && !x.startsWith('~'))) {
+  const files = fs.readdirSync(dir).filter(x => /\.xlsx?$/i.test(x) && !x.startsWith('~'))
+    .map(fn => ({ fn, mtime: fs.statSync(dir + '/' + fn).mtimeMs }));
+  const byKey = {};
+  for (const f of files) { const k = dedupKey(f.fn); if (!byKey[k] || f.mtime > byKey[k].mtime) { if (byKey[k]) dropped.push(byKey[k].fn); byKey[k] = f; } else dropped.push(f.fn); }
+  for (const { fn } of Object.values(byKey)) {
     try { const rows = parseFile(broker, dir + '/' + fn); counts[broker] = (counts[broker] || 0) + rows.length; all = all.concat(rows); }
     catch (e) { console.error('ERR', fn, e.message); }
   }
 }
+if (dropped.length) console.log('deduped (older/duplicate copies skipped):', dropped.length);
 console.log('parsed rows by broker:', counts, '| total', all.length);
 
 // per-breeder broker coverage
