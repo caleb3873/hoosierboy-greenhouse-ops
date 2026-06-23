@@ -27,7 +27,11 @@ const num = v => { const n = parseFloat(String(v).replace(/[$,]/g, '')); return 
 const S = v => String(v == null ? '' : v).trim();
 
 // ---------- variety match-key normalization ----------
-const SPECIES = /^(millefolium|reptans|spurium|didyma|dubium|hybrida|hybrid|aurantiaca|cordata|interspecific|x|sp|spp|species)$/;
+// Latin species epithets + the abbreviations Ball uses for them — dropped between genus & cultivar
+// so e.g. Ball "Thyme cit Lemon" and EHR "THYMUS CITRIODORUS LEMON" both reduce to "thyme lemon".
+const SPECIES = /^(millefolium|reptans|spurium|didyma|dubium|hybrida|hybrid|aurantiaca|cordata|interspecific|x|sp|spp|species|officinalis|off|vulgaris|vul|angustifolia|angust|ang|dracunculus|drac|citriodorus|citriodora|citrata|citri|cit|intermedia|inter|piperita|pip|spicata|suaveolens|serpyllum|serp|praecox|amygdaloides|amy|lindheimeri|lind|nobilis|stoechas|st|douglasii|doug|montana|mastichina|pulegioides|herba|barona|elegans|arvensis|fruticosa|abrotanum|arborescens|canariensis|canary|pseudolanuginosus|pseudolanugin|hederacea|bonariensis|diffusa|odoratum|rebaudiana|chamaecyparissus|viridis|incisa|clinopodioides|europaea|ovata)$/;
+// Genus synonyms — canonicalize botanical & common to one token (Ball uses common, EHR often botanical)
+const GENUS_SYN = { mentha: 'mint', thymus: 'thyme', salvia: 'sage', laurus: 'bay', ocimum: 'basil', rosmarinus: 'rosemary', satureja: 'savory', origanum: 'oregano', lippia: 'lemonverbena', aloysia: 'lemonverbena', helichrysum: 'curry', helichr: 'curry', chamaemelum: 'chamomile', coriandrum: 'coriander', majorana: 'marjoram' };
 function tidy(s) {
   s = ' ' + String(s).toLowerCase() + ' ';
   s = s.replace(/[`'´‘’"*]/g, ' ').replace(/[™®℠]/g, ' ').replace(/#/g, ' ');
@@ -63,11 +67,15 @@ function makeKey(crop, botanical, varietyName) {
   // strip a leading generic category word from the crop so it isn't used as the genus
   // ("HERB BASIL" -> "BASIL", "HERB" -> "") — Ball tags Hishtil herbs this way
   const cropClean = String(crop || '').trim().replace(/^(herbs?|perennials?|annuals?|grass(es)?|vegetables?|veg|tropicals?|foliage|edibles?)\b\s*/i, '');
-  let genus = tidy((botanical || cropClean || '').split(/\s+/)[0] || '');
+  const canon = g => GENUS_SYN[g] || g;
+  let genus = canon(tidy((botanical || cropClean || '').split(/\s+/)[0] || ''));
   let w = tidy(varietyName).split(' ').filter(Boolean);
-  while (w.length > 1 && (w[0] === genus || SPECIES.test(w[0]))) w.shift();
-  if (!genus && w.length) genus = w.shift();
-  return (genus + ' ' + w.join(' ')).trim();
+  if (!genus && w.length) genus = canon(w.shift());
+  // drop a leading repeated/synonym genus and any species epithets, leaving genus + cultivar
+  while (w.length && (canon(w[0]) === genus || w[0] === genus || SPECIES.test(w[0]))) w.shift();
+  // sort cultivar words so word-order differences ("blue dark" vs "dark blue") still match
+  w = w.filter(x => x).sort();
+  return (genus + (w.length ? ' ' + w.join(' ') : '')).trim();
 }
 const genusOf = (crop, botanical, variety) => tidy((botanical || crop || variety || '').split(/\s+/)[0] || '');
 
@@ -225,10 +233,11 @@ function parseFile(broker, file) {
       const rawForm = cForm >= 0 ? S(r[cForm]) : '';
       const formClass = classForm(rawForm);
       const vkey = makeKey(cropV, botanical, variety);
+      const cleanVariety = variety.replace(/^\s*(HE|OR)\s+/, '').replace(/#/g, '').replace(/\s+/g, ' ').trim();
       out.push({
         broker, supplier: breeder, breeder, sheet: sn, form: rawForm, formClass,
         crop: cropV || botanical || variety.split(' ')[0],
-        botanical, variety,
+        botanical, variety: cleanVariety,
         listPrice: +(+listPrice).toFixed(5),
         landed: +(+landed).toFixed(5),
         royalty: roy, freight: frt,
