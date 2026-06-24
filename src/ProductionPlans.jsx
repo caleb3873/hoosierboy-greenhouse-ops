@@ -4831,7 +4831,42 @@ function srcGradeFor(broker, profiles) {
 }
 const money = v => (v == null ? "—" : "$" + Number(v).toFixed(4));
 
+// Standalone Sourcing page (Production nav → 🧭 Sourcing) — same workspace, full width.
+export function SourcingPage() {
+  return (
+    <div style={{ padding: "16px 22px", maxWidth: 1280, margin: "0 auto" }}>
+      <SourcingWorkspace fullscreen />
+    </div>
+  );
+}
+
+// In-plan tab: the workspace + a button to pop it open full screen.
 function SourcingTab({ plan }) {
+  const [fs, setFs] = useState(false);
+  return (
+    <div style={{ fontFamily: "'DM Sans','Segoe UI',sans-serif" }}>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 6 }}>
+        <button onClick={() => setFs(true)}
+          style={{ border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.dark, borderRadius: 8, padding: "5px 12px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+          ↗ Open full screen
+        </button>
+      </div>
+      <SourcingWorkspace />
+      {fs && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "#f4f7f1", overflow: "auto" }}>
+          <div style={{ position: "sticky", top: 0, zIndex: 2, display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 20px", background: "#fff", borderBottom: `1px solid ${COLORS.border}` }}>
+            <div style={{ fontWeight: 800, color: COLORS.dark, fontSize: 16 }}>🧭 Sourcing — full screen</div>
+            <button onClick={() => setFs(false)}
+              style={{ border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.text, borderRadius: 8, padding: "6px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>✕ Close</button>
+          </div>
+          <div style={{ padding: "16px 22px", maxWidth: 1280, margin: "0 auto" }}><SourcingWorkspace fullscreen /></div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SourcingWorkspace({ fullscreen }) {
   const sb = getSupabase();
   const [suppliers, setSuppliers]   = useState(null);
   const [profiles, setProfiles]     = useState([]);
@@ -4840,7 +4875,13 @@ function SourcingTab({ plan }) {
   const [detail, setDetail]         = useState({}); // supplier -> rows
   const [detailBusy, setDetailBusy] = useState(false);
   const [search, setSearch]         = useState("");
+  const [matchOpen, setMatchOpen]   = useState(false); // global match/cleanup workspace
+  const [showChecklist, setShowChecklist] = useState(false);
 
+  function loadSuppliers() {
+    sb.from("v_sourcing_suppliers").select("*").then(({ data }) =>
+      setSuppliers((data || []).slice().sort((a, b) => (b.comparable_count || 0) - (a.comparable_count || 0) || (b.variety_count || 0) - (a.variety_count || 0))));
+  }
   useEffect(() => {
     if (!sb) return;
     sb.from("v_sourcing_suppliers").select("*").then(({ data }) =>
@@ -4860,8 +4901,8 @@ function SourcingTab({ plan }) {
       { onConflict: "supplier,form_class,season" });
   }
 
-  async function loadDetail(supplier) {
-    if (detail[supplier]) return;
+  async function loadDetail(supplier, force) {
+    if (detail[supplier] && !force) return;
     setDetailBusy(true);
     const out = [];
     for (let f = 0; ; f += 1000) {
@@ -4897,12 +4938,29 @@ function SourcingTab({ plan }) {
             Pick the broker for each <strong>supplier program</strong> — that choice is what should drive your plan pricing.
           </div>
         </div>
-        <div style={{ display: "flex", gap: 10 }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <SrcStat label="Suppliers" value={suppliers.length} />
           <SrcStat label="Comparable lanes" value={totalComparable} color={COLORS.light} />
           <SrcStat label="Exclusives" value={single.length} color={COLORS.amber} />
         </div>
       </div>
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
+        <button onClick={() => setMatchOpen(o => !o)}
+          style={{ border: `1.5px solid ${matchOpen ? COLORS.light : COLORS.border}`, background: matchOpen ? COLORS.light : "#fff", color: matchOpen ? "#fff" : COLORS.dark, borderRadius: 8, padding: "6px 13px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+          🔗 {matchOpen ? "← Back to suppliers" : "Match & clean up"}
+        </button>
+        {!matchOpen && (
+          <button onClick={() => setShowChecklist(c => !c)}
+            style={{ border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.dark, borderRadius: 8, padding: "6px 13px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+            📋 Order checklist
+          </button>
+        )}
+      </div>
+
+      {matchOpen ? <SrcMatcher sb={sb} onChanged={loadSuppliers} /> : (<>
+
+      {showChecklist && <SrcOrderChecklist suppliers={competitive} selections={selections} />}
 
       <SrcSectionTitle>Where you can shop brokers</SrcSectionTitle>
       {competitive.map(s => (
@@ -4925,6 +4983,56 @@ function SourcingTab({ plan }) {
           );
         })}
       </div>
+      </>)}
+    </div>
+  );
+}
+
+// Order checklist — every shoppable supplier with the broker you chose to buy through,
+// flagged where that differs from the broker that's cheapest most often. Copyable.
+function SrcOrderChecklist({ suppliers, selections }) {
+  const rows = suppliers.map(s => ({
+    supplier: s.supplier, chosen: selections[s.supplier] || null, rec: s.rec_broker || null,
+    comparable: s.comparable_count || 0, spread: s.avg_spread_pct,
+  }));
+  const decided = rows.filter(r => r.chosen).length;
+  function copy() {
+    const lines = rows.map(r => `${srcSup(r.supplier)}: ${r.chosen ? "buy through " + r.chosen : "— not chosen"}` +
+      (r.rec && r.chosen && r.chosen !== r.rec ? `  (cheapest most often: ${r.rec})` : "") +
+      (r.rec && !r.chosen ? `  (suggest ${r.rec})` : ""));
+    const text = `Sourcing order plan — ${SRC_SEASON}\n` + lines.join("\n");
+    if (navigator.clipboard) navigator.clipboard.writeText(text).then(() => alert("Order checklist copied to clipboard"));
+  }
+  return (
+    <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: "12px 14px", margin: "4px 0 10px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+        <div style={{ fontWeight: 800, color: COLORS.dark }}>📋 Order checklist <span style={{ fontWeight: 400, color: COLORS.muted, fontSize: 12 }}>· {decided}/{rows.length} suppliers assigned</span></div>
+        <button onClick={copy} style={{ border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.dark, borderRadius: 8, padding: "5px 11px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>⧉ Copy</button>
+      </div>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+        <thead><tr style={{ textAlign: "left", color: COLORS.muted }}>
+          <th style={{ padding: "4px 8px", fontWeight: 700 }}>Supplier</th>
+          <th style={{ padding: "4px 8px", fontWeight: 700 }}>Buy through</th>
+          <th style={{ padding: "4px 8px", fontWeight: 700 }}>Cheapest most often</th>
+          <th style={{ padding: "4px 8px", fontWeight: 700, textAlign: "right" }}>Comparable</th>
+          <th style={{ padding: "4px 8px", fontWeight: 700, textAlign: "right" }}>Avg spread</th>
+        </tr></thead>
+        <tbody>
+          {rows.map(r => (
+            <tr key={r.supplier} style={{ borderTop: `1px solid ${COLORS.border}` }}>
+              <td style={{ padding: "4px 8px", fontWeight: 700, color: COLORS.dark }}>{srcSup(r.supplier)}</td>
+              <td style={{ padding: "4px 8px" }}>{r.chosen
+                ? <span style={{ color: srcBrokerColor(r.chosen), fontWeight: 800 }}>{r.chosen}</span>
+                : <span style={{ color: COLORS.amber }}>— not chosen</span>}
+                {r.chosen && r.rec && r.chosen !== r.rec && <span title="paying a relationship premium vs cheapest" style={{ marginLeft: 6, fontSize: 11, color: COLORS.amber }}>⚠ not cheapest</span>}
+              </td>
+              <td style={{ padding: "4px 8px", color: r.rec ? srcBrokerColor(r.rec) : COLORS.muted, fontWeight: r.rec ? 700 : 400 }}>{r.rec || "—"}</td>
+              <td style={{ padding: "4px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.comparable}</td>
+              <td style={{ padding: "4px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.spread != null ? r.spread + "%" : "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -5000,7 +5108,6 @@ function SrcDetail({ detail, detailBusy, selected, search, setSearch }) {
   const total = rows.length;
   const CAP = 400;
   const shown = rows.slice(0, CAP);
-  // which form classes appear
   const byForm = {};
   for (const r of shown) (byForm[r.form] = byForm[r.form] || []).push(r);
 
@@ -5046,6 +5153,216 @@ function SrcDetail({ detail, detailBusy, selected, search, setSearch }) {
         </div>
       ))}
       {total > CAP && <div style={{ fontSize: 12, color: COLORS.muted, marginTop: 4 }}>Showing first {CAP} of {total} — use the filter to narrow.</div>}
+    </div>
+  );
+}
+
+// Global match/cleanup workspace — search any genus/series/cultivar across ALL brokers &
+// suppliers, then consolidate same-genetics listings (checkbox or drag-onto) and archive
+// the ones you'll never use. Match groups = supplier|form_class|variety_key.
+function SrcMatcher({ sb, onChanged }) {
+  const [query, setQuery]       = useState("");
+  const [groups, setGroups]     = useState(null);   // current search result groups
+  const [busy, setBusy]         = useState(false);
+  const [sel, setSel]           = useState(() => new Set()); // selected group ids
+  const [drag, setDrag]         = useState(null);   // dragged group id
+  const [showArchived, setShowArchived] = useState(false);
+  const [archived, setArchived] = useState([]);     // archived rows when viewing
+  const [msg, setMsg]           = useState("");
+
+  const groupId = g => g.supplier + "|" + g.form + "|" + g.key;
+
+  async function runSearch(qRaw) {
+    const q = (qRaw == null ? query : qRaw).trim();
+    if (q.length < 2) { setGroups(null); setMsg("Type at least 2 letters — e.g. geranium, calliope, calibrachoa."); return; }
+    setBusy(true); setMsg(""); setSel(new Set());
+    // pull matching priced listings across all suppliers/brokers (override + archive aware)
+    const like = "%" + q + "%";
+    const { data } = await sb.from("v_sourcing_prices")
+      .select("supplier,form_class,variety_key,variety,crop,broker,landed,has_excl")
+      .or(`variety.ilike.${like},crop.ilike.${like}`).limit(2000);
+    const gm = {};
+    for (const r of (data || [])) {
+      const id = r.supplier + "|" + r.form_class + "|" + r.variety_key;
+      if (!gm[id]) gm[id] = { supplier: r.supplier, form: r.form_class, key: r.variety_key, variety: r.variety, crop: r.crop, excl: false, prices: {} };
+      if (gm[id].prices[r.broker] == null || r.landed < gm[id].prices[r.broker]) gm[id].prices[r.broker] = r.landed;
+      if (r.has_excl) gm[id].excl = true;
+    }
+    // which groups are manual-link targets (so we can offer unlink)
+    const { data: ov } = await sb.from("sourcing_overrides").select("supplier,form_class,to_variety_key").eq("season", SRC_SEASON);
+    const linked = new Set((ov || []).map(o => o.supplier + "|" + o.form_class + "|" + o.to_variety_key));
+    let list = Object.values(gm).map(g => ({ ...g, linked: linked.has(groupId(g)) }));
+    list.sort((a, b) => Object.keys(b.prices).length - Object.keys(a.prices).length || (a.variety || "").localeCompare(b.variety || ""));
+    setGroups(list); setBusy(false);
+    if (showArchived) loadArchived(q);
+  }
+
+  async function loadArchived(qRaw) {
+    const q = (qRaw == null ? query : qRaw).trim();
+    const { data } = await sb.from("sourcing_archived").select("*").eq("season", SRC_SEASON).ilike("variety", "%" + q + "%").limit(500);
+    setArchived(data || []);
+  }
+
+  function toggle(id) { setSel(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; }); }
+
+  // Consolidate a set of groups under one canonical key. Must share supplier + form.
+  async function consolidate(gs) {
+    if (!gs || gs.length < 2) return;
+    const sup = gs[0].supplier, form = gs[0].form;
+    if (!gs.every(g => g.supplier === sup && g.form === form)) {
+      setMsg("Can only merge listings from the same supplier + form. Selected: " +
+        [...new Set(gs.map(g => srcSup(g.supplier) + "·" + srcFormLabel(g.form)))].join(", "));
+      return;
+    }
+    const canon = gs.slice().sort((a, b) => (a.variety || "").length - (b.variety || "").length)[0];
+    const recs = gs.filter(g => g.key !== canon.key).map(g => ({
+      season: SRC_SEASON, supplier: sup, form_class: form, broker: null,
+      from_variety_key: g.key, to_variety_key: canon.key, to_variety: canon.variety,
+    }));
+    if (!recs.length) return;
+    setBusy(true);
+    const { error } = await sb.from("sourcing_overrides").upsert(recs, { onConflict: "season,supplier,form_class,broker,from_variety_key" });
+    setBusy(false);
+    if (error) { setMsg("Could not merge: " + error.message); return; }
+    setMsg(`Merged ${gs.length} listings under “${canon.variety}”.`);
+    onChanged && onChanged();
+    runSearch();
+  }
+
+  async function unlinkGroup(g) {
+    setBusy(true);
+    const { error } = await sb.from("sourcing_overrides").delete()
+      .eq("season", SRC_SEASON).eq("supplier", g.supplier).eq("form_class", g.form).eq("to_variety_key", g.key);
+    setBusy(false);
+    if (error) { setMsg("Could not unlink: " + error.message); return; }
+    onChanged && onChanged(); runSearch();
+  }
+
+  async function archiveGroups(gs) {
+    if (!gs.length) return;
+    if (!window.confirm(`Archive ${gs.length} listing${gs.length > 1 ? "s" : ""}? They'll be hidden from comparison and matching (restorable from “Show archived”).`)) return;
+    const recs = gs.map(g => ({ season: SRC_SEASON, supplier: g.supplier, form_class: g.form, variety_key: g.key, variety: g.variety }));
+    setBusy(true);
+    const { error } = await sb.from("sourcing_archived").upsert(recs, { onConflict: "season,supplier,form_class,variety_key" });
+    setBusy(false);
+    if (error) { setMsg("Could not archive: " + error.message); return; }
+    setMsg(`Archived ${gs.length} listing${gs.length > 1 ? "s" : ""}.`);
+    onChanged && onChanged(); runSearch();
+  }
+
+  async function restore(a) {
+    setBusy(true);
+    await sb.from("sourcing_archived").delete().eq("id", a.id);
+    setBusy(false);
+    onChanged && onChanged();
+    loadArchived(); runSearch();
+  }
+
+  const selGroups = (groups || []).filter(g => sel.has(groupId(g)));
+
+  return (
+    <div>
+      <div style={{ background: "#fff8e8", border: `1px solid ${COLORS.amber}`, borderRadius: 8, padding: "9px 12px", fontSize: 12.5, color: COLORS.text, margin: "4px 0 10px" }}>
+        🔗 <strong>Match &amp; clean up.</strong> Search a genus, series or cultivar, then merge the same genetics that brokers named differently — <strong>tick two+ and “Consolidate”, or drag one row onto another</strong>. Merges apply instantly and survive every re-parse. Tick listings you'll never use and <strong>Archive</strong> them to hide the clutter.
+      </div>
+
+      <form onSubmit={e => { e.preventDefault(); runSearch(); }} style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
+        <input autoFocus value={query} onChange={e => setQuery(e.target.value)} placeholder="Search geranium, calliope, calibrachoa…"
+          style={{ padding: "8px 12px", borderRadius: 8, border: `1px solid ${COLORS.border}`, fontSize: 14, fontFamily: "inherit", width: 340, maxWidth: "100%", boxSizing: "border-box" }} />
+        <button type="submit" style={{ border: "none", background: COLORS.dark, color: "#fff", borderRadius: 8, padding: "8px 16px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Search</button>
+        <label style={{ fontSize: 12, color: COLORS.muted, display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}>
+          <input type="checkbox" checked={showArchived} onChange={e => { setShowArchived(e.target.checked); if (e.target.checked) loadArchived(); }} /> Show archived
+        </label>
+      </form>
+
+      {msg && <div style={{ fontSize: 12.5, color: COLORS.dark, background: "#eef6e7", border: `1px solid ${COLORS.light}`, borderRadius: 8, padding: "6px 10px", marginBottom: 8 }}>{msg}</div>}
+
+      {sel.size > 0 && (
+        <div style={{ position: "sticky", top: 0, zIndex: 3, display: "flex", gap: 8, alignItems: "center", background: COLORS.dark, color: "#fff", borderRadius: 8, padding: "8px 12px", marginBottom: 8 }}>
+          <strong style={{ fontSize: 13 }}>{sel.size} selected</strong>
+          <button onClick={() => consolidate(selGroups)} disabled={sel.size < 2}
+            style={{ border: "none", background: sel.size < 2 ? "#5d6b54" : COLORS.light, color: "#fff", borderRadius: 7, padding: "5px 12px", fontSize: 12.5, fontWeight: 800, cursor: sel.size < 2 ? "default" : "pointer", fontFamily: "inherit" }}>🔗 Consolidate</button>
+          <button onClick={() => archiveGroups(selGroups)}
+            style={{ border: "none", background: COLORS.amber, color: "#fff", borderRadius: 7, padding: "5px 12px", fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>🗄 Archive</button>
+          <button onClick={() => setSel(new Set())} style={{ border: "1px solid #ffffff55", background: "transparent", color: "#fff", borderRadius: 7, padding: "5px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Clear</button>
+        </div>
+      )}
+
+      {busy && <div style={{ padding: 14, color: COLORS.muted, fontSize: 13 }}>Working…</div>}
+      {groups == null && !busy && <div style={{ padding: 14, color: COLORS.muted, fontSize: 13 }}>Search above to start matching.</div>}
+      {groups && groups.length === 0 && !busy && <div style={{ padding: 14, color: COLORS.muted, fontSize: 13 }}>No priced listings match “{query}”.</div>}
+
+      {groups && groups.length > 0 && (
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+          <thead>
+            <tr style={{ textAlign: "left", color: COLORS.muted }}>
+              <th style={{ width: 26 }} />
+              <th style={{ padding: "4px 8px", fontWeight: 700 }}>Variety</th>
+              <th style={{ padding: "4px 8px", fontWeight: 700 }}>Supplier</th>
+              <th style={{ padding: "4px 8px", fontWeight: 700 }}>Form</th>
+              {SRC_BROKERS.map(b => <th key={b} style={{ padding: "4px 8px", textAlign: "right", fontWeight: 700, color: srcBrokerColor(b) }}>{b}</th>)}
+              <th style={{ width: 70 }} />
+            </tr>
+          </thead>
+          <tbody>
+            {groups.map(g => {
+              const id = groupId(g);
+              const present = SRC_BROKERS.filter(b => g.prices[b] != null);
+              const lo = Math.min(...present.map(b => g.prices[b]));
+              const checked = sel.has(id);
+              const comparable = present.length > 1;
+              return (
+                <tr key={id} draggable
+                  onDragStart={() => setDrag(id)}
+                  onDragOver={e => { if (drag && drag !== id) e.preventDefault(); }}
+                  onDrop={() => { if (drag && drag !== id) { const a = groups.find(x => groupId(x) === drag); if (a) consolidate([a, g]); } setDrag(null); }}
+                  style={{ borderTop: `1px solid ${COLORS.border}`, background: checked ? "#eef6e7" : drag === id ? "#f0f6ea" : comparable ? "#fbfdf9" : "transparent", cursor: "grab" }}>
+                  <td style={{ textAlign: "center" }}><input type="checkbox" checked={checked} onChange={() => toggle(id)} /></td>
+                  <td style={{ padding: "4px 8px", color: COLORS.text }}>
+                    <span title="drag onto another row to merge" style={{ color: COLORS.muted, marginRight: 5 }}>⠿</span>
+                    {g.variety}{g.excl && <span title="exclusive" style={{ marginLeft: 6, fontSize: 10, color: COLORS.amber }}>◆</span>}
+                    {comparable && <span style={{ marginLeft: 6, fontSize: 10, color: COLORS.light, fontWeight: 800 }}>✓{present.length}</span>}
+                    {g.linked && <span style={{ marginLeft: 6, fontSize: 10, color: COLORS.muted }}>🔗 linked</span>}
+                  </td>
+                  <td style={{ padding: "4px 8px", color: COLORS.muted }}>{srcSup(g.supplier)}</td>
+                  <td style={{ padding: "4px 8px", color: COLORS.muted }}>{srcFormLabel(g.form)}</td>
+                  {SRC_BROKERS.map(b => {
+                    const v = g.prices[b];
+                    const cheapest = v != null && v === lo && comparable;
+                    return <td key={b} style={{ padding: "4px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums", background: cheapest ? "#dcedc8" : "transparent", fontWeight: cheapest ? 800 : 400, color: v == null ? "#cbd5c0" : COLORS.text }}>{v == null ? "—" : money(v)}</td>;
+                  })}
+                  <td style={{ padding: "4px 6px", textAlign: "right" }}>
+                    {g.linked && <button onClick={() => unlinkGroup(g)} title="break this manual match apart"
+                      style={{ border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.muted, borderRadius: 6, padding: "1px 7px", fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>unlink</button>}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+
+      {showArchived && (
+        <div style={{ marginTop: 18 }}>
+          <SrcSectionTitle>Archived {archived.length ? `(${archived.length})` : ""}</SrcSectionTitle>
+          {archived.length === 0 ? <div style={{ fontSize: 12.5, color: COLORS.muted }}>Nothing archived matches “{query}”.</div> : (
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+              <tbody>
+                {archived.map(a => (
+                  <tr key={a.id} style={{ borderTop: `1px solid ${COLORS.border}`, color: COLORS.muted }}>
+                    <td style={{ padding: "4px 8px" }}>{a.variety || a.variety_key}</td>
+                    <td style={{ padding: "4px 8px" }}>{srcSup(a.supplier)}</td>
+                    <td style={{ padding: "4px 8px" }}>{srcFormLabel(a.form_class)}</td>
+                    <td style={{ padding: "4px 8px", textAlign: "right" }}>
+                      <button onClick={() => restore(a)} style={{ border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.dark, borderRadius: 6, padding: "2px 9px", fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>↩ Restore</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
     </div>
   );
 }
