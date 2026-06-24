@@ -21,24 +21,39 @@ for (const l of fs.readFileSync(path.join(__dirname, '..', '.env.local'), 'utf8'
 const sb = createClient(env.REACT_APP_SUPABASE_URL, env.REACT_APP_SUPABASE_ANON_KEY);
 
 // ---- normalization (must match scripts/parse_broker_quotes.js) ----
-const SPECIES = /^(millefolium|reptans|spurium|didyma|dubium|hybrida|hybrid|aurantiaca|cordata|interspecific|x|sp|spp|species)$/;
+// MUST stay byte-identical to scripts/parse_broker_quotes.js makeKey (and the copy in
+// src/ProductionPlans.jsx srcMakeKey) so a plan item keys the same way broker_prices.variety_key did.
+const SPECIES = /^(millefolium|reptans|spurium|didyma|dubium|hybrida|hybrid|aurantiaca|cordata|interspecific|x|sp|spp|species|officinalis|off|vulgaris|vul|angustifolia|angust|ang|dracunculus|drac|citriodorus|citriodora|citrata|citri|cit|intermedia|inter|piperita|pip|spicata|suaveolens|serpyllum|serp|praecox|amygdaloides|amy|lindheimeri|lind|nobilis|stoechas|st|douglasii|doug|montana|mastichina|pulegioides|herba|barona|elegans|arvensis|fruticosa|abrotanum|arborescens|canariensis|canary|pseudolanuginosus|pseudolanugin|hederacea|bonariensis|diffusa|odoratum|rebaudiana|chamaecyparissus|viridis|incisa|clinopodioides|europaea|ovata)$/;
+const GENUS_SYN = { mentha: 'mint', thymus: 'thyme', salvia: 'sage', laurus: 'bay', ocimum: 'basil', rosmarinus: 'rosemary', satureja: 'savory', origanum: 'oregano', lippia: 'lemonverbena', aloysia: 'lemonverbena', helichrysum: 'curry', helichr: 'curry', chamaemelum: 'chamomile', coriandrum: 'coriander', majorana: 'marjoram', pelargonium: 'geranium', lavendula: 'lavandula' };
+const WORD_SYN = { cas: 'cascadias', com: 'compact', bic: 'bicolor', bestie: 'besties' };
 function tidy(s) {
   s = ' ' + String(s).toLowerCase() + ' ';
+  s = s.replace(/[áàâäãå]/g, 'a').replace(/[éèêë]/g, 'e').replace(/[íìîï]/g, 'i').replace(/[óòôöõ]/g, 'o').replace(/[úùûü]/g, 'u').replace(/ñ/g, 'n').replace(/ç/g, 'c');
+  s = s.replace(/\bw\//g, ' ').replace(/\bwith\b/g, ' ');
   s = s.replace(/[`'´‘’"*]/g, ' ').replace(/[™®℠]/g, ' ').replace(/#/g, ' ');
-  s = s.replace(/\bpp\s?\d+\b/g, ' ').replace(/\bppaf\b/g, ' ').replace(/\bcpbr\s?\d+\b/g, ' ').replace(/\beu\s?\d*\b/g, ' ').replace(/\bp\.?p\.?a\.?f\.?\b/g, ' ');
-  s = s.replace(/\b(usppp?|us\spp)\d+\b/g, ' ').replace(/\([^)]*\)/g, ' ').replace(/\b20\d\d\b/g, ' ');
+  s = s.replace(/\bpp\s?\d+\b/g, ' ').replace(/\bppaf\b/g, ' ').replace(/\bcpbr\s?\d+\b/g, ' ')
+       .replace(/\beu\s?\d*\b/g, ' ').replace(/\bp\.?p\.?a\.?f\.?\b/g, ' ');
+  s = s.replace(/\b(usppp?|us\spp)\d+\b/g, ' ');
+  s = s.replace(/\([^)]*\)/g, ' ');
+  s = s.replace(/\b20\d\d\b/g, ' ');
   s = s.replace(/-?(urc|cc|rc|tc|liner|plug|pellet|callused|unrooted|rooted)\b/g, ' ');
-  s = s.replace(/\bn\/?g\b/g, ' ').replace(/\bnew guinea\b/g, ' ').replace(/\bimproved\b/g, ' ').replace(/\bimp\b/g, ' ');
+  s = s.replace(/\bn\/?g\b/g, ' ').replace(/\bnew guinea\b/g, ' ');
+  s = s.replace(/\bimproved\b/g, ' ').replace(/\bimp\b/g, ' ');
   s = s.replace(/[^a-z0-9 ]/g, ' ');
   return s.replace(/\s+/g, ' ').trim();
 }
 // strip a leading size token from a plan item name: 4.5", HB 10", POT, 1801, FIBER…
 const stripSize = n => String(n || "").replace(/^\s*(HB\s*\d+(?:\.\d+)?"?|\d+(?:\.\d+)?"|1801[LS]?|FIBER|POT|MARKET|BOWL)\s*/i, "").trim();
-function makeKey(varietyName) {
+function makeKey(crop, botanical, varietyName) {
+  varietyName = String(varietyName || '').replace(/^\s*(HE|OR)\s+/, '');
+  const cropClean = String(crop || '').trim().replace(/^(herbs?|perennials?|annuals?|grass(es)?|vegetables?|veg|tropicals?|foliage|edibles?)\b\s*/i, '');
+  const canon = g => GENUS_SYN[g] || g;
+  let genus = canon(tidy((botanical || cropClean || '').split(/\s+/)[0] || ''));
   let w = tidy(varietyName).split(' ').filter(Boolean);
-  let genus = w.shift() || '';
-  while (w.length && SPECIES.test(w[0])) w.shift();
-  return (genus + ' ' + w.join(' ')).trim();
+  if (!genus && w.length) genus = canon(w.shift());
+  while (w.length && (canon(w[0]) === genus || w[0] === genus || SPECIES.test(w[0]))) w.shift();
+  w = w.map(x => WORD_SYN[x] || x).filter(x => x).sort();
+  return (genus + (w.length ? ' ' + w.join(' ') : '')).trim();
 }
 const FORM_RANK = { urc: 0, callused: 1, urc_autostix: 2, rooted: 3, liner: 4, plug: 5 };
 
@@ -73,7 +88,7 @@ const FORM_RANK = { urc: 0, callused: 1, urc_autostix: 2, rooted: 3, liner: 4, p
   let matched = 0, ambiguous = 0, unmatched = 0, gap = 0, costUp = 0, costDn = 0, deltaPlants = 0;
   const updates = [];
   for (const c of crops) {
-    const key = makeKey(stripSize(c.item_name));
+    const key = makeKey(null, null, stripSize(c.item_name));
     const suppliers = idx[key];
     if (!suppliers) { unmatched++; continue; }
     const supNames = Object.keys(suppliers);
