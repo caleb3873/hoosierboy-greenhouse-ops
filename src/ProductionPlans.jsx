@@ -2,7 +2,7 @@
 // Phase 1: plan list + dashboard + property map (SVG) colored by per-house profit.
 // Future phases: per-bench drilldown, inline crop edit, satellite-photo overlays.
 
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, Fragment } from "react";
 import { getSupabase, getCultureClient } from "./supabase";
 import { useAuth } from "./Auth";
 
@@ -992,52 +992,203 @@ function WeekTab({ planId }) {
 }
 
 // ── Pricing tab ─────────────────────────────────────────────────────────────
+// Interactive sale-pricing editor (built for the Winter poinsettia price-set).
+// Per-size BASE price (auto-fills every item that size) + optional per-item override.
+// Shows last year's price as the anchor + projected qty; bulk % adjust + individual edit;
+// copy-to-clipboard for transcription into the B2B system.
+const priceNum = v => { const n = parseFloat(String(v == null ? "" : v).replace(/[$,]/g, "")); return isFinite(n) ? n : null; };
+const round2 = n => Math.round(n * 100) / 100;
+const dia = d => { const n = Number(d); return isFinite(n) ? (n % 1 === 0 ? String(n) : String(n)) : "?"; };
+
 function PricingTab({ plan }) {
   const sb = getSupabase();
-  const [rows, setRows] = useState([]);
+  const lastYear = plan.year - 1;
+  const [sizes, setSizes] = useState(null);   // [{containerId, diameter, sku, cropName, lastBase, items:[...] }]
+  const [baseEdit, setBaseEdit] = useState({}); // containerId -> this-year base (string)
+  const [ovEdit, setOvEdit] = useState({});     // `${cId}|${vId}` -> this-year override (string; "" = inherit base)
+  const [rowIds, setRowIds] = useState({ base: {}, ov: {} }); // existing crop_pricing ids for in-place update/delete
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [pct, setPct] = useState("");
 
-  useEffect(() => {
-    if (!sb) return;
-    (async () => {
-      const { data: prices } = await sb.from("crop_pricing")
-        .select("id,container_id,crop_name,effective_year,price,price_tier,source_doc,notes")
-        .eq("effective_year", plan.year)
-        .order("price", { ascending: false });
-      const { data: containers } = await sb.from("containers").select("id,sku,name,diameter_in");
-      setRows((prices || []).map(p => ({
-        ...p,
-        container: (containers || []).find(c => c.id === p.container_id),
-      })));
-    })();
-  }, [sb, plan.year]);
+  async function reload() {
+    setBusy(true);
+    const sc = [];
+    for (let f = 0; ; f += 1000) {
+      const { data } = await sb.from("scheduled_crops").select("container_id,variety_id,qty_pots")
+        .eq("plan_id", plan.id).eq("is_combo_component", false).range(f, f + 999);
+      if (!data || !data.length) break; sc.push(...data); if (data.length < 1000) break;
+    }
+    const { data: vars } = await sb.from("variety_library").select("id,variety,crop_name");
+    const { data: conts } = await sb.from("containers").select("id,sku,name,diameter_in");
+    const { data: prices } = await sb.from("crop_pricing")
+      .select("id,container_id,variety_id,crop_name,effective_year,price").in("effective_year", [plan.year, lastYear]);
+    const vById = {}; (vars || []).forEach(v => { vById[v.id] = v; });
+    const cById = {}; (conts || []).forEach(c => { cById[c.id] = c; });
+
+    // existing price rows split into base (variety_id null) and per-item override
+    const baseThis = {}, baseLast = {}, ovThis = {}, ovLast = {};
+    const baseIds = {}, ovIds = {};
+    (prices || []).forEach(p => {
+      if (p.variety_id == null) {
+        if (p.effective_year === plan.year) { baseThis[p.container_id] = +p.price; baseIds[p.container_id] = p.id; }
+        else baseLast[p.container_id] = +p.price;
+      } else {
+        const k = p.container_id + "|" + p.variety_id;
+        if (p.effective_year === plan.year) { ovThis[k] = +p.price; ovIds[k] = p.id; }
+        else ovLast[k] = +p.price;
+      }
+    });
+
+    // aggregate plan items by container + variety → projected qty
+    const agg = {};
+    for (const r of sc) {
+      if (!r.container_id) continue;
+      const k = r.container_id + "|" + (r.variety_id || "_");
+      (agg[k] = agg[k] || { containerId: r.container_id, varietyId: r.variety_id, qty: 0 });
+      agg[k].qty += (+r.qty_pots || 0);
+    }
+    // group by size (container), build display structure
+    const byCont = {};
+    Object.values(agg).forEach(it => {
+      const c = cById[it.containerId] || {};
+      const v = vById[it.varietyId] || {};
+      (byCont[it.containerId] = byCont[it.containerId] || {
+        containerId: it.containerId, diameter: c.diameter_in, sku: c.sku, name: c.name,
+        cropName: v.crop_name || "Poinsettia", lastBase: baseLast[it.containerId] ?? null, items: [],
+      }).items.push({
+        key: it.containerId + "|" + it.varietyId, varietyId: it.varietyId,
+        variety: v.variety || "(unnamed)", cropName: v.crop_name || "Poinsettia",
+        qty: it.qty, lastOv: ovLast[it.containerId + "|" + it.varietyId] ?? null,
+      });
+    });
+    const list = Object.values(byCont).sort((a, b) => (Number(a.diameter) || 0) - (Number(b.diameter) || 0));
+    list.forEach(s => s.items.sort((a, b) => a.variety.localeCompare(b.variety)));
+
+    // seed edit buffers: this-year base defaults to existing this-year, else last-year
+    const be = {}, oe = {};
+    list.forEach(s => {
+      be[s.containerId] = (baseThis[s.containerId] ?? baseLast[s.containerId] ?? "");
+      s.items.forEach(it => { if (ovThis[it.key] != null) oe[it.key] = String(ovThis[it.key]); });
+    });
+    setSizes(list); setBaseEdit(p => Object.keys(p).length ? p : be); setOvEdit(p => Object.keys(p).length ? p : oe);
+    setRowIds({ base: baseIds, ov: ovIds });
+    setBusy(false);
+  }
+  useEffect(() => { if (sb) reload(); }, [sb, plan.id]);
+
+  // effective this-year price for an item = override if set, else its size base
+  const effThis = (s, it) => { const o = priceNum(ovEdit[it.key]); return o != null ? o : priceNum(baseEdit[s.containerId]); };
+  const effLast = (s, it) => (it.lastOv != null ? it.lastOv : s.lastBase);
+
+  function applyPct() {
+    const p = priceNum(pct); if (p == null) return;
+    const f = 1 + p / 100;
+    setBaseEdit(prev => { const n = { ...prev }; Object.keys(n).forEach(k => { const v = priceNum(n[k]); if (v != null) n[k] = String(round2(v * f)); }); return n; });
+    setOvEdit(prev => { const n = { ...prev }; Object.keys(n).forEach(k => { const v = priceNum(n[k]); if (v != null && n[k] !== "") n[k] = String(round2(v * f)); }); return n; });
+    setMsg(`Adjusted all this-year prices by ${p > 0 ? "+" : ""}${p}%. Review, then Save.`);
+  }
+
+  async function save() {
+    if (!sizes) return;
+    setBusy(true); setMsg("Saving…");
+    try {
+      for (const s of sizes) {
+        const baseVal = priceNum(baseEdit[s.containerId]);
+        const id = rowIds.base[s.containerId];
+        if (baseVal != null) {
+          if (id) await sb.from("crop_pricing").update({ price: baseVal }).eq("id", id);
+          else await sb.from("crop_pricing").insert({ container_id: s.containerId, variety_id: null, crop_name: (s.cropName || "Poinsettia").toUpperCase(), effective_year: plan.year, price: baseVal, price_tier: "pre-book", source_doc: "winter pricing tool" });
+        }
+        for (const it of s.items) {
+          const ovStr = ovEdit[it.key]; const ovVal = priceNum(ovStr); const ovId = rowIds.ov[it.key];
+          if (ovStr != null && ovStr !== "" && ovVal != null) {
+            if (ovId) await sb.from("crop_pricing").update({ price: ovVal }).eq("id", ovId);
+            else await sb.from("crop_pricing").insert({ container_id: s.containerId, variety_id: it.varietyId, crop_name: it.cropName || "Poinsettia", effective_year: plan.year, price: ovVal, price_tier: "pre-book", source_doc: "winter pricing tool" });
+          } else if (ovId) {
+            await sb.from("crop_pricing").delete().eq("id", ovId); // override cleared → fall back to base
+          }
+        }
+      }
+      setMsg("✓ Saved this-year prices.");
+      await reload();
+    } catch (e) { setMsg("Save failed: " + e.message); }
+    setBusy(false);
+  }
+
+  function copyTable() {
+    const lines = ["Item\tProjected\tLast Year\tThis Year"];
+    (sizes || []).forEach(s => s.items.forEach(it => {
+      const et = effThis(s, it), el = effLast(s, it);
+      lines.push(`${dia(s.diameter)}" ${it.cropName} ${it.variety}\t${it.qty}\t${el != null ? "$" + el.toFixed(2) : ""}\t${et != null ? "$" + et.toFixed(2) : ""}`);
+    }));
+    const text = lines.join("\r\n");
+    if (navigator.clipboard) navigator.clipboard.writeText(text).then(() => setMsg("✓ Copied " + (lines.length - 1) + " items to clipboard — paste into Sheets/Excel or the B2B form."));
+  }
+
+  if (sizes == null) return <div style={{ padding: 30, color: COLORS.muted, fontFamily: "'DM Sans',sans-serif" }}>Loading pricing…</div>;
+  const totalItems = sizes.reduce((n, s) => n + s.items.length, 0);
+  const totalQty = sizes.reduce((n, s) => n + s.items.reduce((m, it) => m + it.qty, 0), 0);
+  const inp = { width: 84, padding: "5px 8px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 13, fontFamily: "inherit", textAlign: "right", boxSizing: "border-box" };
 
   return (
-    <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 16 }}>
-      <div style={{ fontSize: 13, color: COLORS.muted, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, marginBottom: 12 }}>
-        Pricing · {plan.year} sale prices
+    <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 16, fontFamily: "'DM Sans','Segoe UI',sans-serif" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12, marginBottom: 12 }}>
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: COLORS.dark }}>💲 Sale Pricing — {plan.name}</div>
+          <div style={{ fontSize: 12.5, color: COLORS.muted, marginTop: 3, maxWidth: 640 }}>
+            Set a <strong>base price per pot size</strong> (fills every item that size); type a price on any item to <strong>override</strong> it. {totalItems} items · {totalQty.toLocaleString()} projected pots. Last year = {lastYear}.
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ fontSize: 12, color: COLORS.muted }}>Adjust all by</span>
+          <input value={pct} onChange={e => setPct(e.target.value)} placeholder="%" style={{ ...inp, width: 56 }} />
+          <button onClick={applyPct} style={{ border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.dark, borderRadius: 7, padding: "6px 11px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Apply %</button>
+          <button onClick={copyTable} style={{ border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.dark, borderRadius: 7, padding: "6px 11px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>⧉ Copy</button>
+          <button onClick={save} disabled={busy} style={{ border: "none", background: busy ? "#8aa67a" : COLORS.dark, color: "#fff", borderRadius: 7, padding: "6px 14px", fontSize: 12.5, fontWeight: 800, cursor: busy ? "default" : "pointer", fontFamily: "inherit" }}>{busy ? "…" : "Save"}</button>
+        </div>
       </div>
-      {rows.length === 0 ? (
-        <div style={{ color: COLORS.muted, padding: "20px 0" }}>No pricing for {plan.year} yet.</div>
-      ) : (
+      {msg && <div style={{ fontSize: 12.5, color: COLORS.dark, background: "#eef6e7", border: `1px solid ${COLORS.light}`, borderRadius: 8, padding: "7px 11px", marginBottom: 10 }}>{msg}</div>}
+
+      {sizes.length === 0 ? <div style={{ color: COLORS.muted, padding: "20px 0" }}>No items in this plan yet.</div> : (
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead>
-            <tr style={{ background: "#f3f5ef" }}>
-              <th style={th}>Container</th>
-              <th style={th}>Crop</th>
-              <th style={{...th, textAlign:"right"}}>Price</th>
-              <th style={th}>Tier</th>
-              <th style={th}>Source</th>
+            <tr style={{ textAlign: "left", color: COLORS.muted, background: "#f3f5ef" }}>
+              <th style={th}>Item</th>
+              <th style={{ ...th, textAlign: "right" }}>Projected</th>
+              <th style={{ ...th, textAlign: "right" }}>Last Yr</th>
+              <th style={{ ...th, textAlign: "right" }}>This Yr</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map(r => (
-              <tr key={r.id} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
-                <td style={td}><strong>{r.container?.sku || "—"}</strong> <span style={{ color: COLORS.muted, fontSize: 11 }}>{r.container?.name}</span></td>
-                <td style={td}>{r.crop_name}</td>
-                <td style={{...td, textAlign:"right", fontWeight: 800, color: COLORS.dark, fontSize: 15}}>${(+r.price).toFixed(2)}</td>
-                <td style={td}>{r.price_tier}</td>
-                <td style={{...td, fontSize: 11, color: COLORS.muted}}>{r.source_doc}</td>
-              </tr>
+            {sizes.map(s => (
+              <Fragment key={s.containerId}>
+                <tr style={{ background: "#f7f9f4", borderTop: `2px solid ${COLORS.border}` }}>
+                  <td style={{ ...td, fontWeight: 800, color: COLORS.dark }}>{dia(s.diameter)}" {s.cropName} <span style={{ color: COLORS.muted, fontWeight: 400, fontSize: 11 }}>· {s.sku} · {s.items.length} items</span></td>
+                  <td style={{ ...td, textAlign: "right", color: COLORS.muted }}>{s.items.reduce((m, it) => m + it.qty, 0).toLocaleString()}</td>
+                  <td style={{ ...td, textAlign: "right", color: COLORS.muted }}>{s.lastBase != null ? "$" + s.lastBase.toFixed(2) : "—"}</td>
+                  <td style={{ ...td, textAlign: "right" }}>
+                    <span style={{ fontSize: 11, color: COLORS.muted, marginRight: 4 }}>base</span>
+                    <input value={baseEdit[s.containerId] ?? ""} onChange={e => setBaseEdit(p => ({ ...p, [s.containerId]: e.target.value }))} style={inp} />
+                  </td>
+                </tr>
+                {s.items.map(it => {
+                  const et = effThis(s, it), el = effLast(s, it);
+                  const overridden = priceNum(ovEdit[it.key]) != null && ovEdit[it.key] !== "";
+                  return (
+                    <tr key={it.key} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
+                      <td style={{ ...td, paddingLeft: 18 }}>{dia(s.diameter)}" {it.cropName} {it.variety}{overridden && <span title="custom price (overrides the size base)" style={{ marginLeft: 6, fontSize: 10, color: COLORS.amber, fontWeight: 700 }}>◆ custom</span>}</td>
+                      <td style={{ ...td, textAlign: "right" }}>{it.qty.toLocaleString()}</td>
+                      <td style={{ ...td, textAlign: "right", color: COLORS.muted }}>{el != null ? "$" + el.toFixed(2) : "—"}</td>
+                      <td style={{ ...td, textAlign: "right" }}>
+                        <input value={ovEdit[it.key] ?? ""} placeholder={priceNum(baseEdit[s.containerId]) != null ? priceNum(baseEdit[s.containerId]).toFixed(2) : ""}
+                          onChange={e => setOvEdit(p => ({ ...p, [it.key]: e.target.value }))} style={{ ...inp, borderColor: overridden ? COLORS.amber : COLORS.border }} />
+                        <div style={{ fontSize: 10, color: COLORS.muted, marginTop: 1 }}>{et != null ? "= $" + et.toFixed(2) : ""}</div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </Fragment>
             ))}
           </tbody>
         </table>
