@@ -110,6 +110,9 @@ function breederFromName(fn) {
   if (/quality cutting|hma0/.test(f)) return 'QualityCuttings';
   if (/kientzler/.test(f)) return 'Kientzler';
   if (/pell/.test(f)) return 'Pell';
+  if (/green ?fuse/.test(f)) return 'GreenFuse';        // before Vivero — "Green Fuse ... URC - Vivero"
+  if (/vivero/.test(f)) return 'Vivero';
+  if (/plant investment/.test(f)) return 'PlantInvestments';
   return fn.replace(/\.xlsx?$/i, '').slice(0, 16);
 }
 

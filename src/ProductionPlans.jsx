@@ -2,7 +2,7 @@
 // Phase 1: plan list + dashboard + property map (SVG) colored by per-house profit.
 // Future phases: per-bench drilldown, inline crop edit, satellite-photo overlays.
 
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, Fragment } from "react";
 import { getSupabase, getCultureClient } from "./supabase";
 import { useAuth } from "./Auth";
 
@@ -992,52 +992,203 @@ function WeekTab({ planId }) {
 }
 
 // ── Pricing tab ─────────────────────────────────────────────────────────────
+// Interactive sale-pricing editor (built for the Winter poinsettia price-set).
+// Per-size BASE price (auto-fills every item that size) + optional per-item override.
+// Shows last year's price as the anchor + projected qty; bulk % adjust + individual edit;
+// copy-to-clipboard for transcription into the B2B system.
+const priceNum = v => { const n = parseFloat(String(v == null ? "" : v).replace(/[$,]/g, "")); return isFinite(n) ? n : null; };
+const round2 = n => Math.round(n * 100) / 100;
+const dia = d => { const n = Number(d); return isFinite(n) ? (n % 1 === 0 ? String(n) : String(n)) : "?"; };
+
 function PricingTab({ plan }) {
   const sb = getSupabase();
-  const [rows, setRows] = useState([]);
+  const lastYear = plan.year - 1;
+  const [sizes, setSizes] = useState(null);   // [{containerId, diameter, sku, cropName, lastBase, items:[...] }]
+  const [baseEdit, setBaseEdit] = useState({}); // containerId -> this-year base (string)
+  const [ovEdit, setOvEdit] = useState({});     // `${cId}|${vId}` -> this-year override (string; "" = inherit base)
+  const [rowIds, setRowIds] = useState({ base: {}, ov: {} }); // existing crop_pricing ids for in-place update/delete
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [pct, setPct] = useState("");
 
-  useEffect(() => {
-    if (!sb) return;
-    (async () => {
-      const { data: prices } = await sb.from("crop_pricing")
-        .select("id,container_id,crop_name,effective_year,price,price_tier,source_doc,notes")
-        .eq("effective_year", plan.year)
-        .order("price", { ascending: false });
-      const { data: containers } = await sb.from("containers").select("id,sku,name,diameter_in");
-      setRows((prices || []).map(p => ({
-        ...p,
-        container: (containers || []).find(c => c.id === p.container_id),
-      })));
-    })();
-  }, [sb, plan.year]);
+  async function reload() {
+    setBusy(true);
+    const sc = [];
+    for (let f = 0; ; f += 1000) {
+      const { data } = await sb.from("scheduled_crops").select("container_id,variety_id,qty_pots")
+        .eq("plan_id", plan.id).eq("is_combo_component", false).range(f, f + 999);
+      if (!data || !data.length) break; sc.push(...data); if (data.length < 1000) break;
+    }
+    const { data: vars } = await sb.from("variety_library").select("id,variety,crop_name");
+    const { data: conts } = await sb.from("containers").select("id,sku,name,diameter_in");
+    const { data: prices } = await sb.from("crop_pricing")
+      .select("id,container_id,variety_id,crop_name,effective_year,price").in("effective_year", [plan.year, lastYear]);
+    const vById = {}; (vars || []).forEach(v => { vById[v.id] = v; });
+    const cById = {}; (conts || []).forEach(c => { cById[c.id] = c; });
+
+    // existing price rows split into base (variety_id null) and per-item override
+    const baseThis = {}, baseLast = {}, ovThis = {}, ovLast = {};
+    const baseIds = {}, ovIds = {};
+    (prices || []).forEach(p => {
+      if (p.variety_id == null) {
+        if (p.effective_year === plan.year) { baseThis[p.container_id] = +p.price; baseIds[p.container_id] = p.id; }
+        else baseLast[p.container_id] = +p.price;
+      } else {
+        const k = p.container_id + "|" + p.variety_id;
+        if (p.effective_year === plan.year) { ovThis[k] = +p.price; ovIds[k] = p.id; }
+        else ovLast[k] = +p.price;
+      }
+    });
+
+    // aggregate plan items by container + variety → projected qty
+    const agg = {};
+    for (const r of sc) {
+      if (!r.container_id) continue;
+      const k = r.container_id + "|" + (r.variety_id || "_");
+      (agg[k] = agg[k] || { containerId: r.container_id, varietyId: r.variety_id, qty: 0 });
+      agg[k].qty += (+r.qty_pots || 0);
+    }
+    // group by size (container), build display structure
+    const byCont = {};
+    Object.values(agg).forEach(it => {
+      const c = cById[it.containerId] || {};
+      const v = vById[it.varietyId] || {};
+      (byCont[it.containerId] = byCont[it.containerId] || {
+        containerId: it.containerId, diameter: c.diameter_in, sku: c.sku, name: c.name,
+        cropName: v.crop_name || "Poinsettia", lastBase: baseLast[it.containerId] ?? null, items: [],
+      }).items.push({
+        key: it.containerId + "|" + it.varietyId, varietyId: it.varietyId,
+        variety: v.variety || "(unnamed)", cropName: v.crop_name || "Poinsettia",
+        qty: it.qty, lastOv: ovLast[it.containerId + "|" + it.varietyId] ?? null,
+      });
+    });
+    const list = Object.values(byCont).sort((a, b) => (Number(a.diameter) || 0) - (Number(b.diameter) || 0));
+    list.forEach(s => s.items.sort((a, b) => a.variety.localeCompare(b.variety)));
+
+    // seed edit buffers: this-year base defaults to existing this-year, else last-year
+    const be = {}, oe = {};
+    list.forEach(s => {
+      be[s.containerId] = (baseThis[s.containerId] ?? baseLast[s.containerId] ?? "");
+      s.items.forEach(it => { if (ovThis[it.key] != null) oe[it.key] = String(ovThis[it.key]); });
+    });
+    setSizes(list); setBaseEdit(p => Object.keys(p).length ? p : be); setOvEdit(p => Object.keys(p).length ? p : oe);
+    setRowIds({ base: baseIds, ov: ovIds });
+    setBusy(false);
+  }
+  useEffect(() => { if (sb) reload(); }, [sb, plan.id]);
+
+  // effective this-year price for an item = override if set, else its size base
+  const effThis = (s, it) => { const o = priceNum(ovEdit[it.key]); return o != null ? o : priceNum(baseEdit[s.containerId]); };
+  const effLast = (s, it) => (it.lastOv != null ? it.lastOv : s.lastBase);
+
+  function applyPct() {
+    const p = priceNum(pct); if (p == null) return;
+    const f = 1 + p / 100;
+    setBaseEdit(prev => { const n = { ...prev }; Object.keys(n).forEach(k => { const v = priceNum(n[k]); if (v != null) n[k] = String(round2(v * f)); }); return n; });
+    setOvEdit(prev => { const n = { ...prev }; Object.keys(n).forEach(k => { const v = priceNum(n[k]); if (v != null && n[k] !== "") n[k] = String(round2(v * f)); }); return n; });
+    setMsg(`Adjusted all this-year prices by ${p > 0 ? "+" : ""}${p}%. Review, then Save.`);
+  }
+
+  async function save() {
+    if (!sizes) return;
+    setBusy(true); setMsg("Saving…");
+    try {
+      for (const s of sizes) {
+        const baseVal = priceNum(baseEdit[s.containerId]);
+        const id = rowIds.base[s.containerId];
+        if (baseVal != null) {
+          if (id) await sb.from("crop_pricing").update({ price: baseVal }).eq("id", id);
+          else await sb.from("crop_pricing").insert({ container_id: s.containerId, variety_id: null, crop_name: (s.cropName || "Poinsettia").toUpperCase(), effective_year: plan.year, price: baseVal, price_tier: "pre-book", source_doc: "winter pricing tool" });
+        }
+        for (const it of s.items) {
+          const ovStr = ovEdit[it.key]; const ovVal = priceNum(ovStr); const ovId = rowIds.ov[it.key];
+          if (ovStr != null && ovStr !== "" && ovVal != null) {
+            if (ovId) await sb.from("crop_pricing").update({ price: ovVal }).eq("id", ovId);
+            else await sb.from("crop_pricing").insert({ container_id: s.containerId, variety_id: it.varietyId, crop_name: it.cropName || "Poinsettia", effective_year: plan.year, price: ovVal, price_tier: "pre-book", source_doc: "winter pricing tool" });
+          } else if (ovId) {
+            await sb.from("crop_pricing").delete().eq("id", ovId); // override cleared → fall back to base
+          }
+        }
+      }
+      setMsg("✓ Saved this-year prices.");
+      await reload();
+    } catch (e) { setMsg("Save failed: " + e.message); }
+    setBusy(false);
+  }
+
+  function copyTable() {
+    const lines = ["Item\tProjected\tLast Year\tThis Year"];
+    (sizes || []).forEach(s => s.items.forEach(it => {
+      const et = effThis(s, it), el = effLast(s, it);
+      lines.push(`${dia(s.diameter)}" ${it.cropName} ${it.variety}\t${it.qty}\t${el != null ? "$" + el.toFixed(2) : ""}\t${et != null ? "$" + et.toFixed(2) : ""}`);
+    }));
+    const text = lines.join("\r\n");
+    if (navigator.clipboard) navigator.clipboard.writeText(text).then(() => setMsg("✓ Copied " + (lines.length - 1) + " items to clipboard — paste into Sheets/Excel or the B2B form."));
+  }
+
+  if (sizes == null) return <div style={{ padding: 30, color: COLORS.muted, fontFamily: "'DM Sans',sans-serif" }}>Loading pricing…</div>;
+  const totalItems = sizes.reduce((n, s) => n + s.items.length, 0);
+  const totalQty = sizes.reduce((n, s) => n + s.items.reduce((m, it) => m + it.qty, 0), 0);
+  const inp = { width: 84, padding: "5px 8px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 13, fontFamily: "inherit", textAlign: "right", boxSizing: "border-box" };
 
   return (
-    <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 16 }}>
-      <div style={{ fontSize: 13, color: COLORS.muted, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, marginBottom: 12 }}>
-        Pricing · {plan.year} sale prices
+    <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 16, fontFamily: "'DM Sans','Segoe UI',sans-serif" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12, marginBottom: 12 }}>
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: COLORS.dark }}>💲 Sale Pricing — {plan.name}</div>
+          <div style={{ fontSize: 12.5, color: COLORS.muted, marginTop: 3, maxWidth: 640 }}>
+            Set a <strong>base price per pot size</strong> (fills every item that size); type a price on any item to <strong>override</strong> it. {totalItems} items · {totalQty.toLocaleString()} projected pots. Last year = {lastYear}.
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ fontSize: 12, color: COLORS.muted }}>Adjust all by</span>
+          <input value={pct} onChange={e => setPct(e.target.value)} placeholder="%" style={{ ...inp, width: 56 }} />
+          <button onClick={applyPct} style={{ border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.dark, borderRadius: 7, padding: "6px 11px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Apply %</button>
+          <button onClick={copyTable} style={{ border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.dark, borderRadius: 7, padding: "6px 11px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>⧉ Copy</button>
+          <button onClick={save} disabled={busy} style={{ border: "none", background: busy ? "#8aa67a" : COLORS.dark, color: "#fff", borderRadius: 7, padding: "6px 14px", fontSize: 12.5, fontWeight: 800, cursor: busy ? "default" : "pointer", fontFamily: "inherit" }}>{busy ? "…" : "Save"}</button>
+        </div>
       </div>
-      {rows.length === 0 ? (
-        <div style={{ color: COLORS.muted, padding: "20px 0" }}>No pricing for {plan.year} yet.</div>
-      ) : (
+      {msg && <div style={{ fontSize: 12.5, color: COLORS.dark, background: "#eef6e7", border: `1px solid ${COLORS.light}`, borderRadius: 8, padding: "7px 11px", marginBottom: 10 }}>{msg}</div>}
+
+      {sizes.length === 0 ? <div style={{ color: COLORS.muted, padding: "20px 0" }}>No items in this plan yet.</div> : (
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead>
-            <tr style={{ background: "#f3f5ef" }}>
-              <th style={th}>Container</th>
-              <th style={th}>Crop</th>
-              <th style={{...th, textAlign:"right"}}>Price</th>
-              <th style={th}>Tier</th>
-              <th style={th}>Source</th>
+            <tr style={{ textAlign: "left", color: COLORS.muted, background: "#f3f5ef" }}>
+              <th style={th}>Item</th>
+              <th style={{ ...th, textAlign: "right" }}>Projected</th>
+              <th style={{ ...th, textAlign: "right" }}>Last Yr</th>
+              <th style={{ ...th, textAlign: "right" }}>This Yr</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map(r => (
-              <tr key={r.id} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
-                <td style={td}><strong>{r.container?.sku || "—"}</strong> <span style={{ color: COLORS.muted, fontSize: 11 }}>{r.container?.name}</span></td>
-                <td style={td}>{r.crop_name}</td>
-                <td style={{...td, textAlign:"right", fontWeight: 800, color: COLORS.dark, fontSize: 15}}>${(+r.price).toFixed(2)}</td>
-                <td style={td}>{r.price_tier}</td>
-                <td style={{...td, fontSize: 11, color: COLORS.muted}}>{r.source_doc}</td>
-              </tr>
+            {sizes.map(s => (
+              <Fragment key={s.containerId}>
+                <tr style={{ background: "#f7f9f4", borderTop: `2px solid ${COLORS.border}` }}>
+                  <td style={{ ...td, fontWeight: 800, color: COLORS.dark }}>{dia(s.diameter)}" {s.cropName} <span style={{ color: COLORS.muted, fontWeight: 400, fontSize: 11 }}>· {s.sku} · {s.items.length} items</span></td>
+                  <td style={{ ...td, textAlign: "right", color: COLORS.muted }}>{s.items.reduce((m, it) => m + it.qty, 0).toLocaleString()}</td>
+                  <td style={{ ...td, textAlign: "right", color: COLORS.muted }}>{s.lastBase != null ? "$" + s.lastBase.toFixed(2) : "—"}</td>
+                  <td style={{ ...td, textAlign: "right" }}>
+                    <span style={{ fontSize: 11, color: COLORS.muted, marginRight: 4 }}>base</span>
+                    <input value={baseEdit[s.containerId] ?? ""} onChange={e => setBaseEdit(p => ({ ...p, [s.containerId]: e.target.value }))} style={inp} />
+                  </td>
+                </tr>
+                {s.items.map(it => {
+                  const et = effThis(s, it), el = effLast(s, it);
+                  const overridden = priceNum(ovEdit[it.key]) != null && ovEdit[it.key] !== "";
+                  return (
+                    <tr key={it.key} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
+                      <td style={{ ...td, paddingLeft: 18 }}>{dia(s.diameter)}" {it.cropName} {it.variety}{overridden && <span title="custom price (overrides the size base)" style={{ marginLeft: 6, fontSize: 10, color: COLORS.amber, fontWeight: 700 }}>◆ custom</span>}</td>
+                      <td style={{ ...td, textAlign: "right" }}>{it.qty.toLocaleString()}</td>
+                      <td style={{ ...td, textAlign: "right", color: COLORS.muted }}>{el != null ? "$" + el.toFixed(2) : "—"}</td>
+                      <td style={{ ...td, textAlign: "right" }}>
+                        <input value={ovEdit[it.key] ?? ""} placeholder={priceNum(baseEdit[s.containerId]) != null ? priceNum(baseEdit[s.containerId]).toFixed(2) : ""}
+                          onChange={e => setOvEdit(p => ({ ...p, [it.key]: e.target.value }))} style={{ ...inp, borderColor: overridden ? COLORS.amber : COLORS.border }} />
+                        <div style={{ fontSize: 10, color: COLORS.muted, marginTop: 1 }}>{et != null ? "= $" + et.toFixed(2) : ""}</div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </Fragment>
             ))}
           </tbody>
         </table>
@@ -1050,17 +1201,20 @@ function PricingTab({ plan }) {
 function ItemsTab({ plan }) {
   const sb = getSupabase();
   const [rows, setRows] = useState([]);
+  const [brokers, setBrokers] = useState({}); // name -> {rep_name, rep_email, rep_phone}
   const [search, setSearch] = useState("");
 
   useEffect(() => {
     if (!sb) return;
     (async () => {
       const { data: sc } = await sb.from("scheduled_crops")
-        .select("id,variety_id,container_id,bench_id,color,qty_pots,ppp,qty_plants_ordered,liner_unit_cost,plant_week,ship_week,status")
+        .select("id,variety_id,container_id,bench_id,color,qty_pots,ppp,qty_plants_ordered,liner_unit_cost,broker,item_name,plant_week,ship_week,status")
         .eq("plan_id", plan.id);
       const { data: vars } = await sb.from("variety_library").select("id,variety,breeder");
       const { data: containers } = await sb.from("containers").select("id,sku");
       const { data: bench } = await sb.from("benches").select("id,code,zone_label").limit(2000);
+      const { data: bp } = await sb.from("broker_profiles").select("name,rep_name,rep_email,rep_phone");
+      const bmap = {}; (bp || []).forEach(b => { bmap[b.name] = b; }); setBrokers(bmap);
 
       setRows((sc || []).map(r => ({
         ...r,
@@ -1070,6 +1224,21 @@ function ItemsTab({ plan }) {
       })).sort((a, b) => a.plant_week - b.plant_week || (a.bench?.code || "").localeCompare(b.bench?.code || "")));
     })();
   }, [sb, plan.id]);
+
+  // Open a prefilled email to the row's broker rep — for shortages, issues, or re-orders.
+  function contactBroker(r) {
+    const b = brokers[r.broker];
+    const itemName = r.item_name || r.variety?.variety || "this item";
+    const subject = `Schlegel Greenhouse — ${itemName} (${plan.name})`;
+    const body =
+      `Hi ${b?.rep_name || r.broker || ""},\n\n` +
+      `Regarding ${itemName} on our ${plan.name} plan` +
+      (r.qty_plants_ordered ? ` (planned ${r.qty_plants_ordered} liners)` : "") + `:\n\n` +
+      `- [ ] Need to request additional material\n- [ ] Shortage / availability question\n- [ ] Other issue\n\n` +
+      `Please advise on availability and timing. Thanks,\nSchlegel Greenhouse`;
+    const to = b?.rep_email || "";
+    window.location.href = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  }
 
   const q = search.toLowerCase();
   const filtered = q ? rows.filter(r =>
@@ -1101,11 +1270,14 @@ function ItemsTab({ plan }) {
               <th style={{...th, textAlign:"right"}}>ppp</th>
               <th style={{...th, textAlign:"right"}}>Liners</th>
               <th style={{...th, textAlign:"right"}}>$/liner</th>
+              <th style={th}>Broker</th>
               <th style={th}>Status</th>
             </tr>
           </thead>
           <tbody>
-            {filtered.map(r => (
+            {filtered.map(r => {
+              const b = brokers[r.broker];
+              return (
               <tr key={r.id} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
                 <td style={td}>{r.plant_week}</td>
                 <td style={td}>{r.bench?.code}</td>
@@ -1116,9 +1288,19 @@ function ItemsTab({ plan }) {
                 <td style={{...td, textAlign:"right"}}>{r.ppp}</td>
                 <td style={{...td, textAlign:"right"}}>{r.qty_plants_ordered}</td>
                 <td style={{...td, textAlign:"right"}}>${(+r.liner_unit_cost || 0).toFixed(3)}</td>
+                <td style={td}>
+                  {r.broker ? (
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ fontWeight: 700, color: srcBrokerColor(r.broker) }} title={b?.rep_name ? `${b.rep_name}${b.rep_email ? " · " + b.rep_email : ""}` : ""}>{r.broker}</span>
+                      <button onClick={() => contactBroker(r)} title={`Email ${b?.rep_name || r.broker} about ${r.item_name || r.variety?.variety || "this item"} — shortage, issue, or re-order`}
+                        style={{ border: `1px solid ${COLORS.border}`, background: "#fff", borderRadius: 6, padding: "0 6px", fontSize: 11, cursor: "pointer", lineHeight: 1.6 }}>✉</button>
+                    </span>
+                  ) : <span style={{ color: COLORS.muted }}>—</span>}
+                </td>
                 <td style={td}>{r.status}</td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -4831,7 +5013,175 @@ function srcGradeFor(broker, profiles) {
 }
 const money = v => (v == null ? "—" : "$" + Number(v).toFixed(4));
 
+// ── Apply-sourcing matching (mirrors scripts/parse_broker_quotes.js makeKey EXACTLY) ──
+// Maps a plan item name → normalized variety key → the supplier that carries it →
+// that supplier's chosen broker (sourcing_selections, else cheapest available) → landed.
+// These three consts + srcTidy + srcMakeKey MUST stay byte-identical to the parser so a
+// plan item keys the same way broker_prices.variety_key was generated.
+const SRC_SPECIES = /^(millefolium|reptans|spurium|didyma|dubium|hybrida|hybrid|aurantiaca|cordata|interspecific|x|sp|spp|species|officinalis|off|vulgaris|vul|angustifolia|angust|ang|dracunculus|drac|citriodorus|citriodora|citrata|citri|cit|intermedia|inter|piperita|pip|spicata|suaveolens|serpyllum|serp|praecox|amygdaloides|amy|lindheimeri|lind|nobilis|stoechas|st|douglasii|doug|montana|mastichina|pulegioides|herba|barona|elegans|arvensis|fruticosa|abrotanum|arborescens|canariensis|canary|pseudolanuginosus|pseudolanugin|hederacea|bonariensis|diffusa|odoratum|rebaudiana|chamaecyparissus|viridis|incisa|clinopodioides|europaea|ovata)$/;
+const SRC_GENUS_SYN = { mentha: 'mint', thymus: 'thyme', salvia: 'sage', laurus: 'bay', ocimum: 'basil', rosmarinus: 'rosemary', satureja: 'savory', origanum: 'oregano', lippia: 'lemonverbena', aloysia: 'lemonverbena', helichrysum: 'curry', helichr: 'curry', chamaemelum: 'chamomile', coriandrum: 'coriander', majorana: 'marjoram', pelargonium: 'geranium', lavendula: 'lavandula' };
+const SRC_WORD_SYN = { cas: 'cascadias', com: 'compact', bic: 'bicolor', bestie: 'besties' };
+function srcTidy(s) {
+  s = ' ' + String(s).toLowerCase() + ' ';
+  s = s.replace(/[áàâäãå]/g, 'a').replace(/[éèêë]/g, 'e').replace(/[íìîï]/g, 'i').replace(/[óòôöõ]/g, 'o').replace(/[úùûü]/g, 'u').replace(/ñ/g, 'n').replace(/ç/g, 'c');
+  s = s.replace(/\bw\//g, ' ').replace(/\bwith\b/g, ' ');
+  s = s.replace(/[`'´‘’"*]/g, ' ').replace(/[™®℠]/g, ' ').replace(/#/g, ' ');
+  s = s.replace(/\bpp\s?\d+\b/g, ' ').replace(/\bppaf\b/g, ' ').replace(/\bcpbr\s?\d+\b/g, ' ')
+       .replace(/\beu\s?\d*\b/g, ' ').replace(/\bp\.?p\.?a\.?f\.?\b/g, ' ');
+  s = s.replace(/\b(usppp?|us\spp)\d+\b/g, ' ');
+  s = s.replace(/\([^)]*\)/g, ' ');
+  s = s.replace(/\b20\d\d\b/g, ' ');
+  s = s.replace(/-?(urc|cc|rc|tc|liner|plug|pellet|callused|unrooted|rooted)\b/g, ' ');
+  s = s.replace(/\bn\/?g\b/g, ' ').replace(/\bnew guinea\b/g, ' ');
+  s = s.replace(/\bimproved\b/g, ' ').replace(/\bimp\b/g, ' ');
+  s = s.replace(/[^a-z0-9 ]/g, ' ');
+  return s.replace(/\s+/g, ' ').trim();
+}
+// strip a leading size token from a plan item name: 4.5", HB 10", POT, 1801, FIBER…
+const srcStripSize = n => String(n || "").replace(/^\s*(HB\s*\d+(?:\.\d+)?"?|\d+(?:\.\d+)?"|1801[LS]?|FIBER|POT|MARKET|BOWL)\s*/i, "").trim();
+function srcMakeKey(crop, botanical, varietyName) {
+  varietyName = String(varietyName || '').replace(/^\s*(HE|OR)\s+/, '');
+  const cropClean = String(crop || '').trim().replace(/^(herbs?|perennials?|annuals?|grass(es)?|vegetables?|veg|tropicals?|foliage|edibles?)\b\s*/i, '');
+  const canon = g => SRC_GENUS_SYN[g] || g;
+  let genus = canon(srcTidy((botanical || cropClean || '').split(/\s+/)[0] || ''));
+  let w = srcTidy(varietyName).split(' ').filter(Boolean);
+  if (!genus && w.length) genus = canon(w.shift());
+  while (w.length && (canon(w[0]) === genus || w[0] === genus || SRC_SPECIES.test(w[0]))) w.shift();
+  w = w.map(x => SRC_WORD_SYN[x] || x).filter(x => x).sort();
+  return (genus + (w.length ? ' ' + w.join(' ') : '')).trim();
+}
+const SRC_FORM_RANK = { urc: 0, callused: 1, urc_autostix: 2, rooted: 3, liner: 4, plug: 5 };
+
+async function srcPageAll(sb, table, select, filter) {
+  let out = [];
+  for (let f = 0; ; f += 1000) {
+    let q = sb.from(table).select(select).range(f, f + 999);
+    if (filter) q = filter(q);
+    const { data, error } = await q;
+    if (error || !data || !data.length) break;
+    out = out.concat(data);
+    if (data.length < 1000) break;
+  }
+  return out;
+}
+
+// Compute (no write) the broker + landed cost each plan crop would get from current selections.
+async function computeSourcingPlan(sb, planId) {
+  const prices = await srcPageAll(sb, "broker_prices", "broker,supplier,form_class,variety_key,landed", q => q.eq("season", SRC_SEASON).gt("landed", 0));
+  const selRows = await srcPageAll(sb, "sourcing_selections", "supplier,form_class,selected_broker", q => q.eq("season", SRC_SEASON).eq("form_class", "*"));
+  const sels = {}; selRows.forEach(s => { if (s.selected_broker) sels[s.supplier] = s.selected_broker; });
+  const crops = await srcPageAll(sb, "scheduled_crops", "id,item_name,qty_pots,plants_per_unit,liner_unit_cost,broker", q => q.eq("plan_id", planId).eq("is_combo_component", false).gt("qty_pots", 0));
+
+  const idx = {};
+  for (const p of prices) {
+    const k = p.variety_key; if (!k) continue;
+    (idx[k] = idx[k] || {})[p.supplier] = idx[k][p.supplier] || {};
+    const cur = idx[k][p.supplier][p.broker];
+    const better = !cur || (SRC_FORM_RANK[p.form_class] ?? 9) < (SRC_FORM_RANK[cur.form_class] ?? 9)
+      || ((SRC_FORM_RANK[p.form_class] ?? 9) === (SRC_FORM_RANK[cur.form_class] ?? 9) && p.landed < cur.landed);
+    if (better) idx[k][p.supplier][p.broker] = { landed: p.landed, form_class: p.form_class };
+  }
+
+  const updates = []; let ambiguous = 0, unmatched = 0, gap = 0, delta = 0, up = 0, dn = 0;
+  for (const c of crops) {
+    const key = srcMakeKey(null, null, srcStripSize(c.item_name));
+    const suppliers = idx[key];
+    if (!suppliers) { unmatched++; continue; }
+    const supNames = Object.keys(suppliers);
+    let chosenSup = supNames.find(s => sels[s]);
+    if (!chosenSup && supNames.length === 1) chosenSup = supNames[0];
+    if (!chosenSup) { ambiguous++; continue; }
+    const brokers = suppliers[chosenSup];
+    let broker = sels[chosenSup];
+    if (!broker || !brokers[broker]) {
+      broker = Object.keys(brokers).sort((a, b) => brokers[a].landed - brokers[b].landed)[0];
+      if (sels[chosenSup] && !brokers[sels[chosenSup]]) gap++;
+    }
+    const landed = brokers[broker].landed;
+    const old = +c.liner_unit_cost || 0;
+    const plants = (+c.qty_pots || 0) * (+c.plants_per_unit || 1);
+    const changed = !(c.broker === broker && Math.abs(landed - old) < 1e-6);
+    delta += (landed - old) * plants;
+    if (landed > old) up++; else if (landed < old) dn++;
+    updates.push({ id: c.id, item: c.item_name, supplier: chosenSup, broker, landed, old, changed });
+  }
+  return { updates, stats: { total: crops.length, matched: updates.length, ambiguous, unmatched, gap, delta, up, dn, selections: Object.keys(sels).length } };
+}
+
+// Standalone Sourcing page (Production nav → 🧭 Sourcing) — same workspace, full width.
+export function SourcingPage() {
+  return (
+    <div style={{ padding: "16px 22px", maxWidth: 1280, margin: "0 auto" }}>
+      <SourcingWorkspace fullscreen />
+    </div>
+  );
+}
+
+// In-plan tab: the workspace + apply-to-plan + a button to pop it open full screen.
 function SourcingTab({ plan }) {
+  const sb = getSupabase();
+  const [fs, setFs] = useState(false);
+  const [applyBusy, setApplyBusy] = useState(false);
+  const [applyMsg, setApplyMsg] = useState("");
+
+  async function applyToPlan() {
+    if (!plan?.id) return;
+    setApplyBusy(true); setApplyMsg("Matching plan items to your broker picks…");
+    try {
+      const { updates, stats } = await computeSourcingPlan(sb, plan.id);
+      const changes = updates.filter(u => u.changed);
+      const dollars = (stats.delta >= 0 ? "+" : "") + "$" + Math.round(stats.delta).toLocaleString();
+      const ok = window.confirm(
+        `Apply broker pricing to "${plan.name}"?\n\n` +
+        `${stats.matched} of ${stats.total} items matched a broker catalog.\n` +
+        `${changes.length} rows will change (broker and/or liner cost).\n` +
+        `${stats.unmatched} not in any loaded catalog · ${stats.ambiguous} ambiguous (≥2 suppliers, no pick).\n` +
+        `${stats.selections} supplier broker-picks in effect${stats.gap ? ` · ${stats.gap} fell back to cheapest (your pick doesn't carry it)` : ""}.\n\n` +
+        `Liner-cost impact if applied: ${dollars} (${stats.up} up, ${stats.dn} down).`
+      );
+      if (!ok) { setApplyBusy(false); setApplyMsg(""); return; }
+      let done = 0;
+      for (const u of changes) {
+        const { error } = await sb.from("scheduled_crops").update({ liner_unit_cost: u.landed, broker: u.broker }).eq("id", u.id);
+        if (error) { setApplyMsg("Stopped after " + done + " — " + error.message); setApplyBusy(false); return; }
+        done++;
+      }
+      setApplyMsg(`✓ Applied to ${done} rows. ${stats.matched}/${stats.total} matched · ${dollars} liner-cost change. (Reopen the Items tab to see brokers.)`);
+    } catch (e) { setApplyMsg("Failed: " + e.message); }
+    setApplyBusy(false);
+  }
+
+  return (
+    <div style={{ fontFamily: "'DM Sans','Segoe UI',sans-serif" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
+        {plan?.id ? (
+          <button onClick={applyToPlan} disabled={applyBusy} title="Set each plan item's broker + liner cost from your broker picks"
+            style={{ border: "none", background: applyBusy ? "#8aa67a" : COLORS.dark, color: "#fff", borderRadius: 8, padding: "6px 13px", fontSize: 12.5, fontWeight: 800, cursor: applyBusy ? "default" : "pointer", fontFamily: "inherit" }}>
+            {applyBusy ? "Working…" : "⬇ Apply broker picks to this plan"}
+          </button>
+        ) : <span />}
+        <button onClick={() => setFs(true)}
+          style={{ border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.dark, borderRadius: 8, padding: "5px 12px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+          ↗ Open full screen
+        </button>
+      </div>
+      {applyMsg && <div style={{ fontSize: 12.5, color: COLORS.dark, background: "#eef6e7", border: `1px solid ${COLORS.light}`, borderRadius: 8, padding: "7px 11px", marginBottom: 8 }}>{applyMsg}</div>}
+      <SourcingWorkspace />
+      {fs && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "#f4f7f1", overflow: "auto" }}>
+          <div style={{ position: "sticky", top: 0, zIndex: 2, display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 20px", background: "#fff", borderBottom: `1px solid ${COLORS.border}` }}>
+            <div style={{ fontWeight: 800, color: COLORS.dark, fontSize: 16 }}>🧭 Sourcing — full screen</div>
+            <button onClick={() => setFs(false)}
+              style={{ border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.text, borderRadius: 8, padding: "6px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>✕ Close</button>
+          </div>
+          <div style={{ padding: "16px 22px", maxWidth: 1280, margin: "0 auto" }}><SourcingWorkspace fullscreen /></div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SourcingWorkspace({ fullscreen }) {
   const sb = getSupabase();
   const [suppliers, setSuppliers]   = useState(null);
   const [profiles, setProfiles]     = useState([]);
@@ -4840,7 +5190,13 @@ function SourcingTab({ plan }) {
   const [detail, setDetail]         = useState({}); // supplier -> rows
   const [detailBusy, setDetailBusy] = useState(false);
   const [search, setSearch]         = useState("");
+  const [matchOpen, setMatchOpen]   = useState(false); // global match/cleanup workspace
+  const [showChecklist, setShowChecklist] = useState(false);
 
+  function loadSuppliers() {
+    sb.from("v_sourcing_suppliers").select("*").then(({ data }) =>
+      setSuppliers((data || []).slice().sort((a, b) => (b.comparable_count || 0) - (a.comparable_count || 0) || (b.variety_count || 0) - (a.variety_count || 0))));
+  }
   useEffect(() => {
     if (!sb) return;
     sb.from("v_sourcing_suppliers").select("*").then(({ data }) =>
@@ -4860,8 +5216,8 @@ function SourcingTab({ plan }) {
       { onConflict: "supplier,form_class,season" });
   }
 
-  async function loadDetail(supplier) {
-    if (detail[supplier]) return;
+  async function loadDetail(supplier, force) {
+    if (detail[supplier] && !force) return;
     setDetailBusy(true);
     const out = [];
     for (let f = 0; ; f += 1000) {
@@ -4897,12 +5253,29 @@ function SourcingTab({ plan }) {
             Pick the broker for each <strong>supplier program</strong> — that choice is what should drive your plan pricing.
           </div>
         </div>
-        <div style={{ display: "flex", gap: 10 }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <SrcStat label="Suppliers" value={suppliers.length} />
           <SrcStat label="Comparable lanes" value={totalComparable} color={COLORS.light} />
           <SrcStat label="Exclusives" value={single.length} color={COLORS.amber} />
         </div>
       </div>
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
+        <button onClick={() => setMatchOpen(o => !o)}
+          style={{ border: `1.5px solid ${matchOpen ? COLORS.light : COLORS.border}`, background: matchOpen ? COLORS.light : "#fff", color: matchOpen ? "#fff" : COLORS.dark, borderRadius: 8, padding: "6px 13px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+          🔗 {matchOpen ? "← Back to suppliers" : "Match & clean up"}
+        </button>
+        {!matchOpen && (
+          <button onClick={() => setShowChecklist(c => !c)}
+            style={{ border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.dark, borderRadius: 8, padding: "6px 13px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+            📋 Order checklist
+          </button>
+        )}
+      </div>
+
+      {matchOpen ? <SrcMatcher sb={sb} onChanged={loadSuppliers} /> : (<>
+
+      {showChecklist && <SrcOrderChecklist suppliers={competitive} selections={selections} />}
 
       <SrcSectionTitle>Where you can shop brokers</SrcSectionTitle>
       {competitive.map(s => (
@@ -4925,6 +5298,56 @@ function SourcingTab({ plan }) {
           );
         })}
       </div>
+      </>)}
+    </div>
+  );
+}
+
+// Order checklist — every shoppable supplier with the broker you chose to buy through,
+// flagged where that differs from the broker that's cheapest most often. Copyable.
+function SrcOrderChecklist({ suppliers, selections }) {
+  const rows = suppliers.map(s => ({
+    supplier: s.supplier, chosen: selections[s.supplier] || null, rec: s.rec_broker || null,
+    comparable: s.comparable_count || 0, spread: s.avg_spread_pct,
+  }));
+  const decided = rows.filter(r => r.chosen).length;
+  function copy() {
+    const lines = rows.map(r => `${srcSup(r.supplier)}: ${r.chosen ? "buy through " + r.chosen : "— not chosen"}` +
+      (r.rec && r.chosen && r.chosen !== r.rec ? `  (cheapest most often: ${r.rec})` : "") +
+      (r.rec && !r.chosen ? `  (suggest ${r.rec})` : ""));
+    const text = `Sourcing order plan — ${SRC_SEASON}\n` + lines.join("\n");
+    if (navigator.clipboard) navigator.clipboard.writeText(text).then(() => alert("Order checklist copied to clipboard"));
+  }
+  return (
+    <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: "12px 14px", margin: "4px 0 10px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+        <div style={{ fontWeight: 800, color: COLORS.dark }}>📋 Order checklist <span style={{ fontWeight: 400, color: COLORS.muted, fontSize: 12 }}>· {decided}/{rows.length} suppliers assigned</span></div>
+        <button onClick={copy} style={{ border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.dark, borderRadius: 8, padding: "5px 11px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>⧉ Copy</button>
+      </div>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+        <thead><tr style={{ textAlign: "left", color: COLORS.muted }}>
+          <th style={{ padding: "4px 8px", fontWeight: 700 }}>Supplier</th>
+          <th style={{ padding: "4px 8px", fontWeight: 700 }}>Buy through</th>
+          <th style={{ padding: "4px 8px", fontWeight: 700 }}>Cheapest most often</th>
+          <th style={{ padding: "4px 8px", fontWeight: 700, textAlign: "right" }}>Comparable</th>
+          <th style={{ padding: "4px 8px", fontWeight: 700, textAlign: "right" }}>Avg spread</th>
+        </tr></thead>
+        <tbody>
+          {rows.map(r => (
+            <tr key={r.supplier} style={{ borderTop: `1px solid ${COLORS.border}` }}>
+              <td style={{ padding: "4px 8px", fontWeight: 700, color: COLORS.dark }}>{srcSup(r.supplier)}</td>
+              <td style={{ padding: "4px 8px" }}>{r.chosen
+                ? <span style={{ color: srcBrokerColor(r.chosen), fontWeight: 800 }}>{r.chosen}</span>
+                : <span style={{ color: COLORS.amber }}>— not chosen</span>}
+                {r.chosen && r.rec && r.chosen !== r.rec && <span title="paying a relationship premium vs cheapest" style={{ marginLeft: 6, fontSize: 11, color: COLORS.amber }}>⚠ not cheapest</span>}
+              </td>
+              <td style={{ padding: "4px 8px", color: r.rec ? srcBrokerColor(r.rec) : COLORS.muted, fontWeight: r.rec ? 700 : 400 }}>{r.rec || "—"}</td>
+              <td style={{ padding: "4px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.comparable}</td>
+              <td style={{ padding: "4px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.spread != null ? r.spread + "%" : "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -5000,7 +5423,6 @@ function SrcDetail({ detail, detailBusy, selected, search, setSearch }) {
   const total = rows.length;
   const CAP = 400;
   const shown = rows.slice(0, CAP);
-  // which form classes appear
   const byForm = {};
   for (const r of shown) (byForm[r.form] = byForm[r.form] || []).push(r);
 
@@ -5046,6 +5468,216 @@ function SrcDetail({ detail, detailBusy, selected, search, setSearch }) {
         </div>
       ))}
       {total > CAP && <div style={{ fontSize: 12, color: COLORS.muted, marginTop: 4 }}>Showing first {CAP} of {total} — use the filter to narrow.</div>}
+    </div>
+  );
+}
+
+// Global match/cleanup workspace — search any genus/series/cultivar across ALL brokers &
+// suppliers, then consolidate same-genetics listings (checkbox or drag-onto) and archive
+// the ones you'll never use. Match groups = supplier|form_class|variety_key.
+function SrcMatcher({ sb, onChanged }) {
+  const [query, setQuery]       = useState("");
+  const [groups, setGroups]     = useState(null);   // current search result groups
+  const [busy, setBusy]         = useState(false);
+  const [sel, setSel]           = useState(() => new Set()); // selected group ids
+  const [drag, setDrag]         = useState(null);   // dragged group id
+  const [showArchived, setShowArchived] = useState(false);
+  const [archived, setArchived] = useState([]);     // archived rows when viewing
+  const [msg, setMsg]           = useState("");
+
+  const groupId = g => g.supplier + "|" + g.form + "|" + g.key;
+
+  async function runSearch(qRaw) {
+    const q = (qRaw == null ? query : qRaw).trim();
+    if (q.length < 2) { setGroups(null); setMsg("Type at least 2 letters — e.g. geranium, calliope, calibrachoa."); return; }
+    setBusy(true); setMsg(""); setSel(new Set());
+    // pull matching priced listings across all suppliers/brokers (override + archive aware)
+    const like = "%" + q + "%";
+    const { data } = await sb.from("v_sourcing_prices")
+      .select("supplier,form_class,variety_key,variety,crop,broker,landed,has_excl")
+      .or(`variety.ilike.${like},crop.ilike.${like}`).limit(2000);
+    const gm = {};
+    for (const r of (data || [])) {
+      const id = r.supplier + "|" + r.form_class + "|" + r.variety_key;
+      if (!gm[id]) gm[id] = { supplier: r.supplier, form: r.form_class, key: r.variety_key, variety: r.variety, crop: r.crop, excl: false, prices: {} };
+      if (gm[id].prices[r.broker] == null || r.landed < gm[id].prices[r.broker]) gm[id].prices[r.broker] = r.landed;
+      if (r.has_excl) gm[id].excl = true;
+    }
+    // which groups are manual-link targets (so we can offer unlink)
+    const { data: ov } = await sb.from("sourcing_overrides").select("supplier,form_class,to_variety_key").eq("season", SRC_SEASON);
+    const linked = new Set((ov || []).map(o => o.supplier + "|" + o.form_class + "|" + o.to_variety_key));
+    let list = Object.values(gm).map(g => ({ ...g, linked: linked.has(groupId(g)) }));
+    list.sort((a, b) => Object.keys(b.prices).length - Object.keys(a.prices).length || (a.variety || "").localeCompare(b.variety || ""));
+    setGroups(list); setBusy(false);
+    if (showArchived) loadArchived(q);
+  }
+
+  async function loadArchived(qRaw) {
+    const q = (qRaw == null ? query : qRaw).trim();
+    const { data } = await sb.from("sourcing_archived").select("*").eq("season", SRC_SEASON).ilike("variety", "%" + q + "%").limit(500);
+    setArchived(data || []);
+  }
+
+  function toggle(id) { setSel(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; }); }
+
+  // Consolidate a set of groups under one canonical key. Must share supplier + form.
+  async function consolidate(gs) {
+    if (!gs || gs.length < 2) return;
+    const sup = gs[0].supplier, form = gs[0].form;
+    if (!gs.every(g => g.supplier === sup && g.form === form)) {
+      setMsg("Can only merge listings from the same supplier + form. Selected: " +
+        [...new Set(gs.map(g => srcSup(g.supplier) + "·" + srcFormLabel(g.form)))].join(", "));
+      return;
+    }
+    const canon = gs.slice().sort((a, b) => (a.variety || "").length - (b.variety || "").length)[0];
+    const recs = gs.filter(g => g.key !== canon.key).map(g => ({
+      season: SRC_SEASON, supplier: sup, form_class: form, broker: null,
+      from_variety_key: g.key, to_variety_key: canon.key, to_variety: canon.variety,
+    }));
+    if (!recs.length) return;
+    setBusy(true);
+    const { error } = await sb.from("sourcing_overrides").upsert(recs, { onConflict: "season,supplier,form_class,broker,from_variety_key" });
+    setBusy(false);
+    if (error) { setMsg("Could not merge: " + error.message); return; }
+    setMsg(`Merged ${gs.length} listings under “${canon.variety}”.`);
+    onChanged && onChanged();
+    runSearch();
+  }
+
+  async function unlinkGroup(g) {
+    setBusy(true);
+    const { error } = await sb.from("sourcing_overrides").delete()
+      .eq("season", SRC_SEASON).eq("supplier", g.supplier).eq("form_class", g.form).eq("to_variety_key", g.key);
+    setBusy(false);
+    if (error) { setMsg("Could not unlink: " + error.message); return; }
+    onChanged && onChanged(); runSearch();
+  }
+
+  async function archiveGroups(gs) {
+    if (!gs.length) return;
+    if (!window.confirm(`Archive ${gs.length} listing${gs.length > 1 ? "s" : ""}? They'll be hidden from comparison and matching (restorable from “Show archived”).`)) return;
+    const recs = gs.map(g => ({ season: SRC_SEASON, supplier: g.supplier, form_class: g.form, variety_key: g.key, variety: g.variety }));
+    setBusy(true);
+    const { error } = await sb.from("sourcing_archived").upsert(recs, { onConflict: "season,supplier,form_class,variety_key" });
+    setBusy(false);
+    if (error) { setMsg("Could not archive: " + error.message); return; }
+    setMsg(`Archived ${gs.length} listing${gs.length > 1 ? "s" : ""}.`);
+    onChanged && onChanged(); runSearch();
+  }
+
+  async function restore(a) {
+    setBusy(true);
+    await sb.from("sourcing_archived").delete().eq("id", a.id);
+    setBusy(false);
+    onChanged && onChanged();
+    loadArchived(); runSearch();
+  }
+
+  const selGroups = (groups || []).filter(g => sel.has(groupId(g)));
+
+  return (
+    <div>
+      <div style={{ background: "#fff8e8", border: `1px solid ${COLORS.amber}`, borderRadius: 8, padding: "9px 12px", fontSize: 12.5, color: COLORS.text, margin: "4px 0 10px" }}>
+        🔗 <strong>Match &amp; clean up.</strong> Search a genus, series or cultivar, then merge the same genetics that brokers named differently — <strong>tick two+ and “Consolidate”, or drag one row onto another</strong>. Merges apply instantly and survive every re-parse. Tick listings you'll never use and <strong>Archive</strong> them to hide the clutter.
+      </div>
+
+      <form onSubmit={e => { e.preventDefault(); runSearch(); }} style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
+        <input autoFocus value={query} onChange={e => setQuery(e.target.value)} placeholder="Search geranium, calliope, calibrachoa…"
+          style={{ padding: "8px 12px", borderRadius: 8, border: `1px solid ${COLORS.border}`, fontSize: 14, fontFamily: "inherit", width: 340, maxWidth: "100%", boxSizing: "border-box" }} />
+        <button type="submit" style={{ border: "none", background: COLORS.dark, color: "#fff", borderRadius: 8, padding: "8px 16px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Search</button>
+        <label style={{ fontSize: 12, color: COLORS.muted, display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}>
+          <input type="checkbox" checked={showArchived} onChange={e => { setShowArchived(e.target.checked); if (e.target.checked) loadArchived(); }} /> Show archived
+        </label>
+      </form>
+
+      {msg && <div style={{ fontSize: 12.5, color: COLORS.dark, background: "#eef6e7", border: `1px solid ${COLORS.light}`, borderRadius: 8, padding: "6px 10px", marginBottom: 8 }}>{msg}</div>}
+
+      {sel.size > 0 && (
+        <div style={{ position: "sticky", top: 0, zIndex: 3, display: "flex", gap: 8, alignItems: "center", background: COLORS.dark, color: "#fff", borderRadius: 8, padding: "8px 12px", marginBottom: 8 }}>
+          <strong style={{ fontSize: 13 }}>{sel.size} selected</strong>
+          <button onClick={() => consolidate(selGroups)} disabled={sel.size < 2}
+            style={{ border: "none", background: sel.size < 2 ? "#5d6b54" : COLORS.light, color: "#fff", borderRadius: 7, padding: "5px 12px", fontSize: 12.5, fontWeight: 800, cursor: sel.size < 2 ? "default" : "pointer", fontFamily: "inherit" }}>🔗 Consolidate</button>
+          <button onClick={() => archiveGroups(selGroups)}
+            style={{ border: "none", background: COLORS.amber, color: "#fff", borderRadius: 7, padding: "5px 12px", fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>🗄 Archive</button>
+          <button onClick={() => setSel(new Set())} style={{ border: "1px solid #ffffff55", background: "transparent", color: "#fff", borderRadius: 7, padding: "5px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Clear</button>
+        </div>
+      )}
+
+      {busy && <div style={{ padding: 14, color: COLORS.muted, fontSize: 13 }}>Working…</div>}
+      {groups == null && !busy && <div style={{ padding: 14, color: COLORS.muted, fontSize: 13 }}>Search above to start matching.</div>}
+      {groups && groups.length === 0 && !busy && <div style={{ padding: 14, color: COLORS.muted, fontSize: 13 }}>No priced listings match “{query}”.</div>}
+
+      {groups && groups.length > 0 && (
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+          <thead>
+            <tr style={{ textAlign: "left", color: COLORS.muted }}>
+              <th style={{ width: 26 }} />
+              <th style={{ padding: "4px 8px", fontWeight: 700 }}>Variety</th>
+              <th style={{ padding: "4px 8px", fontWeight: 700 }}>Supplier</th>
+              <th style={{ padding: "4px 8px", fontWeight: 700 }}>Form</th>
+              {SRC_BROKERS.map(b => <th key={b} style={{ padding: "4px 8px", textAlign: "right", fontWeight: 700, color: srcBrokerColor(b) }}>{b}</th>)}
+              <th style={{ width: 70 }} />
+            </tr>
+          </thead>
+          <tbody>
+            {groups.map(g => {
+              const id = groupId(g);
+              const present = SRC_BROKERS.filter(b => g.prices[b] != null);
+              const lo = Math.min(...present.map(b => g.prices[b]));
+              const checked = sel.has(id);
+              const comparable = present.length > 1;
+              return (
+                <tr key={id} draggable
+                  onDragStart={() => setDrag(id)}
+                  onDragOver={e => { if (drag && drag !== id) e.preventDefault(); }}
+                  onDrop={() => { if (drag && drag !== id) { const a = groups.find(x => groupId(x) === drag); if (a) consolidate([a, g]); } setDrag(null); }}
+                  style={{ borderTop: `1px solid ${COLORS.border}`, background: checked ? "#eef6e7" : drag === id ? "#f0f6ea" : comparable ? "#fbfdf9" : "transparent", cursor: "grab" }}>
+                  <td style={{ textAlign: "center" }}><input type="checkbox" checked={checked} onChange={() => toggle(id)} /></td>
+                  <td style={{ padding: "4px 8px", color: COLORS.text }}>
+                    <span title="drag onto another row to merge" style={{ color: COLORS.muted, marginRight: 5 }}>⠿</span>
+                    {g.variety}{g.excl && <span title="exclusive" style={{ marginLeft: 6, fontSize: 10, color: COLORS.amber }}>◆</span>}
+                    {comparable && <span style={{ marginLeft: 6, fontSize: 10, color: COLORS.light, fontWeight: 800 }}>✓{present.length}</span>}
+                    {g.linked && <span style={{ marginLeft: 6, fontSize: 10, color: COLORS.muted }}>🔗 linked</span>}
+                  </td>
+                  <td style={{ padding: "4px 8px", color: COLORS.muted }}>{srcSup(g.supplier)}</td>
+                  <td style={{ padding: "4px 8px", color: COLORS.muted }}>{srcFormLabel(g.form)}</td>
+                  {SRC_BROKERS.map(b => {
+                    const v = g.prices[b];
+                    const cheapest = v != null && v === lo && comparable;
+                    return <td key={b} style={{ padding: "4px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums", background: cheapest ? "#dcedc8" : "transparent", fontWeight: cheapest ? 800 : 400, color: v == null ? "#cbd5c0" : COLORS.text }}>{v == null ? "—" : money(v)}</td>;
+                  })}
+                  <td style={{ padding: "4px 6px", textAlign: "right" }}>
+                    {g.linked && <button onClick={() => unlinkGroup(g)} title="break this manual match apart"
+                      style={{ border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.muted, borderRadius: 6, padding: "1px 7px", fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>unlink</button>}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+
+      {showArchived && (
+        <div style={{ marginTop: 18 }}>
+          <SrcSectionTitle>Archived {archived.length ? `(${archived.length})` : ""}</SrcSectionTitle>
+          {archived.length === 0 ? <div style={{ fontSize: 12.5, color: COLORS.muted }}>Nothing archived matches “{query}”.</div> : (
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+              <tbody>
+                {archived.map(a => (
+                  <tr key={a.id} style={{ borderTop: `1px solid ${COLORS.border}`, color: COLORS.muted }}>
+                    <td style={{ padding: "4px 8px" }}>{a.variety || a.variety_key}</td>
+                    <td style={{ padding: "4px 8px" }}>{srcSup(a.supplier)}</td>
+                    <td style={{ padding: "4px 8px" }}>{srcFormLabel(a.form_class)}</td>
+                    <td style={{ padding: "4px 8px", textAlign: "right" }}>
+                      <button onClick={() => restore(a)} style={{ border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.dark, borderRadius: 6, padding: "2px 9px", fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>↩ Restore</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
     </div>
   );
 }
