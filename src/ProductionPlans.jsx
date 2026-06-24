@@ -1006,6 +1006,8 @@ const POIN_COLOR_ORDER = ["Red", "White", "Pink", "Marble", "Ice Crystal", "Glit
 // Pot-cover material cost per pot size (from 2025 sheet). 10"/13" not yet provided.
 const POIN_POTCOVER = { 5.5: 0.52, 6.5: 0.57, 7.5: 0.90, 8.5: 0.99 };
 const potCoverFor = d => { const v = POIN_POTCOVER[Number(d)]; return v == null ? null : v; };
+// Poinsettia big pots are sold by bloom count, not diameter (display name only).
+const POIN_BLOOM = { 10: "8 Bloom", 13: "10 Bloom" };
 
 function PricingTab({ plan }) {
   const sb = getSupabase();
@@ -1150,7 +1152,8 @@ function PricingTab({ plan }) {
     setBusy(false);
   }
 
-  const itemName = (s, it) => `${dia(s.diameter)}" ${[it.cropName, it.label].filter(Boolean).join(" ")}`;
+  const sizePrefix = s => (colorMode && POIN_BLOOM[Number(s.diameter)]) ? POIN_BLOOM[Number(s.diameter)] : `${dia(s.diameter)}"`;
+  const itemName = (s, it) => `${sizePrefix(s)} ${[it.cropName, it.label].filter(Boolean).join(" ")}`;
   function copyTable() {
     const lines = ["Item\tProjected\tLast Year\tThis Year" + (colorMode ? "\tPot Cover" : "")];
     (sizes || []).forEach(s => { const pc = potCoverFor(s.diameter); s.items.forEach(it => {
@@ -1200,7 +1203,7 @@ function PricingTab({ plan }) {
             {sizes.map(s => { const pc = potCoverFor(s.diameter); const hc = s.items.every(i => i.cropName === s.items[0].cropName) ? (s.items[0]?.cropName || "") : ""; return (
               <Fragment key={s.containerId}>
                 <tr style={{ background: "#f7f9f4", borderTop: `2px solid ${COLORS.border}` }}>
-                  <td style={{ ...td, fontWeight: 800, color: COLORS.dark }}>{dia(s.diameter)}"{hc ? " " + hc : ""} <span style={{ color: COLORS.muted, fontWeight: 400, fontSize: 11 }}>· {s.sku} · {s.items.length} items</span></td>
+                  <td style={{ ...td, fontWeight: 800, color: COLORS.dark }}>{sizePrefix(s)}{hc ? " " + hc : ""} <span style={{ color: COLORS.muted, fontWeight: 400, fontSize: 11 }}>· {s.sku} · {s.items.length} items</span></td>
                   <td style={{ ...td, textAlign: "right", color: COLORS.muted }}>{s.items.reduce((m, it) => m + it.qty, 0).toLocaleString()}</td>
                   <td style={{ ...td, textAlign: "right", color: COLORS.muted }}>{s.lastBase != null ? "$" + s.lastBase.toFixed(2) : "—"}</td>
                   <td style={{ ...td, textAlign: "right" }}>
