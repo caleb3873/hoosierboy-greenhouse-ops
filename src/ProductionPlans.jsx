@@ -1014,6 +1014,7 @@ function PricingTab({ plan }) {
   const [baseEdit, setBaseEdit] = useState({}); // containerId -> this-year base (string)
   const [ovEdit, setOvEdit] = useState({});     // `${cId}|${vId}` -> this-year override (string; "" = inherit base)
   const [rowIds, setRowIds] = useState({ base: {}, ov: {} }); // existing crop_pricing ids for in-place update/delete
+  const [colorMode, setColorMode] = useState(false); // poinsettia plans group by color; others per-variety
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [pct, setPct] = useState("");
@@ -1033,29 +1034,34 @@ function PricingTab({ plan }) {
     const vById = {}; (vars || []).forEach(v => { vById[v.id] = v; });
     const cById = {}; (conts || []).forEach(c => { cById[c.id] = c; });
 
-    // split existing prices: size base (variety_id null, crop POINSETTIA); color override
-    // (variety_id null, crop = color code e.g. RED); variety override (variety_id set).
+    // Poinsettia plans sell by COLOR (consolidate); every other plan prices per VARIETY.
+    // Detect: all of this plan's items are poinsettias.
+    const cm = sc.length > 0 && sc.every(r => String((vById[r.variety_id] || {}).crop_name || "").toUpperCase() === "POINSETTIA");
+    const baseTag = cm ? "POINSETTIA" : "__BASE__";
+
+    // split existing prices: size base (variety_id null + crop_name = baseTag); color override
+    // (color mode only: variety_id null + crop_name = color code); variety override (variety_id set).
     const baseThis = {}, baseLast = {}, ovThis = {}, ovLast = {}, baseIds = {}, ovIds = {};
     (prices || []).forEach(p => {
-      const isBase = p.variety_id == null && String(p.crop_name || "").toUpperCase() === "POINSETTIA";
+      const cn = String(p.crop_name || "").toUpperCase();
+      const isBase = p.variety_id == null && (cm ? cn === "POINSETTIA" : true);
       if (isBase) {
         if (p.effective_year === plan.year) { baseThis[p.container_id] = +p.price; baseIds[p.container_id] = p.id; }
         else baseLast[p.container_id] = +p.price;
         return;
       }
-      const key = p.variety_id == null
-        ? p.container_id + "|C|" + String(p.crop_name || "").toUpperCase()
-        : p.container_id + "|V|" + p.variety_id;
+      const key = p.variety_id == null ? p.container_id + "|C|" + cn : p.container_id + "|V|" + p.variety_id;
       if (p.effective_year === plan.year) { ovThis[key] = +p.price; ovIds[key] = p.id; }
       else ovLast[key] = +p.price;
     });
 
-    // group plan rows by container + COLOR (NOVELTY / blank color → keep the variety)
+    // group plan rows: color mode → by container+color (NOVELTY/blank keeps variety);
+    // otherwise → by container+variety.
     const groups = {};
     for (const r of sc) {
       if (!r.container_id) continue;
       const code = String(r.color || "").trim().toUpperCase();
-      const isColor = !!POIN_COLORS[code];
+      const isColor = cm && !!POIN_COLORS[code];
       const key = r.container_id + (isColor ? "|C|" + code : "|V|" + (r.variety_id || "_"));
       if (!groups[key]) {
         const v = vById[r.variety_id] || {};
@@ -1063,7 +1069,7 @@ function PricingTab({ plan }) {
           key, containerId: r.container_id, kind: isColor ? "color" : "variety",
           code: isColor ? code : null, varietyId: isColor ? null : r.variety_id,
           label: isColor ? POIN_COLORS[code] : (v.variety || "(unnamed)"),
-          cropName: v.crop_name || "Poinsettia", qty: 0,
+          cropName: v.crop_name || "", qty: 0,
         };
       }
       groups[key].qty += (+r.qty_pots || 0);
@@ -1074,9 +1080,10 @@ function PricingTab({ plan }) {
       const c = cById[g.containerId] || {};
       (byCont[g.containerId] = byCont[g.containerId] || {
         containerId: g.containerId, diameter: c.diameter_in, sku: c.sku, name: c.name,
-        cropName: "Poinsettia", lastBase: baseLast[g.containerId] ?? null, items: [],
+        lastBase: baseLast[g.containerId] ?? null, items: [],
       }).items.push({ ...g, lastOv: ovLast[g.key] ?? null });
     });
+    setColorMode(cm);
     const list = Object.values(byCont).sort((a, b) => (Number(a.diameter) || 0) - (Number(b.diameter) || 0));
     // colors first (fixed order), then novelties alpha
     list.forEach(s => s.items.sort((a, b) => {
@@ -1111,6 +1118,7 @@ function PricingTab({ plan }) {
 
   async function save() {
     if (!sizes) return;
+    const baseTag = colorMode ? "POINSETTIA" : "__BASE__";
     setBusy(true); setMsg("Saving…");
     try {
       for (const s of sizes) {
@@ -1118,17 +1126,17 @@ function PricingTab({ plan }) {
         const id = rowIds.base[s.containerId];
         if (baseVal != null) {
           if (id) await sb.from("crop_pricing").update({ price: baseVal }).eq("id", id);
-          else await sb.from("crop_pricing").insert({ container_id: s.containerId, variety_id: null, crop_name: (s.cropName || "Poinsettia").toUpperCase(), effective_year: plan.year, price: baseVal, price_tier: "pre-book", source_doc: "winter pricing tool" });
+          else await sb.from("crop_pricing").insert({ container_id: s.containerId, variety_id: null, crop_name: baseTag, effective_year: plan.year, price: baseVal, price_tier: "pre-book", source_doc: "pricing tool" });
         }
         for (const it of s.items) {
           const ovStr = ovEdit[it.key]; const ovVal = priceNum(ovStr); const ovId = rowIds.ov[it.key];
           if (ovStr != null && ovStr !== "" && ovVal != null) {
             if (ovId) await sb.from("crop_pricing").update({ price: ovVal }).eq("id", ovId);
             else {
-              // color override → variety_id null + crop_name = color code; novelty → variety_id row
+              // color override → variety_id null + crop_name = color code; per-variety → variety_id row
               const rec = it.kind === "color"
-                ? { container_id: s.containerId, variety_id: null, crop_name: it.code, effective_year: plan.year, price: ovVal, price_tier: "pre-book", source_doc: "winter pricing tool" }
-                : { container_id: s.containerId, variety_id: it.varietyId, crop_name: it.cropName || "Poinsettia", effective_year: plan.year, price: ovVal, price_tier: "pre-book", source_doc: "winter pricing tool" };
+                ? { container_id: s.containerId, variety_id: null, crop_name: it.code, effective_year: plan.year, price: ovVal, price_tier: "pre-book", source_doc: "pricing tool" }
+                : { container_id: s.containerId, variety_id: it.varietyId, crop_name: it.cropName || null, effective_year: plan.year, price: ovVal, price_tier: "pre-book", source_doc: "pricing tool" };
               await sb.from("crop_pricing").insert(rec);
             }
           } else if (ovId) {
@@ -1142,11 +1150,12 @@ function PricingTab({ plan }) {
     setBusy(false);
   }
 
+  const itemName = (s, it) => `${dia(s.diameter)}" ${[it.cropName, it.label].filter(Boolean).join(" ")}`;
   function copyTable() {
-    const lines = ["Item\tProjected\tLast Year\tThis Year\tPot Cover"];
+    const lines = ["Item\tProjected\tLast Year\tThis Year" + (colorMode ? "\tPot Cover" : "")];
     (sizes || []).forEach(s => { const pc = potCoverFor(s.diameter); s.items.forEach(it => {
       const et = effThis(s, it), el = effLast(s, it);
-      lines.push(`${dia(s.diameter)}" ${it.cropName} ${it.label}\t${it.qty}\t${el != null ? "$" + el.toFixed(2) : ""}\t${et != null ? "$" + et.toFixed(2) : ""}\t${pc != null ? "$" + pc.toFixed(2) : ""}`);
+      lines.push(`${itemName(s, it)}\t${it.qty}\t${el != null ? "$" + el.toFixed(2) : ""}\t${et != null ? "$" + et.toFixed(2) : ""}` + (colorMode ? `\t${pc != null ? "$" + pc.toFixed(2) : ""}` : ""));
     }); });
     const text = lines.join("\r\n");
     if (navigator.clipboard) navigator.clipboard.writeText(text).then(() => setMsg("✓ Copied " + (lines.length - 1) + " items to clipboard — paste into Sheets/Excel or the B2B form."));
@@ -1162,8 +1171,8 @@ function PricingTab({ plan }) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12, marginBottom: 12 }}>
         <div>
           <div style={{ fontSize: 18, fontWeight: 800, color: COLORS.dark }}>💲 Sale Pricing — {plan.name}</div>
-          <div style={{ fontSize: 12.5, color: COLORS.muted, marginTop: 3, maxWidth: 640 }}>
-            Set a <strong>base price per pot size</strong> (fills every item that size); type a price on any item to <strong>override</strong> it. {totalItems} items · {totalQty.toLocaleString()} projected pots. Last year = {lastYear}.
+          <div style={{ fontSize: 12.5, color: COLORS.muted, marginTop: 3, maxWidth: 660 }}>
+            Set a <strong>base price per size</strong> (fills every item that size); type a price on any item to <strong>override</strong>. {colorMode ? "Poinsettias are grouped by color (novelties listed individually)." : "Each variety is listed individually."} {totalItems} items · {totalQty.toLocaleString()} projected pots. Last year = {lastYear}.
           </div>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -1184,28 +1193,28 @@ function PricingTab({ plan }) {
               <th style={{ ...th, textAlign: "right" }}>Projected</th>
               <th style={{ ...th, textAlign: "right" }}>Last Yr</th>
               <th style={{ ...th, textAlign: "right" }}>This Yr</th>
-              <th style={{ ...th, textAlign: "right" }}>Pot Cover</th>
+              {colorMode && <th style={{ ...th, textAlign: "right" }}>Pot Cover</th>}
             </tr>
           </thead>
           <tbody>
-            {sizes.map(s => { const pc = potCoverFor(s.diameter); return (
+            {sizes.map(s => { const pc = potCoverFor(s.diameter); const hc = s.items.every(i => i.cropName === s.items[0].cropName) ? (s.items[0]?.cropName || "") : ""; return (
               <Fragment key={s.containerId}>
                 <tr style={{ background: "#f7f9f4", borderTop: `2px solid ${COLORS.border}` }}>
-                  <td style={{ ...td, fontWeight: 800, color: COLORS.dark }}>{dia(s.diameter)}" {s.cropName} <span style={{ color: COLORS.muted, fontWeight: 400, fontSize: 11 }}>· {s.sku} · {s.items.length} items</span></td>
+                  <td style={{ ...td, fontWeight: 800, color: COLORS.dark }}>{dia(s.diameter)}"{hc ? " " + hc : ""} <span style={{ color: COLORS.muted, fontWeight: 400, fontSize: 11 }}>· {s.sku} · {s.items.length} items</span></td>
                   <td style={{ ...td, textAlign: "right", color: COLORS.muted }}>{s.items.reduce((m, it) => m + it.qty, 0).toLocaleString()}</td>
                   <td style={{ ...td, textAlign: "right", color: COLORS.muted }}>{s.lastBase != null ? "$" + s.lastBase.toFixed(2) : "—"}</td>
                   <td style={{ ...td, textAlign: "right" }}>
                     <span style={{ fontSize: 11, color: COLORS.muted, marginRight: 4 }}>base</span>
                     <input value={baseEdit[s.containerId] ?? ""} onChange={e => setBaseEdit(p => ({ ...p, [s.containerId]: e.target.value }))} style={inp} />
                   </td>
-                  <td style={{ ...td, textAlign: "right", fontWeight: 700, color: pc != null ? COLORS.text : COLORS.muted }}>{pc != null ? "$" + pc.toFixed(2) : "—"}</td>
+                  {colorMode && <td style={{ ...td, textAlign: "right", fontWeight: 700, color: pc != null ? COLORS.text : COLORS.muted }}>{pc != null ? "$" + pc.toFixed(2) : "—"}</td>}
                 </tr>
                 {s.items.map(it => {
                   const et = effThis(s, it), el = effLast(s, it);
                   const overridden = priceNum(ovEdit[it.key]) != null && ovEdit[it.key] !== "";
                   return (
                     <tr key={it.key} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
-                      <td style={{ ...td, paddingLeft: 18 }}>{dia(s.diameter)}" {it.cropName} {it.label}{it.kind === "variety" && <span title="novelty — priced individually" style={{ marginLeft: 6, fontSize: 9.5, color: COLORS.muted }}>novelty</span>}{overridden && <span title="custom price (overrides the size base)" style={{ marginLeft: 6, fontSize: 10, color: COLORS.amber, fontWeight: 700 }}>◆ custom</span>}</td>
+                      <td style={{ ...td, paddingLeft: 18 }}>{itemName(s, it)}{colorMode && it.kind === "variety" && <span title="novelty — priced individually" style={{ marginLeft: 6, fontSize: 9.5, color: COLORS.muted }}>novelty</span>}{overridden && <span title="custom price (overrides the size base)" style={{ marginLeft: 6, fontSize: 10, color: COLORS.amber, fontWeight: 700 }}>◆ custom</span>}</td>
                       <td style={{ ...td, textAlign: "right" }}>{it.qty.toLocaleString()}</td>
                       <td style={{ ...td, textAlign: "right", color: COLORS.muted }}>{el != null ? "$" + el.toFixed(2) : "—"}</td>
                       <td style={{ ...td, textAlign: "right" }}>
@@ -1213,7 +1222,7 @@ function PricingTab({ plan }) {
                           onChange={e => setOvEdit(p => ({ ...p, [it.key]: e.target.value }))} style={{ ...inp, borderColor: overridden ? COLORS.amber : COLORS.border }} />
                         <div style={{ fontSize: 10, color: COLORS.muted, marginTop: 1 }}>{et != null ? "= $" + et.toFixed(2) : ""}</div>
                       </td>
-                      <td style={{ ...td, textAlign: "right", color: COLORS.muted, fontSize: 11 }}>{pc != null ? "$" + pc.toFixed(2) : ""}</td>
+                      {colorMode && <td style={{ ...td, textAlign: "right", color: COLORS.muted, fontSize: 11 }}>{pc != null ? "$" + pc.toFixed(2) : ""}</td>}
                     </tr>
                   );
                 })}
