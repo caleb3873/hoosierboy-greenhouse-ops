@@ -64,6 +64,10 @@ const ALLOWED_FORMS = new Set(['urc', 'callused']);
 const GENUS_SUPPLIER = { ipomoea: 'Pell' };
 // Pansies/violas: 288 plug by default; Cool Wave & Top Wave run in 144s.
 const trayFor = name => /cool wave|top wave/i.test(String(name || '')) ? '144' : '288';
+// Vegetative begonias come from Lucas as ROOTED LINERS (too finicky to propagate) — NOT a URC quote.
+// Reiger is the only exception. No begonia except Reiger is a URC buy, so skip them all from
+// URC matching (no Lucas quote loaded yet → they'd otherwise mis-price as URC).
+const isLucasBegonia = name => /\bbegonia\b/i.test(name) && !/reiger/i.test(name);
 
 (async () => {
   const apply = process.argv.includes('--apply');
@@ -97,9 +101,12 @@ const trayFor = name => /cool wave|top wave/i.test(String(name || '')) ? '144' :
 
   let matched = 0, ambiguous = 0, unmatched = 0, gap = 0, costUp = 0, costDn = 0, deltaPlants = 0;
   const updates = [], gaps = [];
+  let lucasBegonia = 0;
   for (const c of crops) {
     const key = makeKey(null, null, stripSize(c.item_name));
     const genus = key.split(' ')[0];
+    // vegetative begonias → Lucas rooted liner (pending Lucas quote); never URC-match these
+    if (isLucasBegonia(c.item_name)) { lucasBegonia++; continue; }
     // pansy/viola → Bob's plug at the right tray (288 default; Cool/Top Wave → 144)
     if ((genus === 'pansy' || genus === 'viola') && bobsTray[key]) {
       const t = bobsTray[key], tray = trayFor(c.item_name);
@@ -140,6 +147,7 @@ const trayFor = name => /cool wave|top wave/i.test(String(name || '')) ? '144' :
   console.log(`  ambiguous (≥2 suppliers, no selection): ${ambiguous}`);
   console.log(`  unmatched (not in any catalog): ${unmatched}`);
   console.log(`  selection had a broker gap (fell back to cheapest): ${gap}`);
+  console.log(`  vegetative begonias skipped (Lucas liner, pending quote): ${lucasBegonia}`);
   console.log(`  selections in place: ${Object.keys(sels).length ? JSON.stringify(sels) : 'NONE — using cheapest available per variety'}`);
   console.log(`\nliner-cost change if applied: ${deltaPlants >= 0 ? '+' : ''}$${deltaPlants.toFixed(0)} (${costUp} up, ${costDn} down)`);
   console.log('\nsample matches:');
