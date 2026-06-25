@@ -38,6 +38,7 @@ function tidy(s) {
   s = s.replace(/\b20\d\d\b/g, ' ');
   s = s.replace(/-?(urc|cc|rc|tc|liner|plug|pellet|callused|unrooted|rooted)\b/g, ' ');
   s = s.replace(/\bn\/?g\b/g, ' ').replace(/\bnew guinea\b/g, ' ');
+  s = s.replace(/\bmain street\b/g, 'mainstreet');          // Dümmen Coleus series: "Main Street" == "Mainstreet"
   s = s.replace(/\bimproved\b/g, ' ').replace(/\bimp\b/g, ' ');
   s = s.replace(/[^a-z0-9 ]/g, ' ');
   return s.replace(/\s+/g, ' ').trim();
