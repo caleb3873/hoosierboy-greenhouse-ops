@@ -1045,10 +1045,10 @@ function PricingTab({ plan }) {
         .eq("plan_id", plan.id).eq("is_combo_component", false).range(f, f + 999);
       if (!data || !data.length) break; sc.push(...data); if (data.length < 1000) break;
     }
-    const { data: vars } = await sb.from("variety_library").select("id,variety,crop_name");
-    const { data: conts } = await sb.from("containers").select("id,sku,name,diameter_in");
-    const { data: prices } = await sb.from("crop_pricing")
-      .select("id,container_id,variety_id,crop_name,effective_year,price").in("effective_year", [plan.year, lastYear]);
+    // paginate — variety_library exceeds PostgREST's 1000-row cap (else varieties show "(unnamed)")
+    const vars = await srcPageAll(sb, "variety_library", "id,variety,crop_name");
+    const conts = await srcPageAll(sb, "containers", "id,sku,name,diameter_in");
+    const prices = await srcPageAll(sb, "crop_pricing", "id,container_id,variety_id,crop_name,effective_year,price", q => q.in("effective_year", [plan.year, lastYear]));
     const vById = {}; (vars || []).forEach(v => { vById[v.id] = v; });
     const cById = {}; (conts || []).forEach(c => { cById[c.id] = c; });
 
@@ -1264,11 +1264,10 @@ function ItemsTab({ plan }) {
   useEffect(() => {
     if (!sb) return;
     (async () => {
-      const { data: sc } = await sb.from("scheduled_crops")
-        .select("id,variety_id,container_id,bench_id,color,qty_pots,ppp,qty_plants_ordered,liner_unit_cost,broker,item_name,plant_week,ship_week,status")
-        .eq("plan_id", plan.id);
-      const { data: vars } = await sb.from("variety_library").select("id,variety,breeder");
-      const { data: containers } = await sb.from("containers").select("id,sku");
+      // paginate — Spring has >1000 crops and variety_library >1000 rows (PostgREST caps at 1000)
+      const sc = await srcPageAll(sb, "scheduled_crops", "id,variety_id,container_id,bench_id,color,qty_pots,ppp,qty_plants_ordered,liner_unit_cost,broker,item_name,plant_week,ship_week,status", q => q.eq("plan_id", plan.id));
+      const vars = await srcPageAll(sb, "variety_library", "id,variety,breeder");
+      const containers = await srcPageAll(sb, "containers", "id,sku");
       const { data: bench } = await sb.from("benches").select("id,code,zone_label").limit(2000);
       const { data: bp } = await sb.from("broker_profiles").select("name,rep_name,rep_email,rep_phone");
       const bmap = {}; (bp || []).forEach(b => { bmap[b.name] = b; }); setBrokers(bmap);
