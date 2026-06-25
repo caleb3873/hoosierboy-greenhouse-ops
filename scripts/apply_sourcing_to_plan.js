@@ -81,7 +81,7 @@ const isLucasBegonia = name => /\bbegonia\b/i.test(name) && !/reiger/i.test(name
   const page = async (tbl, sel, filt) => { let out = []; for (let f = 0; ; f += 1000) { let q = sb.from(tbl).select(sel).range(f, f + 999); if (filt) q = filt(q); const { data, error } = await q; if (error) { console.error(error.message); break; } if (!data || !data.length) break; out = out.concat(data); if (data.length < 1000) break; } return out; };
 
   // URC/callused for everything, PLUS Bob's plug quote (pansies/violas) as an explicit exception.
-  const prices = await page('broker_prices', 'broker,supplier,form_class,variety_key,landed,form_raw', q => q.eq('season', '2026-2027').gt('landed', 0).or('form_class.in.(urc,callused),supplier.eq.Bobs'));
+  const prices = await page('broker_prices', 'broker,supplier,form_class,variety_key,landed,form_raw,origin', q => q.eq('season', '2026-2027').gt('landed', 0).or('form_class.in.(urc,callused),supplier.eq.Bobs'));
   const sel = await page('sourcing_selections', 'supplier,form_class,selected_broker', q => q.eq('season', '2026-2027').eq('form_class', '*'));
   const sels = {}; sel.forEach(s => { if (s.selected_broker) sels[s.supplier] = s.selected_broker; });
   const crops = await page('scheduled_crops', 'id,item_name,qty_pots,plants_per_unit,liner_unit_cost,broker,is_combo_component', q => q.eq('plan_id', plan.id).eq('is_combo_component', false).gt('qty_pots', 0));
@@ -93,7 +93,7 @@ const isLucasBegonia = name => /\bbegonia\b/i.test(name) && !/reiger/i.test(name
     ((idx[k] = idx[k] || {})[p.supplier] = idx[k][p.supplier] || {});
     const cur = idx[k][p.supplier][p.broker];
     const better = !cur || (FORM_RANK[p.form_class] ?? 9) < (FORM_RANK[cur.form_class] ?? 9) || ((FORM_RANK[p.form_class] ?? 9) === (FORM_RANK[cur.form_class] ?? 9) && p.landed < cur.landed);
-    if (better) idx[k][p.supplier][p.broker] = { landed: p.landed, form_class: p.form_class };
+    if (better) idx[k][p.supplier][p.broker] = { landed: p.landed, form_class: p.form_class, origin: p.origin || null };
     if (p.supplier === 'Bobs') { const m = String(p.form_raw || '').match(/(\d{2,4})/); const cells = m ? m[1] : 'na'; const t = (bobsTray[k] = bobsTray[k] || {}); if (t[cells] == null || p.landed < t[cells]) t[cells] = p.landed; }
   }
   // recommended broker per supplier = cheapest-most-often (use the catalog min as proxy fallback)
@@ -114,7 +114,7 @@ const isLucasBegonia = name => /\bbegonia\b/i.test(name) && !/reiger/i.test(name
       const old = +c.liner_unit_cost || 0;
       const plants = (+c.qty_pots || 0) * (+c.plants_per_unit || 1);
       deltaPlants += (landed - old) * plants; if (landed > old) costUp++; else if (landed < old) costDn++;
-      matched++; updates.push({ id: c.id, item: c.item_name, supplier: 'Bobs', broker: 'Ball', landed, old, tray });
+      matched++; updates.push({ id: c.id, item: c.item_name, supplier: 'Bobs', broker: 'Ball', origin: null, landed, old, tray });
       continue;
     }
     const suppliers = idx[key];
@@ -139,7 +139,7 @@ const isLucasBegonia = name => /\bbegonia\b/i.test(name) && !/reiger/i.test(name
     const d = (landed - old) * plants;
     deltaPlants += d;
     if (landed > old) costUp++; else if (landed < old) costDn++;
-    updates.push({ id: c.id, item: c.item_name, supplier: chosenSup, broker, landed, old });
+    updates.push({ id: c.id, item: c.item_name, supplier: chosenSup, broker, origin: brokers[broker].origin || null, landed, old });
   }
 
   console.log(`\ncrops (finished): ${crops.length}`);
@@ -160,7 +160,7 @@ const isLucasBegonia = name => /\bbegonia\b/i.test(name) && !/reiger/i.test(name
   if (apply) {
     let done = 0;
     for (const u of updates) {
-      const { error } = await sb.from('scheduled_crops').update({ liner_unit_cost: u.landed, broker: u.broker }).eq('id', u.id);
+      const { error } = await sb.from('scheduled_crops').update({ liner_unit_cost: u.landed, broker: u.broker, supplier: u.supplier, origin: u.origin }).eq('id', u.id);
       if (error) { console.error('update failed', u.id, error.message); break; }
       done++;
     }

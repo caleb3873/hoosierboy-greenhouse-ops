@@ -5243,6 +5243,7 @@ function SourcingWorkspace({ fullscreen, plan }) {
   const [search, setSearch]         = useState("");
   const [matchOpen, setMatchOpen]   = useState(false); // global match/cleanup workspace
   const [compareOpen, setCompareOpen] = useState(false); // cross-variety cost comparison
+  const [originsOpen, setOriginsOpen] = useState(false);  // farm-origin map + order minimums
   const [showChecklist, setShowChecklist] = useState(false);
 
   function loadSuppliers() {
@@ -5313,15 +5314,19 @@ function SourcingWorkspace({ fullscreen, plan }) {
       </div>
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
-        <button onClick={() => { setMatchOpen(o => !o); setCompareOpen(false); }}
+        <button onClick={() => { setMatchOpen(o => !o); setCompareOpen(false); setOriginsOpen(false); }}
           style={{ border: `1.5px solid ${matchOpen ? COLORS.light : COLORS.border}`, background: matchOpen ? COLORS.light : "#fff", color: matchOpen ? "#fff" : COLORS.dark, borderRadius: 8, padding: "6px 13px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
           🔗 {matchOpen ? "← Back to suppliers" : "Match & clean up"}
         </button>
-        <button onClick={() => { setCompareOpen(o => !o); setMatchOpen(false); }}
+        <button onClick={() => { setCompareOpen(o => !o); setMatchOpen(false); setOriginsOpen(false); }}
           style={{ border: `1.5px solid ${compareOpen ? COLORS.light : COLORS.border}`, background: compareOpen ? COLORS.light : "#fff", color: compareOpen ? "#fff" : COLORS.dark, borderRadius: 8, padding: "6px 13px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
           💡 {compareOpen ? "← Back to suppliers" : "Compare varieties"}
         </button>
-        {!matchOpen && !compareOpen && (
+        <button onClick={() => { setOriginsOpen(o => !o); setMatchOpen(false); setCompareOpen(false); }}
+          style={{ border: `1.5px solid ${originsOpen ? COLORS.light : COLORS.border}`, background: originsOpen ? COLORS.light : "#fff", color: originsOpen ? "#fff" : COLORS.dark, borderRadius: 8, padding: "6px 13px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+          🗺 {originsOpen ? "← Back to suppliers" : "Origins & minimums"}
+        </button>
+        {!matchOpen && !compareOpen && !originsOpen && (
           <button onClick={() => setShowChecklist(c => !c)}
             style={{ border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.dark, borderRadius: 8, padding: "6px 13px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
             📋 Order checklist
@@ -5329,7 +5334,7 @@ function SourcingWorkspace({ fullscreen, plan }) {
         )}
       </div>
 
-      {matchOpen ? <SrcMatcher sb={sb} onChanged={loadSuppliers} /> : compareOpen ? <SrcCompare sb={sb} plan={plan} /> : (<>
+      {matchOpen ? <SrcMatcher sb={sb} onChanged={loadSuppliers} /> : compareOpen ? <SrcCompare sb={sb} plan={plan} /> : originsOpen ? <SrcOrigins sb={sb} plan={plan} /> : (<>
 
       {showChecklist && <SrcOrderChecklist suppliers={competitive} selections={selections} />}
 
@@ -5524,6 +5529,99 @@ function SrcDetail({ detail, detailBusy, selected, search, setSearch }) {
         </div>
       ))}
       {total > CAP && <div style={{ fontSize: 12, color: COLORS.muted, marginTop: 4 }}>Showing first {CAP} of {total} — use the filter to narrow.</div>}
+    </div>
+  );
+}
+
+// Farm-origin map + order minimums for the plan. Pins sized by this plan's planned plants
+// per growing country, arced to Indianapolis; closer farms = fresher cuttings. Plus per-supplier
+// order rollups vs the 2000-plant order minimum and 100-plant per-variety minimum.
+const ORIGIN_COORDS = { // [lat, lon]
+  Mexico: [21.0, -100.0], "El Salvador": [13.7, -89.2], Guatemala: [15.5, -90.3], "Costa Rica": [9.7, -83.8],
+  Colombia: [4.6, -74.1], Ethiopia: [9.1, 40.5], Uganda: [1.4, 32.3], Kenya: [-1.3, 36.8], Tanzania: [-6.4, 34.9],
+  Portugal: [39.4, -8.2], Spain: [40.0, -3.7], Israel: [31.5, 34.8],
+};
+const INDY = [39.77, -86.16];
+const haversine = (a, b) => { const R = 3959, dLat = (b[0] - a[0]) * Math.PI / 180, dLon = (b[1] - a[1]) * Math.PI / 180, la1 = a[0] * Math.PI / 180, la2 = b[0] * Math.PI / 180; const h = Math.sin(dLat / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin(dLon / 2) ** 2; return Math.round(2 * R * Math.asin(Math.sqrt(h))); };
+function SrcOrigins({ sb, plan }) {
+  const [rows, setRows] = useState(null);
+  useEffect(() => {
+    if (!sb || !plan?.id) { setRows([]); return; }
+    (async () => {
+      const sc = await srcPageAll(sb, "scheduled_crops", "item_name,supplier,origin,qty_pots,ppp,plants_per_unit,liner_unit_cost", q => q.eq("plan_id", plan.id).eq("is_combo_component", false).gt("qty_pots", 0));
+      setRows(sc.map(r => ({ ...r, plants: (+r.qty_pots || 0) * (+r.plants_per_unit || 1) })));
+    })();
+  }, [sb, plan]);
+  if (rows == null) return <div style={{ padding: 16, color: COLORS.muted, fontSize: 13 }}>Loading…</div>;
+  if (!plan?.id) return <div style={{ padding: 16, color: COLORS.muted, fontSize: 13 }}>Open from a plan to see its origins.</div>;
+
+  // by origin (sourced rows only)
+  const byOrigin = {};
+  rows.forEach(r => { if (!r.supplier) return; const k = r.origin || "(unknown farm)"; (byOrigin[k] = byOrigin[k] || { plants: 0, items: 0, supes: new Set() }); byOrigin[k].plants += r.plants; byOrigin[k].items += 1; byOrigin[k].supes.add(r.supplier); });
+  const origins = Object.entries(byOrigin).map(([name, v]) => ({ name, ...v, coord: ORIGIN_COORDS[name], dist: ORIGIN_COORDS[name] ? haversine(ORIGIN_COORDS[name], INDY) : null })).sort((a, b) => b.plants - a.plants);
+  const maxP = Math.max(1, ...origins.map(o => o.plants));
+  // by supplier (order minimums)
+  const bySup = {};
+  rows.forEach(r => { if (!r.supplier) return; (bySup[r.supplier] = bySup[r.supplier] || { plants: 0, vars: new Set(), under100: new Set() }); bySup[r.supplier].plants += r.plants; bySup[r.supplier].vars.add(r.item_name); });
+  // per-variety under 100 (sum plants per item within supplier)
+  const itemPlants = {}; rows.forEach(r => { if (!r.supplier) return; const k = r.supplier + "||" + r.item_name; itemPlants[k] = (itemPlants[k] || 0) + r.plants; });
+  Object.entries(itemPlants).forEach(([k, p]) => { if (p < 100) { const sup = k.split("||")[0]; bySup[sup] && bySup[sup].under100.add(k); } });
+  const sups = Object.entries(bySup).map(([s, v]) => ({ supplier: s, plants: Math.round(v.plants), varieties: v.vars.size, under: v.under100.size })).sort((a, b) => b.plants - a.plants);
+
+  // equirectangular projection over the relevant window
+  const W = 720, H = 360, lonMin = -120, lonMax = 55, latMin = -18, latMax = 52;
+  const px = lon => (lon - lonMin) / (lonMax - lonMin) * W;
+  const py = lat => (latMax - lat) / (latMax - latMin) * H;
+  const regions = [["North America", 38, -100], ["Central America", 14, -86], ["South America", -8, -60], ["Africa", 2, 22], ["Europe", 47, 10]];
+  const indy = [px(INDY[1]), py(INDY[0])];
+
+  return (
+    <div>
+      <div style={{ background: "#eef6e7", border: `1px solid ${COLORS.light}`, borderRadius: 8, padding: "9px 12px", fontSize: 12.5, color: COLORS.text, margin: "4px 0 10px" }}>
+        🗺 <strong>Where your cuttings come from.</strong> Pins sized by this plan's planned plants per farm country, arced to Indianapolis. Shorter transit = fresher, more viable cuttings — a Mexico/Central-America farm can beat East Africa on arrival quality. Below: order rollups vs the <strong>2,000-plant order minimum</strong> and <strong>100-plant per-variety minimum</strong>.
+      </div>
+      <div style={{ background: "#eaf1f7", border: `1px solid ${COLORS.border}`, borderRadius: 10, overflow: "hidden", marginBottom: 14 }}>
+        <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", display: "block" }}>
+          {[-90, -45, 0, 45, 90].map(l => px(l) >= 0 && px(l) <= W && <line key={"v" + l} x1={px(l)} y1={0} x2={px(l)} y2={H} stroke="#d6e0ea" strokeWidth="1" />)}
+          {[-15, 0, 23, 45].map(l => <line key={"h" + l} x1={0} y1={py(l)} x2={W} y2={py(l)} stroke="#d6e0ea" strokeWidth="1" />)}
+          {regions.map(([nm, la, lo]) => <text key={nm} x={px(lo)} y={py(la)} fontSize="11" fill="#9fb3c4" fontWeight="700" textAnchor="middle">{nm}</text>)}
+          {origins.filter(o => o.coord).map(o => { const x = px(o.coord[1]), y = py(o.coord[0]); return <line key={"a" + o.name} x1={x} y1={y} x2={indy[0]} y2={indy[1]} stroke={o.dist > 5000 ? "#d94f3d" : o.dist > 2500 ? "#e89a3a" : "#7fb069"} strokeWidth="1.5" strokeOpacity="0.6" />; })}
+          <g><circle cx={indy[0]} cy={indy[1]} r="6" fill="#1e2d1a" /><text x={indy[0]} y={indy[1] - 9} fontSize="11" fontWeight="800" fill="#1e2d1a" textAnchor="middle">Indianapolis</text></g>
+          {origins.filter(o => o.coord).map(o => { const x = px(o.coord[1]), y = py(o.coord[0]); const r = 5 + 22 * Math.sqrt(o.plants / maxP); const c = o.dist > 5000 ? "#d94f3d" : o.dist > 2500 ? "#e89a3a" : "#7fb069"; return (<g key={o.name}><circle cx={x} cy={y} r={r} fill={c} fillOpacity="0.55" stroke={c} strokeWidth="1.5" /><text x={x} y={y + r + 11} fontSize="10.5" fontWeight="700" fill={COLORS.dark} textAnchor="middle">{o.name} · {o.plants.toLocaleString()}</text></g>); })}
+        </svg>
+      </div>
+
+      <SrcSectionTitle>Origins (this plan)</SrcSectionTitle>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, marginBottom: 16 }}>
+        <thead><tr style={{ textAlign: "left", color: COLORS.muted }}><th style={{ padding: "4px 8px" }}>Farm country</th><th style={{ padding: "4px 8px" }}>Suppliers</th><th style={{ padding: "4px 8px", textAlign: "right" }}>Plants</th><th style={{ padding: "4px 8px", textAlign: "right" }}>~Miles to Indy</th><th style={{ padding: "4px 8px" }}>Transit</th></tr></thead>
+        <tbody>
+          {origins.map(o => (
+            <tr key={o.name} style={{ borderTop: `1px solid ${COLORS.border}` }}>
+              <td style={{ padding: "4px 8px", fontWeight: 700, color: COLORS.dark }}>{o.name}</td>
+              <td style={{ padding: "4px 8px", color: COLORS.muted }}>{[...o.supes].map(srcSup).join(", ")}</td>
+              <td style={{ padding: "4px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{o.plants.toLocaleString()}</td>
+              <td style={{ padding: "4px 8px", textAlign: "right", color: COLORS.muted }}>{o.dist ? o.dist.toLocaleString() : "—"}</td>
+              <td style={{ padding: "4px 8px", fontWeight: 700, color: o.dist == null ? COLORS.muted : o.dist > 5000 ? COLORS.red : o.dist > 2500 ? COLORS.amber : COLORS.light }}>{o.dist == null ? "—" : o.dist > 5000 ? "long haul" : o.dist > 2500 ? "moderate" : "short / fresh"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <SrcSectionTitle>Order minimums — 2,000 plants/order · 100/variety</SrcSectionTitle>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+        <thead><tr style={{ textAlign: "left", color: COLORS.muted }}><th style={{ padding: "4px 8px" }}>Supplier</th><th style={{ padding: "4px 8px", textAlign: "right" }}>Planned plants</th><th style={{ padding: "4px 8px", textAlign: "right" }}>Varieties</th><th style={{ padding: "4px 8px" }}>Order min (2,000)</th><th style={{ padding: "4px 8px", textAlign: "right" }}>Under 100/variety</th></tr></thead>
+        <tbody>
+          {sups.map(s => (
+            <tr key={s.supplier} style={{ borderTop: `1px solid ${COLORS.border}` }}>
+              <td style={{ padding: "4px 8px", fontWeight: 700, color: COLORS.dark }}>{srcSup(s.supplier)}</td>
+              <td style={{ padding: "4px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{s.plants.toLocaleString()}</td>
+              <td style={{ padding: "4px 8px", textAlign: "right", color: COLORS.muted }}>{s.varieties}</td>
+              <td style={{ padding: "4px 8px", fontWeight: 700, color: s.plants < 2000 ? COLORS.red : COLORS.light }}>{s.plants < 2000 ? `⚠ ${(2000 - s.plants).toLocaleString()} short` : "✓ met"}</td>
+              <td style={{ padding: "4px 8px", textAlign: "right", color: s.under > 0 ? COLORS.amber : COLORS.muted, fontWeight: s.under > 0 ? 700 : 400 }}>{s.under || "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
