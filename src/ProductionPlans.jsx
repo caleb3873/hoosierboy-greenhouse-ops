@@ -1039,16 +1039,19 @@ function PricingTab({ plan }) {
 
   async function reload() {
     setBusy(true);
-    const sc = [];
-    for (let f = 0; ; f += 1000) {
-      const { data } = await sb.from("scheduled_crops").select("container_id,variety_id,color,qty_pots")
-        .eq("plan_id", plan.id).eq("is_combo_component", false).range(f, f + 999);
-      if (!data || !data.length) break; sc.push(...data); if (data.length < 1000) break;
-    }
-    // paginate — variety_library exceeds PostgREST's 1000-row cap (else varieties show "(unnamed)")
+    // paginate everything — PostgREST caps at 1000 (plans + variety_library exceed it)
+    const sc = await srcPageAll(sb, "scheduled_crops", "id,container_id,variety_id,color,qty_pots,item_name,plants_per_unit", q => q.eq("plan_id", plan.id).eq("is_combo_component", false));
     const vars = await srcPageAll(sb, "variety_library", "id,variety,crop_name");
     const conts = await srcPageAll(sb, "containers", "id,sku,name,diameter_in");
     const prices = await srcPageAll(sb, "crop_pricing", "id,container_id,variety_id,crop_name,effective_year,price", q => q.in("effective_year", [plan.year, lastYear]));
+    const pl = await srcPageAll(sb, "v_scheduled_crops_pl", "id,direct_cost_total", q => q.eq("plan_id", plan.id));
+    const costById = {}; pl.forEach(r => { costById[r.id] = +r.direct_cost_total || 0; });
+    // 2026 realized sales by plan item_name (same crosswalk as Sales-vs-Plan): avg $ per sold unit
+    const xw = await srcPageAll(sb, "sales_sku_map", "sku,plan_item_name");
+    const skuToItem = {}; xw.forEach(x => { if (x.plan_item_name) skuToItem[x.sku] = x.plan_item_name; });
+    const stot = await srcPageAll(sb, "sales_totals", "sku,units,revenue");
+    const soldRev = {}, soldUnits = {};
+    stot.forEach(t => { const it = skuToItem[t.sku]; if (!it) return; soldRev[it] = (soldRev[it] || 0) + (+t.revenue || 0); soldUnits[it] = (soldUnits[it] || 0) + (+t.units || 0); });
     const vById = {}; (vars || []).forEach(v => { vById[v.id] = v; });
     const cById = {}; (conts || []).forEach(c => { cById[c.id] = c; });
 
@@ -1087,19 +1090,27 @@ function PricingTab({ plan }) {
           key, containerId: r.container_id, kind: isColor ? "color" : "variety",
           code: isColor ? code : null, varietyId: isColor ? null : r.variety_id,
           label: isColor ? POIN_COLORS[code] : (v.variety || "(unnamed)"),
-          cropName: v.crop_name || "", qty: 0,
+          cropName: v.crop_name || "", qty: 0, cost: 0, names: new Set(),
         };
       }
       groups[key].qty += (+r.qty_pots || 0);
+      groups[key].cost += costById[r.id] || 0;
+      if (r.item_name) groups[key].names.add(r.item_name);
     }
-    // bucket groups under their container (size)
+    // bucket groups under their container (size); attach cost/plant + 2026 realized avg
     const byCont = {};
     Object.values(groups).forEach(g => {
       const c = cById[g.containerId] || {};
+      let rRev = 0, rUnits = 0; g.names.forEach(nm => { rRev += soldRev[nm] || 0; rUnits += soldUnits[nm] || 0; });
       (byCont[g.containerId] = byCont[g.containerId] || {
         containerId: g.containerId, diameter: c.diameter_in, sku: c.sku, name: c.name,
         lastBase: baseLast[g.containerId] ?? null, items: [],
-      }).items.push({ ...g, lastOv: ovLast[g.key] ?? null });
+      }).items.push({
+        key: g.key, kind: g.kind, code: g.code, varietyId: g.varietyId, label: g.label, cropName: g.cropName, qty: g.qty,
+        unitCost: g.qty > 0 ? g.cost / g.qty : null,        // direct cost per sold unit
+        soldAvg: rUnits > 0 ? rRev / rUnits : null,         // 2026 realized avg $ per sold unit
+        lastOv: ovLast[g.key] ?? null,
+      });
     });
     setColorMode(cm);
     const list = Object.values(byCont).sort((a, b) => sizeRankOf(a) - sizeRankOf(b) || (a.sku || "").localeCompare(b.sku || ""));
@@ -1171,10 +1182,12 @@ function PricingTab({ plan }) {
   const sizePrefix = s => (colorMode && POIN_BLOOM[Number(s.diameter)]) ? POIN_BLOOM[Number(s.diameter)] : sizeLabelOf(s);
   const itemName = (s, it) => `${sizePrefix(s)} ${[it.cropName, it.label].filter(Boolean).join(" ")}`;
   function copyTable() {
-    const lines = ["Item\tProjected\tLast Year\tThis Year" + (colorMode ? "\tPot Cover" : "")];
+    const yy = String(plan.year).slice(2);
+    const lines = [`Item\tProjected\tAvg sold ${yy}\tLast Year\tThis Year\tCost\tMargin %` + (colorMode ? "\tPot Cover" : "")];
     (sizes || []).forEach(s => { const pc = potCoverFor(s.diameter); s.items.forEach(it => {
       const et = effThis(s, it), el = effLast(s, it);
-      lines.push(`${itemName(s, it)}\t${it.qty}\t${el != null ? "$" + el.toFixed(2) : ""}\t${et != null ? "$" + et.toFixed(2) : ""}` + (colorMode ? `\t${pc != null ? "$" + pc.toFixed(2) : ""}` : ""));
+      const mp = (et != null && it.unitCost != null && et) ? ((et - it.unitCost) / et * 100).toFixed(0) + "%" : "";
+      lines.push(`${itemName(s, it)}\t${it.qty}\t${it.soldAvg != null ? "$" + it.soldAvg.toFixed(2) : ""}\t${el != null ? "$" + el.toFixed(2) : ""}\t${et != null ? "$" + et.toFixed(2) : ""}\t${it.unitCost != null ? "$" + it.unitCost.toFixed(2) : ""}\t${mp}` + (colorMode ? `\t${pc != null ? "$" + pc.toFixed(2) : ""}` : ""));
     }); });
     const text = lines.join("\r\n");
     if (navigator.clipboard) navigator.clipboard.writeText(text).then(() => setMsg("✓ Copied " + (lines.length - 1) + " items to clipboard — paste into Sheets/Excel or the B2B form."));
@@ -1183,6 +1196,16 @@ function PricingTab({ plan }) {
   if (sizes == null) return <div style={{ padding: 30, color: COLORS.muted, fontFamily: "'DM Sans',sans-serif" }}>Loading pricing…</div>;
   const totalItems = sizes.reduce((n, s) => n + s.items.length, 0);
   const totalQty = sizes.reduce((n, s) => n + s.items.reduce((m, it) => m + it.qty, 0), 0);
+  // KPIs: projected revenue at this-year prices vs last-year prices (same volumes) + blended margin
+  let projRev = 0, lastRev = 0, mNum = 0, mDen = 0;
+  sizes.forEach(s => s.items.forEach(it => {
+    const et = effThis(s, it), el = effLast(s, it);
+    if (et != null) projRev += it.qty * et;
+    if (el != null) lastRev += it.qty * el;
+    if (et != null && it.unitCost != null) { mNum += it.qty * (et - it.unitCost); mDen += it.qty * et; }
+  }));
+  const uplift = projRev - lastRev, blended = mDen > 0 ? mNum / mDen * 100 : null;
+  const m$ = v => (v == null ? "—" : (v < 0 ? "-$" : "$") + Math.abs(Math.round(v)).toLocaleString());
   const inp = { width: 84, padding: "5px 8px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 13, fontFamily: "inherit", textAlign: "right", boxSizing: "border-box" };
 
   return (
@@ -1202,6 +1225,12 @@ function PricingTab({ plan }) {
           <button onClick={save} disabled={busy} style={{ border: "none", background: busy ? "#8aa67a" : COLORS.dark, color: "#fff", borderRadius: 7, padding: "6px 14px", fontSize: 12.5, fontWeight: 800, cursor: busy ? "default" : "pointer", fontFamily: "inherit" }}>{busy ? "…" : "Save"}</button>
         </div>
       </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+        <SrcStat label="Projected revenue" value={m$(projRev)} color={COLORS.light} />
+        <SrcStat label={`vs ${lastYear} prices`} value={m$(lastRev)} />
+        <SrcStat label="Uplift this yr" value={(uplift >= 0 ? "+" : "") + m$(uplift)} color={uplift > 0 ? COLORS.light : uplift < 0 ? COLORS.red : undefined} />
+        <SrcStat label="Blended margin" value={blended == null ? "—" : blended.toFixed(0) + "%"} color={blended != null && blended < 0 ? COLORS.red : undefined} />
+      </div>
       {msg && <div style={{ fontSize: 12.5, color: COLORS.dark, background: "#eef6e7", border: `1px solid ${COLORS.light}`, borderRadius: 8, padding: "7px 11px", marginBottom: 10 }}>{msg}</div>}
 
       {sizes.length === 0 ? <div style={{ color: COLORS.muted, padding: "20px 0" }}>No items in this plan yet.</div> : (
@@ -1210,8 +1239,11 @@ function PricingTab({ plan }) {
             <tr style={{ textAlign: "left", color: COLORS.muted, background: "#f3f5ef" }}>
               <th style={th}>Item</th>
               <th style={{ ...th, textAlign: "right" }}>Projected</th>
+              <th style={{ ...th, textAlign: "right" }} title={`Realized avg $ per sold unit, ${plan.year} sales`}>Avg sold {String(plan.year).slice(2)}</th>
               <th style={{ ...th, textAlign: "right" }}>Last Yr</th>
               <th style={{ ...th, textAlign: "right" }}>This Yr</th>
+              <th style={{ ...th, textAlign: "right" }} title="direct cost per unit (liner + pot + soil + ring)">Cost</th>
+              <th style={{ ...th, textAlign: "right" }} title="margin at this-year price">Margin</th>
               {colorMode && <th style={{ ...th, textAlign: "right" }}>Pot Cover</th>}
             </tr>
           </thead>
@@ -1221,11 +1253,14 @@ function PricingTab({ plan }) {
                 <tr style={{ background: "#f7f9f4", borderTop: `2px solid ${COLORS.border}` }}>
                   <td style={{ ...td, fontWeight: 800, color: COLORS.dark }}>{sizePrefix(s)}{hc ? " " + hc : ""} <span style={{ color: COLORS.muted, fontWeight: 400, fontSize: 11 }}>· {s.sku} · {s.items.length} items</span></td>
                   <td style={{ ...td, textAlign: "right", color: COLORS.muted }}>{s.items.reduce((m, it) => m + it.qty, 0).toLocaleString()}</td>
+                  <td style={td} />
                   <td style={{ ...td, textAlign: "right", color: COLORS.muted }}>{s.lastBase != null ? "$" + s.lastBase.toFixed(2) : "—"}</td>
                   <td style={{ ...td, textAlign: "right" }}>
                     <span style={{ fontSize: 11, color: COLORS.muted, marginRight: 4 }}>base</span>
                     <input value={baseEdit[s.containerId] ?? ""} onChange={e => setBaseEdit(p => ({ ...p, [s.containerId]: e.target.value }))} style={inp} />
                   </td>
+                  <td style={td} />
+                  <td style={td} />
                   {colorMode && <td style={{ ...td, textAlign: "right", fontWeight: 700, color: pc != null ? COLORS.text : COLORS.muted }}>{pc != null ? "$" + pc.toFixed(2) : "—"}</td>}
                 </tr>
                 {s.items.map(it => {
@@ -1235,12 +1270,20 @@ function PricingTab({ plan }) {
                     <tr key={it.key} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
                       <td style={{ ...td, paddingLeft: 18 }}>{itemName(s, it)}{colorMode && it.kind === "variety" && <span title="novelty — priced individually" style={{ marginLeft: 6, fontSize: 9.5, color: COLORS.muted }}>novelty</span>}{overridden && <span title="custom price (overrides the size base)" style={{ marginLeft: 6, fontSize: 10, color: COLORS.amber, fontWeight: 700 }}>◆ custom</span>}</td>
                       <td style={{ ...td, textAlign: "right" }}>{it.qty.toLocaleString()}</td>
+                      <td style={{ ...td, textAlign: "right", color: it.soldAvg != null ? COLORS.dark : "#cbd5c0", fontWeight: it.soldAvg != null ? 700 : 400 }} title={it.soldAvg != null ? `realized average per sold unit, ${plan.year}` : "no matched sales"}>{it.soldAvg != null ? "$" + it.soldAvg.toFixed(2) : "—"}</td>
                       <td style={{ ...td, textAlign: "right", color: COLORS.muted }}>{el != null ? "$" + el.toFixed(2) : "—"}</td>
                       <td style={{ ...td, textAlign: "right" }}>
                         <input value={ovEdit[it.key] ?? ""} placeholder={priceNum(baseEdit[s.containerId]) != null ? priceNum(baseEdit[s.containerId]).toFixed(2) : ""}
                           onChange={e => setOvEdit(p => ({ ...p, [it.key]: e.target.value }))} style={{ ...inp, borderColor: overridden ? COLORS.amber : COLORS.border }} />
                         <div style={{ fontSize: 10, color: COLORS.muted, marginTop: 1 }}>{et != null ? "= $" + et.toFixed(2) : ""}</div>
                       </td>
+                      <td style={{ ...td, textAlign: "right", color: COLORS.muted }}>{it.unitCost != null ? "$" + it.unitCost.toFixed(2) : "—"}</td>
+                      {(() => {
+                        const mg = (et != null && it.unitCost != null) ? et - it.unitCost : null;
+                        const mp = (mg != null && et) ? mg / et * 100 : null;
+                        const col = mp == null ? COLORS.muted : mp < 15 ? COLORS.red : mp < 35 ? COLORS.amber : COLORS.light;
+                        return <td style={{ ...td, textAlign: "right", color: col, fontWeight: 700 }} title={mg != null ? `$${mg.toFixed(2)}/unit margin` : ""}>{mp != null ? mp.toFixed(0) + "%" : "—"}</td>;
+                      })()}
                       {colorMode && <td style={{ ...td, textAlign: "right", color: COLORS.muted, fontSize: 11 }}>{pc != null ? "$" + pc.toFixed(2) : ""}</td>}
                     </tr>
                   );
