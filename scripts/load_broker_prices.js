@@ -32,7 +32,7 @@ const jsonPath = process.argv[2] || '/tmp/broker_prices.json';
     broker: r.broker, supplier: r.supplier, form_class: r.formClass, form_raw: r.form || null,
     crop: r.crop || null, variety: r.variety || null, variety_key: r.key || null, match_key: r.mkey || null,
     list_price: r.listPrice ?? null, landed: r.landed ?? null, royalty: r.royalty ?? null, freight: r.freight ?? null,
-    exclusivity: r.exclusivity || null, season: SEASON, source_file: r.sourceFile || null,
+    exclusivity: r.exclusivity || null, season: SEASON, source_file: r.sourceFile || null, origin: r.origin || null,
   }));
 
   const BATCH = 500;

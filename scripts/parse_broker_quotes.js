@@ -118,6 +118,27 @@ function breederFromName(fn) {
   return fn.replace(/\.xlsx?$/i, '').slice(0, 16);
 }
 
+// ---------- farm / origin from filename ----------
+// Suppliers grow at multiple farms; the country is in the quote filename and drives transit
+// distance → cutting viability (Mexico/Central America fresher than East Africa).
+function originFromName(fn) {
+  const f = String(fn || '').toLowerCase();
+  if (/el salvador|salvador/.test(f)) return 'El Salvador';
+  if (/guatemala|guate/.test(f)) return 'Guatemala';
+  if (/\bmexico\b/.test(f)) return 'Mexico';
+  if (/costa rica/.test(f)) return 'Costa Rica';
+  if (/\bcolombia\b/.test(f)) return 'Colombia';
+  if (/ethiopia/.test(f)) return 'Ethiopia';
+  if (/uganda/.test(f)) return 'Uganda';
+  if (/\bkenya\b/.test(f)) return 'Kenya';
+  if (/tanzania/.test(f)) return 'Tanzania';
+  if (/portugal/.test(f)) return 'Portugal';
+  if (/\bspain\b/.test(f)) return 'Spain';
+  if (/israel/.test(f)) return 'Israel';
+  if (/vivero/.test(f)) return 'Costa Rica';            // Green Fuse — Vivero, Costa Rica
+  return null;
+}
+
 // ---------- header detection ----------
 const VAR_TOK = /desc|variety|botanical|product name/i;
 const PRICE_TOK = /price|each|unit|total|fee|volume\s*\d|level\s*\d|\d{2,}\s*-\s*\d{2,}|royalty/i;
@@ -275,6 +296,7 @@ function parseFile(broker, file) {
         // supplier -> form -> variety: the match grain for cross-broker comparison
         mkey: breeder + '|' + formClass + '|' + vkey,
         genus: genusOf(cropV, botanical, variety),
+        origin: originFromName(sourceFile),
         sourceFile,
       });
     }
