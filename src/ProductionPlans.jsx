@@ -1008,6 +1008,10 @@ const POIN_POTCOVER = { 5.5: 0.52, 6.5: 0.57, 7.5: 0.90, 8.5: 0.99 };
 const potCoverFor = d => { const v = POIN_POTCOVER[Number(d)]; return v == null ? null : v; };
 // Poinsettia big pots are sold by bloom count, not diameter (display name only).
 const POIN_BLOOM = { 10: "8 Bloom", 13: "10 Bloom" };
+// Premium lines that command a higher price (more space + quality reputation). Detected by name.
+const PREMIUM_PATTERNS = [/sunpatiens/i, /new\s*guinea/i, /i.?conia/i, /reiger/i, /bacio/i];
+const isPremiumName = n => PREMIUM_PATTERNS.some(re => re.test(String(n || "")));
+const median = arr => { if (!arr.length) return null; const a = [...arr].sort((x, y) => x - y); const m = Math.floor(a.length / 2); return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2; };
 // Size label + sort rank for a plan's container size group {diameter, sku, name}. Handles
 // non-pot containers (baskets, bowls, trays, flats) that have no numeric diameter — those
 // fall back to the container name instead of showing 0", and sort via sizeRank().
@@ -1108,11 +1112,14 @@ function PricingTab({ plan }) {
     Object.values(groups).forEach(g => {
       const c = cById[g.containerId] || {};
       let rRev = 0, rUnits = 0; g.names.forEach(nm => { rRev += soldRev[nm] || 0; rUnits += soldUnits[nm] || 0; });
-      (byCont[g.containerId] = byCont[g.containerId] || {
+      byCont[g.containerId] = byCont[g.containerId] || {
         containerId: g.containerId, diameter: c.diameter_in, sku: c.sku, name: c.name,
         lastBase: baseLast[g.containerId] ?? null, items: [],
-      }).items.push({
+      };
+      const nm0 = [...g.names][0] || "";
+      byCont[g.containerId].items.push({
         key: g.key, kind: g.kind, code: g.code, varietyId: g.varietyId, label: g.label, cropName: g.cropName, qty: g.qty,
+        name: nm0, premium: isPremiumName(nm0 || (g.cropName + " " + g.label)),
         unitCost: g.qty > 0 ? g.cost / g.qty : null,        // direct cost per sold unit
         cc: g.qty > 0 ? { liner: g.liner / g.qty, pot: g.pot / g.qty, soil: g.soil / g.qty, ring: g.ring / g.qty } : null, // per-unit cost components
         soldAvg: rUnits > 0 ? rRev / rUnits : null,         // 2026 realized avg $ per sold unit
@@ -1121,6 +1128,18 @@ function PricingTab({ plan }) {
     });
     setColorMode(cm);
     const list = Object.values(byCont).sort((a, b) => sizeRankOf(a) - sizeRankOf(b) || (a.sku || "").localeCompare(b.sku || ""));
+    // Suggested price = the size's STANDARD realized average (keeps pricing uniform per size);
+    // premium lines get their own (higher) tier. Round to cents. Falls back to the item's own avg.
+    list.forEach(s => {
+      const std = [], prem = [];
+      s.items.forEach(it => { if (it.soldAvg != null) (it.premium ? prem : std).push(it.soldAvg); });
+      s.stdSug = median(std); s.premSug = median(prem);
+      s.items.forEach(it => {
+        const anchor = it.premium ? (s.premSug ?? s.stdSug) : (s.stdSug ?? s.premSug);
+        const v = anchor != null ? anchor : it.soldAvg;
+        it.suggested = v != null ? Math.round(v * 100) / 100 : null;
+      });
+    });
     // colors first (fixed order), then novelties alpha
     list.forEach(s => s.items.sort((a, b) => {
       if (a.kind !== b.kind) return a.kind === "color" ? -1 : 1;
@@ -1150,6 +1169,19 @@ function PricingTab({ plan }) {
     setBaseEdit(prev => { const n = { ...prev }; Object.keys(n).forEach(k => { const v = priceNum(n[k]); if (v != null) n[k] = String(round2(v * f)); }); return n; });
     setOvEdit(prev => { const n = { ...prev }; Object.keys(n).forEach(k => { const v = priceNum(n[k]); if (v != null && n[k] !== "") n[k] = String(round2(v * f)); }); return n; });
     setMsg(`Adjusted all this-year prices by ${p > 0 ? "+" : ""}${p}%. Review, then Save.`);
+  }
+
+  // Fill This-Year from the suggested ceilings: size standard → base; premium items → override.
+  function applySuggested() {
+    const be = {}, oe = { ...ovEdit };
+    (sizes || []).forEach(s => {
+      if (s.stdSug != null) be[s.containerId] = String(round2(s.stdSug));
+      else if (baseEdit[s.containerId]) be[s.containerId] = baseEdit[s.containerId];
+      s.items.forEach(it => { if (it.premium && it.suggested != null) oe[it.key] = String(round2(it.suggested)); });
+    });
+    setBaseEdit(prev => ({ ...prev, ...be }));
+    setOvEdit(oe);
+    setMsg("Filled this-year from suggested (size standard + premium tiers). Review, adjust with %, then Save.");
   }
 
   async function save() {
@@ -1190,11 +1222,11 @@ function PricingTab({ plan }) {
   const itemName = (s, it) => `${sizePrefix(s)} ${[it.cropName, it.label].filter(Boolean).join(" ")}`;
   function copyTable() {
     const yy = String(plan.year).slice(2);
-    const lines = [`Item\tProjected\tAvg sold ${yy}\tLast Year\tThis Year\tCost\tMargin %` + (colorMode ? "\tPot Cover" : "")];
+    const lines = [`Item\tProjected\tAvg sold ${yy}\tLast Year\tSuggested\tThis Year\tCost\tMargin %` + (colorMode ? "\tPot Cover" : "")];
     (sizes || []).forEach(s => { const pc = potCoverFor(s.diameter); s.items.forEach(it => {
       const et = effThis(s, it), el = effLast(s, it);
       const mp = (et != null && it.unitCost != null && et) ? ((et - it.unitCost) / et * 100).toFixed(0) + "%" : "";
-      lines.push(`${itemName(s, it)}\t${it.qty}\t${it.soldAvg != null ? "$" + it.soldAvg.toFixed(2) : ""}\t${el != null ? "$" + el.toFixed(2) : ""}\t${et != null ? "$" + et.toFixed(2) : ""}\t${it.unitCost != null ? "$" + it.unitCost.toFixed(2) : ""}\t${mp}` + (colorMode ? `\t${pc != null ? "$" + pc.toFixed(2) : ""}` : ""));
+      lines.push(`${itemName(s, it)}\t${it.qty}\t${it.soldAvg != null ? "$" + it.soldAvg.toFixed(2) : ""}\t${el != null ? "$" + el.toFixed(2) : ""}\t${it.suggested != null ? "$" + it.suggested.toFixed(2) : ""}\t${et != null ? "$" + et.toFixed(2) : ""}\t${it.unitCost != null ? "$" + it.unitCost.toFixed(2) : ""}\t${mp}` + (colorMode ? `\t${pc != null ? "$" + pc.toFixed(2) : ""}` : ""));
     }); });
     const text = lines.join("\r\n");
     if (navigator.clipboard) navigator.clipboard.writeText(text).then(() => setMsg("✓ Copied " + (lines.length - 1) + " items to clipboard — paste into Sheets/Excel or the B2B form."));
@@ -1228,6 +1260,7 @@ function PricingTab({ plan }) {
           <span style={{ fontSize: 12, color: COLORS.muted }}>Adjust all by</span>
           <input value={pct} onChange={e => setPct(e.target.value)} placeholder="%" style={{ ...inp, width: 56 }} />
           <button onClick={applyPct} style={{ border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.dark, borderRadius: 7, padding: "6px 11px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Apply %</button>
+          <button onClick={applySuggested} title="Fill this-year from suggested: each size's standard realized price, premium lines at their higher tier" style={{ border: `1px solid ${COLORS.light}`, background: "#eef6e7", color: COLORS.dark, borderRadius: 7, padding: "6px 11px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>✨ Use suggested</button>
           <button onClick={copyTable} style={{ border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.dark, borderRadius: 7, padding: "6px 11px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>⧉ Copy</button>
           <button onClick={save} disabled={busy} style={{ border: "none", background: busy ? "#8aa67a" : COLORS.dark, color: "#fff", borderRadius: 7, padding: "6px 14px", fontSize: 12.5, fontWeight: 800, cursor: busy ? "default" : "pointer", fontFamily: "inherit" }}>{busy ? "…" : "Save"}</button>
         </div>
@@ -1248,6 +1281,7 @@ function PricingTab({ plan }) {
               <th style={{ ...th, textAlign: "right" }}>Projected</th>
               <th style={{ ...th, textAlign: "right" }} title={`Realized avg $ per sold unit, ${plan.year} sales`}>Avg sold {String(plan.year).slice(2)}</th>
               <th style={{ ...th, textAlign: "right" }}>Last Yr</th>
+              <th style={{ ...th, textAlign: "right" }} title="size standard from realized sales; premium lines at their higher tier — click to use">Suggested</th>
               <th style={{ ...th, textAlign: "right" }}>This Yr</th>
               <th style={{ ...th, textAlign: "right" }} title="direct cost per unit (liner + pot + soil + ring)">Cost</th>
               <th style={{ ...th, textAlign: "right" }} title="margin at this-year price">Margin</th>
@@ -1262,6 +1296,9 @@ function PricingTab({ plan }) {
                   <td style={{ ...td, textAlign: "right", color: COLORS.muted }}>{s.items.reduce((m, it) => m + it.qty, 0).toLocaleString()}</td>
                   <td style={td} />
                   <td style={{ ...td, textAlign: "right", color: COLORS.muted }}>{s.lastBase != null ? "$" + s.lastBase.toFixed(2) : "—"}</td>
+                  <td onClick={() => s.stdSug != null && setBaseEdit(p => ({ ...p, [s.containerId]: String(round2(s.stdSug)) }))}
+                    title={s.stdSug != null ? "click to set this size's base to the suggested standard" : ""}
+                    style={{ ...td, textAlign: "right", fontWeight: 700, color: s.stdSug != null ? COLORS.dark : COLORS.muted, cursor: s.stdSug != null ? "pointer" : "default" }}>{s.stdSug != null ? "$" + s.stdSug.toFixed(2) : "—"}</td>
                   <td style={{ ...td, textAlign: "right" }}>
                     <span style={{ fontSize: 11, color: COLORS.muted, marginRight: 4 }}>base</span>
                     <input value={baseEdit[s.containerId] ?? ""} onChange={e => setBaseEdit(p => ({ ...p, [s.containerId]: e.target.value }))} style={inp} />
@@ -1281,10 +1318,13 @@ function PricingTab({ plan }) {
                   return (
                     <Fragment key={it.key}>
                     <tr style={{ borderBottom: open ? "none" : `1px solid ${COLORS.border}` }}>
-                      <td style={{ ...td, paddingLeft: 18 }}>{itemName(s, it)}{colorMode && it.kind === "variety" && <span title="novelty — priced individually" style={{ marginLeft: 6, fontSize: 9.5, color: COLORS.muted }}>novelty</span>}{overridden && <span title="custom price (overrides the size base)" style={{ marginLeft: 6, fontSize: 10, color: COLORS.amber, fontWeight: 700 }}>◆ custom</span>}</td>
+                      <td style={{ ...td, paddingLeft: 18 }}>{itemName(s, it)}{it.premium && <span title="premium line — priced higher (more space + quality reputation)" style={{ marginLeft: 6, fontSize: 9.5, color: "#a86a10", fontWeight: 800 }}>✦ premium</span>}{colorMode && it.kind === "variety" && <span title="novelty — priced individually" style={{ marginLeft: 6, fontSize: 9.5, color: COLORS.muted }}>novelty</span>}{overridden && <span title="custom price (overrides the size base)" style={{ marginLeft: 6, fontSize: 10, color: COLORS.amber, fontWeight: 700 }}>◆ custom</span>}</td>
                       <td style={{ ...td, textAlign: "right" }}>{it.qty.toLocaleString()}</td>
                       <td style={{ ...td, textAlign: "right", color: it.soldAvg != null ? COLORS.dark : "#cbd5c0", fontWeight: it.soldAvg != null ? 700 : 400 }} title={it.soldAvg != null ? `realized average per sold unit, ${plan.year}` : "no matched sales"}>{it.soldAvg != null ? "$" + it.soldAvg.toFixed(2) : "—"}</td>
                       <td style={{ ...td, textAlign: "right", color: COLORS.muted }}>{el != null ? "$" + el.toFixed(2) : "—"}</td>
+                      <td onClick={() => it.suggested != null && setOvEdit(p => ({ ...p, [it.key]: String(round2(it.suggested)) }))}
+                        title={it.suggested != null ? (it.premium ? "suggested premium-tier price — click to use" : "suggested size-standard price — click to use") : ""}
+                        style={{ ...td, textAlign: "right", color: it.suggested != null ? (it.premium ? "#a86a10" : COLORS.dark) : COLORS.muted, fontWeight: 700, cursor: it.suggested != null ? "pointer" : "default" }}>{it.suggested != null ? "$" + it.suggested.toFixed(2) : "—"}</td>
                       <td style={{ ...td, textAlign: "right" }}>
                         <input value={ovEdit[it.key] ?? ""} placeholder={priceNum(baseEdit[s.containerId]) != null ? priceNum(baseEdit[s.containerId]).toFixed(2) : ""}
                           onChange={e => setOvEdit(p => ({ ...p, [it.key]: e.target.value }))} style={{ ...inp, borderColor: overridden ? COLORS.amber : COLORS.border }} />
@@ -1300,7 +1340,7 @@ function PricingTab({ plan }) {
                     </tr>
                     {open && cc && (
                       <tr style={{ borderBottom: `1px solid ${COLORS.border}`, background: "#fbfdf9" }}>
-                        <td colSpan={7 + (colorMode ? 1 : 0)} style={{ ...td, padding: "4px 18px 8px 30px" }}>
+                        <td colSpan={8 + (colorMode ? 1 : 0)} style={{ ...td, padding: "4px 18px 8px 30px" }}>
                           <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center", fontSize: 12 }}>
                             <span style={{ color: COLORS.muted, fontWeight: 700 }}>Cost breakdown ${it.unitCost.toFixed(2)}/unit:</span>
                             {[["Liner", cc.liner, "#1976d2"], ["Pot", cc.pot, "#c8791a"], ["Soil", cc.soil, "#7a5230"], ["Ring", cc.ring, "#3d7a2f"]].map(([lbl, v, c]) => (
