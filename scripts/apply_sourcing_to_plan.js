@@ -24,8 +24,8 @@ const sb = createClient(env.REACT_APP_SUPABASE_URL, env.REACT_APP_SUPABASE_ANON_
 // MUST stay byte-identical to scripts/parse_broker_quotes.js makeKey (and the copy in
 // src/ProductionPlans.jsx srcMakeKey) so a plan item keys the same way broker_prices.variety_key did.
 const SPECIES = /^(millefolium|reptans|spurium|didyma|dubium|hybrida|hybrid|aurantiaca|cordata|interspecific|x|sp|spp|species|officinalis|off|vulgaris|vul|angustifolia|angust|ang|dracunculus|drac|citriodorus|citriodora|citrata|citri|cit|intermedia|inter|piperita|pip|spicata|suaveolens|serpyllum|serp|praecox|amygdaloides|amy|lindheimeri|lind|nobilis|stoechas|st|douglasii|doug|montana|mastichina|pulegioides|herba|barona|elegans|arvensis|fruticosa|abrotanum|arborescens|canariensis|canary|pseudolanuginosus|pseudolanugin|hederacea|bonariensis|diffusa|odoratum|rebaudiana|chamaecyparissus|viridis|incisa|clinopodioides|europaea|ovata)$/;
-const GENUS_SYN = { mentha: 'mint', thymus: 'thyme', salvia: 'sage', laurus: 'bay', ocimum: 'basil', rosmarinus: 'rosemary', satureja: 'savory', origanum: 'oregano', lippia: 'lemonverbena', aloysia: 'lemonverbena', helichrysum: 'curry', helichr: 'curry', chamaemelum: 'chamomile', coriandrum: 'coriander', majorana: 'marjoram', pelargonium: 'geranium', lavendula: 'lavandula' };
-const WORD_SYN = { cas: 'cascadias', com: 'compact', bic: 'bicolor', bestie: 'besties' };
+const GENUS_SYN = { mentha: 'mint', thymus: 'thyme', salvia: 'sage', laurus: 'bay', ocimum: 'basil', rosmarinus: 'rosemary', satureja: 'savory', origanum: 'oregano', lippia: 'lemonverbena', aloysia: 'lemonverbena', helichrysum: 'curry', helichr: 'curry', chamaemelum: 'chamomile', coriandrum: 'coriander', majorana: 'marjoram', pelargonium: 'geranium', lavendula: 'lavandula', ipom: 'ipomoea' };
+const WORD_SYN = { cas: 'cascadias', com: 'compact', bic: 'bicolor', bestie: 'besties', swt: 'sweet', hrt: 'heart' };
 function tidy(s) {
   s = ' ' + String(s).toLowerCase() + ' ';
   s = s.replace(/[áàâäãå]/g, 'a').replace(/[éèêë]/g, 'e').replace(/[íìîï]/g, 'i').replace(/[óòôöõ]/g, 'o').replace(/[úùûü]/g, 'u').replace(/ñ/g, 'n').replace(/ç/g, 'c');
@@ -56,6 +56,10 @@ function makeKey(crop, botanical, varietyName) {
   return (genus + (w.length ? ' ' + w.join(' ') : '')).trim();
 }
 const FORM_RANK = { urc: 0, callused: 1, urc_autostix: 2, rooted: 3, liner: 4, plug: 5 };
+// Only price from Unrooted (URC) or Callused quotes — not enough liner/plug quotes yet (Caleb).
+const ALLOWED_FORMS = new Set(['urc', 'callused']);
+// Force a genus to a preferred supplier when that supplier carries the variety (e.g. ipomoea → Pell).
+const GENUS_SUPPLIER = { ipomoea: 'Pell' };
 
 (async () => {
   const apply = process.argv.includes('--apply');
@@ -68,7 +72,7 @@ const FORM_RANK = { urc: 0, callused: 1, urc_autostix: 2, rooted: 3, liner: 4, p
 
   const page = async (tbl, sel, filt) => { let out = []; for (let f = 0; ; f += 1000) { let q = sb.from(tbl).select(sel).range(f, f + 999); if (filt) q = filt(q); const { data, error } = await q; if (error) { console.error(error.message); break; } if (!data || !data.length) break; out = out.concat(data); if (data.length < 1000) break; } return out; };
 
-  const prices = await page('broker_prices', 'broker,supplier,form_class,variety_key,landed', q => q.eq('season', '2026-2027').gt('landed', 0));
+  const prices = await page('broker_prices', 'broker,supplier,form_class,variety_key,landed', q => q.eq('season', '2026-2027').gt('landed', 0).in('form_class', ['urc', 'callused']));
   const sel = await page('sourcing_selections', 'supplier,form_class,selected_broker', q => q.eq('season', '2026-2027').eq('form_class', '*'));
   const sels = {}; sel.forEach(s => { if (s.selected_broker) sels[s.supplier] = s.selected_broker; });
   const crops = await page('scheduled_crops', 'id,item_name,qty_pots,plants_per_unit,liner_unit_cost,broker,is_combo_component', q => q.eq('plan_id', plan.id).eq('is_combo_component', false).gt('qty_pots', 0));
@@ -92,8 +96,10 @@ const FORM_RANK = { urc: 0, callused: 1, urc_autostix: 2, rooted: 3, liner: 4, p
     const suppliers = idx[key];
     if (!suppliers) { unmatched++; continue; }
     const supNames = Object.keys(suppliers);
-    // choose supplier: one with a selection first, else single supplier, else flag ambiguous
-    let chosenSup = supNames.find(s => sels[s]);
+    const genus = key.split(' ')[0];
+    // choose supplier: genus-forced supplier first (e.g. ipomoea→Pell), then a selected supplier,
+    // then the single supplier, else flag ambiguous
+    let chosenSup = (GENUS_SUPPLIER[genus] && suppliers[GENUS_SUPPLIER[genus]]) ? GENUS_SUPPLIER[genus] : supNames.find(s => sels[s]);
     if (!chosenSup && supNames.length === 1) chosenSup = supNames[0];
     if (!chosenSup) { ambiguous++; continue; }
     const brokers = suppliers[chosenSup];
