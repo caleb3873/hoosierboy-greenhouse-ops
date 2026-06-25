@@ -5181,45 +5181,7 @@ function srcGradeFor(broker, profiles) {
 }
 const money = v => (v == null ? "—" : "$" + Number(v).toFixed(4));
 
-// ── Apply-sourcing matching (mirrors scripts/parse_broker_quotes.js makeKey EXACTLY) ──
-// Maps a plan item name → normalized variety key → the supplier that carries it →
-// that supplier's chosen broker (sourcing_selections, else cheapest available) → landed.
-// These three consts + srcTidy + srcMakeKey MUST stay byte-identical to the parser so a
-// plan item keys the same way broker_prices.variety_key was generated.
-const SRC_SPECIES = /^(millefolium|reptans|spurium|didyma|dubium|hybrida|hybrid|aurantiaca|cordata|interspecific|x|sp|spp|species|officinalis|off|vulgaris|vul|angustifolia|angust|ang|dracunculus|drac|citriodorus|citriodora|citrata|citri|cit|intermedia|inter|piperita|pip|spicata|suaveolens|serpyllum|serp|praecox|amygdaloides|amy|lindheimeri|lind|nobilis|stoechas|st|douglasii|doug|montana|mastichina|pulegioides|herba|barona|elegans|arvensis|fruticosa|abrotanum|arborescens|canariensis|canary|pseudolanuginosus|pseudolanugin|hederacea|bonariensis|diffusa|odoratum|rebaudiana|chamaecyparissus|viridis|incisa|clinopodioides|europaea|ovata)$/;
-const SRC_GENUS_SYN = { mentha: 'mint', thymus: 'thyme', salvia: 'sage', laurus: 'bay', ocimum: 'basil', rosmarinus: 'rosemary', satureja: 'savory', origanum: 'oregano', lippia: 'lemonverbena', aloysia: 'lemonverbena', helichrysum: 'curry', helichr: 'curry', chamaemelum: 'chamomile', coriandrum: 'coriander', majorana: 'marjoram', pelargonium: 'geranium', lavendula: 'lavandula', ipom: 'ipomoea' };
-const SRC_WORD_SYN = { cas: 'cascadias', com: 'compact', bic: 'bicolor', bestie: 'besties', swt: 'sweet', hrt: 'heart' };
-function srcTidy(s) {
-  s = ' ' + String(s).toLowerCase() + ' ';
-  s = s.replace(/[áàâäãå]/g, 'a').replace(/[éèêë]/g, 'e').replace(/[íìîï]/g, 'i').replace(/[óòôöõ]/g, 'o').replace(/[úùûü]/g, 'u').replace(/ñ/g, 'n').replace(/ç/g, 'c');
-  s = s.replace(/\bw\//g, ' ').replace(/\bwith\b/g, ' ');
-  s = s.replace(/[`'´‘’"*]/g, ' ').replace(/[™®℠]/g, ' ').replace(/#/g, ' ');
-  s = s.replace(/\bpp\s?\d+\b/g, ' ').replace(/\bppaf\b/g, ' ').replace(/\bcpbr\s?\d+\b/g, ' ')
-       .replace(/\beu\s?\d*\b/g, ' ').replace(/\bp\.?p\.?a\.?f\.?\b/g, ' ');
-  s = s.replace(/\b(usppp?|us\spp)\d+\b/g, ' ');
-  s = s.replace(/\([^)]*\)/g, ' ');
-  s = s.replace(/\b20\d\d\b/g, ' ');
-  s = s.replace(/-?(urc|cc|rc|tc|liner|plug|pellet|callused|unrooted|rooted)\b/g, ' ');
-  s = s.replace(/\bn\/?g\b/g, ' ').replace(/\bnew guinea\b/g, ' ');
-  s = s.replace(/\bimproved\b/g, ' ').replace(/\bimp\b/g, ' ');
-  s = s.replace(/[^a-z0-9 ]/g, ' ');
-  return s.replace(/\s+/g, ' ').trim();
-}
-// strip a leading size token from a plan item name: 4.5", HB 10", POT, 1801, FIBER…
-const srcStripSize = n => String(n || "").replace(/^\s*(HB\s*\d+(?:\.\d+)?"?|\d+(?:\.\d+)?"|1801[LS]?|FIBER|POT|MARKET|BOWL)\s*/i, "").trim();
-function srcMakeKey(crop, botanical, varietyName) {
-  varietyName = String(varietyName || '').replace(/^\s*(HE|OR)\s+/, '');
-  const cropClean = String(crop || '').trim().replace(/^(herbs?|perennials?|annuals?|grass(es)?|vegetables?|veg|tropicals?|foliage|edibles?)\b\s*/i, '');
-  const canon = g => SRC_GENUS_SYN[g] || g;
-  let genus = canon(srcTidy((botanical || cropClean || '').split(/\s+/)[0] || ''));
-  let w = srcTidy(varietyName).split(' ').filter(Boolean);
-  if (!genus && w.length) genus = canon(w.shift());
-  while (w.length && (canon(w[0]) === genus || w[0] === genus || SRC_SPECIES.test(w[0]))) w.shift();
-  w = w.map(x => SRC_WORD_SYN[x] || x).filter(x => x).sort();
-  return (genus + (w.length ? ' ' + w.join(' ') : '')).trim();
-}
-const SRC_FORM_RANK = { urc: 0, callused: 1, urc_autostix: 2, rooted: 3, liner: 4, plug: 5 };
-
+// Paginated fetch (PostgREST caps at 1000/req) — used by the Pricing tab.
 async function srcPageAll(sb, table, select, filter) {
   let out = [];
   for (let f = 0; ; f += 1000) {
@@ -5233,49 +5195,6 @@ async function srcPageAll(sb, table, select, filter) {
   return out;
 }
 
-// Compute (no write) the broker + landed cost each plan crop would get from current selections.
-async function computeSourcingPlan(sb, planId) {
-  const prices = await srcPageAll(sb, "broker_prices", "broker,supplier,form_class,variety_key,landed", q => q.eq("season", SRC_SEASON).gt("landed", 0));
-  const selRows = await srcPageAll(sb, "sourcing_selections", "supplier,form_class,selected_broker", q => q.eq("season", SRC_SEASON).eq("form_class", "*"));
-  const sels = {}; selRows.forEach(s => { if (s.selected_broker) sels[s.supplier] = s.selected_broker; });
-  const crops = await srcPageAll(sb, "scheduled_crops", "id,item_name,qty_pots,plants_per_unit,liner_unit_cost,broker", q => q.eq("plan_id", planId).eq("is_combo_component", false).gt("qty_pots", 0));
-
-  const idx = {};
-  for (const p of prices) {
-    const k = p.variety_key; if (!k) continue;
-    (idx[k] = idx[k] || {})[p.supplier] = idx[k][p.supplier] || {};
-    const cur = idx[k][p.supplier][p.broker];
-    const better = !cur || (SRC_FORM_RANK[p.form_class] ?? 9) < (SRC_FORM_RANK[cur.form_class] ?? 9)
-      || ((SRC_FORM_RANK[p.form_class] ?? 9) === (SRC_FORM_RANK[cur.form_class] ?? 9) && p.landed < cur.landed);
-    if (better) idx[k][p.supplier][p.broker] = { landed: p.landed, form_class: p.form_class };
-  }
-
-  const updates = []; let ambiguous = 0, unmatched = 0, gap = 0, delta = 0, up = 0, dn = 0;
-  for (const c of crops) {
-    const key = srcMakeKey(null, null, srcStripSize(c.item_name));
-    const suppliers = idx[key];
-    if (!suppliers) { unmatched++; continue; }
-    const supNames = Object.keys(suppliers);
-    let chosenSup = supNames.find(s => sels[s]);
-    if (!chosenSup && supNames.length === 1) chosenSup = supNames[0];
-    if (!chosenSup) { ambiguous++; continue; }
-    const brokers = suppliers[chosenSup];
-    let broker = sels[chosenSup];
-    if (!broker || !brokers[broker]) {
-      broker = Object.keys(brokers).sort((a, b) => brokers[a].landed - brokers[b].landed)[0];
-      if (sels[chosenSup] && !brokers[sels[chosenSup]]) gap++;
-    }
-    const landed = brokers[broker].landed;
-    const old = +c.liner_unit_cost || 0;
-    const plants = (+c.qty_pots || 0) * (+c.plants_per_unit || 1);
-    const changed = !(c.broker === broker && Math.abs(landed - old) < 1e-6);
-    delta += (landed - old) * plants;
-    if (landed > old) up++; else if (landed < old) dn++;
-    updates.push({ id: c.id, item: c.item_name, supplier: chosenSup, broker, landed, old, changed });
-  }
-  return { updates, stats: { total: crops.length, matched: updates.length, ambiguous, unmatched, gap, delta, up, dn, selections: Object.keys(sels).length } };
-}
-
 // Standalone Sourcing page (Production nav → 🧭 Sourcing) — same workspace, full width.
 export function SourcingPage() {
   return (
@@ -5285,55 +5204,19 @@ export function SourcingPage() {
   );
 }
 
-// In-plan tab: the workspace + apply-to-plan + a button to pop it open full screen.
+// In-plan tab: the workspace + a button to pop it open full screen. (Applying broker picks to
+// the plan's costs runs via scripts/apply_sourcing_to_plan.js — the single source of truth,
+// since it depends on the desktop quote files + the URC/callused & per-supplier rules.)
 function SourcingTab({ plan }) {
-  const sb = getSupabase();
   const [fs, setFs] = useState(false);
-  const [applyBusy, setApplyBusy] = useState(false);
-  const [applyMsg, setApplyMsg] = useState("");
-
-  async function applyToPlan() {
-    if (!plan?.id) return;
-    setApplyBusy(true); setApplyMsg("Matching plan items to your broker picks…");
-    try {
-      const { updates, stats } = await computeSourcingPlan(sb, plan.id);
-      const changes = updates.filter(u => u.changed);
-      const dollars = (stats.delta >= 0 ? "+" : "") + "$" + Math.round(stats.delta).toLocaleString();
-      const ok = window.confirm(
-        `Apply broker pricing to "${plan.name}"?\n\n` +
-        `${stats.matched} of ${stats.total} items matched a broker catalog.\n` +
-        `${changes.length} rows will change (broker and/or liner cost).\n` +
-        `${stats.unmatched} not in any loaded catalog · ${stats.ambiguous} ambiguous (≥2 suppliers, no pick).\n` +
-        `${stats.selections} supplier broker-picks in effect${stats.gap ? ` · ${stats.gap} fell back to cheapest (your pick doesn't carry it)` : ""}.\n\n` +
-        `Liner-cost impact if applied: ${dollars} (${stats.up} up, ${stats.dn} down).`
-      );
-      if (!ok) { setApplyBusy(false); setApplyMsg(""); return; }
-      let done = 0;
-      for (const u of changes) {
-        const { error } = await sb.from("scheduled_crops").update({ liner_unit_cost: u.landed, broker: u.broker }).eq("id", u.id);
-        if (error) { setApplyMsg("Stopped after " + done + " — " + error.message); setApplyBusy(false); return; }
-        done++;
-      }
-      setApplyMsg(`✓ Applied to ${done} rows. ${stats.matched}/${stats.total} matched · ${dollars} liner-cost change. (Reopen the Items tab to see brokers.)`);
-    } catch (e) { setApplyMsg("Failed: " + e.message); }
-    setApplyBusy(false);
-  }
-
   return (
     <div style={{ fontFamily: "'DM Sans','Segoe UI',sans-serif" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
-        {plan?.id ? (
-          <button onClick={applyToPlan} disabled={applyBusy} title="Set each plan item's broker + liner cost from your broker picks"
-            style={{ border: "none", background: applyBusy ? "#8aa67a" : COLORS.dark, color: "#fff", borderRadius: 8, padding: "6px 13px", fontSize: 12.5, fontWeight: 800, cursor: applyBusy ? "default" : "pointer", fontFamily: "inherit" }}>
-            {applyBusy ? "Working…" : "⬇ Apply broker picks to this plan"}
-          </button>
-        ) : <span />}
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 6 }}>
         <button onClick={() => setFs(true)}
           style={{ border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.dark, borderRadius: 8, padding: "5px 12px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
           ↗ Open full screen
         </button>
       </div>
-      {applyMsg && <div style={{ fontSize: 12.5, color: COLORS.dark, background: "#eef6e7", border: `1px solid ${COLORS.light}`, borderRadius: 8, padding: "7px 11px", marginBottom: 8 }}>{applyMsg}</div>}
       <SourcingWorkspace />
       {fs && (
         <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "#f4f7f1", overflow: "auto" }}>
