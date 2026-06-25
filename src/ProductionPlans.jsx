@@ -1008,6 +1008,22 @@ const POIN_POTCOVER = { 5.5: 0.52, 6.5: 0.57, 7.5: 0.90, 8.5: 0.99 };
 const potCoverFor = d => { const v = POIN_POTCOVER[Number(d)]; return v == null ? null : v; };
 // Poinsettia big pots are sold by bloom count, not diameter (display name only).
 const POIN_BLOOM = { 10: "8 Bloom", 13: "10 Bloom" };
+// Size label + sort rank for a plan's container size group {diameter, sku, name}. Handles
+// non-pot containers (baskets, bowls, trays, flats) that have no numeric diameter — those
+// fall back to the container name instead of showing 0", and sort via sizeRank().
+const sizeLabelOf = s => {
+  const d = Number(s.diameter);
+  if (isFinite(d) && d > 0) return `${d}"`;
+  const nm = String(s.name || "").replace(/\s*\(.*?\)\s*/g, " ").replace(/\s+/g, " ").trim();
+  return nm || String(s.sku || "—");
+};
+const sizeRankOf = s => {
+  const d = Number(s.diameter);
+  const nm = String(s.name || s.sku || "");
+  if (isFinite(d) && d > 0) return sizeRank(`${d} ${nm}`);
+  if (/\b1801\b|tray|insert|landscape|\bflat\b|\bcell\b/i.test(nm)) return 3800; // flats/inserts → after baskets, before plugs
+  return sizeRank(nm);
+};
 
 function PricingTab({ plan }) {
   const sb = getSupabase();
@@ -1086,7 +1102,7 @@ function PricingTab({ plan }) {
       }).items.push({ ...g, lastOv: ovLast[g.key] ?? null });
     });
     setColorMode(cm);
-    const list = Object.values(byCont).sort((a, b) => (Number(a.diameter) || 0) - (Number(b.diameter) || 0));
+    const list = Object.values(byCont).sort((a, b) => sizeRankOf(a) - sizeRankOf(b) || (a.sku || "").localeCompare(b.sku || ""));
     // colors first (fixed order), then novelties alpha
     list.forEach(s => s.items.sort((a, b) => {
       if (a.kind !== b.kind) return a.kind === "color" ? -1 : 1;
@@ -1152,7 +1168,7 @@ function PricingTab({ plan }) {
     setBusy(false);
   }
 
-  const sizePrefix = s => (colorMode && POIN_BLOOM[Number(s.diameter)]) ? POIN_BLOOM[Number(s.diameter)] : `${dia(s.diameter)}"`;
+  const sizePrefix = s => (colorMode && POIN_BLOOM[Number(s.diameter)]) ? POIN_BLOOM[Number(s.diameter)] : sizeLabelOf(s);
   const itemName = (s, it) => `${sizePrefix(s)} ${[it.cropName, it.label].filter(Boolean).join(" ")}`;
   function copyTable() {
     const lines = ["Item\tProjected\tLast Year\tThis Year" + (colorMode ? "\tPot Cover" : "")];
