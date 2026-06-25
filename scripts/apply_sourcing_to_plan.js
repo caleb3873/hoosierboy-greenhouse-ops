@@ -58,8 +58,11 @@ function makeKey(crop, botanical, varietyName) {
 const FORM_RANK = { urc: 0, callused: 1, urc_autostix: 2, rooted: 3, liner: 4, plug: 5 };
 // Only price from Unrooted (URC) or Callused quotes — not enough liner/plug quotes yet (Caleb).
 const ALLOWED_FORMS = new Set(['urc', 'callused']);
-// Force a genus to a preferred supplier when that supplier carries the variety (e.g. ipomoea → Pell).
+// Force a genus to a preferred supplier when that supplier carries the variety. ipomoea → Pell.
+// (pansy/viola handled separately below — Bob's plug at a specific tray size.)
 const GENUS_SUPPLIER = { ipomoea: 'Pell' };
+// Pansies/violas: 288 plug by default; Cool Wave & Top Wave run in 144s.
+const trayFor = name => /cool wave|top wave/i.test(String(name || '')) ? '144' : '288';
 
 (async () => {
   const apply = process.argv.includes('--apply');
@@ -72,31 +75,43 @@ const GENUS_SUPPLIER = { ipomoea: 'Pell' };
 
   const page = async (tbl, sel, filt) => { let out = []; for (let f = 0; ; f += 1000) { let q = sb.from(tbl).select(sel).range(f, f + 999); if (filt) q = filt(q); const { data, error } = await q; if (error) { console.error(error.message); break; } if (!data || !data.length) break; out = out.concat(data); if (data.length < 1000) break; } return out; };
 
-  const prices = await page('broker_prices', 'broker,supplier,form_class,variety_key,landed', q => q.eq('season', '2026-2027').gt('landed', 0).in('form_class', ['urc', 'callused']));
+  // URC/callused for everything, PLUS Bob's plug quote (pansies/violas) as an explicit exception.
+  const prices = await page('broker_prices', 'broker,supplier,form_class,variety_key,landed,form_raw', q => q.eq('season', '2026-2027').gt('landed', 0).or('form_class.in.(urc,callused),supplier.eq.Bobs'));
   const sel = await page('sourcing_selections', 'supplier,form_class,selected_broker', q => q.eq('season', '2026-2027').eq('form_class', '*'));
   const sels = {}; sel.forEach(s => { if (s.selected_broker) sels[s.supplier] = s.selected_broker; });
   const crops = await page('scheduled_crops', 'id,item_name,qty_pots,plants_per_unit,liner_unit_cost,broker,is_combo_component', q => q.eq('plan_id', plan.id).eq('is_combo_component', false).gt('qty_pots', 0));
 
   // index broker_prices by variety key → supplier → broker → best landed (prefer URC)
-  const idx = {};
+  const idx = {}, bobsTray = {}; // bobsTray[key][cellCount] = landed (pansy/viola tray pricing)
   for (const p of prices) {
     const k = p.variety_key; if (!k) continue;
     ((idx[k] = idx[k] || {})[p.supplier] = idx[k][p.supplier] || {});
     const cur = idx[k][p.supplier][p.broker];
     const better = !cur || (FORM_RANK[p.form_class] ?? 9) < (FORM_RANK[cur.form_class] ?? 9) || ((FORM_RANK[p.form_class] ?? 9) === (FORM_RANK[cur.form_class] ?? 9) && p.landed < cur.landed);
     if (better) idx[k][p.supplier][p.broker] = { landed: p.landed, form_class: p.form_class };
+    if (p.supplier === 'Bobs') { const m = String(p.form_raw || '').match(/(\d{2,4})/); const cells = m ? m[1] : 'na'; const t = (bobsTray[k] = bobsTray[k] || {}); if (t[cells] == null || p.landed < t[cells]) t[cells] = p.landed; }
   }
   // recommended broker per supplier = cheapest-most-often (use the catalog min as proxy fallback)
   // here: for a key+supplier, if no selection, take the cheapest broker available for that key.
 
   let matched = 0, ambiguous = 0, unmatched = 0, gap = 0, costUp = 0, costDn = 0, deltaPlants = 0;
-  const updates = [];
+  const updates = [], gaps = [];
   for (const c of crops) {
     const key = makeKey(null, null, stripSize(c.item_name));
+    const genus = key.split(' ')[0];
+    // pansy/viola → Bob's plug at the right tray (288 default; Cool/Top Wave → 144)
+    if ((genus === 'pansy' || genus === 'viola') && bobsTray[key]) {
+      const t = bobsTray[key], tray = trayFor(c.item_name);
+      const landed = t[tray] ?? t['288'] ?? Math.min(...Object.values(t));
+      const old = +c.liner_unit_cost || 0;
+      const plants = (+c.qty_pots || 0) * (+c.plants_per_unit || 1);
+      deltaPlants += (landed - old) * plants; if (landed > old) costUp++; else if (landed < old) costDn++;
+      matched++; updates.push({ id: c.id, item: c.item_name, supplier: 'Bobs', broker: 'Ball', landed, old, tray });
+      continue;
+    }
     const suppliers = idx[key];
     if (!suppliers) { unmatched++; continue; }
     const supNames = Object.keys(suppliers);
-    const genus = key.split(' ')[0];
     // choose supplier: genus-forced supplier first (e.g. ipomoea→Pell), then a selected supplier,
     // then the single supplier, else flag ambiguous
     let chosenSup = (GENUS_SUPPLIER[genus] && suppliers[GENUS_SUPPLIER[genus]]) ? GENUS_SUPPLIER[genus] : supNames.find(s => sels[s]);
@@ -105,8 +120,9 @@ const GENUS_SUPPLIER = { ipomoea: 'Pell' };
     const brokers = suppliers[chosenSup];
     let broker = sels[chosenSup];
     if (!broker || !brokers[broker]) { // no selection or chosen broker doesn't carry it → cheapest available
+      const want = sels[chosenSup];
       broker = Object.keys(brokers).sort((a, b) => brokers[a].landed - brokers[b].landed)[0];
-      if (sels[chosenSup] && !brokers[sels[chosenSup]]) gap++;
+      if (want && !brokers[want]) { gap++; gaps.push({ item: c.item_name, supplier: chosenSup, want, got: broker, landed: brokers[broker].landed }); }
     }
     const landed = brokers[broker].landed;
     matched++;
@@ -127,6 +143,10 @@ const GENUS_SUPPLIER = { ipomoea: 'Pell' };
   console.log(`\nliner-cost change if applied: ${deltaPlants >= 0 ? '+' : ''}$${deltaPlants.toFixed(0)} (${costUp} up, ${costDn} down)`);
   console.log('\nsample matches:');
   updates.slice(0, 12).forEach(u => console.log(`  ${u.item.slice(0, 42).padEnd(44)} ${u.supplier}/${u.broker}  $${u.old.toFixed(4)} → $${u.landed.toFixed(4)}`));
+  if (gaps.length) {
+    console.log(`\nGAP — your selected broker doesn't carry these in URC/callused; fell back to cheapest (${gaps.length}):`);
+    gaps.forEach(g => console.log(`  ${g.item.slice(0, 46).padEnd(48)} ${g.supplier}: want ${g.want} → using ${g.got}  $${g.landed.toFixed(4)}`));
+  }
 
   if (apply) {
     let done = 0;
