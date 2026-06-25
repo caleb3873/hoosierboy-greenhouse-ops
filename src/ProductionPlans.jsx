@@ -1033,6 +1033,7 @@ function PricingTab({ plan }) {
   const [ovEdit, setOvEdit] = useState({});     // `${cId}|${vId}` -> this-year override (string; "" = inherit base)
   const [rowIds, setRowIds] = useState({ base: {}, ov: {} }); // existing crop_pricing ids for in-place update/delete
   const [colorMode, setColorMode] = useState(false); // poinsettia plans group by color; others per-variety
+  const [costOpen, setCostOpen] = useState(() => new Set()); // item keys with cost breakdown expanded
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [pct, setPct] = useState("");
@@ -1044,8 +1045,12 @@ function PricingTab({ plan }) {
     const vars = await srcPageAll(sb, "variety_library", "id,variety,crop_name");
     const conts = await srcPageAll(sb, "containers", "id,sku,name,diameter_in");
     const prices = await srcPageAll(sb, "crop_pricing", "id,container_id,variety_id,crop_name,effective_year,price", q => q.in("effective_year", [plan.year, lastYear]));
-    const pl = await srcPageAll(sb, "v_scheduled_crops_pl", "id,direct_cost_total", q => q.eq("plan_id", plan.id));
-    const costById = {}; pl.forEach(r => { costById[r.id] = +r.direct_cost_total || 0; });
+    const pl = await srcPageAll(sb, "v_scheduled_crops_pl", "id,direct_cost_total,liner_cost,pot_cost,soil_cost,ring_cost", q => q.eq("plan_id", plan.id));
+    const costById = {}, compById = {};
+    pl.forEach(r => {
+      costById[r.id] = +r.direct_cost_total || 0;
+      compById[r.id] = { liner: +r.liner_cost || 0, pot: +r.pot_cost || 0, soil: +r.soil_cost || 0, ring: +r.ring_cost || 0 };
+    });
     // 2026 realized sales by plan item_name (same crosswalk as Sales-vs-Plan): avg $ per sold unit
     const xw = await srcPageAll(sb, "sales_sku_map", "sku,plan_item_name");
     const skuToItem = {}; xw.forEach(x => { if (x.plan_item_name) skuToItem[x.sku] = x.plan_item_name; });
@@ -1090,11 +1095,12 @@ function PricingTab({ plan }) {
           key, containerId: r.container_id, kind: isColor ? "color" : "variety",
           code: isColor ? code : null, varietyId: isColor ? null : r.variety_id,
           label: isColor ? POIN_COLORS[code] : (v.variety || "(unnamed)"),
-          cropName: v.crop_name || "", qty: 0, cost: 0, names: new Set(),
+          cropName: v.crop_name || "", qty: 0, cost: 0, liner: 0, pot: 0, soil: 0, ring: 0, names: new Set(),
         };
       }
       groups[key].qty += (+r.qty_pots || 0);
       groups[key].cost += costById[r.id] || 0;
+      const cm2 = compById[r.id]; if (cm2) { groups[key].liner += cm2.liner; groups[key].pot += cm2.pot; groups[key].soil += cm2.soil; groups[key].ring += cm2.ring; }
       if (r.item_name) groups[key].names.add(r.item_name);
     }
     // bucket groups under their container (size); attach cost/plant + 2026 realized avg
@@ -1108,6 +1114,7 @@ function PricingTab({ plan }) {
       }).items.push({
         key: g.key, kind: g.kind, code: g.code, varietyId: g.varietyId, label: g.label, cropName: g.cropName, qty: g.qty,
         unitCost: g.qty > 0 ? g.cost / g.qty : null,        // direct cost per sold unit
+        cc: g.qty > 0 ? { liner: g.liner / g.qty, pot: g.pot / g.qty, soil: g.soil / g.qty, ring: g.ring / g.qty } : null, // per-unit cost components
         soldAvg: rUnits > 0 ? rRev / rUnits : null,         // 2026 realized avg $ per sold unit
         lastOv: ovLast[g.key] ?? null,
       });
@@ -1266,8 +1273,14 @@ function PricingTab({ plan }) {
                 {s.items.map(it => {
                   const et = effThis(s, it), el = effLast(s, it);
                   const overridden = priceNum(ovEdit[it.key]) != null && ovEdit[it.key] !== "";
+                  const mg = (et != null && it.unitCost != null) ? et - it.unitCost : null;
+                  const mp = (mg != null && et) ? mg / et * 100 : null;
+                  const mcol = mp == null ? COLORS.muted : mp < 15 ? COLORS.red : mp < 35 ? COLORS.amber : COLORS.light;
+                  const cc = it.cc, open = costOpen.has(it.key);
+                  const ccTip = cc ? `Liner $${cc.liner.toFixed(2)} · Pot $${cc.pot.toFixed(2)} · Soil $${cc.soil.toFixed(2)} · Ring $${cc.ring.toFixed(2)}  (click for detail)` : "";
                   return (
-                    <tr key={it.key} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
+                    <Fragment key={it.key}>
+                    <tr style={{ borderBottom: open ? "none" : `1px solid ${COLORS.border}` }}>
                       <td style={{ ...td, paddingLeft: 18 }}>{itemName(s, it)}{colorMode && it.kind === "variety" && <span title="novelty — priced individually" style={{ marginLeft: 6, fontSize: 9.5, color: COLORS.muted }}>novelty</span>}{overridden && <span title="custom price (overrides the size base)" style={{ marginLeft: 6, fontSize: 10, color: COLORS.amber, fontWeight: 700 }}>◆ custom</span>}</td>
                       <td style={{ ...td, textAlign: "right" }}>{it.qty.toLocaleString()}</td>
                       <td style={{ ...td, textAlign: "right", color: it.soldAvg != null ? COLORS.dark : "#cbd5c0", fontWeight: it.soldAvg != null ? 700 : 400 }} title={it.soldAvg != null ? `realized average per sold unit, ${plan.year}` : "no matched sales"}>{it.soldAvg != null ? "$" + it.soldAvg.toFixed(2) : "—"}</td>
@@ -1277,15 +1290,31 @@ function PricingTab({ plan }) {
                           onChange={e => setOvEdit(p => ({ ...p, [it.key]: e.target.value }))} style={{ ...inp, borderColor: overridden ? COLORS.amber : COLORS.border }} />
                         <div style={{ fontSize: 10, color: COLORS.muted, marginTop: 1 }}>{et != null ? "= $" + et.toFixed(2) : ""}</div>
                       </td>
-                      <td style={{ ...td, textAlign: "right", color: COLORS.muted }}>{it.unitCost != null ? "$" + it.unitCost.toFixed(2) : "—"}</td>
-                      {(() => {
-                        const mg = (et != null && it.unitCost != null) ? et - it.unitCost : null;
-                        const mp = (mg != null && et) ? mg / et * 100 : null;
-                        const col = mp == null ? COLORS.muted : mp < 15 ? COLORS.red : mp < 35 ? COLORS.amber : COLORS.light;
-                        return <td style={{ ...td, textAlign: "right", color: col, fontWeight: 700 }} title={mg != null ? `$${mg.toFixed(2)}/unit margin` : ""}>{mp != null ? mp.toFixed(0) + "%" : "—"}</td>;
-                      })()}
+                      <td onClick={() => cc && setCostOpen(p => { const n = new Set(p); n.has(it.key) ? n.delete(it.key) : n.add(it.key); return n; })}
+                        title={ccTip}
+                        style={{ ...td, textAlign: "right", color: COLORS.muted, cursor: cc ? "pointer" : "default", textDecoration: cc ? "underline dotted" : "none" }}>
+                        {it.unitCost != null ? "$" + it.unitCost.toFixed(2) : "—"}{cc ? <span style={{ marginLeft: 3, fontSize: 9, color: COLORS.muted }}>{open ? "▾" : "▸"}</span> : null}
+                      </td>
+                      <td style={{ ...td, textAlign: "right", color: mcol, fontWeight: 700 }} title={mg != null ? `$${mg.toFixed(2)}/unit margin` : ""}>{mp != null ? mp.toFixed(0) + "%" : "—"}</td>
                       {colorMode && <td style={{ ...td, textAlign: "right", color: COLORS.muted, fontSize: 11 }}>{pc != null ? "$" + pc.toFixed(2) : ""}</td>}
                     </tr>
+                    {open && cc && (
+                      <tr style={{ borderBottom: `1px solid ${COLORS.border}`, background: "#fbfdf9" }}>
+                        <td colSpan={7 + (colorMode ? 1 : 0)} style={{ ...td, padding: "4px 18px 8px 30px" }}>
+                          <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center", fontSize: 12 }}>
+                            <span style={{ color: COLORS.muted, fontWeight: 700 }}>Cost breakdown ${it.unitCost.toFixed(2)}/unit:</span>
+                            {[["Liner", cc.liner, "#1976d2"], ["Pot", cc.pot, "#c8791a"], ["Soil", cc.soil, "#7a5230"], ["Ring", cc.ring, "#3d7a2f"]].map(([lbl, v, c]) => (
+                              <span key={lbl} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                                <span style={{ width: 9, height: 9, borderRadius: 2, background: c, display: "inline-block" }} />
+                                <strong style={{ color: COLORS.dark }}>{lbl}</strong> ${v.toFixed(2)}
+                                <span style={{ color: COLORS.muted }}>({it.unitCost > 0 ? Math.round(v / it.unitCost * 100) : 0}%)</span>
+                              </span>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
                   );
                 })}
               </Fragment>
