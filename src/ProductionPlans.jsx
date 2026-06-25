@@ -5217,7 +5217,7 @@ function SourcingTab({ plan }) {
           ↗ Open full screen
         </button>
       </div>
-      <SourcingWorkspace />
+      <SourcingWorkspace plan={plan} />
       {fs && (
         <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "#f4f7f1", overflow: "auto" }}>
           <div style={{ position: "sticky", top: 0, zIndex: 2, display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 20px", background: "#fff", borderBottom: `1px solid ${COLORS.border}` }}>
@@ -5225,14 +5225,14 @@ function SourcingTab({ plan }) {
             <button onClick={() => setFs(false)}
               style={{ border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.text, borderRadius: 8, padding: "6px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>✕ Close</button>
           </div>
-          <div style={{ padding: "16px 22px", maxWidth: 1280, margin: "0 auto" }}><SourcingWorkspace fullscreen /></div>
+          <div style={{ padding: "16px 22px", maxWidth: 1280, margin: "0 auto" }}><SourcingWorkspace fullscreen plan={plan} /></div>
         </div>
       )}
     </div>
   );
 }
 
-function SourcingWorkspace({ fullscreen }) {
+function SourcingWorkspace({ fullscreen, plan }) {
   const sb = getSupabase();
   const [suppliers, setSuppliers]   = useState(null);
   const [profiles, setProfiles]     = useState([]);
@@ -5242,6 +5242,7 @@ function SourcingWorkspace({ fullscreen }) {
   const [detailBusy, setDetailBusy] = useState(false);
   const [search, setSearch]         = useState("");
   const [matchOpen, setMatchOpen]   = useState(false); // global match/cleanup workspace
+  const [compareOpen, setCompareOpen] = useState(false); // cross-variety cost comparison
   const [showChecklist, setShowChecklist] = useState(false);
 
   function loadSuppliers() {
@@ -5312,11 +5313,15 @@ function SourcingWorkspace({ fullscreen }) {
       </div>
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
-        <button onClick={() => setMatchOpen(o => !o)}
+        <button onClick={() => { setMatchOpen(o => !o); setCompareOpen(false); }}
           style={{ border: `1.5px solid ${matchOpen ? COLORS.light : COLORS.border}`, background: matchOpen ? COLORS.light : "#fff", color: matchOpen ? "#fff" : COLORS.dark, borderRadius: 8, padding: "6px 13px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
           🔗 {matchOpen ? "← Back to suppliers" : "Match & clean up"}
         </button>
-        {!matchOpen && (
+        <button onClick={() => { setCompareOpen(o => !o); setMatchOpen(false); }}
+          style={{ border: `1.5px solid ${compareOpen ? COLORS.light : COLORS.border}`, background: compareOpen ? COLORS.light : "#fff", color: compareOpen ? "#fff" : COLORS.dark, borderRadius: 8, padding: "6px 13px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+          💡 {compareOpen ? "← Back to suppliers" : "Compare varieties"}
+        </button>
+        {!matchOpen && !compareOpen && (
           <button onClick={() => setShowChecklist(c => !c)}
             style={{ border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.dark, borderRadius: 8, padding: "6px 13px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
             📋 Order checklist
@@ -5324,7 +5329,7 @@ function SourcingWorkspace({ fullscreen }) {
         )}
       </div>
 
-      {matchOpen ? <SrcMatcher sb={sb} onChanged={loadSuppliers} /> : (<>
+      {matchOpen ? <SrcMatcher sb={sb} onChanged={loadSuppliers} /> : compareOpen ? <SrcCompare sb={sb} plan={plan} /> : (<>
 
       {showChecklist && <SrcOrderChecklist suppliers={competitive} selections={selections} />}
 
@@ -5519,6 +5524,120 @@ function SrcDetail({ detail, detailBusy, selected, search, setSearch }) {
         </div>
       ))}
       {total > CAP && <div style={{ fontSize: 12, color: COLORS.muted, marginTop: 4 }}>Showing first {CAP} of {total} — use the filter to narrow.</div>}
+    </div>
+  );
+}
+
+// Cross-variety cost comparison — within a crop, see every variety across all suppliers
+// sorted by landed cost (cheaper equivalents = savings). Shows crops you already grow first;
+// toggle to reveal crops you don't grow. Grouped by form (URC/callused).
+const SRC_COLORS_RX = /\b(red|white|pink|yellow|orange|purple|blue|salmon|coral|rose|lavender|burgundy|bronze|lime|green|peach|gold|scarlet|magenta|violet|cream|apricot|cherry|plum)\b/i;
+function SrcCompare({ sb, plan }) {
+  const [grown, setGrown] = useState(null);   // [{genus,label}] crops in the plan
+  const [allGenera, setAllGenera] = useState(null);
+  const [showAll, setShowAll] = useState(!plan);
+  const [open, setOpen] = useState(null);      // expanded genus
+  const [rows, setRows] = useState({});        // genus -> variety rows
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!sb) return;
+    (async () => {
+      if (plan?.id) {
+        const sc = await srcPageAll(sb, "scheduled_crops", "variety_id", q => q.eq("plan_id", plan.id).eq("is_combo_component", false));
+        const vids = [...new Set(sc.map(r => r.variety_id).filter(Boolean))];
+        const vars = await srcPageAll(sb, "variety_library", "id,crop_name");
+        const cropById = {}; vars.forEach(v => { cropById[v.id] = v.crop_name; });
+        const g = {};
+        vids.forEach(id => { const cn = cropById[id]; if (!cn) return; const genus = String(cn).trim().toLowerCase().split(/\s+/)[0]; if (genus) g[genus] = cn; });
+        setGrown(Object.entries(g).map(([genus, label]) => ({ genus, label })).sort((a, b) => a.label.localeCompare(b.label)));
+      } else setGrown([]);
+    })();
+  }, [sb, plan]);
+
+  async function loadAllGenera() {
+    if (allGenera) return;
+    const data = await srcPageAll(sb, "v_sourcing_prices", "variety_key", q => q.in("form_class", ["urc", "callused"]));
+    setAllGenera([...new Set(data.map(r => String(r.variety_key || "").split(" ")[0]).filter(Boolean))].sort());
+  }
+  async function expand(genus) {
+    if (open === genus) { setOpen(null); return; }
+    setOpen(genus);
+    if (!rows[genus]) {
+      setBusy(true);
+      const data = await srcPageAll(sb, "v_sourcing_prices", "supplier,broker,form_class,variety_key,variety,landed",
+        q => q.like("variety_key", genus + "%").in("form_class", ["urc", "callused"]));
+      // one row per variety_key → cheapest source
+      const byKey = {};
+      (data || []).forEach(r => {
+        if (String(r.variety_key || "").split(" ")[0] !== genus) return;
+        const k = r.form_class + "|" + r.variety_key;
+        if (!byKey[k] || r.landed < byKey[k].landed) byKey[k] = { form: r.form_class, variety: r.variety, supplier: r.supplier, broker: r.broker, landed: +r.landed };
+      });
+      setRows(prev => ({ ...prev, [genus]: Object.values(byKey) }));
+      setBusy(false);
+    }
+  }
+
+  if (grown == null) return <div style={{ padding: 16, color: COLORS.muted, fontSize: 13 }}>Loading…</div>;
+  const grownGenera = new Set(grown.map(g => g.genus));
+  const notGrown = showAll && allGenera ? allGenera.filter(g => !grownGenera.has(g)).map(g => ({ genus: g, label: g.charAt(0).toUpperCase() + g.slice(1) })) : [];
+
+  const CropRow = ({ c, isGrown }) => {
+    const list = (rows[c.genus] || []).slice().sort((a, b) => a.landed - b.landed);
+    const byForm = {}; list.forEach(r => (byForm[r.form] = byForm[r.form] || []).push(r));
+    const lo = list.length ? Math.min(...list.map(r => r.landed)) : null;
+    return (
+      <div style={{ border: `1px solid ${COLORS.border}`, borderRadius: 10, marginBottom: 6, overflow: "hidden", background: COLORS.card }}>
+        <div onClick={() => expand(c.genus)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", cursor: "pointer" }}>
+          <span style={{ color: COLORS.muted, width: 12 }}>{open === c.genus ? "▾" : "▸"}</span>
+          <strong style={{ color: COLORS.dark }}>{c.label}</strong>
+          {!isGrown && <span style={{ fontSize: 10, color: COLORS.muted, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "1px 7px" }}>don't grow</span>}
+        </div>
+        {open === c.genus && (
+          busy && !rows[c.genus] ? <div style={{ padding: "4px 14px 12px", color: COLORS.muted, fontSize: 12 }}>Loading varieties…</div> :
+          !list.length ? <div style={{ padding: "4px 14px 12px", color: COLORS.muted, fontSize: 12 }}>No URC/callused quotes.</div> :
+          <div style={{ padding: "0 12px 10px" }}>
+            {Object.entries(byForm).map(([form, fl]) => (
+              <div key={form} style={{ marginBottom: 8 }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: COLORS.muted, margin: "4px 0" }}>{srcFormLabel(form)} <span style={{ fontWeight: 400 }}>({fl.length})</span></div>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                  <tbody>
+                    {fl.sort((a, b) => a.landed - b.landed).map((r, i) => {
+                      const col = (r.variety.match(SRC_COLORS_RX) || [])[0];
+                      const cheap = r.landed === lo;
+                      return (
+                        <tr key={i} style={{ borderTop: `1px solid ${COLORS.border}` }}>
+                          <td style={{ padding: "3px 8px" }}>{r.variety}{col && <span style={{ marginLeft: 6, fontSize: 9.5, color: COLORS.muted, textTransform: "capitalize" }}>{col}</span>}</td>
+                          <td style={{ padding: "3px 8px", color: COLORS.muted }}>{srcSup(r.supplier)}</td>
+                          <td style={{ padding: "3px 8px", color: srcBrokerColor(r.broker), fontWeight: 700 }}>{r.broker}</td>
+                          <td style={{ padding: "3px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums", background: cheap ? "#dcedc8" : "transparent", fontWeight: cheap ? 800 : 400 }}>{money(r.landed)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div>
+      <div style={{ background: "#eef6e7", border: `1px solid ${COLORS.light}`, borderRadius: 8, padding: "9px 12px", fontSize: 12.5, color: COLORS.text, margin: "4px 0 10px" }}>
+        💡 <strong>Compare varieties by cost.</strong> Within each crop, every variety across all suppliers, cheapest first (URC/callused). Use it to swap a pricey variety for an equally-good cheaper one. Showing crops you grow{plan ? "" : " — open from a plan to filter to yours"}.
+      </div>
+      <label style={{ fontSize: 12, color: COLORS.muted, display: "flex", alignItems: "center", gap: 5, cursor: "pointer", marginBottom: 10 }}>
+        <input type="checkbox" checked={showAll} onChange={e => { setShowAll(e.target.checked); if (e.target.checked) loadAllGenera(); }} /> Show crops we don't grow
+      </label>
+      {grown.length === 0 && !showAll && <div style={{ color: COLORS.muted, fontSize: 13 }}>No crops detected for this plan.</div>}
+      {grown.map(c => <CropRow key={c.genus} c={c} isGrown />)}
+      {showAll && !allGenera && <div style={{ color: COLORS.muted, fontSize: 12, padding: "6px 0" }}>Loading other crops…</div>}
+      {notGrown.length > 0 && <SrcSectionTitle>Crops we don't grow</SrcSectionTitle>}
+      {notGrown.map(c => <CropRow key={c.genus} c={c} isGrown={false} />)}
     </div>
   );
 }
