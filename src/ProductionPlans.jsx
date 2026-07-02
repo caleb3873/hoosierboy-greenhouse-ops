@@ -1394,7 +1394,7 @@ function ItemsTab({ plan }) {
 
   // Open a prefilled email to the row's broker rep — for shortages, issues, or re-orders.
   function contactBroker(r) {
-    const b = brokers[r.broker];
+    const b = resolveBrokerProfile(brokers, r.broker);
     const itemName = r.item_name || r.variety?.variety || "this item";
     const subject = `Schlegel Greenhouse — ${itemName} (${plan.name})`;
     const body =
@@ -1443,7 +1443,7 @@ function ItemsTab({ plan }) {
           </thead>
           <tbody>
             {filtered.map(r => {
-              const b = brokers[r.broker];
+              const b = resolveBrokerProfile(brokers, r.broker);
               return (
               <tr key={r.id} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
                 <td style={td}>{r.plant_week}</td>
@@ -5170,7 +5170,16 @@ const SRC_BROKER_NOTE = {
 };
 const srcSup = s => SRC_SUPPLIER_LABEL[s] || s;
 const srcFormLabel = f => SRC_FORM_LABEL[f] || f || "—";
-function srcBrokerColor(b) { return b === "Ball" ? "#1976d2" : b === "EHR" ? "#3d7a2f" : "#c8791a"; }
+function srcBrokerColor(b) { const x = String(b || "").toLowerCase(); return x.startsWith("ball") ? "#1976d2" : x.startsWith("ehr") ? "#3d7a2f" : "#c8791a"; }
+// Resolve a plan row's broker (e.g. 'Ball'/'BALL'/'Express') to its broker_profiles record,
+// whose names are longer/cased differently ('BALL SEED'/'Express Seed'). Case-insensitive prefix.
+function resolveBrokerProfile(bmap, broker) {
+  if (!broker || !bmap) return null;
+  if (bmap[broker]) return bmap[broker];
+  const k = String(broker).toLowerCase().trim();
+  const hit = Object.keys(bmap).find(n => { const nl = n.toLowerCase(); return nl === k || nl.startsWith(k) || k.startsWith(nl.split(" ")[0]); });
+  return hit ? bmap[hit] : null;
+}
 function srcGradeFor(broker, profiles) {
   const re = broker === "Ball" ? /ball/i : broker === "EHR" ? /ehr/i : /express/i;
   const p = (profiles || []).find(x => re.test(x.name || ""));
