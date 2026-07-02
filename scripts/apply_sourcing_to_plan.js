@@ -57,8 +57,6 @@ function makeKey(crop, botanical, varietyName) {
   return (genus + (w.length ? ' ' + w.join(' ') : '')).trim();
 }
 const FORM_RANK = { urc: 0, callused: 1, urc_autostix: 2, rooted: 3, liner: 4, plug: 5 };
-// Only price from Unrooted (URC) or Callused quotes — not enough liner/plug quotes yet (Caleb).
-const ALLOWED_FORMS = new Set(['urc', 'callused']);
 // Force a genus to a preferred supplier when that supplier carries the variety. ipomoea → Pell.
 // (pansy/viola handled separately below — Bob's plug at a specific tray size.)
 const GENUS_SUPPLIER = { ipomoea: 'Pell' };

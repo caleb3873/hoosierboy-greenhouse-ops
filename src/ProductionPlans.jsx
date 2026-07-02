@@ -998,7 +998,6 @@ function WeekTab({ planId }) {
 // copy-to-clipboard for transcription into the B2B system.
 const priceNum = v => { const n = parseFloat(String(v == null ? "" : v).replace(/[$,]/g, "")); return isFinite(n) ? n : null; };
 const round2 = n => Math.round(n * 100) / 100;
-const dia = d => { const n = Number(d); return isFinite(n) ? (n % 1 === 0 ? String(n) : String(n)) : "?"; };
 // Poinsettias sell by COLOR, not variety — consolidate every variety of a color into one
 // item. NOVELTY (or blank) keeps its variety name (priced individually). Keys = scheduled_crops.color.
 const POIN_COLORS = { RED: "Red", WHITE: "White", PINK: "Pink", MARBLE: "Marble", CRYSTAL: "Ice Crystal", GLITTER: "Glitter" };
@@ -1928,7 +1927,6 @@ const STICKING_DIFFICULTY = {
   // everything else (Ivy, Begonia, Petunia, Verbena, Coleus, Lantana, Lysimachia, Vinca, Angelonia, Salvia, Fuchsia, Portulaca, Torenia, Plectranthus, Ageratum, Petchoa, Ajuga, Alternanthera, Artemesia, Calendula, Felicia, Gaura, Heliotrope, Heuchera, Phlox, Sanvitalia, Double Impatiens, …) defaults to 2 = average
 };
 const DIFF_DEFAULT = 2;
-const DIFF_COLOR = { 1: "#7fb069", 2: "#e89a3a", 3: "#d94f3d" };
 
 // Propagation schedule — prop-stage items sorted date → cell size → sticking priority,
 // split by misting need (culture days_in_mist), with treatment recs + task creation.
