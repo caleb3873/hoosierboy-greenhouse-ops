@@ -593,7 +593,7 @@ function SuggestionsSection({ plan, onAccepted }) {
     if (!sb) return;
     const { data: s } = await sb.from("plan_suggestions").select("*").eq("plan_id", plan.id).order("created_at", { ascending: false });
     setList(s || []);
-    const { data: it } = await sb.from("scheduled_crops").select("item_name").eq("plan_id", plan.id).not("item_name", "is", null);
+    const it = await srcPageAll(sb, "scheduled_crops", "item_name", q => q.eq("plan_id", plan.id).not("item_name", "is", null)); // paginate — >1000 rows
     setItems([...new Set((it || []).map(r => r.item_name))].sort());
   })(); }, [sb, plan.id, tick]);
   async function add() {
@@ -748,7 +748,7 @@ function BenchTab({ plan, houses, housesProfit, drilldown, setDrilldown }) {
   useEffect(() => {
     if (!sb || !plan?.id) return;
     (async () => {
-      const { data: scd } = await sb.from("scheduled_crops").select("id,item_name,plant_week,bench_id,variety_id,qty_pots,is_combo_component,improvement_note").eq("plan_id", plan.id);
+      const scd = await srcPageAll(sb, "scheduled_crops", "id,item_name,plant_week,bench_id,variety_id,qty_pots,is_combo_component,improvement_note", q => q.eq("plan_id", plan.id)); // paginate — >1000 rows
       const benchIds = [...new Set((scd || []).map(r => r.bench_id).filter(Boolean))];
       const varIds = [...new Set((scd || []).map(r => r.variety_id).filter(Boolean))];
       const { data: bdata } = benchIds.length ? await sb.from("benches").select("id,code,zone_label").in("id", benchIds) : { data: [] };
@@ -830,11 +830,10 @@ function VarietyTab({ planId }) {
   useEffect(() => {
     if (!sb) return;
     (async () => {
-      const { data: pl } = await sb.from("v_scheduled_crops_pl")
-        .select("variety_id,container_id,qty_pots,qty_plants_ordered,direct_cost_total,revenue,gross_profit,is_combo_component,combo_parent_id")
-        .eq("plan_id", planId);
-      const { data: vars } = await sb.from("variety_library").select("id,variety,breeder,series,typical_color");
-      const { data: containers } = await sb.from("containers").select("id,sku");
+      // paginate — plans exceed PostgREST's 1000-row cap (was silently truncating totals)
+      const pl = await srcPageAll(sb, "v_scheduled_crops_pl", "variety_id,container_id,qty_pots,qty_plants_ordered,direct_cost_total,revenue,gross_profit,is_combo_component,combo_parent_id", q => q.eq("plan_id", planId));
+      const vars = await srcPageAll(sb, "variety_library", "id,variety,breeder,series,typical_color");
+      const containers = await srcPageAll(sb, "containers", "id,sku");
 
       const byVar = {};
       for (const r of (pl || [])) {
@@ -929,10 +928,9 @@ function WeekTab({ planId }) {
   useEffect(() => {
     if (!sb) return;
     (async () => {
-      const { data: pl } = await sb.from("v_scheduled_crops_pl")
-        .select("plant_week,variety_id,qty_pots,qty_plants_ordered,direct_cost_total,revenue,gross_profit,bench_id,is_combo_component,combo_parent_id")
-        .eq("plan_id", planId);
-      const { data: vars } = await sb.from("variety_library").select("id,variety");
+      // paginate — plans exceed PostgREST's 1000-row cap (was silently truncating totals)
+      const pl = await srcPageAll(sb, "v_scheduled_crops_pl", "plant_week,variety_id,qty_pots,qty_plants_ordered,direct_cost_total,revenue,gross_profit,bench_id,is_combo_component,combo_parent_id", q => q.eq("plan_id", planId));
+      const vars = await srcPageAll(sb, "variety_library", "id,variety");
       const { data: bench } = await sb.from("benches").select("id,zone_label").limit(2000);
 
       const byW = {};
@@ -2219,7 +2217,7 @@ function MaterialsTab({ plan }) {
         if (data.length < 1000) break;
       }
       const parentIds = new Set((sc || []).filter(r => r.is_combo_component && r.combo_parent_id).map(r => r.combo_parent_id));
-      const { data: vars } = await sb.from("variety_library").select("id,crop_name,variety,breeder");
+      const vars = await srcPageAll(sb, "variety_library", "id,crop_name,variety,breeder"); // paginate — >1000 rows
       const { data: containers } = await sb.from("containers").select("id,sku,name,cost_per_unit,units_per_case,qty_per_pallet,fill_volume_cu_ft,default_ring_id,primary_supplier");
       const { data: soils } = await sb.from("soil_mixes").select("id,name,vendor,cost_per_bag,fluffed_volume,bag_size,bags_per_pallet,cost_per_cf,cf_per_truck,cost_per_truck,origin");
       const { data: inputs } = await sb.from("program_inputs").select("*").eq("year", plan.year);
