@@ -329,6 +329,7 @@ const PLAN_TABS = [
   { id: "sourcing",  label: "🧭 Sourcing" },
   { id: "inputs",    label: "⚙ Inputs" },
   { id: "pricing",   label: "💰 Pricing" },
+  { id: "combos",    label: "🪴 Combos" },
   { id: "items",     label: "📑 Items" },
 ];
 
@@ -477,6 +478,7 @@ function PlanDashboard({ plan, initialTab }) {
           {hasData && tab === "inputs"    && <InputsTab plan={plan} />}
           {hasData && tab === "pricing"   && <PricingTab plan={plan} />}
           {hasData && tab === "items"     && <ItemsTab plan={plan} />}
+          {hasData && tab === "combos"    && <CombosTab plan={plan} />}
         </>
       )}
     </div>
@@ -6728,6 +6730,73 @@ function BasketDesigner({ layout, plantNames, onSave, onClose }) {
   );
 }
 
+// Combos gallery — every combo in the plan as a card (diagram where arranged, recipe otherwise).
+// Click a card to open the item detail → ✏️ Arrange (drag plants) + 🔗 Share.
+function CombosTab({ plan }) {
+  const sb = getSupabase();
+  const [combos, setCombos] = useState(null);
+  const [detail, setDetail] = useState(null);
+  const [q, setQ] = useState("");
+  useEffect(() => {
+    if (!sb) return;
+    (async () => {
+      const sc = await srcPageAll(sb, "scheduled_crops", "id,item_name,planting_layout,variety_id,bench_id,plant_week,qty_pots,qty_plants_ordered,combo_parent_id,is_combo_component,improvement_note,kept_note", f => f.eq("plan_id", plan.id));
+      const parentIds = new Set(sc.map(r => r.combo_parent_id).filter(Boolean));
+      const parents = sc.filter(r => parentIds.has(r.id));
+      const vars = await srcPageAll(sb, "variety_library", "id,crop_name,variety,breeder,culture_source_id,culture_guide_url,care_profile");
+      const vById = {}; vars.forEach(v => { vById[v.id] = v; });
+      const benches = await srcPageAll(sb, "benches", "id,code,zone_label");
+      const bById = {}; benches.forEach(b => { bById[b.id] = b; });
+      const recipeByParent = {};
+      sc.filter(r => r.is_combo_component && r.combo_parent_id).forEach(c => { (recipeByParent[c.combo_parent_id] = recipeByParent[c.combo_parent_id] || []).push(c); });
+      // group parents by name; prefer a representative that has a saved layout
+      const byName = {};
+      parents.forEach(p => {
+        const nm = p.item_name || "(combo)";
+        if (!byName[nm] || (!byName[nm].planting_layout && p.planting_layout)) byName[nm] = { ...p, variety: vById[p.variety_id], bench: bById[p.bench_id] };
+      });
+      const list = Object.values(byName).map(p => ({
+        ...p,
+        recipe: (recipeByParent[p.id] || []).map(c => ({ v: vById[c.variety_id], qty: c.qty_plants_ordered })),
+      })).sort((a, b) => (b.planting_layout ? 1 : 0) - (a.planting_layout ? 1 : 0) || (a.item_name || "").localeCompare(b.item_name || ""));
+      setCombos(list);
+    })();
+  }, [sb, plan.id]);
+  if (combos == null) return <div style={{ padding: 30, color: COLORS.muted, fontFamily: "'DM Sans',sans-serif" }}>Loading combos…</div>;
+  const ql = q.trim().toLowerCase();
+  const shown = ql ? combos.filter(c => (c.item_name || "").toLowerCase().includes(ql) || c.recipe.some(r => `${r.v?.crop_name || ""} ${r.v?.variety || ""}`.toLowerCase().includes(ql))) : combos;
+  const arranged = combos.filter(c => c.planting_layout).length;
+  return (
+    <div style={{ fontFamily: "'DM Sans','Segoe UI',sans-serif" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: COLORS.dark }}>🪴 Combos — {combos.length}</div>
+          <div style={{ fontSize: 12.5, color: COLORS.muted, marginTop: 2 }}>{arranged} arranged · click a combo to view, <strong>✏️ Arrange</strong> the plants, or <strong>🔗 Share</strong> a grower diagram.</div>
+        </div>
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder="Filter combos / plants…" style={{ padding: "6px 10px", border: `1px solid ${COLORS.border}`, borderRadius: 8, fontSize: 13, fontFamily: "inherit", minWidth: 220 }} />
+      </div>
+      {shown.length === 0 ? <div style={{ color: COLORS.muted, padding: "20px 0" }}>No combos{ql ? " match" : " in this plan"}.</div> : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(230px,1fr))", gap: 12 }}>
+          {shown.map(c => (
+            <div key={c.id} onClick={() => setDetail(c)} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: 12, cursor: "pointer", display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 150, background: "#fafcf8", borderRadius: 8, overflow: "hidden" }}>
+                {c.planting_layout?.plants ? <div style={{ width: 150 }}><ComboDiagram layout={c.planting_layout} /></div>
+                  : <div style={{ color: COLORS.muted, fontSize: 12, textAlign: "center", padding: 10 }}>▦ not arranged yet<br /><span style={{ fontSize: 10 }}>open to lay it out</span></div>}
+              </div>
+              <div style={{ fontWeight: 700, color: COLORS.dark, fontSize: 13 }}>{c.item_name}</div>
+              <div style={{ fontSize: 11.5, color: COLORS.muted, lineHeight: 1.4 }}>
+                {c.recipe.length ? c.recipe.map((r, i) => <span key={i}>{i ? " · " : ""}{`${r.v?.crop_name || ""} ${r.v?.variety || ""}`.trim()}{r.qty ? ` ×${r.qty}` : ""}</span>) : <em>no components</em>}
+              </div>
+              {c.planting_layout ? <span style={{ fontSize: 10, color: COLORS.light, fontWeight: 800 }}>✓ arranged</span> : <span style={{ fontSize: 10, color: COLORS.amber, fontWeight: 700 }}>needs layout</span>}
+            </div>
+          ))}
+        </div>
+      )}
+      {detail && <Modal onClose={() => setDetail(null)}><ItemDetail row={detail} planId={plan.id} onClose={() => setDetail(null)} onTask={() => window.alert("Create tasks from the ✓ Tasks tab or the By-Bench drilldown.")} /></Modal>}
+    </div>
+  );
+}
+
 function ItemDetail({ row, onClose, onTask, planId }) {
   const [guide, setGuide] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -6826,23 +6895,23 @@ function ItemDetail({ row, onClose, onTask, planId }) {
           {row.item_name && <span style={{ fontSize: 10, color: COLORS.muted, marginLeft: "auto" }}>Applies to all "{row.item_name}" facility-wide</span>}
         </div>
       </div>
-      {layout && (
+      {(layout || combo.length > 0) && (
         <div style={{ borderTop: `1px solid ${COLORS.border}`, paddingTop: 10, marginBottom: 10 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
             <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase", letterSpacing: 0.5 }}>Combo planting</div>
             {!editLayout && (
               <div style={{ display: "flex", gap: 6 }}>
-                <button onClick={() => setEditLayout(true)} style={{ fontSize: 12, fontWeight: 700, color: COLORS.dark, background: "#fff", border: `1px solid ${COLORS.border}`, borderRadius: 7, padding: "4px 10px", cursor: "pointer", fontFamily: "inherit" }}>✏️ Arrange</button>
-                <button onClick={async () => {
+                <button onClick={() => setEditLayout(true)} style={{ fontSize: 12, fontWeight: 700, color: COLORS.dark, background: "#fff", border: `1px solid ${COLORS.border}`, borderRadius: 7, padding: "4px 10px", cursor: "pointer", fontFamily: "inherit" }}>✏️ {layout ? "Arrange" : "Lay it out"}</button>
+                {layout && <button onClick={async () => {
                   const recipe = combo.map(c => `${c.v?.crop_name || ""} ${c.v?.variety || ""}${c.qty ? ` ×${c.qty}` : ""}`.trim()).filter(Boolean).join(" · ");
                   const url = await shareComboDiagram(row, planId, recipe);
                   if (url) { try { await navigator.clipboard.writeText(url); } catch {} window.prompt("Shareable link (copied) — anyone can open this on their phone, no login needed:", url); }
-                }} style={{ fontSize: 12, fontWeight: 700, color: COLORS.dark, background: "#fff", border: `1px solid ${COLORS.border}`, borderRadius: 7, padding: "4px 10px", cursor: "pointer", fontFamily: "inherit" }}>🔗 Share</button>
+                }} style={{ fontSize: 12, fontWeight: 700, color: COLORS.dark, background: "#fff", border: `1px solid ${COLORS.border}`, borderRadius: 7, padding: "4px 10px", cursor: "pointer", fontFamily: "inherit" }}>🔗 Share</button>}
               </div>
             )}
           </div>
           {editLayout ? (
-            <BasketDesigner layout={layout} plantNames={combo.map(c => `${c.v?.crop_name || ""} ${c.v?.variety || ""}`.trim()).filter(Boolean)}
+            <BasketDesigner layout={layout || { plants: combo.map(c => `${c.v?.crop_name || ""} ${c.v?.variety || ""}`.trim()).filter(Boolean) }} plantNames={combo.map(c => `${c.v?.crop_name || ""} ${c.v?.variety || ""}`.trim()).filter(Boolean)}
               onSave={async (l) => {
                 const sb = getSupabase();
                 if (!sb || !row?.id) { window.alert("Not saved — no connection."); return; }
@@ -6857,9 +6926,9 @@ function ItemDetail({ row, onClose, onTask, planId }) {
               onClose={() => setEditLayout(false)} />
           ) : (
             <div style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
-              <ComboDiagram layout={layout} />
+              {layout ? <ComboDiagram layout={layout} /> : <div style={{ width: 150, height: 120, borderRadius: 8, border: `1px dashed ${COLORS.border}`, display: "flex", alignItems: "center", justifyContent: "center", color: COLORS.muted, fontSize: 12, textAlign: "center" }}>Not arranged yet —<br />click "Lay it out"</div>}
               <div style={{ flex: "1 1 200px" }}>
-                <div style={{ fontSize: 13, color: COLORS.text, marginBottom: 8 }}>{layout.howto}</div>
+                {layout?.howto && <div style={{ fontSize: 13, color: COLORS.text, marginBottom: 8 }}>{layout.howto}</div>}
                 <div style={{ fontSize: 12, color: COLORS.muted }}>{combo.length ? combo.map(c => `${c.v?.crop_name || ""} ${c.v?.variety || ""}${c.qty ? ` (${c.qty})` : ""}`).join(" · ") : "—"}</div>
               </div>
             </div>
