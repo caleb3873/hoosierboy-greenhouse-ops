@@ -6835,15 +6835,19 @@ function ItemDetail({ row, onClose, onTask, planId }) {
     setLoading(true);
     cc.from("culture_guides_public").select("*").eq("id", srcId).single().then(({ data }) => { setGuide(data || null); setLoading(false); });
   }, [srcId]);
+  // Load combo components whenever this item owns any (regardless of whether a layout exists yet),
+  // so multi-plant combos can always be arranged.
   useEffect(() => {
-    if (!row?.planting_layout) { setCombo([]); return; }
-    const sb = getSupabase(); if (!sb) return;
+    const sb = getSupabase(); if (!sb || !row?.id) { setCombo([]); return; }
     sb.from("scheduled_crops").select("variety_id,qty_plants_ordered").eq("combo_parent_id", row.id).then(async ({ data }) => {
       const vids = [...new Set((data || []).map(d => d.variety_id).filter(Boolean))];
       const { data: vs } = vids.length ? await sb.from("variety_library").select("id,crop_name,variety").in("id", vids) : { data: [] };
       setCombo((data || []).map(d => ({ qty: d.qty_plants_ordered, v: (vs || []).find(x => x.id === d.variety_id) })));
     });
-  }, [row?.id, row?.planting_layout]);
+  }, [row?.id]);
+  // full plant set for arranging = parent variety + component varieties (children)
+  const comboPlants = combo.length ? [...(row?.variety ? [{ v: row.variety, qty: row.qty_plants_ordered }] : []), ...combo] : [];
+  const comboNames = comboPlants.map(c => `${c.v?.crop_name || ""} ${c.v?.variety || ""}`.trim()).filter(Boolean);
   const cd = guide?.culture_details || {};
   const DEDICATED = /potential pest|potential disease|growth regulator/i;
   const entries = Object.keys(cd).filter(k => /pgr|warning|water|temp|finish|pinch|exposure|bloom|media|habit|propagation|ph|ec|fertil/i.test(k) && !DEDICATED.test(k) && cd[k] && String(cd[k]).trim());
@@ -6895,15 +6899,15 @@ function ItemDetail({ row, onClose, onTask, planId }) {
           {row.item_name && <span style={{ fontSize: 10, color: COLORS.muted, marginLeft: "auto" }}>Applies to all "{row.item_name}" facility-wide</span>}
         </div>
       </div>
-      {(layout || combo.length > 0) && (
+      {(layout || comboPlants.length > 1) && (
         <div style={{ borderTop: `1px solid ${COLORS.border}`, paddingTop: 10, marginBottom: 10 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase", letterSpacing: 0.5 }}>Combo planting</div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase", letterSpacing: 0.5 }}>Combo planting <span style={{ fontWeight: 400, textTransform: "none" }}>· {comboNames.length} plants</span></div>
             {!editLayout && (
               <div style={{ display: "flex", gap: 6 }}>
                 <button onClick={() => setEditLayout(true)} style={{ fontSize: 12, fontWeight: 700, color: COLORS.dark, background: "#fff", border: `1px solid ${COLORS.border}`, borderRadius: 7, padding: "4px 10px", cursor: "pointer", fontFamily: "inherit" }}>✏️ {layout ? "Arrange" : "Lay it out"}</button>
                 {layout && <button onClick={async () => {
-                  const recipe = combo.map(c => `${c.v?.crop_name || ""} ${c.v?.variety || ""}${c.qty ? ` ×${c.qty}` : ""}`.trim()).filter(Boolean).join(" · ");
+                  const recipe = comboPlants.map(c => `${c.v?.crop_name || ""} ${c.v?.variety || ""}${c.qty ? ` ×${c.qty}` : ""}`.trim()).filter(Boolean).join(" · ");
                   const url = await shareComboDiagram(row, planId, recipe);
                   if (url) { try { await navigator.clipboard.writeText(url); } catch {} window.prompt("Shareable link (copied) — anyone can open this on their phone, no login needed:", url); }
                 }} style={{ fontSize: 12, fontWeight: 700, color: COLORS.dark, background: "#fff", border: `1px solid ${COLORS.border}`, borderRadius: 7, padding: "4px 10px", cursor: "pointer", fontFamily: "inherit" }}>🔗 Share</button>}
@@ -6911,7 +6915,7 @@ function ItemDetail({ row, onClose, onTask, planId }) {
             )}
           </div>
           {editLayout ? (
-            <BasketDesigner layout={layout || { plants: combo.map(c => `${c.v?.crop_name || ""} ${c.v?.variety || ""}`.trim()).filter(Boolean) }} plantNames={combo.map(c => `${c.v?.crop_name || ""} ${c.v?.variety || ""}`.trim()).filter(Boolean)}
+            <BasketDesigner layout={layout || { plants: comboNames }} plantNames={comboNames}
               onSave={async (l) => {
                 const sb = getSupabase();
                 if (!sb || !row?.id) { window.alert("Not saved — no connection."); return; }
@@ -6929,7 +6933,7 @@ function ItemDetail({ row, onClose, onTask, planId }) {
               {layout ? <ComboDiagram layout={layout} /> : <div style={{ width: 150, height: 120, borderRadius: 8, border: `1px dashed ${COLORS.border}`, display: "flex", alignItems: "center", justifyContent: "center", color: COLORS.muted, fontSize: 12, textAlign: "center" }}>Not arranged yet —<br />click "Lay it out"</div>}
               <div style={{ flex: "1 1 200px" }}>
                 {layout?.howto && <div style={{ fontSize: 13, color: COLORS.text, marginBottom: 8 }}>{layout.howto}</div>}
-                <div style={{ fontSize: 12, color: COLORS.muted }}>{combo.length ? combo.map(c => `${c.v?.crop_name || ""} ${c.v?.variety || ""}${c.qty ? ` (${c.qty})` : ""}`).join(" · ") : "—"}</div>
+                <div style={{ fontSize: 12, color: COLORS.muted }}>{comboPlants.length ? comboPlants.map(c => `${c.v?.crop_name || ""} ${c.v?.variety || ""}${c.qty ? ` (${c.qty})` : ""}`).join(" · ") : "—"}</div>
               </div>
             </div>
           )}
