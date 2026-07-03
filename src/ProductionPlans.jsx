@@ -5466,13 +5466,21 @@ const ORIGIN_COORDS = { // [lat, lon]
 };
 const INDY = [39.77, -86.16];
 const haversine = (a, b) => { const R = 3959, dLat = (b[0] - a[0]) * Math.PI / 180, dLon = (b[1] - a[1]) * Math.PI / 180, la1 = a[0] * Math.PI / 180, la2 = b[0] * Math.PI / 180; const h = Math.sin(dLat / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin(dLon / 2) ** 2; return Math.round(2 * R * Math.asin(Math.sqrt(h))); };
+// mode() helper — most-common non-null value, to smooth free-text parse glitches across a supplier's quotes
+const srcMode = arr => { const c = {}; arr.filter(x => x != null).forEach(x => { c[x] = (c[x] || 0) + 1; }); let best = null, n = 0; for (const k in c) if (c[k] > n) { n = c[k]; best = +k; } return best; };
 function SrcOrigins({ sb, plan }) {
   const [rows, setRows] = useState(null);
+  const [terms, setTerms] = useState({}); // supplier -> { urc, pv, stmt }
   useEffect(() => {
     if (!sb || !plan?.id) { setRows([]); return; }
     (async () => {
       const sc = await srcPageAll(sb, "scheduled_crops", "item_name,supplier,origin,qty_pots,ppp,plants_per_unit,liner_unit_cost", q => q.eq("plan_id", plan.id).eq("is_combo_component", false).gt("qty_pots", 0));
       setRows(sc.map(r => ({ ...r, plants: (+r.qty_pots || 0) * (+r.plants_per_unit || 1) })));
+      // real per-quote order minimums parsed from the quote sheets (broker_quote_terms)
+      const bt = await srcPageAll(sb, "broker_quote_terms", "supplier,urc_order_min,per_variety_min,min_statement", q => q.eq("season", "2026-2027"));
+      const bySupT = {}; bt.forEach(t => { (bySupT[t.supplier] = bySupT[t.supplier] || { urc: [], pv: [], stmt: "" }); bySupT[t.supplier].urc.push(t.urc_order_min); bySupT[t.supplier].pv.push(t.per_variety_min); if ((t.min_statement || "").length > bySupT[t.supplier].stmt.length) bySupT[t.supplier].stmt = t.min_statement; });
+      const tmap = {}; Object.entries(bySupT).forEach(([s, v]) => { tmap[s] = { urc: srcMode(v.urc), pv: srcMode(v.pv), stmt: v.stmt }; });
+      setTerms(tmap);
     })();
   }, [sb, plan]);
   if (rows == null) return <div style={{ padding: 16, color: COLORS.muted, fontSize: 13 }}>Loading…</div>;
@@ -5488,8 +5496,12 @@ function SrcOrigins({ sb, plan }) {
   rows.forEach(r => { if (!r.supplier) return; (bySup[r.supplier] = bySup[r.supplier] || { plants: 0, vars: new Set(), under100: new Set() }); bySup[r.supplier].plants += r.plants; bySup[r.supplier].vars.add(r.item_name); });
   // per-variety under 100 (sum plants per item within supplier)
   const itemPlants = {}; rows.forEach(r => { if (!r.supplier) return; const k = r.supplier + "||" + r.item_name; itemPlants[k] = (itemPlants[k] || 0) + r.plants; });
-  Object.entries(itemPlants).forEach(([k, p]) => { if (p < 100) { const sup = k.split("||")[0]; bySup[sup] && bySup[sup].under100.add(k); } });
-  const sups = Object.entries(bySup).map(([s, v]) => ({ supplier: s, plants: Math.round(v.plants), varieties: v.vars.size, under: v.under100.size })).sort((a, b) => b.plants - a.plants);
+  // per-variety minimum is the supplier's real quoted value (usually 100), fall back to 100
+  Object.entries(itemPlants).forEach(([k, p]) => { const sup = k.split("||")[0]; const vmin = terms[sup]?.pv || 100; if (p < vmin) bySup[sup] && bySup[sup].under100.add(k); });
+  const sups = Object.entries(bySup).map(([s, v]) => {
+    const orderMin = terms[s]?.urc || 2000; // real quoted URC order minimum; 2,000 industry default if not quoted
+    return { supplier: s, plants: Math.round(v.plants), varieties: v.vars.size, under: v.under100.size, orderMin, varMin: terms[s]?.pv || 100, stmt: terms[s]?.stmt || "", quoted: terms[s]?.urc != null };
+  }).sort((a, b) => b.plants - a.plants);
 
   // equirectangular projection over the relevant window
   const W = 720, H = 360, lonMin = -120, lonMax = 55, latMin = -18, latMax = 52;
@@ -5501,7 +5513,7 @@ function SrcOrigins({ sb, plan }) {
   return (
     <div>
       <div style={{ background: "#eef6e7", border: `1px solid ${COLORS.light}`, borderRadius: 8, padding: "9px 12px", fontSize: 12.5, color: COLORS.text, margin: "4px 0 10px" }}>
-        🗺 <strong>Where your cuttings come from.</strong> Pins sized by this plan's planned plants per farm country, arced to Indianapolis. Shorter transit = fresher, more viable cuttings — a Mexico/Central-America farm can beat East Africa on arrival quality. Below: order rollups vs the <strong>2,000-plant order minimum</strong> and <strong>100-plant per-variety minimum</strong>.
+        🗺 <strong>Where your cuttings come from.</strong> Pins sized by this plan's planned plants per farm country, arced to Indianapolis. Shorter transit = fresher, more viable cuttings — a Mexico/Central-America farm can beat East Africa on arrival quality. Below: order rollups vs each supplier's <strong>real order minimum</strong> (parsed from the quote sheets — e.g. Dümmen 3,000 URC, Beekenkamp 1,500) and per-variety minimum.
       </div>
       <div style={{ background: "#eaf1f7", border: `1px solid ${COLORS.border}`, borderRadius: 10, overflow: "hidden", marginBottom: 14 }}>
         <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", display: "block" }}>
@@ -5530,17 +5542,19 @@ function SrcOrigins({ sb, plan }) {
         </tbody>
       </table>
 
-      <SrcSectionTitle>Order minimums — 2,000 plants/order · 100/variety</SrcSectionTitle>
+      <SrcSectionTitle>Order minimums — per-quote (parsed from the sheets)</SrcSectionTitle>
+      <div style={{ fontSize: 11.5, color: COLORS.muted, marginBottom: 6 }}>Order min is each supplier's real quoted URC minimum (hover for the full term); ✳ = not quoted, using the 2,000 industry default. Per-variety min from the quote (usually 100).</div>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-        <thead><tr style={{ textAlign: "left", color: COLORS.muted }}><th style={{ padding: "4px 8px" }}>Supplier</th><th style={{ padding: "4px 8px", textAlign: "right" }}>Planned plants</th><th style={{ padding: "4px 8px", textAlign: "right" }}>Varieties</th><th style={{ padding: "4px 8px" }}>Order min (2,000)</th><th style={{ padding: "4px 8px", textAlign: "right" }}>Under 100/variety</th></tr></thead>
+        <thead><tr style={{ textAlign: "left", color: COLORS.muted }}><th style={{ padding: "4px 8px" }}>Supplier</th><th style={{ padding: "4px 8px", textAlign: "right" }}>Planned plants</th><th style={{ padding: "4px 8px", textAlign: "right" }}>Varieties</th><th style={{ padding: "4px 8px", textAlign: "right" }}>Order min</th><th style={{ padding: "4px 8px" }}>vs min</th><th style={{ padding: "4px 8px", textAlign: "right" }}>Under {"<"}/variety</th></tr></thead>
         <tbody>
           {sups.map(s => (
             <tr key={s.supplier} style={{ borderTop: `1px solid ${COLORS.border}` }}>
-              <td style={{ padding: "4px 8px", fontWeight: 700, color: COLORS.dark }}>{srcSup(s.supplier)}</td>
+              <td style={{ padding: "4px 8px", fontWeight: 700, color: COLORS.dark }} title={s.stmt || ""}>{srcSup(s.supplier)}</td>
               <td style={{ padding: "4px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{s.plants.toLocaleString()}</td>
               <td style={{ padding: "4px 8px", textAlign: "right", color: COLORS.muted }}>{s.varieties}</td>
-              <td style={{ padding: "4px 8px", fontWeight: 700, color: s.plants < 2000 ? COLORS.red : COLORS.light }}>{s.plants < 2000 ? `⚠ ${(2000 - s.plants).toLocaleString()} short` : "✓ met"}</td>
-              <td style={{ padding: "4px 8px", textAlign: "right", color: s.under > 0 ? COLORS.amber : COLORS.muted, fontWeight: s.under > 0 ? 700 : 400 }}>{s.under || "—"}</td>
+              <td style={{ padding: "4px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums" }} title={s.stmt || ""}>{s.orderMin.toLocaleString()}{!s.quoted && <span style={{ color: COLORS.muted }}> ✳</span>}</td>
+              <td style={{ padding: "4px 8px", fontWeight: 700, color: s.plants < s.orderMin ? COLORS.red : COLORS.light }}>{s.plants < s.orderMin ? `⚠ ${(s.orderMin - s.plants).toLocaleString()} short` : "✓ met"}</td>
+              <td style={{ padding: "4px 8px", textAlign: "right", color: s.under > 0 ? COLORS.amber : COLORS.muted, fontWeight: s.under > 0 ? 700 : 400 }} title={`under ${s.varMin}/variety`}>{s.under || "—"}</td>
             </tr>
           ))}
         </tbody>
