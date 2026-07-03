@@ -5600,14 +5600,16 @@ function SrcCompare({ sb, plan }) {
     setOpen(genus);
     if (!rows[genus]) {
       setBusy(true);
-      const data = await srcPageAll(sb, "v_sourcing_prices", "supplier,broker,form_class,variety_key,variety,landed",
+      const data = await srcPageAll(sb, "v_sourcing_prices", "supplier,broker,form_class,variety_key,variety,landed,item_min",
         q => q.like("variety_key", genus + "%").in("form_class", ["urc", "callused"]));
-      // one row per variety_key → cheapest source
+      // one row per variety_key → cheapest source (keep the largest item_min seen for that variety)
       const byKey = {};
       (data || []).forEach(r => {
         if (String(r.variety_key || "").split(" ")[0] !== genus) return;
         const k = r.form_class + "|" + r.variety_key;
-        if (!byKey[k] || r.landed < byKey[k].landed) byKey[k] = { form: r.form_class, variety: r.variety, supplier: r.supplier, broker: r.broker, landed: +r.landed };
+        const min = r.item_min || null;
+        if (!byKey[k] || r.landed < byKey[k].landed) byKey[k] = { form: r.form_class, variety: r.variety, supplier: r.supplier, broker: r.broker, landed: +r.landed, itemMin: min ?? byKey[k]?.itemMin ?? null };
+        else if (min && (!byKey[k].itemMin || min > byKey[k].itemMin)) byKey[k].itemMin = min;
       });
       setRows(prev => ({ ...prev, [genus]: Object.values(byKey) }));
       setBusy(false);
@@ -5646,6 +5648,7 @@ function SrcCompare({ sb, plan }) {
                           <td style={{ padding: "3px 8px" }}>{r.variety}{col && <span style={{ marginLeft: 6, fontSize: 9.5, color: COLORS.muted, textTransform: "capitalize" }}>{col}</span>}</td>
                           <td style={{ padding: "3px 8px", color: COLORS.muted }}>{srcSup(r.supplier)}</td>
                           <td style={{ padding: "3px 8px", color: srcBrokerColor(r.broker), fontWeight: 700 }}>{r.broker}</td>
+                          <td style={{ padding: "3px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums", color: r.itemMin > 100 ? COLORS.red : COLORS.muted, fontWeight: r.itemMin > 100 ? 700 : 400 }} title="minimum per variety (from the quote)">{r.itemMin ? `min ${r.itemMin.toLocaleString()}` : ""}</td>
                           <td style={{ padding: "3px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums", background: cheap ? "#dcedc8" : "transparent", fontWeight: cheap ? 800 : 400 }}>{money(r.landed)}</td>
                         </tr>
                       );

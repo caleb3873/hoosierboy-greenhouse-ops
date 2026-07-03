@@ -182,6 +182,7 @@ function parseFile(broker, file) {
     const cTotal= find(/^total price/, /no tag unit price includes frt/);
     const cAed  = find(/^v1 eod$/, /^v1$/);   // EHR AED quotes: V1 EOD = early-order unit price
     const cExcl = find(/exclusiv/);
+    const cMin  = find(/item min/, /min per var/, /^min qty$/); // Express "Item Min" per-variety minimum
     const tiers = tierCols(hdr);
     if (cVar < 0) continue;
     const term = broker === 'EHR' ? (EHR_TERMS[breeder] || { volume: 1, discount: 0 }) : null;
@@ -252,6 +253,7 @@ function parseFile(broker, file) {
         landed: +(+landed).toFixed(5),
         royalty: roy, freight: frt,
         exclusivity: cExcl >= 0 ? S(r[cExcl]) : '',
+        itemMin: cMin >= 0 ? (parseInt(String(r[cMin]).replace(/[^\d]/g, ''), 10) || null) : null,
         key: vkey,
         // supplier -> form -> variety: the match grain for cross-broker comparison
         mkey: breeder + '|' + formClass + '|' + vkey,
