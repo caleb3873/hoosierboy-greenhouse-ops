@@ -54,10 +54,22 @@ const isLucasBegonia = name => /\bbegonia\b/i.test(name) && !/reiger/i.test(name
   const sels = {}; sel.forEach(s => { if (s.selected_broker) sels[s.supplier] = s.selected_broker; });
   const crops = await page('scheduled_crops', 'id,item_name,qty_pots,plants_per_unit,liner_unit_cost,broker,is_combo_component', q => q.eq('plan_id', plan.id).eq('is_combo_component', false).gt('qty_pots', 0));
 
-  // index broker_prices by variety key → supplier → broker → best landed (prefer URC)
+  // Curated form rules — MUST match v_sourcing_prices so a plan costs exactly what the Sourcing UI
+  // shows (autostix already excluded by the query above):
+  //   • geranium / osteospermum / scaevola → callused-only (drop URC)
+  //   • lantana → callused-only where a callused listing exists for that supplier+variety (else URC)
+  const CALLUSED_ONLY = new Set(['geranium', 'osteospermum', 'scaevola']);
+  const hasCallused = new Set();
+  for (const p of prices) if (p.form_class === 'callused' && p.variety_key) hasCallused.add(p.supplier + '|' + p.variety_key);
+
+  // index broker_prices by variety key → supplier → broker → best landed (prefer URC unless a
+  // callused-only rule applies above)
   const idx = {}, bobsTray = {}; // bobsTray[key][cellCount] = landed (pansy/viola tray pricing)
   for (const p of prices) {
     const k = p.variety_key; if (!k) continue;
+    const g = k.split(' ')[0];
+    if (CALLUSED_ONLY.has(g) && p.form_class !== 'callused') continue;
+    if (g === 'lantana' && p.form_class !== 'callused' && hasCallused.has(p.supplier + '|' + k)) continue;
     ((idx[k] = idx[k] || {})[p.supplier] = idx[k][p.supplier] || {});
     const cur = idx[k][p.supplier][p.broker];
     const better = !cur || (FORM_RANK[p.form_class] ?? 9) < (FORM_RANK[cur.form_class] ?? 9) || ((FORM_RANK[p.form_class] ?? 9) === (FORM_RANK[cur.form_class] ?? 9) && p.landed < cur.landed);
