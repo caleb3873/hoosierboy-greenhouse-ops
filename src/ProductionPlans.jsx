@@ -367,15 +367,7 @@ function PlanDashboard({ plan, initialTab }) {
     if (!sb) return;
     setLoading(true);
     (async () => {
-      let rows = [];
-      for (let from = 0; ; from += 1000) {   // paginate — PostgREST caps at 1000/req; plan P&L exceeds it
-        const { data } = await sb.from("v_scheduled_crops_pl")
-          .select("liner_cost,pot_cost,soil_cost,ring_cost,direct_cost_total,revenue,gross_profit,bench_id,qty_pots,is_combo_component,combo_parent_id")
-          .eq("plan_id", plan.id).range(from, from + 999);
-        if (!data || !data.length) break;
-        rows = rows.concat(data);
-        if (data.length < 1000) break;
-      }
+      const rows = await srcPageAll(sb, "v_scheduled_crops_pl", "liner_cost,pot_cost,soil_cost,ring_cost,direct_cost_total,revenue,gross_profit,bench_id,qty_pots,is_combo_component,combo_parent_id", q => q.eq("plan_id", plan.id));
 
       const totals = (rows || []).reduce((acc, r) => ({
         liner:    acc.liner    + (+r.liner_cost   || 0),
@@ -1513,15 +1505,7 @@ function PlugOrdersTab({ plan }) {
   useEffect(() => {
     if (!sb) return;
     (async () => {
-      let sc = [];
-      for (let from = 0; ; from += 1000) {   // paginate (PostgREST 1000-row cap) + include combo components
-        const { data } = await sb.from("scheduled_crops")
-          .select("id,variety_id,container_id,qty_pots,ppp,qty_plants_ordered,plant_week,plant_year,item_name,prop_method,is_combo_component")
-          .eq("plan_id", plan.id).range(from, from + 999);
-        if (!data || !data.length) break;
-        sc = sc.concat(data);
-        if (data.length < 1000) break;
-      }
+      const sc = await srcPageAll(sb, "scheduled_crops", "id,variety_id,container_id,qty_pots,ppp,qty_plants_ordered,plant_week,plant_year,item_name,prop_method,is_combo_component", q => q.eq("plan_id", plan.id)); // paginate + include combo components
       const plugs = (sc || []).filter(r => (r.prop_method || "").toUpperCase().startsWith("PLUG"));
       const vids = [...new Set(plugs.map(r => r.variety_id).filter(Boolean))];
       const cids = [...new Set(plugs.map(r => r.container_id).filter(Boolean))];
@@ -1687,12 +1671,11 @@ function SalesVsPlanTab({ plan }) {
     if (!sb) return;
     const COMPONENT = /\bVINE\b|\bIVY\b|HEDERA|MU[EH]+LENBECKIA|CAREX/i;
     (async () => {
-      const page = async (tbl, sel, eq) => { let out = []; for (let f = 0; ; f += 1000) { let q = sb.from(tbl).select(sel).range(f, f + 999); if (eq) q = q.eq(eq[0], eq[1]); const { data } = await q; if (!data || !data.length) break; out = out.concat(data); if (data.length < 1000) break; } return out; };
-      const xw = await page("sales_sku_map", "sku,plan_item_name");
+      const xw = await srcPageAll(sb, "sales_sku_map", "sku,plan_item_name");
       const skuToItem = {}; xw.forEach(x => { if (x.plan_item_name) skuToItem[x.sku] = x.plan_item_name; });
-      const tot = await page("sales_totals", "sku,units,revenue,avg_price");
-      const wk = await page("sales_weekly", "sku,wk,units,revenue");
-      const sc = await page("scheduled_crops", "id,item_name,qty_pots,ppp,plants_per_unit,ship_week,combo_parent_id,is_combo_component", ["plan_id", plan.id]);
+      const tot = await srcPageAll(sb, "sales_totals", "sku,units,revenue,avg_price");
+      const wk = await srcPageAll(sb, "sales_weekly", "sku,wk,units,revenue");
+      const sc = await srcPageAll(sb, "scheduled_crops", "id,item_name,qty_pots,ppp,plants_per_unit,ship_week,combo_parent_id,is_combo_component", q => q.eq("plan_id", plan.id));
       const weeks = [...new Set(wk.map(w => +w.wk))].sort((a, b) => a - b);
       const wIdx = Object.fromEntries(weeks.map((w, i) => [w, i]));
       // A combo basket = one finished unit (multiple plants on a row are for ONE basket, not many).
@@ -1944,15 +1927,7 @@ function PropagationTab({ plan }) {
   useEffect(() => {
     if (!sb) return;
     (async () => {
-      let sc = [];
-      for (let from = 0; ; from += 1000) {   // paginate — PostgREST caps at 1000/req; plan has more rows
-        const { data } = await sb.from("scheduled_crops")
-          .select("id,variety_id,prop_method,prop_tray_size,ship_week,ship_year,plant_week,plant_year,qty_pots,qty_plants_ordered,ppp,container_id,item_name,is_combo_component,bench_id")
-          .eq("plan_id", plan.id).range(from, from + 999);
-        if (!data || !data.length) break;
-        sc = sc.concat(data);
-        if (data.length < 1000) break;
-      }
+      const sc = await srcPageAll(sb, "scheduled_crops", "id,variety_id,prop_method,prop_tray_size,ship_week,ship_year,plant_week,plant_year,qty_pots,qty_plants_ordered,ppp,container_id,item_name,is_combo_component,bench_id", q => q.eq("plan_id", plan.id));
       const prop = (sc || []).filter(r => r.prop_tray_size && String(r.prop_tray_size).trim() && /^(URC|CALL|SEED)/i.test(r.prop_method || ""));
       const vids = [...new Set(prop.map(r => r.variety_id).filter(Boolean))];
       let vars = [];   // chunk the .in() — a single lookup of hundreds of UUIDs overflows the URL and returns nothing
@@ -2205,28 +2180,13 @@ function MaterialsTab({ plan }) {
   useEffect(() => {
     if (!sb) return;
     (async () => {
-      let sc = [];
-      for (let from = 0; ; from += 1000) {   // paginate — PostgREST 1000-row cap
-        const { data } = await sb.from("scheduled_crops")
-          .select("id,variety_id,container_id,qty_pots,ppp,qty_plants_ordered,liner_unit_cost,soil_mix_id,is_combo_component,combo_parent_id,prop_method,prop_tray_size,ship_week,ship_year,plant_week,plant_year")
-          .eq("plan_id", plan.id).range(from, from + 999);
-        if (!data || !data.length) break;
-        sc = sc.concat(data);
-        if (data.length < 1000) break;
-      }
+      const sc = await srcPageAll(sb, "scheduled_crops", "id,variety_id,container_id,qty_pots,ppp,qty_plants_ordered,liner_unit_cost,soil_mix_id,is_combo_component,combo_parent_id,prop_method,prop_tray_size,ship_week,ship_year,plant_week,plant_year", q => q.eq("plan_id", plan.id));
       const parentIds = new Set((sc || []).filter(r => r.is_combo_component && r.combo_parent_id).map(r => r.combo_parent_id));
       const vars = await srcPageAll(sb, "variety_library", "id,crop_name,variety,breeder"); // paginate — >1000 rows
       const { data: containers } = await sb.from("containers").select("id,sku,name,cost_per_unit,units_per_case,qty_per_pallet,fill_volume_cu_ft,default_ring_id,primary_supplier");
       const { data: soils } = await sb.from("soil_mixes").select("id,name,vendor,cost_per_bag,fluffed_volume,bag_size,bags_per_pallet,cost_per_cf,cf_per_truck,cost_per_truck,origin");
       const { data: inputs } = await sb.from("program_inputs").select("*").eq("year", plan.year);
-      let yearRows = [];
-      for (let from = 0; ; from += 1000) {
-        const { data } = await sb.from("scheduled_crops")
-          .select("qty_pots,is_combo_component,combo_parent_id,container_id,plant_year").range(from, from + 999);
-        if (!data || !data.length) break;
-        yearRows = yearRows.concat(data);
-        if (data.length < 1000) break;
-      }
+      const yearRows = await srcPageAll(sb, "scheduled_crops", "qty_pots,is_combo_component,combo_parent_id,container_id,plant_year");
 
       const linerRows = []; const byPot = {}, byRing = {};
       let totalSoilCuFt = 0;
@@ -2657,16 +2617,7 @@ function CatalogTab({ plan }) {
     setLoading(true);
     (async () => {
       // Pull all history (paginated)
-      const all = [];
-      let offset = 0;
-      while (true) {
-        const { data } = await sb.from("houseplant_sales_history")
-          .select("period,product_code,description,pot_size,qty_sold,sold_value").range(offset, offset + 999);
-        if (!data?.length) break;
-        all.push(...data);
-        if (data.length < 1000) break;
-        offset += 1000;
-      }
+      const all = await srcPageAll(sb, "houseplant_sales_history", "period,product_code,description,pot_size,qty_sold,sold_value");
 
       // Pull saved catalog targets for this plan
       const { data: cat } = await sb.from("houseplant_catalog").select("*").eq("plan_id", plan.id);
@@ -3923,16 +3874,7 @@ function HpHistoryTab({ plan }) {
   useEffect(() => {
     if (!sb) return;
     (async () => {
-      const all = [];
-      let offset = 0;
-      while (true) {
-        const { data } = await sb.from("houseplant_sales_history")
-          .select("period,qty_sold,sold_value,pot_size").range(offset, offset + 999);
-        if (!data?.length) break;
-        all.push(...data);
-        if (data.length < 1000) break;
-        offset += 1000;
-      }
+      const all = await srcPageAll(sb, "houseplant_sales_history", "period,qty_sold,sold_value,pot_size");
       // Group by month
       const byMonth = {};
       for (const r of all) {
@@ -4364,16 +4306,7 @@ function HpPresentationTab({ plan }) {
     if (!sb) return;
     setLoading(true);
     (async () => {
-      const all = [];
-      let offset = 0;
-      while (true) {
-        const { data } = await sb.from("houseplant_sales_history")
-          .select("period,description,pot_size,qty_sold,sold_value").range(offset, offset + 999);
-        if (!data?.length) break;
-        all.push(...data);
-        if (data.length < 1000) break;
-        offset += 1000;
-      }
+      const all = await srcPageAll(sb, "houseplant_sales_history", "period,description,pot_size,qty_sold,sold_value");
       setRows(all);
       setLoading(false);
     })();
@@ -4717,16 +4650,7 @@ function HpInsightsTab({ plan }) {
     if (!sb) return;
     setLoading(true);
     (async () => {
-      const all = [];
-      let offset = 0;
-      while (true) {
-        const { data } = await sb.from("houseplant_sales_history")
-          .select("period,description,pot_size,qty_sold,sold_value").range(offset, offset + 999);
-        if (!data?.length) break;
-        all.push(...data);
-        if (data.length < 1000) break;
-        offset += 1000;
-      }
+      const all = await srcPageAll(sb, "houseplant_sales_history", "period,description,pot_size,qty_sold,sold_value");
       const { data: aliasData } = await sb.from("houseplant_merge_aliases").select("*");
       setAliases(aliasData || []);
       setRows(all);
@@ -5279,15 +5203,7 @@ function SourcingWorkspace({ fullscreen, plan }) {
   async function loadDetail(supplier, force) {
     if (detail[supplier] && !force) return;
     setDetailBusy(true);
-    const out = [];
-    for (let f = 0; ; f += 1000) {
-      const { data } = await sb.from("v_sourcing_prices")
-        .select("form_class,variety_key,variety,crop,broker,landed,has_excl")
-        .eq("supplier", supplier).range(f, f + 999);
-      if (!data || !data.length) break;
-      out.push(...data);
-      if (data.length < 1000) break;
-    }
+    const out = await srcPageAll(sb, "v_sourcing_prices", "form_class,variety_key,variety,crop,broker,landed,has_excl", q => q.eq("supplier", supplier));
     setDetail(prev => ({ ...prev, [supplier]: out }));
     setDetailBusy(false);
   }
