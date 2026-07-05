@@ -5175,6 +5175,7 @@ function SourcingWorkspace({ fullscreen, plan }) {
   const [matchOpen, setMatchOpen]   = useState(false); // global match/cleanup workspace
   const [compareOpen, setCompareOpen] = useState(false); // cross-variety cost comparison
   const [originsOpen, setOriginsOpen] = useState(false);  // farm-origin map + order minimums
+  const [locksOpen, setLocksOpen] = useState(false);      // series locks master panel
   const [showChecklist, setShowChecklist] = useState(false);
 
   function loadSuppliers() {
@@ -5237,19 +5238,23 @@ function SourcingWorkspace({ fullscreen, plan }) {
       </div>
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
-        <button onClick={() => { setMatchOpen(o => !o); setCompareOpen(false); setOriginsOpen(false); }}
+        <button onClick={() => { setMatchOpen(o => !o); setCompareOpen(false); setOriginsOpen(false); setLocksOpen(false); }}
           style={{ border: `1.5px solid ${matchOpen ? COLORS.light : COLORS.border}`, background: matchOpen ? COLORS.light : "#fff", color: matchOpen ? "#fff" : COLORS.dark, borderRadius: 8, padding: "6px 13px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
           🔗 {matchOpen ? "← Back to suppliers" : "Match & clean up"}
         </button>
-        <button onClick={() => { setCompareOpen(o => !o); setMatchOpen(false); setOriginsOpen(false); }}
+        <button onClick={() => { setCompareOpen(o => !o); setMatchOpen(false); setOriginsOpen(false); setLocksOpen(false); }}
           style={{ border: `1.5px solid ${compareOpen ? COLORS.light : COLORS.border}`, background: compareOpen ? COLORS.light : "#fff", color: compareOpen ? "#fff" : COLORS.dark, borderRadius: 8, padding: "6px 13px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
           💡 {compareOpen ? "← Back to suppliers" : "Compare varieties"}
         </button>
-        <button onClick={() => { setOriginsOpen(o => !o); setMatchOpen(false); setCompareOpen(false); }}
+        <button onClick={() => { setOriginsOpen(o => !o); setMatchOpen(false); setCompareOpen(false); setLocksOpen(false); }}
           style={{ border: `1.5px solid ${originsOpen ? COLORS.light : COLORS.border}`, background: originsOpen ? COLORS.light : "#fff", color: originsOpen ? "#fff" : COLORS.dark, borderRadius: 8, padding: "6px 13px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
           🗺 {originsOpen ? "← Back to suppliers" : "Origins & minimums"}
         </button>
-        {!matchOpen && !compareOpen && !originsOpen && (
+        <button onClick={() => { setLocksOpen(o => !o); setMatchOpen(false); setCompareOpen(false); setOriginsOpen(false); }}
+          style={{ border: `1.5px solid ${locksOpen ? COLORS.light : COLORS.border}`, background: locksOpen ? COLORS.light : "#fff", color: locksOpen ? "#fff" : COLORS.dark, borderRadius: 8, padding: "6px 13px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+          🔒 {locksOpen ? "← Back to suppliers" : "Series locks"}
+        </button>
+        {!matchOpen && !compareOpen && !originsOpen && !locksOpen && (
           <button onClick={() => setShowChecklist(c => !c)}
             style={{ border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.dark, borderRadius: 8, padding: "6px 13px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
             📋 Order checklist
@@ -5257,7 +5262,7 @@ function SourcingWorkspace({ fullscreen, plan }) {
         )}
       </div>
 
-      {matchOpen ? <SrcMatcher sb={sb} onChanged={loadSuppliers} /> : compareOpen ? <SrcCompare sb={sb} plan={plan} /> : originsOpen ? <SrcOrigins sb={sb} plan={plan} /> : (<>
+      {matchOpen ? <SrcMatcher sb={sb} onChanged={loadSuppliers} /> : compareOpen ? <SrcCompare sb={sb} plan={plan} /> : originsOpen ? <SrcOrigins sb={sb} plan={plan} /> : locksOpen ? <SrcLocks sb={sb} plan={plan} /> : (<>
 
       {showChecklist && <SrcOrderChecklist suppliers={competitive} selections={selections} />}
 
@@ -5567,6 +5572,93 @@ function SrcOrigins({ sb, plan }) {
 // sorted by landed cost (cheaper equivalents = savings). Shows crops you already grow first;
 // toggle to reveal crops you don't grow. Grouped by form (URC/callused).
 const SRC_COLORS_RX = /\b(red|white|pink|yellow|orange|purple|blue|salmon|coral|rose|lavender|burgundy|bronze|lime|green|peach|gold|scarlet|magenta|violet|cream|apricot|cherry|plum)\b/i;
+// genus-aware series word: drop a leading genus token, take the next word (works whether or not the
+// variety name is genus-prefixed) — used for plan-drift matching against a locked series.
+const srcSeriesOf = (name, genus) => { const w = String(name || "").toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter(Boolean); if (w[0] === genus) w.shift(); return w[0] || ""; };
+
+// Master panel — every crop→series lock in one place, with plan-drift flagging (which planned
+// varieties are off the locked series). Locks are created inline from the Compare-varieties view.
+function SrcLocks({ sb, plan }) {
+  const [locks, setLocks] = useState(null);
+  const [sels, setSels] = useState({});
+  const [drift, setDrift] = useState({}); // genus -> [{variety, series}]
+  const season = `${(plan?.year || 2027) - 1}-${plan?.year || 2027}`;
+  const load = async () => setLocks(await srcPageAll(sb, "sourcing_series_locks", "id,genus,series,variety,supplier,grown_before,note", q => q.eq("season", season)));
+  useEffect(() => {
+    if (!sb) return;
+    (async () => {
+      await load();
+      const sel = await srcPageAll(sb, "sourcing_selections", "supplier,selected_broker", q => q.eq("season", season).eq("form_class", "*"));
+      const sm = {}; sel.forEach(s => { if (s.selected_broker) sm[s.supplier] = s.selected_broker; }); setSels(sm);
+      if (plan?.id) {
+        const sc = await srcPageAll(sb, "scheduled_crops", "variety_id,item_name", q => q.eq("plan_id", plan.id).eq("is_combo_component", false).gt("qty_pots", 0));
+        const vars = await srcPageAll(sb, "variety_library", "id,crop_name,variety");
+        const vById = {}; vars.forEach(v => { vById[v.id] = v; });
+        const byGenus = {};
+        sc.forEach(r => { const v = vById[r.variety_id]; const name = v?.variety || r.item_name; if (!name) return; const genus = String(v?.crop_name || name).trim().toLowerCase().split(/\s+/)[0]; (byGenus[genus] = byGenus[genus] || []).push({ variety: name, series: srcSeriesOf(name, genus) }); });
+        setDrift(byGenus);
+      }
+    })();
+  }, [sb, plan]);
+  async function del(id) { await sb.from("sourcing_series_locks").delete().eq("id", id); await load(); }
+  if (locks == null) return <div style={{ padding: 16, color: COLORS.muted, fontSize: 13 }}>Loading…</div>;
+
+  // group locks by genus so drift is computed against the full locked-series set for that crop
+  const byGenusLock = {}; locks.forEach(l => { (byGenusLock[l.genus] = byGenusLock[l.genus] || []).push(l); });
+  const rowsUI = Object.entries(byGenusLock).map(([genus, ls]) => {
+    const lockedSeries = new Set(ls.map(l => (l.series || "").toLowerCase()).filter(Boolean));
+    const planItems = drift[genus] || [];
+    const off = lockedSeries.size ? planItems.filter(p => p.series && !lockedSeries.has(p.series)) : [];
+    return { genus, ls, off: [...new Set(off.map(o => o.variety))], planCount: planItems.length };
+  }).sort((a, b) => a.genus.localeCompare(b.genus));
+
+  return (
+    <div>
+      <div style={{ background: "#eef6e7", border: `1px solid ${COLORS.light}`, borderRadius: 8, padding: "9px 12px", fontSize: 12.5, color: COLORS.text, margin: "4px 0 12px" }}>
+        🔒 <strong>Series locks.</strong> The series (or specific variety) you've standardized on per crop, so genetics don't drift year to year. Broker is inherited from your supplier selection. Add locks from <strong>💡 Compare varieties</strong> (click 🔒 on a row). Below, <strong>off-series</strong> = varieties in this plan that don't match the locked series.
+      </div>
+      {rowsUI.length === 0 ? <div style={{ color: COLORS.muted, fontSize: 13, padding: "10px 0" }}>No series locked yet — open <strong>Compare varieties</strong>, expand a crop, and click 🔒 on the series you want to standardize on.</div> : (
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+          <thead><tr style={{ textAlign: "left", color: COLORS.muted }}><th style={{ padding: "5px 8px" }}>Crop</th><th style={{ padding: "5px 8px" }}>Locked series / variety</th><th style={{ padding: "5px 8px" }}>Supplier · broker</th><th style={{ padding: "5px 8px" }}>Plan drift</th><th></th></tr></thead>
+          <tbody>
+            {rowsUI.map(r => (
+              <tr key={r.genus} style={{ borderTop: `1px solid ${COLORS.border}`, verticalAlign: "top" }}>
+                <td style={{ padding: "6px 8px", fontWeight: 700, color: COLORS.dark, textTransform: "capitalize" }}>{r.genus}</td>
+                <td style={{ padding: "6px 8px" }}>{r.ls.map(l => (
+                  <div key={l.id} style={{ marginBottom: 3 }}>
+                    <span style={{ fontWeight: 700, textTransform: "capitalize", color: COLORS.dark }}>{l.series || l.variety}</span>
+                    {l.grown_before && <span title="we've grown this before" style={{ marginLeft: 6, fontSize: 9.5, color: COLORS.light, fontWeight: 800 }}>✓ grown</span>}
+                    {l.note && <span style={{ marginLeft: 6, fontSize: 11, color: COLORS.muted }}>{l.note}</span>}
+                    <button onClick={() => del(l.id)} title="Remove lock" style={{ marginLeft: 8, border: "none", background: "transparent", color: COLORS.red, cursor: "pointer", fontSize: 12 }}>✕</button>
+                  </div>
+                ))}</td>
+                <td style={{ padding: "6px 8px", color: COLORS.muted }}>{[...new Set(r.ls.map(l => l.supplier).filter(Boolean))].map(s => `${srcSup(s)}${sels[s] ? ` · ${sels[s]}` : ""}`).join(", ") || "—"}</td>
+                <td style={{ padding: "6px 8px" }}>{r.off.length ? <span style={{ color: COLORS.amber, fontWeight: 700 }} title={r.off.join("\n")}>⚠ {r.off.length} off-series</span> : <span style={{ color: COLORS.light, fontWeight: 700 }}>✓ on-series ({r.planCount})</span>}</td>
+                <td></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {rowsUI.some(r => r.off.length > 0) && (
+        <div style={{ marginTop: 14 }}>
+          <SrcSectionTitle>Off-series in this plan (drift)</SrcSectionTitle>
+          {rowsUI.filter(r => r.off.length).map(r => (
+            <div key={r.genus} style={{ fontSize: 12.5, marginBottom: 6 }}>
+              <strong style={{ textTransform: "capitalize", color: COLORS.dark }}>{r.genus}</strong> <span style={{ color: COLORS.muted }}>— not in {r.ls.map(l => l.series || l.variety).join("/")}: </span>
+              {r.off.map((v, i) => <span key={i} style={{ color: COLORS.amber }}>{i ? ", " : ""}{v}</span>)}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// loose normalize for "have we grown this variety before" matching (no genus-synonyms — a hint, not a hard key)
+const srcNorm = s => String(s || "").toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter(Boolean).sort().join(" ");
+// series word = the token right after the genus (e.g. "Bidens Blazing Ring" → "blazing"); noisy but a starting point
+const srcSeriesWord = variety => { const w = String(variety || "").trim().split(/\s+/); return (w[1] || "").toLowerCase().replace(/[^a-z0-9]/g, ""); };
 function SrcCompare({ sb, plan }) {
   const [grown, setGrown] = useState(null);   // [{genus,label}] crops in the plan
   const [allGenera, setAllGenera] = useState(null);
@@ -5574,21 +5666,35 @@ function SrcCompare({ sb, plan }) {
   const [open, setOpen] = useState(null);      // expanded genus
   const [rows, setRows] = useState({});        // genus -> variety rows
   const [busy, setBusy] = useState(false);
+  const [locks, setLocks] = useState([]);      // sourcing_series_locks rows
+  const [grownVars, setGrownVars] = useState(new Set()); // normalized names we've grown before
+  const [sels, setSels] = useState({});        // supplier -> selected broker (inherited)
+  const season = `${(plan?.year || 2027) - 1}-${plan?.year || 2027}`;
 
+  const loadLocks = async () => { const l = await srcPageAll(sb, "sourcing_series_locks", "id,genus,series,variety,supplier,grown_before,note", q => q.eq("season", season)); setLocks(l || []); };
   useEffect(() => {
     if (!sb) return;
     (async () => {
+      await loadLocks();
+      const sel = await srcPageAll(sb, "sourcing_selections", "supplier,selected_broker", q => q.eq("season", season).eq("form_class", "*"));
+      const sm = {}; sel.forEach(s => { if (s.selected_broker) sm[s.supplier] = s.selected_broker; }); setSels(sm);
       if (plan?.id) {
         const sc = await srcPageAll(sb, "scheduled_crops", "variety_id", q => q.eq("plan_id", plan.id).eq("is_combo_component", false));
         const vids = [...new Set(sc.map(r => r.variety_id).filter(Boolean))];
-        const vars = await srcPageAll(sb, "variety_library", "id,crop_name");
+        const vars = await srcPageAll(sb, "variety_library", "id,crop_name,variety");
         const cropById = {}; vars.forEach(v => { cropById[v.id] = v.crop_name; });
         const g = {};
         vids.forEach(id => { const cn = cropById[id]; if (!cn) return; const genus = String(cn).trim().toLowerCase().split(/\s+/)[0]; if (genus) g[genus] = cn; });
         setGrown(Object.entries(g).map(([genus, label]) => ({ genus, label })).sort((a, b) => a.label.localeCompare(b.label)));
+        // "grown before" = varieties on ANY plan (track record) — normalized, genus dropped for matching
+        const allSc = await srcPageAll(sb, "scheduled_crops", "variety_id", q => q.eq("is_combo_component", false).gt("qty_pots", 0));
+        const usedVids = new Set(allSc.map(r => r.variety_id).filter(Boolean));
+        const gv = new Set();
+        vars.forEach(v => { if (usedVids.has(v.id) && v.variety) gv.add(srcNorm(String(v.variety).split(/\s+/).slice(1).join(" ") || v.variety)); });
+        setGrownVars(gv);
       } else setGrown([]);
     })();
-  }, [sb, plan]);
+  }, [sb, plan]); // eslint wants season but it's derived from plan
 
   async function loadAllGenera() {
     if (allGenera) return;
@@ -5615,6 +5721,13 @@ function SrcCompare({ sb, plan }) {
       setBusy(false);
     }
   }
+  // lock / unlock a series for a crop (broker is inherited from the supplier's sourcing_selection)
+  async function toggleLock(genus, seriesWord, supplier, variety, grownBefore) {
+    const existing = locks.find(l => l.genus === genus && (l.series || "").toLowerCase() === seriesWord);
+    if (existing) await sb.from("sourcing_series_locks").delete().eq("id", existing.id);
+    else await sb.from("sourcing_series_locks").insert({ season, genus, series: seriesWord, supplier: supplier || null, grown_before: !!grownBefore, note: variety ? `e.g. ${variety}` : null });
+    await loadLocks();
+  }
 
   if (grown == null) return <div style={{ padding: 16, color: COLORS.muted, fontSize: 13 }}>Loading…</div>;
   const grownGenera = new Set(grown.map(g => g.genus));
@@ -5624,17 +5737,21 @@ function SrcCompare({ sb, plan }) {
     const list = (rows[c.genus] || []).slice().sort((a, b) => a.landed - b.landed);
     const byForm = {}; list.forEach(r => (byForm[r.form] = byForm[r.form] || []).push(r));
     const lo = list.length ? Math.min(...list.map(r => r.landed)) : null;
+    const genusLocks = locks.filter(l => l.genus === c.genus);
+    const lockedSeries = new Set(genusLocks.map(l => (l.series || "").toLowerCase()).filter(Boolean));
     return (
-      <div style={{ border: `1px solid ${COLORS.border}`, borderRadius: 10, marginBottom: 6, overflow: "hidden", background: COLORS.card }}>
+      <div style={{ border: `1px solid ${lockedSeries.size ? COLORS.light : COLORS.border}`, borderRadius: 10, marginBottom: 6, overflow: "hidden", background: COLORS.card }}>
         <div onClick={() => expand(c.genus)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", cursor: "pointer" }}>
           <span style={{ color: COLORS.muted, width: 12 }}>{open === c.genus ? "▾" : "▸"}</span>
           <strong style={{ color: COLORS.dark }}>{c.label}</strong>
+          {genusLocks.map(l => <span key={l.id} style={{ fontSize: 10, color: "#fff", background: COLORS.light, borderRadius: 10, padding: "1px 8px", fontWeight: 700, textTransform: "capitalize" }}>🔒 {l.series || l.variety}{l.supplier ? ` · ${srcSup(l.supplier)}` : ""}{sels[l.supplier] ? ` (${sels[l.supplier]})` : ""}</span>)}
           {!isGrown && <span style={{ fontSize: 10, color: COLORS.muted, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "1px 7px" }}>don't grow</span>}
         </div>
         {open === c.genus && (
           busy && !rows[c.genus] ? <div style={{ padding: "4px 14px 12px", color: COLORS.muted, fontSize: 12 }}>Loading varieties…</div> :
           !list.length ? <div style={{ padding: "4px 14px 12px", color: COLORS.muted, fontSize: 12 }}>No URC/callused quotes.</div> :
           <div style={{ padding: "0 12px 10px" }}>
+            {lockedSeries.size > 0 && <div style={{ fontSize: 11, color: COLORS.muted, margin: "2px 0 6px" }}>🔒 Locked to <strong style={{ textTransform: "capitalize" }}>{[...lockedSeries].join(", ")}</strong> — off-series varieties are dimmed. 🔒 to lock a series · ✓ = grown before.</div>}
             {Object.entries(byForm).map(([form, fl]) => (
               <div key={form} style={{ marginBottom: 8 }}>
                 <div style={{ fontSize: 11, fontWeight: 800, color: COLORS.muted, margin: "4px 0" }}>{srcFormLabel(form)} <span style={{ fontWeight: 400 }}>({fl.length})</span></div>
@@ -5643,13 +5760,18 @@ function SrcCompare({ sb, plan }) {
                     {fl.sort((a, b) => a.landed - b.landed).map((r, i) => {
                       const col = (r.variety.match(SRC_COLORS_RX) || [])[0];
                       const cheap = r.landed === lo;
+                      const sw = srcSeriesWord(r.variety);
+                      const isLocked = lockedSeries.has(sw);
+                      const offSeries = lockedSeries.size > 0 && !isLocked;
+                      const grownB = grownVars.has(srcNorm(String(r.variety).split(/\s+/).slice(1).join(" ")));
                       return (
-                        <tr key={i} style={{ borderTop: `1px solid ${COLORS.border}` }}>
-                          <td style={{ padding: "3px 8px" }}>{r.variety}{col && <span style={{ marginLeft: 6, fontSize: 9.5, color: COLORS.muted, textTransform: "capitalize" }}>{col}</span>}</td>
+                        <tr key={i} style={{ borderTop: `1px solid ${COLORS.border}`, opacity: offSeries ? 0.45 : 1, background: isLocked ? "#f2f8ec" : "transparent" }}>
+                          <td style={{ padding: "3px 8px" }}>{r.variety}{col && <span style={{ marginLeft: 6, fontSize: 9.5, color: COLORS.muted, textTransform: "capitalize" }}>{col}</span>}{grownB && <span title="we've grown this before" style={{ marginLeft: 6, fontSize: 9.5, color: COLORS.light, fontWeight: 800 }}>✓ grown</span>}</td>
                           <td style={{ padding: "3px 8px", color: COLORS.muted }}>{srcSup(r.supplier)}</td>
                           <td style={{ padding: "3px 8px", color: srcBrokerColor(r.broker), fontWeight: 700 }}>{r.broker}</td>
                           <td style={{ padding: "3px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums", color: r.itemMin > 100 ? COLORS.red : COLORS.muted, fontWeight: r.itemMin > 100 ? 700 : 400 }} title="minimum per variety (from the quote)">{r.itemMin ? `min ${r.itemMin.toLocaleString()}` : ""}</td>
                           <td style={{ padding: "3px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums", background: cheap ? "#dcedc8" : "transparent", fontWeight: cheap ? 800 : 400 }}>{money(r.landed)}</td>
+                          <td style={{ padding: "3px 4px", textAlign: "center" }}><button onClick={() => sw && toggleLock(c.genus, sw, r.supplier, r.variety, grownB)} title={isLocked ? "Unlock this series" : `Lock ${c.label} to the ${sw} series`} style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: 13, opacity: isLocked ? 1 : 0.35 }}>🔒</button></td>
                         </tr>
                       );
                     })}
