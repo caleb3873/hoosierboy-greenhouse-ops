@@ -6934,6 +6934,7 @@ function BpProfilesView({ plan }) {
 // staggered). Rows run down the length: edge-to-edge gap (spacingIn) + pot for the "every N in" specs,
 // or the ~13" board pitch when blank ("every board"). Blue dashed line(s) = irrigation tube(s).
 const BENCH_BOARD_PITCH_IN = 13; // far-end to far-end of consecutive boards
+const poinChipBg = c => { const x = String(c || "").toUpperCase(); return x === "RED" ? "#fdecea" : x === "WHITE" ? "#f3f3f3" : x === "PINK" ? "#fce4ec" : x.includes("MARBLE") ? "#fff3e0" : (x.includes("CRYSTAL") || x.includes("ICE")) ? "#e8f4fb" : x.includes("GLITTER") ? "#f3e5f5" : "#eef3e9"; };
 function BenchTopDiagram({ widthFt, pattern, across, spacingIn, touching, tubes, tubePosIn, potIn }) {
   const wIn = (+widthFt || 4) * 12;
   const pot = +potIn || 6.5;
@@ -6962,20 +6963,32 @@ function BenchByBench({ plan }) {
   const sb = getSupabase();
   const [benches, setBenches] = useState(null);
   const [pots, setPots] = useState({});   // bench_id -> "6.5\"/8\""
+  const [items, setItems] = useState({}); // bench_id -> [{pot,dia,label,qty,color}]
   const [spec, setSpec] = useState({});   // bench_id -> editable spec
   const [guides, setGuides] = useState([]);
   const [showGuides, setShowGuides] = useState(false);
   const load = async () => {
     if (!sb) return;
-    const sc = await srcPageAll(sb, "scheduled_crops", "bench_id,container_id", q => q.eq("plan_id", plan.id).eq("is_combo_component", false).not("bench_id", "is", null));
+    const sc = await srcPageAll(sb, "scheduled_crops", "bench_id,container_id,variety_id,color,item_name,qty_pots", q => q.eq("plan_id", plan.id).eq("is_combo_component", false).not("bench_id", "is", null));
     const bids = [...new Set(sc.map(r => r.bench_id))];
     const { data: gd } = await sb.from("spacing_guidelines").select("*"); setGuides(gd || []);
     if (!bids.length) { setBenches([]); return; }
     const { data: bd } = await sb.from("benches").select("id,code,zone_label,position,width_ft,length_ft").in("id", bids);
-    const { data: cs } = await sb.from("containers").select("id,diameter_in");
-    const dia = {}; (cs || []).forEach(c => { dia[c.id] = c.diameter_in; });
-    const potBy = {}; sc.forEach(r => { const d = dia[r.container_id]; if (d) (potBy[r.bench_id] = potBy[r.bench_id] || new Set()).add(d); });
+    const { data: cs } = await sb.from("containers").select("id,diameter_in,name");
+    const dia = {}, cname = {}; (cs || []).forEach(c => { dia[c.id] = c.diameter_in; cname[c.id] = c.name; });
+    const vids = [...new Set(sc.map(r => r.variety_id).filter(Boolean))];
+    const vl = vids.length ? await srcPageAll(sb, "variety_library", "id,variety,crop_name", q => q.in("id", vids)) : [];
+    const vById = {}; vl.forEach(v => { vById[v.id] = v; });
+    const potBy = {}, itemBy = {};
+    sc.forEach(r => {
+      const d = dia[r.container_id]; if (d) (potBy[r.bench_id] = potBy[r.bench_id] || new Set()).add(d);
+      const v = vById[r.variety_id];
+      const label = [v?.variety || v?.crop_name || r.item_name, r.color && !/novelty/i.test(r.color) ? r.color : null].filter(Boolean).join(" · ");
+      const potLbl = d ? `${d}"` : (cname[r.container_id] || "");
+      (itemBy[r.bench_id] = itemBy[r.bench_id] || []).push({ pot: potLbl, dia: d, label: label || "—", qty: +r.qty_pots || 0, color: r.color || null });
+    });
     const pm = {}; Object.entries(potBy).forEach(([b, s]) => { pm[b] = [...s].sort((a, x) => a - x).map(d => `${d}"`).join("/"); }); setPots(pm);
+    setItems(itemBy);
     setBenches((bd || []).sort((a, b) => (a.zone_label || "").localeCompare(b.zone_label || "") || (a.code || "").localeCompare(b.code || "")));
     const { data: sp } = await sb.from("bench_spacing").select("*").eq("plan_id", plan.id);
     const m = {}; (sp || []).forEach(r => { m[r.bench_id] = r; }); setSpec(m);
@@ -7037,12 +7050,19 @@ function BenchByBench({ plan }) {
           {benches.filter(b => (b.zone_label || "—") === z).map(b => {
             const s = spec[b.id] || {};
             const potIn = parseFloat(String(pots[b.id] || "").replace(/[^\d.]/g, "")) || null;
+            const dedup = Object.values((items[b.id] || []).reduce((a, it) => { const k = it.label + "|" + it.pot; (a[k] = a[k] || { ...it, qty: 0 }).qty += it.qty; return a; }, {}));
             return (
-              <div key={b.id} style={{ display: "flex", gap: 12, alignItems: "flex-start", borderTop: `1px solid ${COLORS.border}`, padding: "9px 0" }}>
-                <div style={{ minWidth: 92 }}>
-                  <div style={{ fontWeight: 800, color: COLORS.dark, fontSize: 13 }}>{b.code}</div>
-                  <div style={{ fontSize: 11, color: COLORS.muted }}>{b.width_ft ? `${b.width_ft} ft` : "— ft"}{pots[b.id] ? ` · ${pots[b.id]}` : ""}</div>
+              <div key={b.id} style={{ borderTop: `1px solid ${COLORS.border}`, padding: "10px 0" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
+                  <span style={{ fontWeight: 800, color: COLORS.dark, fontSize: 14, minWidth: 74 }}>{b.code}</span>
+                  <span style={{ fontSize: 11, color: COLORS.muted }}>{b.width_ft ? `${b.width_ft} ft wide` : "— ft"}</span>
+                  {(pots[b.id] || "").split("/").filter(Boolean).map((p, i) => <span key={i} style={{ fontSize: 17, fontWeight: 800, color: "#fff", background: COLORS.dark, borderRadius: 8, padding: "2px 12px", letterSpacing: .3 }}>{p}</span>)}
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {dedup.length ? dedup.map((it, i) => <span key={i} style={{ fontSize: 12.5, fontWeight: 600, color: COLORS.dark, background: poinChipBg(it.color), border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "2px 10px" }}>{it.label}{it.qty ? ` · ${it.qty.toLocaleString()}` : ""}</span>)
+                      : <span style={{ fontSize: 12, color: COLORS.muted }}>no item scheduled</span>}
+                  </div>
                 </div>
+                <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0,1fr)) auto", gap: 6, flex: 1, alignItems: "end" }}>
                   <div><div style={lbl}>Pattern</div><input value={s.pattern || ""} onChange={e => upd(b.id, { pattern: e.target.value })} onBlur={() => save(b.id)} placeholder="2×1" style={{ ...inp, width: "100%" }} /></div>
                   <div><div style={lbl}>Across</div><input value={s.across ?? ""} onChange={e => upd(b.id, { across: e.target.value })} onBlur={() => save(b.id)} inputMode="numeric" style={{ ...inp, width: "100%" }} /></div>
@@ -7056,6 +7076,7 @@ function BenchByBench({ plan }) {
                   </div>
                 </div>
                 <BenchTopDiagram widthFt={b.width_ft} pattern={s.pattern} across={s.across} spacingIn={s.spacing_in} touching={s.touching} tubes={s.tubes} tubePosIn={s.tube_pos_in} potIn={potIn} />
+                </div>
               </div>
             );
           })}
