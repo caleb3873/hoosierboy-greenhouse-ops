@@ -6936,6 +6936,9 @@ function BpProfilesView({ plan }) {
 // layouts); blue dashed line(s) = irrigation tube(s). Vertical spacing is schematic; caption has the real numbers.
 const BENCH_BOARD_PITCH_IN = 13; // far-end to far-end of consecutive boards
 const poinChipBg = c => { const x = String(c || "").toUpperCase(); return x === "RED" ? "#fdecea" : x === "WHITE" ? "#f3f3f3" : x === "PINK" ? "#fce4ec" : x.includes("MARBLE") ? "#fff3e0" : (x.includes("CRYSTAL") || x.includes("ICE")) ? "#e8f4fb" : x.includes("GLITTER") ? "#f3e5f5" : "#eef3e9"; };
+// optional print columns (bench / plant / item are always included)
+const BP_PRINT_COLS = [["pots", "Pots/bench"], ["potsize", "Pot size"], ["pattern", "Pattern"], ["across", "Across"], ["along", "Along"], ["tubes", "Tubes"], ["tubepos", "Tube @"], ["note", "Note"]];
+const bpWeekDate = (year, week) => { if (!year || !week) return ""; const s = new Date(Date.UTC(+year, 0, 1 + (+week - 1) * 7)); const dow = s.getUTCDay(); const m = new Date(s); m.setUTCDate(s.getUTCDate() + (dow <= 4 ? 1 - dow : 8 - dow)); return `${m.getUTCMonth() + 1}/${m.getUTCDate()}`; };
 function benchSpacingCaption({ pattern, spacingIn, touching, potIn }) {
   const pot = potIn ? `${potIn}" pots · ` : "";
   const along = touching ? "pot-to-pot" : (+spacingIn ? `every ${spacingIn}" (edge)` : `every board (~13")`);
@@ -6988,9 +6991,10 @@ function BenchByBench({ plan }) {
   const [spec, setSpec] = useState({});   // bench_id -> editable spec
   const [guides, setGuides] = useState([]);
   const [showGuides, setShowGuides] = useState(false);
+  const [printCols, setPrintCols] = useState({ pots: true, potsize: true });
   const load = async () => {
     if (!sb) return;
-    const sc = await srcPageAll(sb, "scheduled_crops", "bench_id,container_id,variety_id,color,item_name,qty_pots", q => q.eq("plan_id", plan.id).eq("is_combo_component", false).not("bench_id", "is", null));
+    const sc = await srcPageAll(sb, "scheduled_crops", "bench_id,container_id,variety_id,color,item_name,qty_pots,plant_week,plant_year", q => q.eq("plan_id", plan.id).eq("is_combo_component", false).not("bench_id", "is", null));
     const bids = [...new Set(sc.map(r => r.bench_id))];
     const { data: gd } = await sb.from("spacing_guidelines").select("*"); setGuides(gd || []);
     if (!bids.length) { setBenches([]); return; }
@@ -7006,7 +7010,7 @@ function BenchByBench({ plan }) {
       const v = vById[r.variety_id];
       const label = [v?.variety || v?.crop_name || r.item_name, r.color && !/novelty/i.test(r.color) ? r.color : null].filter(Boolean).join(" · ");
       const potLbl = d ? `${d}"` : (cname[r.container_id] || "");
-      (itemBy[r.bench_id] = itemBy[r.bench_id] || []).push({ pot: potLbl, dia: d, label: label || "—", qty: +r.qty_pots || 0, color: r.color || null });
+      (itemBy[r.bench_id] = itemBy[r.bench_id] || []).push({ pot: potLbl, dia: d, label: label || "—", qty: +r.qty_pots || 0, color: r.color || null, week: r.plant_week, year: r.plant_year });
     });
     const pm = {}; Object.entries(potBy).forEach(([b, s]) => { pm[b] = [...s].sort((a, x) => a - x).map(d => `${d}"`).join("/"); }); setPots(pm);
     setItems(itemBy);
@@ -7041,6 +7045,27 @@ function BenchByBench({ plan }) {
     await sb.from("bench_spacing").upsert(zone.map(x => ({ ...rowOf(src), bench_id: x.id })), { onConflict: "plan_id,bench_id" });
     await load();
   }
+  // production handoff sheet — always Bench / Plant / Item, plus the chosen optional columns
+  function printSheet() {
+    const optCols = BP_PRINT_COLS.filter(([k]) => printCols[k]);
+    const esc = s => String(s == null ? "" : s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+    const rowCells = b => {
+      const s = spec[b.id] || {};
+      const its = Object.values((items[b.id] || []).reduce((a, it) => { const k = it.pot + "|" + it.label; (a[k] = a[k] || { ...it, qty: 0 }).qty += it.qty; return a; }, {}));
+      const totalPots = (items[b.id] || []).reduce((n, it) => n + it.qty, 0);
+      const weeks = [...new Set((items[b.id] || []).map(it => it.week ? bpWeekDate(it.year, it.week) : null).filter(Boolean))].join(", ");
+      const itemStr = its.map(it => `${it.pot ? it.pot + " " : ""}${it.label}`).join("; ");
+      const map = { pots: totalPots || "", potsize: pots[b.id] || "", pattern: s.pattern || "", across: s.across ?? "", along: s.touching ? "touch" : (s.spacing_in ? s.spacing_in + '"' : (s.pattern ? "board" : "")), tubes: s.tubes ?? "", tubepos: s.tube_pos_in ? s.tube_pos_in + '"' : "", note: s.note || "" };
+      return `<td><b>${esc(b.code)}</b></td><td>${esc(weeks)}</td><td>${esc(itemStr)}</td>` + optCols.map(([k]) => `<td>${esc(map[k])}</td>`).join("");
+    };
+    let body = "";
+    zones.forEach(z => { body += `<tr class="z"><td colspan="${3 + optCols.length}">${esc(z)}</td></tr>`; benches.filter(b => (b.zone_label || "—") === z).forEach(b => { body += `<tr>${rowCells(b)}</tr>`; }); });
+    const head = `<th>Bench</th><th>Plant</th><th>Item</th>` + optCols.map(([, l]) => `<th>${esc(l)}</th>`).join("");
+    const html = `<html><head><title>${esc(plan.name)} — Bench Prep</title><style>body{font-family:Arial,Helvetica,sans-serif;margin:18px;color:#000}h2{margin:0}.sub{color:#555;font-size:12px;margin:2px 0 12px}table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid #999;padding:5px 8px;text-align:left}th{background:#eee}tr.z td{background:#333;color:#fff;font-weight:bold}@media print{body{margin:8mm}}</style></head><body><h2>${esc(plan.name)} — Bench Prep</h2><div class="sub">Production handoff · ${benches.length} benches</div><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></body></html>`;
+    const w = window.open("", "_blank");
+    if (!w) { window.alert("Allow pop-ups to print the handoff sheet."); return; }
+    w.document.write(html); w.document.close(); w.focus(); setTimeout(() => w.print(), 300);
+  }
   if (benches == null) return <div style={{ padding: 30, color: COLORS.muted, fontFamily: "'DM Sans',sans-serif" }}>Loading benches…</div>;
   if (!benches.length) return <div style={{ padding: 16, color: COLORS.muted, fontSize: 13 }}>No benches assigned in this plan yet.</div>;
   const zones = [...new Set(benches.map(b => b.zone_label || "—"))];
@@ -7055,6 +7080,13 @@ function BenchByBench({ plan }) {
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
         <button onClick={prefill} style={{ background: COLORS.light, color: "#fff", border: "none", borderRadius: 8, padding: "7px 14px", fontWeight: 700, fontSize: 12.5, cursor: "pointer", fontFamily: "inherit" }}>✨ Prefill from guidelines</button>
         <button onClick={() => setShowGuides(s => !s)} style={{ background: "#fff", color: COLORS.dark, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "7px 12px", fontWeight: 700, fontSize: 12.5, cursor: "pointer", fontFamily: "inherit" }}>📋 {showGuides ? "Hide" : "Show"} guidelines</button>
+        <button onClick={printSheet} style={{ background: COLORS.dark, color: "#fff", border: "none", borderRadius: 8, padding: "7px 14px", fontWeight: 700, fontSize: 12.5, cursor: "pointer", fontFamily: "inherit" }}>🖨 Print handoff</button>
+      </div>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 12, fontSize: 12, color: COLORS.muted }}>
+        <span style={{ fontWeight: 700 }}>Print columns:</span>
+        <span>Bench · Plant · Item</span>
+        <span style={{ color: COLORS.border }}>|</span>
+        {BP_PRINT_COLS.map(([k, l]) => <label key={k} style={{ display: "flex", gap: 3, alignItems: "center", cursor: "pointer" }}><input type="checkbox" checked={!!printCols[k]} onChange={e => setPrintCols(p => ({ ...p, [k]: e.target.checked }))} /> {l}</label>)}
       </div>
       {showGuides && (
         <div style={{ border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "8px 12px", marginBottom: 12, background: COLORS.card }}>
@@ -7078,9 +7110,10 @@ function BenchByBench({ plan }) {
                 <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
                   <span style={{ fontWeight: 800, color: COLORS.dark, fontSize: 14, minWidth: 74 }}>{b.code}</span>
                   <span style={{ fontSize: 11, color: COLORS.muted }}>{b.width_ft ? `${b.width_ft} ft wide` : "— ft"}</span>
-                  {(pots[b.id] || "").split("/").filter(Boolean).map((p, i) => <span key={i} style={{ fontSize: 17, fontWeight: 800, color: "#fff", background: COLORS.dark, borderRadius: 8, padding: "2px 12px", letterSpacing: .3 }}>{p}</span>)}
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                    {dedup.length ? dedup.map((it, i) => <span key={i} style={{ fontSize: 12.5, fontWeight: 600, color: COLORS.dark, background: poinChipBg(it.color), border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "2px 10px" }}>{it.label}{it.qty ? ` · ${it.qty.toLocaleString()}` : ""}</span>)
+                    {dedup.length ? dedup.map((it, i) => <span key={i} style={{ fontSize: 12.5, fontWeight: 600, color: COLORS.dark, background: poinChipBg(it.color), border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "2px 10px", display: "inline-flex", alignItems: "center", gap: 7 }}>
+                      <span style={{ fontSize: 15, fontWeight: 800, color: "#fff", background: COLORS.dark, borderRadius: 6, padding: "1px 8px" }}>{it.pot || "?"}</span>
+                      {it.label}{it.qty ? ` · ${it.qty.toLocaleString()}` : ""}</span>)
                       : <span style={{ fontSize: 12, color: COLORS.muted }}>no item scheduled</span>}
                   </div>
                 </div>
