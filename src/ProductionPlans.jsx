@@ -6930,19 +6930,23 @@ function BpProfilesView({ plan }) {
   );
 }
 
-// top-down bench slice (real width) — `across` pots across the width, rows down the length every
-// `spacingIn` (the "every N inches" pitch); blue dashed line(s) = irrigation tube(s).
-function BenchTopDiagram({ widthFt, across, spacingIn, touching, tubes, tubePosIn, potIn }) {
+// top-down bench slice (real width). Pattern "N×M" = N pots on one board, M on the next (alternating,
+// staggered). Rows run down the length: edge-to-edge gap (spacingIn) + pot for the "every N in" specs,
+// or the ~13" board pitch when blank ("every board"). Blue dashed line(s) = irrigation tube(s).
+const BENCH_BOARD_PITCH_IN = 13; // far-end to far-end of consecutive boards
+function BenchTopDiagram({ widthFt, pattern, across, spacingIn, touching, tubes, tubePosIn, potIn }) {
   const wIn = (+widthFt || 4) * 12;
   const pot = +potIn || 6.5;
-  const cols = +across || Math.max(1, Math.floor(wIn / pot));
-  const colPitch = wIn / cols;
-  const rowPitch = touching ? pot : (+spacingIn || pot);
-  const rows = Math.max(3, Math.min(6, Math.round(66 / rowPitch) || 4)); // nominal length window
-  const MAXW = 230, scale = MAXW / wIn, W = wIn * scale, H = rows * rowPitch * scale;
-  const pr = Math.max(2, Math.min(colPitch, rowPitch) / 2 * 0.82 * scale);
+  let N = +across || 1, M = N;
+  if (pattern && /x/i.test(String(pattern))) { const p = String(pattern).toLowerCase().split("x"); const a = parseInt(p[0], 10), b = parseInt(p[1], 10); if (a) N = a; M = b || a; }
+  const rowPitch = touching ? pot : (+spacingIn ? +spacingIn + pot : BENCH_BOARD_PITCH_IN); // center-to-center down length
+  const maxAcross = Math.max(N, M, 1);
+  const MAXW = 230, scale = MAXW / wIn, W = wIn * scale;
+  const rows = Math.max(4, Math.min(8, Math.round(72 / rowPitch) || 4));
+  const H = rows * rowPitch * scale;
+  const pr = Math.max(2, Math.min(wIn / maxAcross, rowPitch) / 2 * 0.8 * scale);
   const cells = [];
-  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) cells.push([colPitch * (c + 0.5) * scale, rowPitch * (r + 0.5) * scale]);
+  for (let r = 0; r < rows; r++) { const k = r % 2 === 0 ? N : M; for (let c = 0; c < k; c++) cells.push([wIn * (c + 0.5) / k * scale, rowPitch * (r + 0.5) * scale]); }
   const nt = +tubes || 1;
   const tubeXs = (tubePosIn && nt === 1) ? [(+tubePosIn) * scale] : Array.from({ length: nt }, (_, t) => ((t + 1) / (nt + 1)) * W);
   return (
@@ -7051,7 +7055,7 @@ function BenchByBench({ plan }) {
                     <button onClick={() => applyToZone(b)} title={`Copy to all of ${z}`} style={{ border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.dark, borderRadius: 6, padding: "5px 10px", fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>↓ Apply to zone</button>
                   </div>
                 </div>
-                <BenchTopDiagram widthFt={b.width_ft} across={s.across} spacingIn={s.spacing_in} touching={s.touching} tubes={s.tubes} tubePosIn={s.tube_pos_in} potIn={potIn} />
+                <BenchTopDiagram widthFt={b.width_ft} pattern={s.pattern} across={s.across} spacingIn={s.spacing_in} touching={s.touching} tubes={s.tubes} tubePosIn={s.tube_pos_in} potIn={potIn} />
               </div>
             );
           })}
