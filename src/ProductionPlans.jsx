@@ -6902,6 +6902,16 @@ function BpProfileCard({ p, onChange }) {
   );
 }
 function BenchPrepTab({ plan }) {
+  const [mode, setMode] = useState("bench"); // bench-by-bench walk (default) | crop profiles
+  const tabBtn = (m, label) => <button onClick={() => setMode(m)} style={{ border: `1.5px solid ${mode === m ? COLORS.light : COLORS.border}`, background: mode === m ? COLORS.light : "#fff", color: mode === m ? "#fff" : COLORS.dark, borderRadius: 8, padding: "6px 14px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{label}</button>;
+  return (
+    <div style={{ fontFamily: "'DM Sans','Segoe UI',sans-serif" }}>
+      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>{tabBtn("bench", "🪑 By bench")}{tabBtn("crop", "📐 By crop profile")}</div>
+      {mode === "bench" ? <BenchByBench plan={plan} /> : <BpProfilesView plan={plan} />}
+    </div>
+  );
+}
+function BpProfilesView({ plan }) {
   const sb = getSupabase();
   const [profiles, setProfiles] = useState(null);
   const load = async () => { if (!sb) return; const { data } = await sb.from("spacing_profiles").select("*").eq("plan_id", plan.id).order("created_at"); setProfiles(data || []); };
@@ -6916,6 +6926,104 @@ function BenchPrepTab({ plan }) {
       <button onClick={add} style={{ background: COLORS.light, color: "#fff", border: "none", borderRadius: 8, padding: "7px 15px", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit", marginBottom: 12 }}>+ Add spacing profile</button>
       {profiles.length === 0 ? <div style={{ color: COLORS.muted, fontSize: 13, padding: "10px 0" }}>No spacing profiles yet — add one per crop type + pot size.</div>
         : profiles.map(p => <BpProfileCard key={p.id} p={p} onChange={load} />)}
+    </div>
+  );
+}
+
+// top-down bench diagram (real width) — pots across at the spacing, blue dashed tube line(s)
+function BenchTopDiagram({ widthFt, across, spacingIn, touching, tubes, tubePosIn, potIn }) {
+  const wIn = (+widthFt || 4) * 12;
+  const pot = +potIn || 6.5;
+  const sp = touching ? pot : (+spacingIn || pot);
+  const n = +across || Math.max(1, Math.floor(wIn / sp));
+  const MAXW = 230, scale = MAXW / wIn, W = wIn * scale;
+  const rows = 4, H = rows * sp * scale;
+  const offX = (wIn - (n - 1) * sp) / 2;
+  const pr = Math.max(2, (sp / 2) * 0.82 * scale);
+  const cells = [];
+  for (let r = 0; r < rows; r++) for (let c = 0; c < n; c++) cells.push([(offX + c * sp) * scale, sp * (r + 0.5) * scale]);
+  const nt = +tubes || 1;
+  const tubeXs = (tubePosIn && nt === 1) ? [(+tubePosIn) * scale] : Array.from({ length: nt }, (_, t) => ((t + 1) / (nt + 1)) * W);
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: W, maxWidth: "100%", border: `1px solid ${COLORS.border}`, borderRadius: 6, background: "#fafcf8", display: "block" }}>
+      {tubeXs.map((x, i) => <line key={"t" + i} x1={x} y1={0} x2={x} y2={H} stroke="#4a90d9" strokeWidth="2" strokeDasharray="5 3" />)}
+      {cells.map(([x, y], i) => <circle key={i} cx={x} cy={y} r={pr} fill="#7fb069" fillOpacity="0.5" stroke="#5a8048" strokeWidth="0.7" />)}
+    </svg>
+  );
+}
+// Bench-by-bench walk — every bench in the plan (sorted by zone + code), each with its pot pattern /
+// spacing / tube setup. Upserts on blur; "apply to zone" copies one bench's setup to the whole range.
+function BenchByBench({ plan }) {
+  const sb = getSupabase();
+  const [benches, setBenches] = useState(null);
+  const [pots, setPots] = useState({});   // bench_id -> "6.5\"/8\""
+  const [spec, setSpec] = useState({});   // bench_id -> editable spec
+  const load = async () => {
+    if (!sb) return;
+    const sc = await srcPageAll(sb, "scheduled_crops", "bench_id,container_id", q => q.eq("plan_id", plan.id).eq("is_combo_component", false).not("bench_id", "is", null));
+    const bids = [...new Set(sc.map(r => r.bench_id))];
+    if (!bids.length) { setBenches([]); return; }
+    const { data: bd } = await sb.from("benches").select("id,code,zone_label,position,width_ft,length_ft").in("id", bids);
+    const { data: cs } = await sb.from("containers").select("id,diameter_in");
+    const dia = {}; (cs || []).forEach(c => { dia[c.id] = c.diameter_in; });
+    const potBy = {}; sc.forEach(r => { const d = dia[r.container_id]; if (d) (potBy[r.bench_id] = potBy[r.bench_id] || new Set()).add(d); });
+    const pm = {}; Object.entries(potBy).forEach(([b, s]) => { pm[b] = [...s].sort((a, x) => a - x).map(d => `${d}"`).join("/"); }); setPots(pm);
+    setBenches((bd || []).sort((a, b) => (a.zone_label || "").localeCompare(b.zone_label || "") || (a.code || "").localeCompare(b.code || "")));
+    const { data: sp } = await sb.from("bench_spacing").select("*").eq("plan_id", plan.id);
+    const m = {}; (sp || []).forEach(r => { m[r.bench_id] = r; }); setSpec(m);
+  };
+  useEffect(() => { load(); }, [sb, plan.id]);
+  const rowOf = r => ({ plan_id: plan.id, bench_id: r.bench_id, pattern: r.pattern || null, across: r.across ? +r.across : null, spacing_in: r.spacing_in ? +r.spacing_in : null, touching: !!r.touching, tubes: r.tubes ? +r.tubes : 1, tube_pos_in: r.tube_pos_in ? +r.tube_pos_in : null, note: r.note || null, updated_at: new Date().toISOString() });
+  const upd = (id, patch) => setSpec(s => ({ ...s, [id]: { ...s[id], bench_id: id, ...patch } }));
+  const save = async id => { await sb.from("bench_spacing").upsert(rowOf(spec[id] || { bench_id: id }), { onConflict: "plan_id,bench_id" }); };
+  async function applyToZone(b) {
+    const src = spec[b.id]; if (!src) return;
+    if (!window.confirm(`Copy ${b.code}'s setup to every bench in ${b.zone_label}?`)) return;
+    const zone = benches.filter(x => x.zone_label === b.zone_label);
+    await sb.from("bench_spacing").upsert(zone.map(x => ({ ...rowOf(src), bench_id: x.id })), { onConflict: "plan_id,bench_id" });
+    await load();
+  }
+  if (benches == null) return <div style={{ padding: 30, color: COLORS.muted, fontFamily: "'DM Sans',sans-serif" }}>Loading benches…</div>;
+  if (!benches.length) return <div style={{ padding: 16, color: COLORS.muted, fontSize: 13 }}>No benches assigned in this plan yet.</div>;
+  const zones = [...new Set(benches.map(b => b.zone_label || "—"))];
+  const configured = benches.filter(b => { const s = spec[b.id]; return s && (s.across || s.spacing_in || s.touching || s.pattern); }).length;
+  const inp = { padding: "5px 7px", border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 12.5, fontFamily: "inherit", boxSizing: "border-box" };
+  const lbl = { fontSize: 9.5, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase", letterSpacing: .3 };
+  return (
+    <div>
+      <div style={{ background: "#eef6e7", border: `1px solid ${COLORS.light}`, borderRadius: 8, padding: "10px 12px", fontSize: 12.5, color: COLORS.text, margin: "0 0 12px" }}>
+        🪑 <strong>Bench-by-bench spacing — {plan.name}.</strong> Every bench in this plan, sorted by location + number. For each: <strong>pattern</strong> (e.g. "2×1"), <strong>pots across</strong> the width, <strong>spacing</strong> (inches apart, or ✓ touching), and <strong>tubes</strong> + where the tube sits. The diagram updates as you type — growers move the tube to the blue line and fill pots at that spacing. Set one bench, then <strong>Apply to zone</strong> to copy it down a range. <strong>{configured}/{benches.length}</strong> benches set.
+      </div>
+      {zones.map(z => (
+        <div key={z} style={{ marginBottom: 16 }}>
+          <SrcSectionTitle>{z} <span style={{ color: COLORS.muted, fontWeight: 400 }}>({benches.filter(b => (b.zone_label || "—") === z).length})</span></SrcSectionTitle>
+          {benches.filter(b => (b.zone_label || "—") === z).map(b => {
+            const s = spec[b.id] || {};
+            const potIn = parseFloat(String(pots[b.id] || "").replace(/[^\d.]/g, "")) || null;
+            return (
+              <div key={b.id} style={{ display: "flex", gap: 12, alignItems: "flex-start", borderTop: `1px solid ${COLORS.border}`, padding: "9px 0" }}>
+                <div style={{ minWidth: 92 }}>
+                  <div style={{ fontWeight: 800, color: COLORS.dark, fontSize: 13 }}>{b.code}</div>
+                  <div style={{ fontSize: 11, color: COLORS.muted }}>{b.width_ft ? `${b.width_ft} ft` : "— ft"}{pots[b.id] ? ` · ${pots[b.id]}` : ""}</div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0,1fr)) auto", gap: 6, flex: 1, alignItems: "end" }}>
+                  <div><div style={lbl}>Pattern</div><input value={s.pattern || ""} onChange={e => upd(b.id, { pattern: e.target.value })} onBlur={() => save(b.id)} placeholder="2×1" style={{ ...inp, width: "100%" }} /></div>
+                  <div><div style={lbl}>Across</div><input value={s.across ?? ""} onChange={e => upd(b.id, { across: e.target.value })} onBlur={() => save(b.id)} inputMode="numeric" style={{ ...inp, width: "100%" }} /></div>
+                  <div><div style={lbl}>Spacing in</div><input value={s.spacing_in ?? ""} onChange={e => upd(b.id, { spacing_in: e.target.value })} onBlur={() => save(b.id)} inputMode="decimal" disabled={!!s.touching} placeholder={s.touching ? "touch" : ""} style={{ ...inp, width: "100%", background: s.touching ? "#f0f0f0" : "#fff" }} /></div>
+                  <div><div style={lbl}>Tubes</div><input value={s.tubes ?? ""} onChange={e => upd(b.id, { tubes: e.target.value })} onBlur={() => save(b.id)} inputMode="numeric" placeholder="1" style={{ ...inp, width: "100%" }} /></div>
+                  <div><div style={lbl}>Tube @ in</div><input value={s.tube_pos_in ?? ""} onChange={e => upd(b.id, { tube_pos_in: e.target.value })} onBlur={() => save(b.id)} inputMode="decimal" placeholder="even" style={{ ...inp, width: "100%" }} title="inches from left edge; blank = evenly spaced" /></div>
+                  <label style={{ fontSize: 11, color: COLORS.muted, display: "flex", gap: 3, alignItems: "center", cursor: "pointer", paddingBottom: 6 }}><input type="checkbox" checked={!!s.touching} onChange={e => { upd(b.id, { touching: e.target.checked }); setTimeout(() => save(b.id), 0); }} /> touch</label>
+                  <div style={{ gridColumn: "1 / -1", display: "flex", gap: 8, alignItems: "center", marginTop: 2 }}>
+                    <input value={s.note || ""} onChange={e => upd(b.id, { note: e.target.value })} onBlur={() => save(b.id)} placeholder="note (e.g. tube on north side)" style={{ ...inp, flex: 1 }} />
+                    <button onClick={() => applyToZone(b)} title={`Copy to all of ${z}`} style={{ border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.dark, borderRadius: 6, padding: "5px 10px", fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>↓ Apply to zone</button>
+                  </div>
+                </div>
+                <BenchTopDiagram widthFt={b.width_ft} across={s.across} spacingIn={s.spacing_in} touching={s.touching} tubes={s.tubes} tubePosIn={s.tube_pos_in} potIn={potIn} />
+              </div>
+            );
+          })}
+        </div>
+      ))}
     </div>
   );
 }
