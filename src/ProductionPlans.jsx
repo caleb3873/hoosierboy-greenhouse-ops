@@ -6930,30 +6930,40 @@ function BpProfilesView({ plan }) {
   );
 }
 
-// top-down bench slice (real width). Pattern "N×M" = N pots on one board, M on the next (alternating,
-// staggered). Rows run down the length: edge-to-edge gap (spacingIn) + pot for the "every N in" specs,
-// or the ~13" board pitch when blank ("every board"). Blue dashed line(s) = irrigation tube(s).
+// Top-down picture of the bench. Pots are drawn TO SCALE across the real bench width (a 10" pot reads
+// bigger than a 6.5"), so you see how many fit across and how much gap. Pattern "N×M" = N pots on one
+// board, M on the next — alternating rows (staggered when equal). Tan bands = boards (for "every board"
+// layouts); blue dashed line(s) = irrigation tube(s). Vertical spacing is schematic; caption has the real numbers.
 const BENCH_BOARD_PITCH_IN = 13; // far-end to far-end of consecutive boards
 const poinChipBg = c => { const x = String(c || "").toUpperCase(); return x === "RED" ? "#fdecea" : x === "WHITE" ? "#f3f3f3" : x === "PINK" ? "#fce4ec" : x.includes("MARBLE") ? "#fff3e0" : (x.includes("CRYSTAL") || x.includes("ICE")) ? "#e8f4fb" : x.includes("GLITTER") ? "#f3e5f5" : "#eef3e9"; };
+function benchSpacingCaption({ pattern, spacingIn, touching, potIn }) {
+  const pot = potIn ? `${potIn}" pots · ` : "";
+  const along = touching ? "pot-to-pot" : (+spacingIn ? `every ${spacingIn}" (edge)` : `every board (~13")`);
+  return `${pattern || "—"} · ${pot}${along}`;
+}
 function BenchTopDiagram({ widthFt, pattern, across, spacingIn, touching, tubes, tubePosIn, potIn }) {
   const wIn = (+widthFt || 4) * 12;
   const pot = +potIn || 6.5;
   let N = +across || 1, M = N;
   if (pattern && /x/i.test(String(pattern))) { const p = String(pattern).toLowerCase().split("x"); const a = parseInt(p[0], 10), b = parseInt(p[1], 10); if (a) N = a; M = b || a; }
-  const rowPitch = touching ? pot : (+spacingIn ? +spacingIn + pot : BENCH_BOARD_PITCH_IN); // center-to-center down length
-  const maxAcross = Math.max(N, M, 1);
-  const MAXW = 230, scale = MAXW / wIn, W = wIn * scale;
-  const rows = Math.max(4, Math.min(8, Math.round(72 / rowPitch) || 4));
-  const H = rows * rowPitch * scale;
-  const pr = Math.max(2, Math.min(wIn / maxAcross, rowPitch) / 2 * 0.8 * scale);
+  const board = !(+spacingIn) && !touching; // "every board" layout → draw the boards
+  const scale = 3.2, W = wIn * scale;              // FIXED px/inch so 4/6/8 ft benches are comparable
+  const pr = Math.max(3, (pot / 2) * scale);       // pots to scale across the width
+  const rowGap = Math.max(pr * 2.4, 30);           // schematic vertical spacing (readable)
+  const rows = 4, H = rows * rowGap;
   const cells = [];
-  for (let r = 0; r < rows; r++) { const k = r % 2 === 0 ? N : M; for (let c = 0; c < k; c++) cells.push([wIn * (c + 0.5) / k * scale, rowPitch * (r + 0.5) * scale]); }
+  for (let r = 0; r < rows; r++) {
+    const k = r % 2 === 0 ? N : M; if (k < 1) continue;
+    const off = (N === M && r % 2 === 1) ? wIn / (2 * k) : 0; // stagger equal patterns
+    for (let c = 0; c < k; c++) { let xin = wIn * (c + 0.5) / k + off; if (xin > wIn - pot / 2) xin -= wIn / k; cells.push([xin * scale, (r + 0.5) * rowGap]); }
+  }
   const nt = +tubes || 1;
   const tubeXs = (tubePosIn && nt === 1) ? [(+tubePosIn) * scale] : Array.from({ length: nt }, (_, t) => ((t + 1) / (nt + 1)) * W);
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: W, maxWidth: "100%", border: `1px solid ${COLORS.border}`, borderRadius: 6, background: "#fafcf8", display: "block" }}>
-      {tubeXs.map((x, i) => <line key={"t" + i} x1={x} y1={0} x2={x} y2={H} stroke="#4a90d9" strokeWidth="2" strokeDasharray="5 3" />)}
-      {cells.map(([x, y], i) => <circle key={i} cx={x} cy={y} r={pr} fill="#7fb069" fillOpacity="0.5" stroke="#5a8048" strokeWidth="0.7" />)}
+    <svg viewBox={`0 0 ${W} ${H}`} width={W} style={{ maxWidth: "100%", border: `1px solid ${COLORS.border}`, borderRadius: 8, background: "#f7faf3", display: "block" }}>
+      {board && Array.from({ length: rows }).map((_, r) => <rect key={"bd" + r} x={0} y={(r + 0.5) * rowGap - Math.min(rowGap * 0.42, 11)} width={W} height={Math.min(rowGap * 0.84, 22)} fill="#e7dcc8" fillOpacity="0.55" />)}
+      {tubeXs.map((x, i) => <line key={"t" + i} x1={x} y1={0} x2={x} y2={H} stroke="#4a90d9" strokeWidth="2.5" strokeDasharray="7 4" />)}
+      {cells.map(([x, y], i) => <circle key={i} cx={x} cy={y} r={pr} fill="#7fb069" fillOpacity="0.6" stroke="#4e7038" strokeWidth="1" />)}
     </svg>
   );
 }
@@ -7062,8 +7072,7 @@ function BenchByBench({ plan }) {
                       : <span style={{ fontSize: 12, color: COLORS.muted }}>no item scheduled</span>}
                   </div>
                 </div>
-                <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0,1fr)) auto", gap: 6, flex: 1, alignItems: "end" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0,1fr)) auto", gap: 6, alignItems: "end" }}>
                   <div><div style={lbl}>Pattern</div><input value={s.pattern || ""} onChange={e => upd(b.id, { pattern: e.target.value })} onBlur={() => save(b.id)} placeholder="2×1" style={{ ...inp, width: "100%" }} /></div>
                   <div><div style={lbl}>Across</div><input value={s.across ?? ""} onChange={e => upd(b.id, { across: e.target.value })} onBlur={() => save(b.id)} inputMode="numeric" style={{ ...inp, width: "100%" }} /></div>
                   <div><div style={lbl}>Along (in)</div><input value={s.spacing_in ?? ""} onChange={e => upd(b.id, { spacing_in: e.target.value })} onBlur={() => save(b.id)} inputMode="decimal" disabled={!!s.touching} placeholder={s.touching ? "touch" : "or board"} style={{ ...inp, width: "100%", background: s.touching ? "#f0f0f0" : "#fff" }} /></div>
@@ -7075,7 +7084,9 @@ function BenchByBench({ plan }) {
                     <button onClick={() => applyToZone(b)} title={`Copy to all of ${z}`} style={{ border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.dark, borderRadius: 6, padding: "5px 10px", fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>↓ Apply to zone</button>
                   </div>
                 </div>
-                <BenchTopDiagram widthFt={b.width_ft} pattern={s.pattern} across={s.across} spacingIn={s.spacing_in} touching={s.touching} tubes={s.tubes} tubePosIn={s.tube_pos_in} potIn={potIn} />
+                <div style={{ marginTop: 10 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.muted, marginBottom: 4 }}>What the bench looks like — <span style={{ color: COLORS.dark }}>{benchSpacingCaption({ pattern: s.pattern, spacingIn: s.spacing_in, touching: s.touching, potIn })}</span></div>
+                  <BenchTopDiagram widthFt={b.width_ft} pattern={s.pattern} across={s.across} spacingIn={s.spacing_in} touching={s.touching} tubes={s.tubes} tubePosIn={s.tube_pos_in} potIn={potIn} />
                 </div>
               </div>
             );
