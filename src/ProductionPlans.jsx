@@ -6960,12 +6960,15 @@ function BenchTopDiagram({ widthFt, pattern, across, spacingIn, touching, tubes,
     const k = r % 2 === 0 ? N : M; if (k < 1) continue;
     const base = Math.floor(k / sections), extra = k % sections;
     for (let si = 0; si < sections; si++) {
-      const cnt = base + (si < extra ? 1 : 0);
-      for (let c = 0; c < cnt; c++) cells.push([(si * secW + secW * (c + 0.5) / cnt) * scale, (r + 0.5) * rowGap]);
+      const cnt = base + (si < extra ? 1 : 0); if (cnt < 1) continue;
+      const pitch = secW / cnt;
+      const ph = (r % 2 ? 1 : -1) * pitch / 4; // stagger: alternate boards offset half a pitch
+      for (let c = 0; c < cnt; c++) cells.push([(si * secW + pitch * (c + 0.5) + ph) * scale, (r + 0.5) * rowGap]);
     }
   }
-  const nt = +tubes || 1;
-  const tubeXs = (tubePosIn && nt === 1) ? [(+tubePosIn) * scale] : Array.from({ length: nt }, (_, t) => ((t + 1) / (nt + 1)) * W);
+  // one tube per 4' section at the pot-size's tube offset (so an 8' bench = 2 tubes); else evenly spaced
+  const tubeXs = (+tubePosIn) ? Array.from({ length: sections }, (_, si) => (si * secW + +tubePosIn) * scale)
+    : Array.from({ length: +tubes || 1 }, (_, t) => ((t + 1) / ((+tubes || 1) + 1)) * W);
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width={W} style={{ maxWidth: "100%", border: `1px solid ${COLORS.border}`, borderRadius: 8, background: "#f7faf3", display: "block" }}>
       {board && Array.from({ length: rows }).map((_, r) => <rect key={"bd" + r} x={0} y={(r + 0.5) * rowGap - Math.min(rowGap * 0.42, 11)} width={W} height={Math.min(rowGap * 0.84, 22)} fill="#e7dcc8" fillOpacity="0.55" />)}
@@ -7020,7 +7023,8 @@ function BenchByBench({ plan }) {
       const dia = parseFloat(String(pots[b.id] || "").replace(/[^\d.]/g, "")) || null;
       const g = guides.find(x => x.pot_dia != null && Number(x.bench_ft) === Number(b.width_ft) && Math.abs(Number(x.pot_dia) - dia) < 0.01);
       if (!g) return;
-      rows.push({ plan_id: plan.id, bench_id: b.id, pattern: g.pattern, across: g.across, spacing_in: g.along_in, touching: false, tubes: 1, note: g.every_board ? "every board" : (g.edge_measure ? "from edge of pot" : null), updated_at: new Date().toISOString() });
+      const sections = (b.width_ft && b.width_ft % 4 === 0 && b.width_ft > 4) ? Math.round(b.width_ft / 4) : 1;
+      rows.push({ plan_id: plan.id, bench_id: b.id, pattern: g.pattern, across: g.across, spacing_in: g.along_in, touching: false, tubes: sections, tube_pos_in: g.tube_pos, note: g.every_board ? "every board" : (g.edge_measure ? "from edge of pot" : null), updated_at: new Date().toISOString() });
     });
     if (!rows.length) { window.alert("No guideline matches for these benches' pot size + width (bloom pots need their diameter confirmed)."); return; }
     await sb.from("bench_spacing").upsert(rows, { onConflict: "plan_id,bench_id" });
@@ -7055,9 +7059,9 @@ function BenchByBench({ plan }) {
       {showGuides && (
         <div style={{ border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "8px 12px", marginBottom: 12, background: COLORS.card }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-            <thead><tr style={{ textAlign: "left", color: COLORS.muted }}><th style={{ padding: "3px 8px" }}>Pot</th><th style={{ padding: "3px 8px" }}>Bench width</th><th style={{ padding: "3px 8px" }}>Pattern</th><th style={{ padding: "3px 8px" }}>Across</th><th style={{ padding: "3px 8px" }}>Along</th></tr></thead>
+            <thead><tr style={{ textAlign: "left", color: COLORS.muted }}><th style={{ padding: "3px 8px" }}>Pot</th><th style={{ padding: "3px 8px" }}>Bench width</th><th style={{ padding: "3px 8px" }}>Pattern</th><th style={{ padding: "3px 8px" }}>Across</th><th style={{ padding: "3px 8px" }}>Along</th><th style={{ padding: "3px 8px" }}>Tube @</th></tr></thead>
             <tbody>{guides.slice().sort((a, b) => (a.pot_dia ?? 99) - (b.pot_dia ?? 99) || a.bench_ft - b.bench_ft).map(g => (
-              <tr key={g.id} style={{ borderTop: `1px solid ${COLORS.border}` }}><td style={{ padding: "3px 8px", fontWeight: 700 }}>{g.pot_key}</td><td style={{ padding: "3px 8px" }}>{g.bench_ft} ft</td><td style={{ padding: "3px 8px" }}>{g.pattern}</td><td style={{ padding: "3px 8px" }}>{g.across}</td><td style={{ padding: "3px 8px" }}>{g.every_board ? "every board" : `${g.along_in}"${g.edge_measure ? " (edge)" : ""}`}</td></tr>
+              <tr key={g.id} style={{ borderTop: `1px solid ${COLORS.border}` }}><td style={{ padding: "3px 8px", fontWeight: 700 }}>{g.pot_key}</td><td style={{ padding: "3px 8px" }}>{g.bench_ft} ft</td><td style={{ padding: "3px 8px" }}>{g.pattern}</td><td style={{ padding: "3px 8px" }}>{g.across}</td><td style={{ padding: "3px 8px" }}>{g.every_board ? "every board" : `${g.along_in}"${g.edge_measure ? " (edge)" : ""}`}</td><td style={{ padding: "3px 8px" }}>{g.tube_pos ? `${g.tube_pos}"${g.bench_ft >= 8 ? " ×2" : ""}` : "?"}</td></tr>
             ))}</tbody>
           </table>
         </div>
