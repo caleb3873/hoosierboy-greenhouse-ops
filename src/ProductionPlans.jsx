@@ -6951,17 +6951,25 @@ function BenchTopDiagram({ widthFt, pattern, across, spacingIn, touching, tubes,
   const pr = Math.max(3, (pot / 2) * scale);       // pots to scale across the width
   const rowGap = Math.max(pr * 2.4, 30);           // schematic vertical spacing (readable)
   const rows = 4, H = rows * rowGap;
+  // wide benches are built from 4' sections — lay each section out on its own so the bench center
+  // stays clear and an odd count splits across halves (e.g. 8' "3" = 2 on one half + 1 on the other).
+  const sections = (+widthFt && +widthFt % 4 === 0 && +widthFt > 4) ? Math.round(+widthFt / 4) : 1;
+  const secW = wIn / sections;
   const cells = [];
   for (let r = 0; r < rows; r++) {
     const k = r % 2 === 0 ? N : M; if (k < 1) continue;
-    const off = (N === M && r % 2 === 1) ? wIn / (2 * k) : 0; // stagger equal patterns
-    for (let c = 0; c < k; c++) { let xin = wIn * (c + 0.5) / k + off; if (xin > wIn - pot / 2) xin -= wIn / k; cells.push([xin * scale, (r + 0.5) * rowGap]); }
+    const base = Math.floor(k / sections), extra = k % sections;
+    for (let si = 0; si < sections; si++) {
+      const cnt = base + (si < extra ? 1 : 0);
+      for (let c = 0; c < cnt; c++) cells.push([(si * secW + secW * (c + 0.5) / cnt) * scale, (r + 0.5) * rowGap]);
+    }
   }
   const nt = +tubes || 1;
   const tubeXs = (tubePosIn && nt === 1) ? [(+tubePosIn) * scale] : Array.from({ length: nt }, (_, t) => ((t + 1) / (nt + 1)) * W);
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width={W} style={{ maxWidth: "100%", border: `1px solid ${COLORS.border}`, borderRadius: 8, background: "#f7faf3", display: "block" }}>
       {board && Array.from({ length: rows }).map((_, r) => <rect key={"bd" + r} x={0} y={(r + 0.5) * rowGap - Math.min(rowGap * 0.42, 11)} width={W} height={Math.min(rowGap * 0.84, 22)} fill="#e7dcc8" fillOpacity="0.55" />)}
+      {Array.from({ length: sections - 1 }).map((_, i) => <line key={"sec" + i} x1={secW * (i + 1) * scale} y1={0} x2={secW * (i + 1) * scale} y2={H} stroke={COLORS.border} strokeWidth="1" />)}
       {tubeXs.map((x, i) => <line key={"t" + i} x1={x} y1={0} x2={x} y2={H} stroke="#4a90d9" strokeWidth="2.5" strokeDasharray="7 4" />)}
       {cells.map(([x, y], i) => <circle key={i} cx={x} cy={y} r={pr} fill="#7fb069" fillOpacity="0.6" stroke="#4e7038" strokeWidth="1" />)}
     </svg>
