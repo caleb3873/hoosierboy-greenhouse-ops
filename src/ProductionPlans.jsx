@@ -330,6 +330,7 @@ const PLAN_TABS = [
   { id: "inputs",    label: "⚙ Inputs" },
   { id: "pricing",   label: "💰 Pricing" },
   { id: "combos",    label: "🪴 Combos" },
+  { id: "benchprep", label: "📐 Bench Prep" },
   { id: "items",     label: "📑 Items" },
 ];
 
@@ -471,6 +472,7 @@ function PlanDashboard({ plan, initialTab }) {
           {hasData && tab === "pricing"   && <PricingTab plan={plan} />}
           {hasData && tab === "items"     && <ItemsTab plan={plan} />}
           {hasData && tab === "combos"    && <CombosTab plan={plan} />}
+          {hasData && tab === "benchprep" && <BenchPrepTab plan={plan} />}
         </>
       )}
     </div>
@@ -6786,6 +6788,134 @@ function BasketDesigner({ layout, plantNames, onSave, onClose }) {
         <button onClick={() => onSave({ plants, dots, howto: layout.howto || "" })} style={{ padding: "8px 16px", background: COLORS.dark, color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>🔒 Lock &amp; save</button>
         <button onClick={onClose} style={{ padding: "8px 16px", background: "#fff", color: COLORS.text, border: `1px solid ${COLORS.border}`, borderRadius: 8, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
       </div>
+    </div>
+  );
+}
+
+// ---------- Bench Prep — spacing + irrigation-tube setup per crop, with a to-scale diagram ----------
+// Poinsettias entered by hand; other crops auto-compute pots/bench from spacing + bench size. Tubes are
+// doubled/tripled and kept uniform (not repositioned). Staged: start tight, space out later.
+const BP_MODES = [["centers", "Center-to-center (in)"], ["count", "Pots per bench (manual)"], ["density", "Pots per sq ft"]];
+const bpArea = (bw, bl) => (bw * bl) / 144; // sq ft
+function bpCount(mode, st, bw, bl) {
+  if (mode === "count") return +st.count || 0;
+  if (mode === "density") return Math.round((+st.density || 0) * bpArea(bw, bl));
+  const w = +st.w_in || 0, l = +st.l_in || 0;
+  if (!w || !l || !bw || !bl) return 0;
+  return Math.max(0, Math.floor(bw / w) * Math.floor(bl / l));
+}
+function BenchDiagram({ bw, bl, mode, st, tubes, potIn }) {
+  if (!bw || !bl) return <div style={{ color: COLORS.muted, fontSize: 12, padding: "18px 0" }}>Enter bench size to see the layout.</div>;
+  const MAXW = 440, scale = MAXW / bw, W = bw * scale, H = bl * scale;
+  const pots = [];
+  if (mode === "centers" && +st.w_in && +st.l_in) {
+    const dw = +st.w_in, dl = +st.l_in, cols = Math.floor(bw / dw), rows = Math.floor(bl / dl);
+    const offX = (bw - (cols - 1) * dw) / 2, offY = (bl - (rows - 1) * dl) / 2;
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+      let x = offX + c * dw; const y = offY + r * dl;
+      if (st.staggered && r % 2) { x += dw / 2; if (x > bw - offX / 2) continue; }
+      pots.push([x * scale, y * scale]);
+    }
+  } else {
+    const n = bpCount(mode, st, bw, bl);
+    if (n > 0) { const cols = Math.max(1, Math.round(Math.sqrt(n * bw / bl))), rows = Math.ceil(n / cols), dw = bw / cols, dl = bl / rows; let k = 0; for (let r = 0; r < rows && k < n; r++) for (let c = 0; c < cols && k < n; c++, k++) pots.push([dw * (c + 0.5) * scale, dl * (r + 0.5) * scale]); }
+  }
+  const pr = Math.max(1.5, (potIn ? potIn / 2 : Math.min(+st.w_in || 4, +st.l_in || 4) * 0.42) * scale);
+  const tubeXs = Array.from({ length: tubes || 1 }, (_, t) => ((t + 1) / ((tubes || 1) + 1)) * W);
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", maxWidth: MAXW, border: `1px solid ${COLORS.border}`, borderRadius: 8, background: "#fafcf8", display: "block" }}>
+      {tubeXs.map((x, i) => <line key={"t" + i} x1={x} y1={0} x2={x} y2={H} stroke="#4a90d9" strokeWidth="2" strokeDasharray="6 4" />)}
+      {pots.map(([x, y], i) => <circle key={i} cx={x} cy={y} r={pr} fill="#7fb069" fillOpacity="0.5" stroke="#5a8048" strokeWidth="0.7" />)}
+    </svg>
+  );
+}
+function BpProfileCard({ p, onChange }) {
+  const sb = getSupabase();
+  const [d, setD] = useState(() => ({ ...p, stages: (p.stages && p.stages.length) ? p.stages : [{ label: "Final", w_in: "", l_in: "", staggered: false, count: "", density: "", week: "", note: "" }] }));
+  const [status, setStatus] = useState("");
+  const set = (k, v) => { setD(x => ({ ...x, [k]: v })); setStatus(""); };
+  const setStage = (i, k, v) => { setD(x => ({ ...x, stages: x.stages.map((s, j) => j === i ? { ...s, [k]: v } : s) })); setStatus(""); };
+  const addStage = () => setD(x => ({ ...x, stages: [{ label: "Tight (pot-to-pot)", w_in: "", l_in: "", staggered: false, count: "", density: "", week: "", note: "" }, ...x.stages] }));
+  const delStage = i => setD(x => ({ ...x, stages: x.stages.filter((_, j) => j !== i) }));
+  const potIn = parseFloat(String(d.container_ref || "").replace(/[^\d.]/g, "")) || null;
+  const bw = +d.bench_w_in || 0, bl = +d.bench_l_in || 0;
+  async function save() {
+    setStatus("saving…");
+    const { error } = await sb.from("spacing_profiles").update({ name: d.name || `${d.crop_ref} ${d.container_ref}`.trim(), crop_ref: d.crop_ref, container_ref: d.container_ref, input_mode: d.input_mode, tubes_per_bench: +d.tubes_per_bench || 1, bench_w_in: +d.bench_w_in || null, bench_l_in: +d.bench_l_in || null, stages: d.stages, notes: d.notes, updated_at: new Date().toISOString() }).eq("id", d.id);
+    setStatus(error ? "save failed" : "Saved ✓"); if (!error) onChange();
+  }
+  async function del() { if (!window.confirm("Delete this spacing profile?")) return; await sb.from("spacing_profiles").delete().eq("id", d.id); onChange(); }
+  const inp = { padding: "5px 8px", border: `1px solid ${COLORS.border}`, borderRadius: 7, fontSize: 12.5, fontFamily: "inherit", width: "100%", boxSizing: "border-box" };
+  const lbl = { fontSize: 10, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase", letterSpacing: .4, marginBottom: 2 };
+  return (
+    <div style={{ border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: 14, marginBottom: 12, background: COLORS.card }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 0.9fr 0.9fr 0.9fr", gap: 8, marginBottom: 10 }}>
+        <div><div style={lbl}>Crop type</div><input value={d.crop_ref || ""} onChange={e => set("crop_ref", e.target.value)} placeholder="Poinsettia / Annual / Mum" style={inp} /></div>
+        <div><div style={lbl}>Pot size</div><input value={d.container_ref || ""} onChange={e => set("container_ref", e.target.value)} placeholder={'6.5"'} style={inp} /></div>
+        <div><div style={lbl}>Bench W (in)</div><input value={d.bench_w_in || ""} onChange={e => set("bench_w_in", e.target.value)} inputMode="decimal" style={inp} /></div>
+        <div><div style={lbl}>Bench L (in)</div><input value={d.bench_l_in || ""} onChange={e => set("bench_l_in", e.target.value)} inputMode="decimal" style={inp} /></div>
+        <div><div style={lbl}>Tubes / bench</div><input value={d.tubes_per_bench || ""} onChange={e => set("tubes_per_bench", e.target.value)} inputMode="numeric" style={inp} /></div>
+      </div>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10, flexWrap: "wrap" }}>
+        <div style={lbl}>Spacing by</div>
+        {BP_MODES.map(([m, label]) => <button key={m} onClick={() => set("input_mode", m)} style={{ border: `1.5px solid ${d.input_mode === m ? COLORS.light : COLORS.border}`, background: d.input_mode === m ? COLORS.light : "#fff", color: d.input_mode === m ? "#fff" : COLORS.dark, borderRadius: 7, padding: "4px 10px", fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{label}</button>)}
+        {bw > 0 && bl > 0 && <span style={{ fontSize: 11.5, color: COLORS.muted, marginLeft: "auto" }}>bench ≈ {bpArea(bw, bl).toFixed(1)} sq ft</span>}
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ fontSize: 11, fontWeight: 800, color: COLORS.muted, textTransform: "uppercase" }}>Stages (start tight → space out)</div>
+        <button onClick={addStage} style={{ border: `1px solid ${COLORS.border}`, background: "#fff", borderRadius: 7, padding: "3px 9px", fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", color: COLORS.dark }}>+ earlier stage</button>
+      </div>
+      {d.stages.map((st, i) => {
+        const cnt = bpCount(d.input_mode, st, bw, bl);
+        return (
+          <div key={i} style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr", gap: 14, borderTop: `1px solid ${COLORS.border}`, padding: "10px 0", alignItems: "start" }}>
+            <div>
+              <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
+                <input value={st.label || ""} onChange={e => setStage(i, "label", e.target.value)} placeholder="Stage" style={{ ...inp, width: 150, fontWeight: 700 }} />
+                <input value={st.week || ""} onChange={e => setStage(i, "week", e.target.value)} placeholder="wk" style={{ ...inp, width: 60 }} title="week this spacing starts" />
+                {d.stages.length > 1 && <button onClick={() => delStage(i)} style={{ border: "none", background: "transparent", color: COLORS.red, cursor: "pointer", fontSize: 13 }}>✕</button>}
+              </div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                {d.input_mode === "centers" && <>
+                  <input value={st.w_in || ""} onChange={e => setStage(i, "w_in", e.target.value)} placeholder="across in" inputMode="decimal" style={{ ...inp, width: 80 }} />
+                  <span style={{ color: COLORS.muted }}>×</span>
+                  <input value={st.l_in || ""} onChange={e => setStage(i, "l_in", e.target.value)} placeholder="along in" inputMode="decimal" style={{ ...inp, width: 80 }} />
+                  <label style={{ fontSize: 11.5, color: COLORS.muted, display: "flex", gap: 4, alignItems: "center", cursor: "pointer" }}><input type="checkbox" checked={!!st.staggered} onChange={e => setStage(i, "staggered", e.target.checked)} /> staggered</label>
+                </>}
+                {d.input_mode === "count" && <input value={st.count || ""} onChange={e => setStage(i, "count", e.target.value)} placeholder="pots per bench" inputMode="numeric" style={{ ...inp, width: 130 }} />}
+                {d.input_mode === "density" && <input value={st.density || ""} onChange={e => setStage(i, "density", e.target.value)} placeholder="pots / sq ft" inputMode="decimal" style={{ ...inp, width: 110 }} />}
+                <span style={{ fontSize: 13, fontWeight: 800, color: COLORS.dark, marginLeft: 6 }}>= {cnt.toLocaleString()} pots/bench</span>
+              </div>
+              <input value={st.note || ""} onChange={e => setStage(i, "note", e.target.value)} placeholder="note (optional)" style={{ ...inp, marginTop: 6 }} />
+            </div>
+            <BenchDiagram bw={bw} bl={bl} mode={d.input_mode} st={st} tubes={+d.tubes_per_bench || 1} potIn={potIn} />
+          </div>
+        );
+      })}
+      <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 10 }}>
+        <input value={d.notes || ""} onChange={e => set("notes", e.target.value)} placeholder="Prep notes for growers…" style={{ ...inp, flex: 1 }} />
+        <button onClick={save} style={{ background: COLORS.dark, color: "#fff", border: "none", borderRadius: 8, padding: "6px 16px", fontWeight: 700, fontSize: 12.5, cursor: "pointer", fontFamily: "inherit" }}>💾 Save</button>
+        <button onClick={del} style={{ background: "#fff", color: COLORS.red, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "6px 12px", fontWeight: 700, fontSize: 12.5, cursor: "pointer", fontFamily: "inherit" }}>Delete</button>
+        {status && <span style={{ fontSize: 12, color: status === "Saved ✓" ? COLORS.light : COLORS.muted, fontWeight: 700 }}>{status}</span>}
+      </div>
+    </div>
+  );
+}
+function BenchPrepTab({ plan }) {
+  const sb = getSupabase();
+  const [profiles, setProfiles] = useState(null);
+  const load = async () => { if (!sb) return; const { data } = await sb.from("spacing_profiles").select("*").eq("plan_id", plan.id).order("created_at"); setProfiles(data || []); };
+  useEffect(() => { load(); }, [sb, plan.id]); // reload when the plan changes
+  async function add() { await sb.from("spacing_profiles").insert({ plan_id: plan.id, name: "New spacing", crop_ref: "", container_ref: "", input_mode: "centers", tubes_per_bench: 1, stages: [{ label: "Final", w_in: "", l_in: "", staggered: false, count: "", density: "", week: "", note: "" }] }); await load(); }
+  if (profiles == null) return <div style={{ padding: 30, color: COLORS.muted, fontFamily: "'DM Sans',sans-serif" }}>Loading…</div>;
+  return (
+    <div style={{ fontFamily: "'DM Sans','Segoe UI',sans-serif" }}>
+      <div style={{ background: "#eef6e7", border: `1px solid ${COLORS.light}`, borderRadius: 8, padding: "10px 12px", fontSize: 12.5, color: COLORS.text, margin: "2px 0 12px" }}>
+        📐 <strong>Bench prep — spacing & irrigation tubes for this season.</strong> One profile per crop type + pot size (a 6.5" poinsettia spaces differently than a 6.5" annual). Enter the bench size and spacing; pots-per-bench and the layout diagram fill in automatically (poinsettias you can enter counts by hand). <strong>Tubes/bench</strong> = how many tubes you run (double/triple), kept uniform. Add an earlier <strong>stage</strong> for crops you start tight and space out later. The <span style={{ color: "#4a90d9", fontWeight: 700 }}>blue dashed lines</span> are tubes; green circles are pots.
+      </div>
+      <button onClick={add} style={{ background: COLORS.light, color: "#fff", border: "none", borderRadius: 8, padding: "7px 15px", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit", marginBottom: 12 }}>+ Add spacing profile</button>
+      {profiles.length === 0 ? <div style={{ color: COLORS.muted, fontSize: 13, padding: "10px 0" }}>No spacing profiles yet — add one per crop type + pot size.</div>
+        : profiles.map(p => <BpProfileCard key={p.id} p={p} onChange={load} />)}
     </div>
   );
 }
