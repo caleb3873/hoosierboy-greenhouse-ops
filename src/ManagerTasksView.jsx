@@ -19,6 +19,7 @@ import { SpecialMessagePopup, TaskSpecialMessageBanner } from "./SpecialMessages
 import ReconApprovalInbox from "./ReconApprovalInbox";
 import Evaluations from "./Evaluations";
 import TradeShow from "./TradeShow";
+import TreatmentPlan from "./TreatmentPlan";
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
 
@@ -1207,6 +1208,13 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
                   <div className="hub-card-sub">Photo sessions + quick shots</div>
                 </div>
 
+                {/* Treatment Plan — last year's crop plan → this year's tasks */}
+                <div className="hub-card" onClick={() => setCurrentView("treatment")} style={{ borderTopColor: "#8e5aa8", borderTopWidth: 4 }}>
+                  <div className="hub-card-emoji">🌼</div>
+                  <div className="hub-card-title">Treatment Plan</div>
+                  <div className="hub-card-sub">Last year's plan → this year's tasks</div>
+                </div>
+
                 {/* Vacation */}
                 <div className="hub-card" onClick={() => setCurrentView("vacation")} style={{ borderTopColor: "#7fb069", borderTopWidth: 4 }}>
                   <div className="hub-card-emoji">🌴</div>
@@ -1718,6 +1726,10 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
           <button onClick={() => setCurrentView("hub")} style={{ background: "#1e2d1a", color: "#c8e6b8", border: "none", padding: "11px 16px", fontSize: 14, fontWeight: 700, cursor: "pointer", width: "100%", textAlign: "left", fontFamily: "inherit" }}>← Hub</button>
           <TradeShow />
         </div>
+      )}
+
+      {currentView === "treatment" && (
+        <TreatmentPlan onBack={() => setCurrentView("hub")} />
       )}
 
       {currentView === "evaluations" && isManager && (
