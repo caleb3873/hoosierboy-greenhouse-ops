@@ -25,6 +25,7 @@ const JSONB_KEYS = new Set([
   "signed_invoice_photos","signedInvoicePhotos",
   "alerts",
   "action_items","actionItems",
+  "assignees",
   "manager_ratings","managerRatings",
   "employer_ratings","employerRatings",
   "employer_responses_en","employerResponsesEn",
