@@ -1,6 +1,9 @@
 import { useState, useEffect, useRef } from "react";
+import { useTable, getSupabase } from "./supabase";
 
 // ── STORAGE KEY ────────────────────────────────────────────────────────────────
+// Supabase (tradeshow_sessions + tradeshow-photos bucket) is the source of truth; localStorage is a
+// read-through MIRROR so the home-widget helpers below stay fast and offline-friendly.
 const STORAGE_KEY    = "gh_tradeshow_sessions_v1";
 const VIEWED_KEY     = "gh_tradeshow_viewed_v1";
 
@@ -44,8 +47,8 @@ export function getSessionsWithPhotos() {
   return sessions
     .filter(s => (s.photos || []).length > 0)
     .sort((a, b) => {
-      const latestA = Math.max(...(a.photos || []).map(p => p.capturedAt || 0), a.createdAt || 0);
-      const latestB = Math.max(...(b.photos || []).map(p => p.capturedAt || 0), b.createdAt || 0);
+      const latestA = Math.max(...(a.photos || []).map(p => p.capturedAt || 0), Number(a.createdAt) || 0);
+      const latestB = Math.max(...(b.photos || []).map(p => p.capturedAt || 0), Number(b.createdAt) || 0);
       return latestB - latestA;
     });
 }
@@ -53,64 +56,58 @@ const uid = () => crypto.randomUUID();
 
 // ── MAIN EXPORT ────────────────────────────────────────────────────────────────
 export default function TradeShow() {
-  const [sessions, setSessions] = useState(loadSessions);
+  const { rows: sessions, update, remove, upsert, loading } = useTable("tradeshow_sessions", { orderBy: "created_at", ascending: false });
   const [view, setView]         = useState("list"); // list | session | capture | quickshot
   const [activeId, setActiveId] = useState(null);
   const [showNewModal, setShowNewModal] = useState(false);
+  const localAtMount = useRef(loadSessions()); // capture device-trial sessions before the mirror runs
+  const migrated     = useRef(false);
 
-  function persist(next) { setSessions(next); saveSessions(next); }
+  // Mirror the live rows into localStorage (only after the DB has loaded, so we never clobber the
+  // device-trial sessions before they're migrated) — keeps the home-widget helpers fast + offline.
+  useEffect(() => { if (!loading) saveSessions(sessions || []); }, [sessions, loading]);
 
-  function createSession({ name, date, time, location, type }) {
-    const s = {
-      id: uid(),
-      name: name.trim(),
-      date, time, location: location.trim(),
-      type, // "event" | "quickshot"
-      createdAt: Date.now(),
-      photos: [],
-    };
-    const next = [s, ...sessions];
-    persist(next);
-    setActiveId(s.id);
+  // One-time migration: push any device-only trial sessions into Supabase (idempotent by id).
+  useEffect(() => {
+    if (loading || migrated.current) return;
+    migrated.current = true;
+    const dbIds = new Set((sessions || []).map(s => s.id));
+    (localAtMount.current || []).filter(s => s && s.id && !dbIds.has(s.id))
+      .forEach(s => upsert({ id: s.id, name: s.name, date: s.date, time: s.time, location: s.location, type: s.type, photos: s.photos || [] }));
+  }, [loading, sessions, upsert]);
+
+  async function createSession({ name, date, time, location, type }) {
+    const id = uid();
+    await upsert({ id, name: name.trim(), date, time, location: (location || "").trim(), type, photos: [] });
+    setActiveId(id);
     setShowNewModal(false);
     setView(type === "quickshot" ? "capture" : "session");
   }
 
   function deleteSession(id) {
     if (!window.confirm("Delete this session and all its photos?")) return;
-    persist(sessions.filter(s => s.id !== id));
+    remove(id);
     if (activeId === id) { setActiveId(null); setView("list"); }
   }
 
-  function updateSession(id, changes) {
-    const next = sessions.map(s => s.id === id ? { ...s, ...changes } : s);
-    persist(next);
-  }
+  function updateSession(id, changes) { update(id, changes); }
 
   function addPhoto(sessionId, photo) {
-    const next = sessions.map(s =>
-      s.id === sessionId ? { ...s, photos: [...s.photos, photo] } : s
-    );
-    persist(next);
+    const s = (sessions || []).find(x => x.id === sessionId); if (!s) return;
+    update(sessionId, { photos: [...(s.photos || []), photo] });
   }
 
   function updatePhoto(sessionId, photoId, changes) {
-    const next = sessions.map(s =>
-      s.id === sessionId
-        ? { ...s, photos: s.photos.map(p => p.id === photoId ? { ...p, ...changes } : p) }
-        : s
-    );
-    persist(next);
+    const s = (sessions || []).find(x => x.id === sessionId); if (!s) return;
+    update(sessionId, { photos: (s.photos || []).map(p => p.id === photoId ? { ...p, ...changes } : p) });
   }
 
   function deletePhoto(sessionId, photoId) {
-    const next = sessions.map(s =>
-      s.id === sessionId ? { ...s, photos: s.photos.filter(p => p.id !== photoId) } : s
-    );
-    persist(next);
+    const s = (sessions || []).find(x => x.id === sessionId); if (!s) return;
+    update(sessionId, { photos: (s.photos || []).filter(p => p.id !== photoId) });
   }
 
-  const activeSession = sessions.find(s => s.id === activeId);
+  const activeSession = (sessions || []).find(s => s.id === activeId);
 
   // Mark viewed when session opens
   useEffect(() => {
@@ -195,7 +192,7 @@ export default function TradeShow() {
                       {s.photos.length > 0 && (
                         <div style={{ display: "flex", gap: 2, height: 72, overflow: "hidden" }}>
                           {s.photos.slice(0, 5).map((p, pi) => (
-                            <img key={p.id} src={p.imgData} alt=""
+                            <img key={p.id} src={p.url || p.imgData} alt=""
                               style={{ flex: 1, minWidth: 0, objectFit: "cover", display: "block" }} />
                           ))}
                           {s.photos.length === 0 && <div style={{ flex: 1, background: "#f0f5ee" }} />}
@@ -260,23 +257,40 @@ export default function TradeShow() {
 // ── CAPTURE VIEW ──────────────────────────────────────────────────────────────
 function CaptureView({ session, onAdd, onCancel }) {
   const [imgData,  setImgData ] = useState(null);
+  const [file,     setFile    ] = useState(null);
   const [comment,  setComment ] = useState("");
   const [source,   setSource  ] = useState("camera"); // camera | upload
+  const [uploading, setUploading] = useState(false);
   const fileRef   = useRef(null);
   const cameraRef = useRef(null);
 
-  function handleFile(file) {
-    if (!file || !file.type.startsWith("image/")) return;
+  function handleFile(f) {
+    if (!f || !f.type.startsWith("image/")) return;
+    setFile(f);
     const reader = new FileReader();
     reader.onload = e => setImgData(e.target.result);
-    reader.readAsDataURL(file);
+    reader.readAsDataURL(f);
   }
 
-  function submit() {
+  async function submit() {
     if (!imgData) return;
+    const id = uid();
+    let url = null;
+    if (file) {
+      setUploading(true);
+      try {
+        const ext = ((file.name || "").split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
+        const path = `${session.id}/${id}.${ext}`;
+        const sb = getSupabase();
+        const { error } = await sb.storage.from("tradeshow-photos").upload(path, file, { upsert: true, contentType: file.type });
+        if (!error) url = sb.storage.from("tradeshow-photos").getPublicUrl(path).data.publicUrl;
+      } catch { /* offline → fall back to base64 imgData below */ }
+      setUploading(false);
+    }
     onAdd({
-      id: uid(),
-      imgData,
+      id,
+      url,                            // Supabase public URL (null if upload failed / no file)
+      imgData: url ? null : imgData,  // keep base64 only as an offline fallback
       comment: comment.trim(),
       capturedAt: Date.now(),
       selected: false,
@@ -322,7 +336,7 @@ function CaptureView({ session, onAdd, onCancel }) {
         ) : (
           <div style={{ marginBottom: 20, position: "relative" }}>
             <img src={imgData} alt="Preview" style={{ width: "100%", maxHeight: 360, objectFit: "contain", borderRadius: 10, border: "1.5px solid #e0ead8", background: "#f0f5ee" }} />
-            <button onClick={() => setImgData(null)}
+            <button onClick={() => { setImgData(null); setFile(null); }}
               style={{ position: "absolute", top: 8, right: 8, background: "rgba(0,0,0,0.5)", color: "#fff", border: "none", borderRadius: 20, width: 28, height: 28, fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
               ×
             </button>
@@ -342,9 +356,9 @@ function CaptureView({ session, onAdd, onCancel }) {
 
         {/* Actions */}
         <div style={{ display: "flex", gap: 10 }}>
-          <button onClick={submit} disabled={!imgData}
-            style={{ flex: 1, background: imgData ? "#7fb069" : "#c8d8c0", color: "#fff", border: "none", borderRadius: 10, padding: 14, fontWeight: 700, fontSize: 14, cursor: imgData ? "pointer" : "default", fontFamily: "inherit" }}>
-            ✓ Save Photo
+          <button onClick={submit} disabled={!imgData || uploading}
+            style={{ flex: 1, background: (imgData && !uploading) ? "#7fb069" : "#c8d8c0", color: "#fff", border: "none", borderRadius: 10, padding: 14, fontWeight: 700, fontSize: 14, cursor: (imgData && !uploading) ? "pointer" : "default", fontFamily: "inherit" }}>
+            {uploading ? "Uploading…" : "✓ Save Photo"}
           </button>
           <button onClick={onCancel}
             style={{ background: "none", border: "1.5px solid #c8d8c0", borderRadius: 10, padding: "14px 20px", fontWeight: 600, fontSize: 13, color: "#7a8c74", cursor: "pointer", fontFamily: "inherit" }}>
@@ -432,7 +446,7 @@ function SessionView({ session, onUpdatePhoto, onDeletePhoto, onAddMore }) {
       const imgX = 0.28;
 
       slide.addImage({
-        data: photo.imgData,
+        ...(photo.url ? { path: photo.url } : { data: photo.imgData }),
         x: imgX, y: 0.28, w: imgW, h: 5.065,
         sizing: { type: "contain", w: imgW, h: 5.065 }
       });
@@ -559,7 +573,7 @@ function SessionView({ session, onUpdatePhoto, onDeletePhoto, onAddMore }) {
 
                 {/* Image */}
                 <div style={{ position: "relative", cursor: "pointer" }} onClick={() => setLightbox(photo)}>
-                  <img src={photo.imgData} alt={`Photo ${idx + 1}`}
+                  <img src={photo.url || photo.imgData} alt={`Photo ${idx + 1}`}
                     style={{ width: "100%", height: 180, objectFit: "cover", display: "block" }} />
                   {/* Select checkbox overlay */}
                   <div
@@ -627,7 +641,7 @@ function SessionView({ session, onUpdatePhoto, onDeletePhoto, onAddMore }) {
         <div onClick={() => setLightbox(null)}
           style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.9)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, cursor: "zoom-out" }}>
           <div onClick={e => e.stopPropagation()} style={{ maxWidth: "90vw", maxHeight: "90vh", position: "relative" }}>
-            <img src={lightbox.imgData} alt="Full size"
+            <img src={lightbox.url || lightbox.imgData} alt="Full size"
               style={{ maxWidth: "80vw", maxHeight: "80vh", objectFit: "contain", borderRadius: 8 }} />
             {lightbox.comment && (
               <div style={{ background: "rgba(0,0,0,0.75)", color: "#e8f4e0", padding: "10px 16px", borderRadius: "0 0 8px 8px", fontSize: 14, lineHeight: 1.5 }}>

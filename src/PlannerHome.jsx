@@ -585,7 +585,7 @@ function TradeShowWidget({ recentPhotos, photoSessions, unviewedCount, onNavigat
                 {(session.photos||[]).slice(0, 8).map(photo => (
                   <div key={photo.id} onClick={() => onNavigate("tradeshow")} style={{ flexShrink: 0, position: "relative", cursor: "pointer" }}>
                     {isNew({ ...photo, sessionId: session.id }) && <div style={{ position: "absolute", top: 3, left: 3, zIndex: 1, background: "#7fb069", color: "#fff", borderRadius: 3, fontSize: 8, fontWeight: 900, padding: "1px 4px" }}>NEW</div>}
-                    <img src={photo.imgData} alt="" style={{ width: 90, height: 65, objectFit: "cover", borderRadius: 6, border: "1px solid #e0ead8", display: "block" }} />
+                    <img src={photo.url || photo.imgData} alt="" style={{ width: 90, height: 65, objectFit: "cover", borderRadius: 6, border: "1px solid #e0ead8", display: "block" }} />
                   </div>
                 ))}
               </div>
