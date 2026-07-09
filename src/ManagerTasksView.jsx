@@ -1729,7 +1729,8 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       )}
 
       {currentView === "treatment" && (
-        <TreatmentPlan onBack={() => setCurrentView("hub")} />
+        <TreatmentPlan onBack={() => setCurrentView("hub")}
+          onGoToGrowing={() => { setCategory("growing"); setSelectedWeek(today); setSearchQuery(""); setCurrentView("tasks"); }} />
       )}
 
       {currentView === "evaluations" && isManager && (

@@ -52,7 +52,7 @@ function compressImage(file, maxDim = 1280, quality = 0.8) {
   });
 }
 
-export default function TreatmentPlan({ onBack }) {
+export default function TreatmentPlan({ onBack, onGoToGrowing }) {
   const sb = getSupabase();
   const [crop, setCrop] = useState("Mum");
   const [crops, setCrops] = useState(["Mum"]);
@@ -281,7 +281,8 @@ export default function TreatmentPlan({ onBack }) {
       </div>
 
       {sel && <DetailModal sb={sb} rec={sel} thisYear={thisYear} defaultDate={targetDefault(sel)} varTasks={listOf(sel.id)}
-        onConvert={(td) => convert(sel, td)} onUndo={() => undo(sel)} onReconcile={(r) => reconcile(r)} onChanged={async () => { await load(); }} onSyncSel={r => setSel(r)} onClose={() => setSel(null)} />}
+        onConvert={(td) => convert(sel, td)} onUndo={() => undo(sel)} onReconcile={(r) => reconcile(r)} onChanged={async () => { await load(); }} onSyncSel={r => setSel(r)} onClose={() => setSel(null)}
+        onGoToGrowing={onGoToGrowing} />}
       {logOpen && <LogModal crop={crop} year={thisYear} sb={sb} onClose={() => setLogOpen(false)} onSaved={() => { setLogOpen(false); load(); }} />}
       {helpOpen && <HelpModal crop={crop} year={thisYear} onClose={() => setHelpOpen(false)} />}
     </div>
@@ -326,7 +327,7 @@ function HelpModal({ crop, year, onClose }) {
 }
 
 // Detail window — read the treatment, add plant-size photos + notes, set the date, create/undo the task.
-function DetailModal({ sb, rec, thisYear, defaultDate, varTasks = [], onConvert, onUndo, onReconcile, onChanged, onSyncSel, onClose }) {
+function DetailModal({ sb, rec, thisYear, defaultDate, varTasks = [], onConvert, onUndo, onReconcile, onChanged, onSyncSel, onClose, onGoToGrowing }) {
   const init = () => ({ application: rec.application || "", rates: rec.rates || "", location: rec.location || "", notes: rec.notes || "" });
   const [meta, setMeta] = useState(init);
   const [lines, setLines] = useState(() => { const v = splitVars(rec.crop_detail); return v.length ? v : [""]; });
@@ -475,7 +476,8 @@ function DetailModal({ sb, rec, thisYear, defaultDate, varTasks = [], onConvert,
                 ? <span style={{ fontSize: 13, fontWeight: 800, color: "#fff", background: "#3a7d2c", borderRadius: 8, padding: "8px 12px" }}>✓ Completed{lastDone ? ` ${fmtDate(String(lastDone).slice(0, 10))}` : ""}{lastBy ? ` · ${lastBy}` : ""}</span>
                 : dN > 0
                   ? <span style={{ fontSize: 13, fontWeight: 800, color: "#2e5c1e", background: "#eef6e7", borderRadius: 8, padding: "8px 12px" }}>{dN} of {total} varieties done</span>
-                  : <span style={{ fontSize: 13, fontWeight: 700, color: "#2e5c1e", background: "#eef6e7", borderRadius: 8, padding: "8px 12px" }}>✓ {total > 1 ? `${total} tasks` : "Task"} created — in Growing</span>}
+                  : <span style={{ fontSize: 13, fontWeight: 700, color: "#2e5c1e", background: "#eef6e7", borderRadius: 8, padding: "8px 12px" }}>✓ {total > 1 ? `${total} tasks` : "Task"} created</span>}
+              {onGoToGrowing && <button onClick={onGoToGrowing} style={{ background: "#eaf1fb", color: "#2b6cb0", border: "1.5px solid #4a90d9", borderRadius: 9, padding: "9px 14px", fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>🌿 View in Growing ›</button>}
               <button onClick={doUndo} disabled={busy} style={{ background: "#fff", color: "#d94f3d", border: `1.5px solid ${C.border}`, borderRadius: 9, padding: "9px 14px", fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>{busy ? "…" : total > 1 ? "Undo all" : "Undo"}</button>
             </div>
           )}
