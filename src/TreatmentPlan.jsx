@@ -150,14 +150,19 @@ export default function TreatmentPlan({ onBack }) {
         <div style={{ fontWeight: 800, color: C.dark, fontSize: 13 }}>{fmtDate(r.rec_date)}</div>
         <div style={{ fontSize: 9, color: C.muted }}>'{String(r.rec_date).slice(2, 4)}</div>
       </div>
-      <div onClick={() => setSel(r)} style={{ flex: 1, minWidth: 0, cursor: "pointer" }}>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
-          {r.application && <span style={{ fontSize: 11.5, fontWeight: 800, color: "#fff", background: appColor(r.application), borderRadius: 7, padding: "2px 9px", ...wrap }}>{r.application}{r.rates ? ` · ${r.rates}` : ""}</span>}
-          {(r.photos || []).length > 0 && <span style={{ fontSize: 10.5, color: C.plum, fontWeight: 700 }}>📷 {(r.photos || []).length}</span>}
-          <span style={{ marginLeft: "auto", color: C.muted, fontSize: 11, flexShrink: 0 }}>tap ›</span>
+      <div onClick={() => setSel(r)} style={{ flex: 1, minWidth: 0, cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+            {r.application && <span style={{ fontSize: 11.5, fontWeight: 800, color: "#fff", background: appColor(r.application), borderRadius: 7, padding: "2px 9px", ...wrap }}>{r.application}{r.rates ? ` · ${r.rates}` : ""}</span>}
+            {(r.photos || []).length > 0 && <span style={{ fontSize: 10.5, color: C.plum, fontWeight: 700 }}>📷 {(r.photos || []).length}</span>}
+          </div>
+          {r.crop_detail && <div style={{ fontSize: 12.5, color: C.dark, marginTop: 3, ...wrap, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{r.crop_detail}</div>}
         </div>
-        {r.crop_detail && <div style={{ fontSize: 12.5, color: C.dark, marginTop: 3, ...wrap, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{r.crop_detail}</div>}
       </div>
+      <button onClick={() => setSel(r)} title="Open — edit, photos, notes, schedule"
+        style={{ border: `1.5px solid ${C.plum}`, background: "#f5eefa", color: C.plum, borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap", flexShrink: 0 }}>
+        Open ›
+      </button>
       <button onClick={() => (added[r.id] ? setSel(r) : convert(r))} disabled={busy === r.id}
         style={{ border: added[r.id] ? `1.5px solid ${C.light}` : "none", background: added[r.id] ? "#eef6e7" : C.light, color: added[r.id] ? "#2e5c1e" : "#fff", borderRadius: 8, padding: "6px 11px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap", flexShrink: 0 }}>
         {busy === r.id ? "…" : added[r.id] ? "✓ added" : `➕ ${thisYear}`}
@@ -179,7 +184,7 @@ export default function TreatmentPlan({ onBack }) {
         </div>
 
         <div style={{ background: "#eef6e7", border: `1px solid ${C.light}`, borderRadius: 10, padding: "10px 12px", fontSize: 12.5, color: "#2e3d28", marginBottom: 14 }}>
-          Your <strong>{crop} {lastYear}</strong> records ({recs.length}). Tap a treatment to see it, add a <strong>plant-size photo</strong> + notes, set the date, and create this year's <strong>Growing</strong> task. <strong>➕ {thisYear}</strong> quick-adds at the same date (adjust after).
+          Your <strong>{crop} {lastYear}</strong> records ({recs.length}). Tap a treatment or its <strong style={{ color: C.plum }}>Open ›</strong> button to open the window — edit varieties, add a <strong>plant-size photo</strong> + notes, set the date, and create this year's <strong>Growing</strong> task. <strong>➕ {thisYear}</strong> quick-adds at the same date.
         </div>
 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
