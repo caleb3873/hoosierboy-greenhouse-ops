@@ -21,6 +21,7 @@ export default function TreatmentPlan({ onBack }) {
   const [recs, setRecs] = useState([]);
   const [busy, setBusy] = useState("");
   const [added, setAdded] = useState({}); // record id -> true (converted this session)
+  const [open, setOpen] = useState({});   // record id -> expanded
   const [logOpen, setLogOpen] = useState(false);
   const thisYear = new Date().getFullYear();
 
@@ -68,26 +69,36 @@ export default function TreatmentPlan({ onBack }) {
   recs.forEach(r => { if (!r.rec_date) return; (byMonth[monthOf(r.rec_date)] = byMonth[monthOf(r.rec_date)] || []).push(r); });
 
   const C = { dark: "#1e2d1a", light: "#7fb069", muted: "#7a8c74", border: "#e0ead8", card: "#fff" };
-  const Row = ({ r, compact }) => (
-    <div style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "9px 4px", borderTop: `1px solid ${C.border}` }}>
-      <div style={{ minWidth: 52, textAlign: "center" }}>
-        <div style={{ fontWeight: 800, color: C.dark, fontSize: 13 }}>{fmtDate(r.rec_date)}</div>
-        <div style={{ fontSize: 9, color: C.muted }}>{compact ? `→ ${thisYear}` : `'${String(r.rec_date).slice(2, 4)}`}</div>
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
-          {r.application && <span style={{ fontSize: 11.5, fontWeight: 800, color: "#fff", background: appColor(r.application), borderRadius: 7, padding: "2px 9px" }}>{r.application}{r.rates ? ` · ${r.rates}` : ""}</span>}
-          {r.location && <span style={{ fontSize: 11, color: C.muted }}>📍 {r.location}</span>}
+  const wrap = { overflowWrap: "anywhere", wordBreak: "break-word" };
+  const Row = ({ r, compact }) => {
+    const isOpen = !!open[r.id];
+    const toggle = () => setOpen(o => ({ ...o, [r.id]: !o[r.id] }));
+    return (
+      <div style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "9px 4px", borderTop: `1px solid ${C.border}` }}>
+        <div style={{ minWidth: 52, textAlign: "center", flexShrink: 0 }}>
+          <div style={{ fontWeight: 800, color: C.dark, fontSize: 13 }}>{fmtDate(r.rec_date)}</div>
+          <div style={{ fontSize: 9, color: C.muted }}>{compact ? `→ ${thisYear}` : `'${String(r.rec_date).slice(2, 4)}`}</div>
         </div>
-        {r.crop_detail && <div style={{ fontSize: 12.5, color: C.dark, marginTop: 3 }}>{r.crop_detail}</div>}
-        {r.notes && <div style={{ fontSize: 11, color: C.muted, marginTop: 2, fontStyle: "italic" }}>📝 {r.notes}</div>}
+        <div onClick={toggle} style={{ flex: 1, minWidth: 0, cursor: "pointer" }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+            {r.application && <span style={{ fontSize: 11.5, fontWeight: 800, color: "#fff", background: appColor(r.application), borderRadius: 7, padding: "2px 9px", ...wrap }}>{r.application}{r.rates ? ` · ${r.rates}` : ""}</span>}
+            {r.location && <span style={{ fontSize: 11, color: C.muted, ...wrap }}>📍 {r.location}</span>}
+            <span style={{ marginLeft: "auto", color: C.muted, fontSize: 11, flexShrink: 0 }}>{isOpen ? "▲ less" : "▼ more"}</span>
+          </div>
+          {r.crop_detail && (
+            <div style={{ fontSize: 12.5, color: C.dark, marginTop: 3, ...wrap, ...(isOpen ? {} : { display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }) }}>{r.crop_detail}</div>
+          )}
+          {isOpen && r.notes && <div style={{ fontSize: 11.5, color: C.muted, marginTop: 4, fontStyle: "italic", ...wrap }}>📝 {r.notes}</div>}
+          {isOpen && (r.rates || r.location) && <div style={{ fontSize: 11, color: C.muted, marginTop: 4 }}>{[r.location && `📍 ${r.location}`, r.rates && `Rate: ${r.rates}`].filter(Boolean).join("  ·  ")}</div>}
+          {!isOpen && r.notes && <div style={{ fontSize: 10.5, color: C.muted, marginTop: 2, ...wrap, display: "-webkit-box", WebkitLineClamp: 1, WebkitBoxOrient: "vertical", overflow: "hidden" }}>📝 {r.notes}</div>}
+        </div>
+        <button onClick={() => convert(r)} disabled={busy === r.id || added[r.id]}
+          style={{ border: "none", background: added[r.id] ? "#eef3e9" : C.light, color: added[r.id] ? C.muted : "#fff", borderRadius: 8, padding: "6px 11px", fontSize: 12, fontWeight: 800, cursor: added[r.id] ? "default" : "pointer", fontFamily: "inherit", whiteSpace: "nowrap", flexShrink: 0 }}>
+          {added[r.id] ? "✓ added" : busy === r.id ? "…" : `➕ ${thisYear}`}
+        </button>
       </div>
-      <button onClick={() => convert(r)} disabled={busy === r.id || added[r.id]}
-        style={{ border: "none", background: added[r.id] ? "#eef3e9" : C.light, color: added[r.id] ? C.muted : "#fff", borderRadius: 8, padding: "6px 11px", fontSize: 12, fontWeight: 800, cursor: added[r.id] ? "default" : "pointer", fontFamily: "inherit", whiteSpace: "nowrap", flexShrink: 0 }}>
-        {added[r.id] ? "✓ added" : busy === r.id ? "…" : `➕ ${thisYear}`}
-      </button>
-    </div>
-  );
+    );
+  };
 
   return (
     <div style={{ fontFamily: "'DM Sans','Segoe UI',sans-serif", background: "#f2f5ef", minHeight: "100vh" }}>
