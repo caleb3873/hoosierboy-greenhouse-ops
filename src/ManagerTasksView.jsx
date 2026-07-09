@@ -2976,7 +2976,7 @@ function TaskDetail({ task, onBack, onSave }) {
     return (
       <div style={{ ...FONT, minHeight: "100vh", background: "#f2f5ef" }}>
         <div style={{ background: "#1e2d1a", padding: "16px 20px", color: "#c8e6b8", display: "flex", alignItems: "center", gap: 12 }}>
-          <button onClick={onBack} style={{ background: "none", border: "none", color: "#c8e6b8", fontSize: 22, cursor: "pointer" }}>&larr;</button>
+          <button onClick={handleBack} style={{ background: "none", border: "none", color: "#c8e6b8", fontSize: 22, cursor: "pointer" }}>&larr;</button>
           <div style={{ fontSize: 17, fontWeight: 800, flex: 1 }}>Task</div>
           <button onClick={() => setMode("edit")}
             style={{ background: "#7fb069", color: "#1e2d1a", border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
@@ -3034,14 +3034,19 @@ function TaskDetail({ task, onBack, onSave }) {
             </Section>
           )}
 
-          {/* Photos */}
-          {Array.isArray(t.photos) && t.photos.length > 0 && (
-            <Section title={`Photos · ${t.photos.length}`}>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(110px, 1fr))", gap: 8 }}>
+          {/* Photos + camera — snap a photo without entering Edit (loops back to the Treatment Plan) */}
+          <Section title={`Photos${(t.photos || []).length ? ` · ${t.photos.length}` : ""}`}>
+            {Array.isArray(t.photos) && t.photos.length > 0 && (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(110px, 1fr))", gap: 8, marginBottom: 10 }}>
                 {t.photos.map((p, i) => <TaskPhoto key={i} src={p} size={110} />)}
               </div>
-            </Section>
-          )}
+            )}
+            <label style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", boxSizing: "border-box", padding: "15px 16px", borderRadius: 10, border: "2px solid #7fb069", background: "#eef6e7", color: "#1e2d1a", fontSize: 15, fontWeight: 800, cursor: uploadingPhoto ? "default" : "pointer" }}>
+              {uploadingPhoto ? "Uploading…" : "📷 Take / add a photo"}
+              <input type="file" accept="image/*" capture="environment" disabled={uploadingPhoto} onChange={handlePhoto} style={{ display: "none" }} />
+            </label>
+            <div style={{ fontSize: 12, color: "#7a8c74", marginTop: 6, textAlign: "center" }}>Snap the plant size now — it saves to this task when you go back.</div>
+          </Section>
 
           {/* Status history */}
           <Section title="History">
