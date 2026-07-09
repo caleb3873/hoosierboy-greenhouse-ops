@@ -57,6 +57,40 @@ export default function TreatmentPlan({ onBack }) {
   const taskDesc = rec => [rec.crop_detail && `Crop: ${rec.crop_detail}`, rec.location && `Location: ${rec.location}`, rec.rates && `Rate: ${rec.rates}`, rec.notes && `Note: ${rec.notes}`, "📷 Take a photo of the plant size when treating."].filter(Boolean).join("\n");
   const toTask = (rec, id, td) => { const wi = isoWeek(td); return { id, title: taskTitle(rec), description: taskDesc(rec), category: "growing", status: "pending", priority: 10, week_number: wi.week, year: wi.year, target_date: td, bucket: null, carried_over: false, created_by: `${crop} Plan`, location: rec.location || null, assignees: [], photos: [] }; };
 
+  // Loop-back: when the crew completes a converted task with photos, copy those plant-size photos back
+  // onto the treatment record (task-photos is private → physically copy into the public treatment-photos
+  // bucket) so next year's plan shows how big the plants actually were. Idempotent via srcPath.
+  async function pullTaskPhotos(list, tasks) {
+    const byTitle = {}; tasks.forEach(t => { byTitle[t.title] = t; });
+    for (const rec of list) {
+      const t = byTitle[taskTitle(rec)];
+      if (!t || t.status !== "completed" || !(t.photos || []).length) continue;
+      const have = new Set((rec.photos || []).map(p => p.srcPath).filter(Boolean));
+      const toAdd = [];
+      for (const ph of t.photos) {
+        if (typeof ph !== "string" || have.has(ph)) continue;
+        let url = null;
+        if (ph.startsWith("http") || ph.startsWith("data:")) url = ph;
+        else {
+          try {
+            const { data: blob } = await sb.storage.from("task-photos").download(ph);
+            if (blob) {
+              const path = `${rec.id}/fromtask-${uid()}.jpg`;
+              const { error } = await sb.storage.from("treatment-photos").upload(path, blob, { contentType: blob.type || "image/jpeg" });
+              if (!error) url = sb.storage.from("treatment-photos").getPublicUrl(path).data.publicUrl;
+            }
+          } catch { /* skip this photo */ }
+        }
+        if (url) toAdd.push({ id: uid(), url, capturedAt: Date.now(), fromTask: true, srcPath: ph });
+      }
+      if (toAdd.length) {
+        const next = [...(rec.photos || []), ...toAdd];
+        await sb.from("treatment_records").update({ photos: next }).eq("id", rec.id);
+        setRecs(prev => prev.map(r => r.id === rec.id ? { ...r, photos: next } : r));
+      }
+    }
+  }
+
   const load = useCallback(async () => {
     if (!sb) return;
     const { data: cr } = await sb.from("treatment_records").select("crop");
@@ -64,10 +98,11 @@ export default function TreatmentPlan({ onBack }) {
     const { data } = await sb.from("treatment_records").select("*").eq("crop", crop).order("rec_date");
     const list = data || []; setRecs(list);
     // detect which are already scheduled (so ✓/undo persist across reloads) — match by title
-    const { data: existing } = await sb.from("manager_tasks").select("id,title").eq("created_by", `${crop} Plan`);
+    const { data: existing } = await sb.from("manager_tasks").select("id,title,status,photos").eq("created_by", `${crop} Plan`);
     const idx = {}; (existing || []).forEach(t => { idx[t.title] = t.id; });
     const map = {}; list.forEach(r => { const id = idx[taskTitle(r)]; if (id) map[r.id] = id; }); setAdded(map);
-  }, [sb, crop]); // eslint: taskTitle stable enough
+    pullTaskPhotos(list, existing || []); // copy back any completed-task photos (fire-and-forget)
+  }, [sb, crop]); // pullTaskPhotos intentionally not a dep
   useEffect(() => { load(); }, [load]);
 
   const lastYear = recs.length ? Math.max(...recs.map(r => +String(r.rec_date).slice(0, 4) || 0)) : thisYear - 1;
@@ -188,6 +223,7 @@ function HelpModal({ crop, year, onClose }) {
     ["📝", "Add notes", "Jot anything for next time — it saves right onto the record."],
     ["➕", `Create this year's task`, `Set the date (it defaults to the same day last year — change it to when the plants actually reach size) and create the task. It lands in Growing tasks, where the crew sees it on their phones and can upload their own photos as they do it.`],
     ["↩️", "Undo anytime", "A created treatment shows ✓ added. Open it and hit Undo to remove the task."],
+    ["🔄", "It builds next year's plan by itself", "When the crew finishes the task in Growing and adds a photo of the plants, that plant-size photo automatically comes back onto this treatment record — so next year you'll see exactly how big they were when you treated, and the whole plan keeps improving."],
     ["📅", "Around now, last year", `At the top, the treatments from this point in the season last year — one tap to schedule.`],
     ["📋", "Copy the whole plan", `Create every task for ${year} at once, then adjust dates as the plants tell you.`],
     ["＋", "Log a treatment", "Record what you actually do this year — it becomes next year's plan, so it keeps improving."],
@@ -277,6 +313,7 @@ function DetailModal({ sb, rec, crop, thisYear, defaultDate, taskId, onConvert, 
           {photos.map(p => (
             <div key={p.id} style={{ position: "relative" }}>
               <img src={p.url} alt="" onClick={() => window.open(p.url, "_blank")} style={{ width: 92, height: 92, objectFit: "cover", borderRadius: 8, border: `1px solid ${C.border}`, cursor: "pointer" }} />
+              {p.fromTask && <span style={{ position: "absolute", bottom: 3, left: 3, background: "rgba(30,45,26,.8)", color: "#c8e6b8", fontSize: 8.5, fontWeight: 800, padding: "1px 5px", borderRadius: 4 }}>CREW</span>}
               <button onClick={() => delPhoto(p.id)} style={{ position: "absolute", top: 3, right: 3, background: "rgba(0,0,0,.55)", color: "#fff", border: "none", borderRadius: 14, width: 22, height: 22, fontSize: 13, cursor: "pointer" }}>×</button>
             </div>
           ))}
