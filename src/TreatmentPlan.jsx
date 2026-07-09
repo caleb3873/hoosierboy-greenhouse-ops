@@ -49,6 +49,7 @@ export default function TreatmentPlan({ onBack }) {
   const [added, setAdded] = useState({}); // record id -> created task id (persisted via title match)
   const [sel, setSel] = useState(null);   // record whose detail window is open
   const [logOpen, setLogOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const thisYear = new Date().getFullYear();
 
   const targetDefault = rec => `${thisYear}-${String(rec.rec_date).slice(5)}`; // same day, this year
@@ -149,6 +150,7 @@ export default function TreatmentPlan({ onBack }) {
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
           <button onClick={copyAll} disabled={busy === "all" || !recs.length} style={{ background: C.dark, color: "#fff", border: "none", borderRadius: 9, padding: "9px 15px", fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>{busy === "all" ? "Creating…" : `📋 Copy whole plan → ${thisYear}`}</button>
           <button onClick={() => setLogOpen(true)} style={{ background: "#fff", color: C.dark, border: `1.5px solid ${C.border}`, borderRadius: 9, padding: "9px 15px", fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>＋ Log a treatment</button>
+          <button onClick={() => setHelpOpen(true)} style={{ background: "#fff", color: C.plum, border: `1.5px solid ${C.plum}`, borderRadius: 9, padding: "9px 15px", fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>❓ How it works</button>
         </div>
 
         {soon.length > 0 && (
@@ -172,6 +174,43 @@ export default function TreatmentPlan({ onBack }) {
       {sel && <DetailModal sb={sb} rec={sel} crop={crop} thisYear={thisYear} defaultDate={targetDefault(sel)} taskId={added[sel.id]}
         onConvert={(td) => convert(sel, td)} onUndo={() => undo(sel)} onChanged={async () => { await load(); }} onSyncSel={r => setSel(r)} onClose={() => setSel(null)} />}
       {logOpen && <LogModal crop={crop} year={thisYear} sb={sb} onClose={() => setLogOpen(false)} onSaved={() => { setLogOpen(false); load(); }} />}
+      {helpOpen && <HelpModal crop={crop} year={thisYear} onClose={() => setHelpOpen(false)} />}
+    </div>
+  );
+}
+
+// How-it-works guide.
+function HelpModal({ crop, year, onClose }) {
+  const steps = [
+    ["🌼", "It's last year's plan", `Every ${crop} treatment you did last season — Piccolo drenches, fertilizer step-downs, planting, netting — in order. Use it to do the same things again this year.`],
+    ["👆", "Tap a treatment to open it", "See the full details, the varieties/sizes, location and rate. Nothing's cut off in the window."],
+    ["📷", "Add a plant-size photo", "Because treatments like Piccolo are size-triggered, snap a photo of how big the plants are. Last year's photo shows the target size; this year's builds the record. Photos are shrunk before upload so they're quick."],
+    ["📝", "Add notes", "Jot anything for next time — it saves right onto the record."],
+    ["➕", `Create this year's task`, `Set the date (it defaults to the same day last year — change it to when the plants actually reach size) and create the task. It lands in Growing tasks, where the crew sees it on their phones and can upload their own photos as they do it.`],
+    ["↩️", "Undo anytime", "A created treatment shows ✓ added. Open it and hit Undo to remove the task."],
+    ["📅", "Around now, last year", `At the top, the treatments from this point in the season last year — one tap to schedule.`],
+    ["📋", "Copy the whole plan", `Create every task for ${year} at once, then adjust dates as the plants tell you.`],
+    ["＋", "Log a treatment", "Record what you actually do this year — it becomes next year's plan, so it keeps improving."],
+  ];
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 9999, display: "flex", alignItems: "flex-end", justifyContent: "center", overflow: "auto" }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: "16px 16px 0 0", padding: 20, width: "100%", maxWidth: 520, maxHeight: "92vh", overflow: "auto", fontFamily: "'DM Sans','Segoe UI',sans-serif" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+          <div style={{ fontWeight: 800, fontSize: 18, color: C.dark }}>How the Treatment Plan works</div>
+          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 24, color: C.muted, cursor: "pointer", lineHeight: 1 }}>×</button>
+        </div>
+        <div style={{ fontSize: 12.5, color: C.muted, marginBottom: 14 }}>Do what you did last year, on the right dates — and keep the record.</div>
+        {steps.map(([icon, title, body], i) => (
+          <div key={i} style={{ display: "flex", gap: 12, padding: "10px 0", borderTop: i ? `1px solid ${C.border}` : "none" }}>
+            <div style={{ fontSize: 22, width: 30, textAlign: "center", flexShrink: 0 }}>{icon}</div>
+            <div>
+              <div style={{ fontWeight: 800, fontSize: 13.5, color: C.dark }}>{title}</div>
+              <div style={{ fontSize: 12.5, color: "#4a5a44", marginTop: 2, lineHeight: 1.45 }}>{body}</div>
+            </div>
+          </div>
+        ))}
+        <button onClick={onClose} style={{ width: "100%", marginTop: 14, background: C.dark, color: "#fff", border: "none", borderRadius: 10, padding: 13, fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>Got it</button>
+      </div>
     </div>
   );
 }
