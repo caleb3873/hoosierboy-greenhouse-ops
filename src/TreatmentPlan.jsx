@@ -117,11 +117,11 @@ export default function TreatmentPlan({ onBack }) {
     const { data } = await sb.from("treatment_records").select("*").eq("crop", crop).order("rec_date");
     const list = data || []; setRecs(list);
     // link each record to its scheduled tasks — for ✓/undo state + completion status + loop-back
-    const { data: existing } = await sb.from("manager_tasks").select("id,title,status,completed_at,completed_by,photos,source_record_id,source_variety").eq("created_by", `${crop} Plan`);
+    const { data: existing } = await sb.from("manager_tasks").select("id,title,status,completed_at,completed_by,photos,target_date,source_record_id,source_variety").eq("created_by", `${crop} Plan`);
     const byOldTitle = {}; list.forEach(r => { byOldTitle[oldTitle(r)] = r.id; }); // legacy fallback
     const recIdOf = t => t.source_record_id != null ? t.source_record_id : (byOldTitle[t.title] ?? null);
     const byRec = {};
-    (existing || []).forEach(t => { const rid = recIdOf(t); if (rid == null) return; (byRec[rid] = byRec[rid] || []).push({ id: t.id, variety: t.source_variety, status: t.status, completedAt: t.completed_at, completedBy: t.completed_by }); });
+    (existing || []).forEach(t => { const rid = recIdOf(t); if (rid == null) return; (byRec[rid] = byRec[rid] || []).push({ id: t.id, variety: t.source_variety, status: t.status, completedAt: t.completed_at, completedBy: t.completed_by, targetDate: t.target_date }); });
     setTasks(byRec);
     pullTaskPhotos(list, existing || [], recIdOf); // copy back any completed-task photos (fire-and-forget)
   }, [sb, crop]); // pullTaskPhotos intentionally not a dep
@@ -136,7 +136,7 @@ export default function TreatmentPlan({ onBack }) {
     const { error } = await sb.from("manager_tasks").insert(rows);
     setBusy("");
     if (error) { window.alert("Couldn't create task: " + error.message); return false; }
-    setTasks(t => ({ ...t, [rec.id]: rows.map(r => ({ id: r.id, variety: r.source_variety, status: "pending" })) }));
+    setTasks(t => ({ ...t, [rec.id]: rows.map(r => ({ id: r.id, variety: r.source_variety, status: "pending", targetDate: r.target_date })) }));
     return true;
   }
   async function undo(rec) {
@@ -146,11 +146,48 @@ export default function TreatmentPlan({ onBack }) {
     setBusy("");
     setTasks(t => { const n = { ...t }; delete n[rec.id]; return n; });
   }
+  const setRecPhotos = (id, ph) => { setRecs(prev => prev.map(r => r.id === id ? { ...r, photos: ph } : r)); setSel(prev => prev && prev.id === id ? { ...prev, photos: ph } : prev); };
+  // Keep a scheduled treatment's per-variety tasks in sync with its variety lines when they change AFTER
+  // scheduling: add a task for a new variety, delete a removed one, and (single add+remove) treat it as a
+  // rename — moving the task's variety + retagging its photos so the loop-back still lands on the right line.
+  async function reconcile(rec) {
+    const existing = listOf(rec.id);
+    if (!existing.length) return; // not scheduled → nothing to reconcile
+    const want = varsOf(rec).map(v => isAll(v) ? null : v); // desired variety keys (null = broad/location task)
+    const wantSet = new Set(want), haveSet = new Set(existing.map(t => t.variety));
+    const toAddKeys = want.filter(k => !haveSet.has(k));
+    const toRemove = existing.filter(t => !wantSet.has(t.variety));
+    const td = existing[0].targetDate || targetDefault(rec);
+    const retag = (map) => { const ph = (rec.photos || []).map(map); if (JSON.stringify(ph) !== JSON.stringify(rec.photos || [])) { sb.from("treatment_records").update({ photos: ph }).eq("id", rec.id).then(() => setRecPhotos(rec.id, ph)); } };
+
+    if (toAddKeys.length === 1 && toRemove.length === 1) {          // RENAME
+      const from = toRemove[0], toKey = toAddKeys[0];
+      await sb.from("manager_tasks").update({ source_variety: toKey, title: mkTitle(rec, toKey ?? "(all)"), description: mkDesc(rec, toKey ?? "(all)"), location: rec.location || null }).eq("id", from.id);
+      retag(p => p.variety === from.variety ? { ...p, variety: toKey } : p);
+      setTasks(t => ({ ...t, [rec.id]: existing.map(x => x.id === from.id ? { ...x, variety: toKey } : x) }));
+    } else {                                                        // ADD / REMOVE
+      if (toRemove.length) {
+        await sb.from("manager_tasks").delete().in("id", toRemove.map(t => t.id));
+        const rm = new Set(toRemove.map(t => t.variety).filter(Boolean));
+        if (rm.size) retag(p => rm.has(p.variety) ? { ...p, variety: null } : p); // keep orphaned photos → General
+      }
+      let addedRows = [];
+      if (toAddKeys.length) { addedRows = toAddKeys.map(k => toTask(rec, uid(), td, k ?? "(all)")); await sb.from("manager_tasks").insert(addedRows); }
+      setTasks(t => {
+        const survivors = existing.filter(x => wantSet.has(x.variety));
+        const news = addedRows.map(r => ({ id: r.id, variety: r.source_variety, status: "pending", targetDate: r.target_date }));
+        return { ...t, [rec.id]: [...survivors, ...news] };
+      });
+    }
+    // re-sync title/desc/location on every kept task (covers application/rate/location edits)
+    const survivors = existing.filter(x => wantSet.has(x.variety) || (toAddKeys.length === 1 && toRemove.length === 1));
+    for (const vt of survivors) { const v = wantSet.has(vt.variety) ? vt.variety : (toAddKeys[0] ?? null); await sb.from("manager_tasks").update({ title: mkTitle(rec, v ?? "(all)"), description: mkDesc(rec, v ?? "(all)"), location: rec.location || null }).eq("id", vt.id); }
+  }
   async function copyAll() {
     const pending = recs.filter(r => r.rec_date && !listOf(r.id).length);
     if (!pending.length) { window.alert("All treatments are already added to " + thisYear + "."); return; }
     const rows = [], local = {};
-    pending.forEach(r => { const made = varsOf(r).map(v => { const id = uid(); rows.push(toTask(r, id, targetDefault(r), v)); return { id, variety: isAll(v) ? null : v, status: "pending" }; }); local[r.id] = made; });
+    pending.forEach(r => { const td = targetDefault(r); const made = varsOf(r).map(v => { const id = uid(); rows.push(toTask(r, id, td, v)); return { id, variety: isAll(v) ? null : v, status: "pending", targetDate: td }; }); local[r.id] = made; });
     if (!window.confirm(`Create ${rows.length} ${crop} tasks in ${thisYear} (same dates as last year — Piccolo split per variety, fertilizer by location; adjust each in Growing or here)? `)) return;
     setBusy("all");
     const { error } = await sb.from("manager_tasks").insert(rows);
@@ -244,7 +281,7 @@ export default function TreatmentPlan({ onBack }) {
       </div>
 
       {sel && <DetailModal sb={sb} rec={sel} thisYear={thisYear} defaultDate={targetDefault(sel)} varTasks={listOf(sel.id)}
-        onConvert={(td) => convert(sel, td)} onUndo={() => undo(sel)} onChanged={async () => { await load(); }} onSyncSel={r => setSel(r)} onClose={() => setSel(null)} />}
+        onConvert={(td) => convert(sel, td)} onUndo={() => undo(sel)} onReconcile={(r) => reconcile(r)} onChanged={async () => { await load(); }} onSyncSel={r => setSel(r)} onClose={() => setSel(null)} />}
       {logOpen && <LogModal crop={crop} year={thisYear} sb={sb} onClose={() => setLogOpen(false)} onSaved={() => { setLogOpen(false); load(); }} />}
       {helpOpen && <HelpModal crop={crop} year={thisYear} onClose={() => setHelpOpen(false)} />}
     </div>
@@ -289,7 +326,7 @@ function HelpModal({ crop, year, onClose }) {
 }
 
 // Detail window — read the treatment, add plant-size photos + notes, set the date, create/undo the task.
-function DetailModal({ sb, rec, thisYear, defaultDate, varTasks = [], onConvert, onUndo, onChanged, onSyncSel, onClose }) {
+function DetailModal({ sb, rec, thisYear, defaultDate, varTasks = [], onConvert, onUndo, onReconcile, onChanged, onSyncSel, onClose }) {
   const init = () => ({ application: rec.application || "", rates: rec.rates || "", location: rec.location || "", notes: rec.notes || "" });
   const [meta, setMeta] = useState(init);
   const [lines, setLines] = useState(() => { const v = splitVars(rec.crop_detail); return v.length ? v : [""]; });
@@ -338,14 +375,10 @@ function DetailModal({ sb, rec, thisYear, defaultDate, varTasks = [], onConvert,
     const cd = (linesOverride || lines).map(s => s.trim()).filter(Boolean).join(", ");
     const clean = { application: meta.application.trim() || null, rates: meta.rates.trim() || null, crop_detail: cd || null, location: meta.location.trim() || null, notes: meta.notes.trim() || null };
     await sb.from("treatment_records").update(clean).eq("id", rec.id);
-    onSyncSel({ ...rec, ...clean }); onChanged();
-    // keep each already-scheduled task's title/detail in sync (per its own variety)
-    if (varTasks.length) {
-      const m = { ...rec, ...clean };
-      for (const vt of varTasks) {
-        await sb.from("manager_tasks").update({ title: mkTitle(m, vt.variety || "(all)"), description: mkDesc(m, vt.variety || "(all)"), location: m.location || null }).eq("id", vt.id);
-      }
-    }
+    onSyncSel({ ...rec, ...clean });
+    // if already scheduled, reconcile the per-variety tasks to the current lines (add/remove/rename + retag)
+    if (varTasks.length) await onReconcile({ ...rec, ...clean });
+    onChanged();
   }
   async function doConvert() { setBusy(true); await onConvert(date); setBusy(false); }
   async function doUndo() { setBusy(true); await onUndo(); setBusy(false); }
