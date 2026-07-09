@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { getSupabase } from "./supabase";
 
 // "What we did last year" treatment plan → seed this year's tasks. Generic per crop (Mum first).
+const uid = () => crypto.randomUUID();
 const isoWeek = (iso) => {
   const d = new Date(iso + "T12:00:00");
   const dt = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
@@ -13,6 +14,31 @@ const isoWeek = (iso) => {
 const fmtDate = iso => new Date(iso + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
 const monthOf = iso => new Date(iso + "T12:00:00").toLocaleDateString("en-US", { month: "long" });
 const appColor = a => { const x = (a || "").toLowerCase(); return x.includes("piccolo") || x.includes("cleary") || x.includes("sprint") || x.includes("subdue") ? "#8e5aa8" : x.includes("plant") ? "#7fb069" : x.includes("ppm") || x.includes("fert") ? "#e89a3a" : x.includes("net") ? "#4a90d9" : "#7a8c74"; };
+const C = { dark: "#1e2d1a", light: "#7fb069", muted: "#7a8c74", border: "#e0ead8", card: "#fff", plum: "#8e5aa8" };
+const wrap = { overflowWrap: "anywhere", wordBreak: "break-word" };
+
+// Resize + JPEG-compress in the browser BEFORE upload so a 4–8 MB phone photo becomes ~200–400 KB
+// (fast on a weak bench/booth connection). Falls back to the original file if anything fails.
+function compressImage(file, maxDim = 1280, quality = 0.8) {
+  return new Promise(resolve => {
+    try {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        let { width, height } = img;
+        const m = Math.max(width, height);
+        if (m > maxDim) { const s = maxDim / m; width = Math.round(width * s); height = Math.round(height * s); }
+        const canvas = document.createElement("canvas");
+        canvas.width = width; canvas.height = height;
+        canvas.getContext("2d").drawImage(img, 0, 0, width, height);
+        canvas.toBlob(b => resolve(b && b.size < file.size ? b : file), "image/jpeg", quality);
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+      img.src = url;
+    } catch { resolve(file); }
+  });
+}
 
 export default function TreatmentPlan({ onBack }) {
   const sb = getSupabase();
@@ -20,119 +46,119 @@ export default function TreatmentPlan({ onBack }) {
   const [crops, setCrops] = useState(["Mum"]);
   const [recs, setRecs] = useState([]);
   const [busy, setBusy] = useState("");
-  const [added, setAdded] = useState({}); // record id -> true (converted this session)
-  const [open, setOpen] = useState({});   // record id -> expanded
+  const [added, setAdded] = useState({}); // record id -> created task id (persisted via title match)
+  const [sel, setSel] = useState(null);   // record whose detail window is open
   const [logOpen, setLogOpen] = useState(false);
   const thisYear = new Date().getFullYear();
+
+  const targetDefault = rec => `${thisYear}-${String(rec.rec_date).slice(5)}`; // same day, this year
+  const taskTitle = rec => (["🌼", rec.application, rec.rates].filter(Boolean).join(" ") + (rec.crop_detail ? ` — ${rec.crop_detail}` : "")).trim();
+  const taskDesc = rec => [rec.crop_detail && `Crop: ${rec.crop_detail}`, rec.location && `Location: ${rec.location}`, rec.rates && `Rate: ${rec.rates}`, rec.notes && `Note: ${rec.notes}`, "📷 Take a photo of the plant size when treating."].filter(Boolean).join("\n");
+  const toTask = (rec, id, td) => { const wi = isoWeek(td); return { id, title: taskTitle(rec), description: taskDesc(rec), category: "growing", status: "pending", priority: 10, week_number: wi.week, year: wi.year, target_date: td, bucket: null, carried_over: false, created_by: `${crop} Plan`, location: rec.location || null, assignees: [], photos: [] }; };
 
   const load = useCallback(async () => {
     if (!sb) return;
     const { data: cr } = await sb.from("treatment_records").select("crop");
     setCrops([...new Set((cr || []).map(r => r.crop))].sort());
     const { data } = await sb.from("treatment_records").select("*").eq("crop", crop).order("rec_date");
-    setRecs(data || []);
-  }, [sb, crop]);
+    const list = data || []; setRecs(list);
+    // detect which are already scheduled (so ✓/undo persist across reloads) — match by title
+    const { data: existing } = await sb.from("manager_tasks").select("id,title").eq("created_by", `${crop} Plan`);
+    const idx = {}; (existing || []).forEach(t => { idx[t.title] = t.id; });
+    const map = {}; list.forEach(r => { const id = idx[taskTitle(r)]; if (id) map[r.id] = id; }); setAdded(map);
+  }, [sb, crop]); // eslint: taskTitle stable enough
   useEffect(() => { load(); }, [load]);
 
   const lastYear = recs.length ? Math.max(...recs.map(r => +String(r.rec_date).slice(0, 4) || 0)) : thisYear - 1;
-  const targetDate = rec => `${thisYear}-${String(rec.rec_date).slice(5)}`;
-  const taskTitle = rec => (["🌼", rec.application, rec.rates].filter(Boolean).join(" ") + (rec.crop_detail ? ` — ${rec.crop_detail}` : "")).trim();
-  const taskDesc = rec => [rec.crop_detail && `Crop: ${rec.crop_detail}`, rec.location && `Location: ${rec.location}`, rec.rates && `Rate: ${rec.rates}`, rec.notes && `Note: ${rec.notes}`].filter(Boolean).join("\n");
-  const toTask = rec => { const td = targetDate(rec); const wi = isoWeek(td); return { id: crypto.randomUUID(), title: taskTitle(rec), description: taskDesc(rec), category: "growing", status: "pending", priority: 10, week_number: wi.week, year: wi.year, target_date: td, bucket: null, carried_over: false, created_by: `${crop} Plan`, location: rec.location || null, assignees: [], photos: [] }; };
 
-  async function convert(rec) {
-    if (!rec.rec_date) return;
+  async function convert(rec, td) {
+    if (!rec.rec_date || added[rec.id]) return added[rec.id];
+    const id = uid();
     setBusy(rec.id);
-    const { error } = await sb.from("manager_tasks").insert(toTask(rec));
+    const { error } = await sb.from("manager_tasks").insert(toTask(rec, id, td || targetDefault(rec)));
     setBusy("");
-    if (error) { window.alert("Couldn't add: " + error.message); return; }
-    setAdded(a => ({ ...a, [rec.id]: true }));
+    if (error) { window.alert("Couldn't create task: " + error.message); return; }
+    setAdded(a => ({ ...a, [rec.id]: id }));
+    return id;
+  }
+  async function undo(rec) {
+    const id = added[rec.id]; if (!id) return;
+    setBusy(rec.id);
+    await sb.from("manager_tasks").delete().eq("id", id);
+    setBusy("");
+    setAdded(a => { const n = { ...a }; delete n[rec.id]; return n; });
   }
   async function copyAll() {
-    const rows = recs.filter(r => r.rec_date).map(toTask);
-    if (!window.confirm(`Copy all ${rows.length} ${crop} treatments to ${thisYear} as editable tasks (same dates)? Find them under Growing — tweak or delete after.`)) return;
+    const pending = recs.filter(r => r.rec_date && !added[r.id]);
+    if (!pending.length) { window.alert("All treatments are already added to " + thisYear + "."); return; }
+    if (!window.confirm(`Create ${pending.length} ${crop} tasks in ${thisYear} (same dates as last year — adjust each in Growing or here)? `)) return;
     setBusy("all");
+    const map = { ...added }; const rows = pending.map(r => { const id = uid(); map[r.id] = id; return toTask(r, id, targetDefault(r)); });
     const { error } = await sb.from("manager_tasks").insert(rows);
     setBusy("");
     if (error) { window.alert("Copy failed: " + error.message); return; }
-    const map = {}; recs.forEach(r => { if (r.rec_date) map[r.id] = true; }); setAdded(map);
-    window.alert(`Added ${rows.length} tasks to ${thisYear}. They're in Growing tasks — editable.`);
+    setAdded(map);
+    window.alert(`Created ${rows.length} tasks in ${thisYear}. They're in Growing — adjust dates/notes as needed.`);
   }
 
-  // "around now last year" — records dated within the next ~10 days (and 3 back) by month/day
+  // "around now last year" — records dated within the next ~12 days (and 3 back) by month/day
   const now = new Date();
   const soon = recs.filter(r => { if (!r.rec_date) return false; const d = new Date(`${thisYear}-${String(r.rec_date).slice(5)}T12:00:00`); const diff = (d - now) / 86400000; return diff >= -3 && diff <= 12; })
     .sort((a, b) => a.rec_date.slice(5).localeCompare(b.rec_date.slice(5)));
-
-  // group full timeline by month
   const byMonth = {};
   recs.forEach(r => { if (!r.rec_date) return; (byMonth[monthOf(r.rec_date)] = byMonth[monthOf(r.rec_date)] || []).push(r); });
 
-  const C = { dark: "#1e2d1a", light: "#7fb069", muted: "#7a8c74", border: "#e0ead8", card: "#fff" };
-  const wrap = { overflowWrap: "anywhere", wordBreak: "break-word" };
-  const Row = ({ r, compact }) => {
-    const isOpen = !!open[r.id];
-    const toggle = () => setOpen(o => ({ ...o, [r.id]: !o[r.id] }));
-    return (
-      <div style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "9px 4px", borderTop: `1px solid ${C.border}` }}>
-        <div style={{ minWidth: 52, textAlign: "center", flexShrink: 0 }}>
-          <div style={{ fontWeight: 800, color: C.dark, fontSize: 13 }}>{fmtDate(r.rec_date)}</div>
-          <div style={{ fontSize: 9, color: C.muted }}>{compact ? `→ ${thisYear}` : `'${String(r.rec_date).slice(2, 4)}`}</div>
-        </div>
-        <div onClick={toggle} style={{ flex: 1, minWidth: 0, cursor: "pointer" }}>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
-            {r.application && <span style={{ fontSize: 11.5, fontWeight: 800, color: "#fff", background: appColor(r.application), borderRadius: 7, padding: "2px 9px", ...wrap }}>{r.application}{r.rates ? ` · ${r.rates}` : ""}</span>}
-            {r.location && <span style={{ fontSize: 11, color: C.muted, ...wrap }}>📍 {r.location}</span>}
-            <span style={{ marginLeft: "auto", color: C.muted, fontSize: 11, flexShrink: 0 }}>{isOpen ? "▲ less" : "▼ more"}</span>
-          </div>
-          {r.crop_detail && (
-            <div style={{ fontSize: 12.5, color: C.dark, marginTop: 3, ...wrap, ...(isOpen ? {} : { display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }) }}>{r.crop_detail}</div>
-          )}
-          {isOpen && r.notes && <div style={{ fontSize: 11.5, color: C.muted, marginTop: 4, fontStyle: "italic", ...wrap }}>📝 {r.notes}</div>}
-          {isOpen && (r.rates || r.location) && <div style={{ fontSize: 11, color: C.muted, marginTop: 4 }}>{[r.location && `📍 ${r.location}`, r.rates && `Rate: ${r.rates}`].filter(Boolean).join("  ·  ")}</div>}
-          {!isOpen && r.notes && <div style={{ fontSize: 10.5, color: C.muted, marginTop: 2, ...wrap, display: "-webkit-box", WebkitLineClamp: 1, WebkitBoxOrient: "vertical", overflow: "hidden" }}>📝 {r.notes}</div>}
-        </div>
-        <button onClick={() => convert(r)} disabled={busy === r.id || added[r.id]}
-          style={{ border: "none", background: added[r.id] ? "#eef3e9" : C.light, color: added[r.id] ? C.muted : "#fff", borderRadius: 8, padding: "6px 11px", fontSize: 12, fontWeight: 800, cursor: added[r.id] ? "default" : "pointer", fontFamily: "inherit", whiteSpace: "nowrap", flexShrink: 0 }}>
-          {added[r.id] ? "✓ added" : busy === r.id ? "…" : `➕ ${thisYear}`}
-        </button>
+  const Row = ({ r }) => (
+    <div style={{ display: "flex", gap: 10, alignItems: "center", padding: "9px 4px", borderTop: `1px solid ${C.border}` }}>
+      <div style={{ minWidth: 52, textAlign: "center", flexShrink: 0 }}>
+        <div style={{ fontWeight: 800, color: C.dark, fontSize: 13 }}>{fmtDate(r.rec_date)}</div>
+        <div style={{ fontSize: 9, color: C.muted }}>'{String(r.rec_date).slice(2, 4)}</div>
       </div>
-    );
-  };
+      <div onClick={() => setSel(r)} style={{ flex: 1, minWidth: 0, cursor: "pointer" }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+          {r.application && <span style={{ fontSize: 11.5, fontWeight: 800, color: "#fff", background: appColor(r.application), borderRadius: 7, padding: "2px 9px", ...wrap }}>{r.application}{r.rates ? ` · ${r.rates}` : ""}</span>}
+          {(r.photos || []).length > 0 && <span style={{ fontSize: 10.5, color: C.plum, fontWeight: 700 }}>📷 {(r.photos || []).length}</span>}
+          <span style={{ marginLeft: "auto", color: C.muted, fontSize: 11, flexShrink: 0 }}>tap ›</span>
+        </div>
+        {r.crop_detail && <div style={{ fontSize: 12.5, color: C.dark, marginTop: 3, ...wrap, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{r.crop_detail}</div>}
+      </div>
+      <button onClick={() => (added[r.id] ? setSel(r) : convert(r))} disabled={busy === r.id}
+        style={{ border: added[r.id] ? `1.5px solid ${C.light}` : "none", background: added[r.id] ? "#eef6e7" : C.light, color: added[r.id] ? "#2e5c1e" : "#fff", borderRadius: 8, padding: "6px 11px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap", flexShrink: 0 }}>
+        {busy === r.id ? "…" : added[r.id] ? "✓ added" : `➕ ${thisYear}`}
+      </button>
+    </div>
+  );
 
   return (
     <div style={{ fontFamily: "'DM Sans','Segoe UI',sans-serif", background: "#f2f5ef", minHeight: "100vh" }}>
       <div style={{ background: C.dark, padding: "12px 20px", display: "flex", alignItems: "center", gap: 12 }}>
         {onBack && <button onClick={onBack} style={{ background: "none", border: "none", color: "#7a9a6a", fontSize: 20, cursor: "pointer", padding: 0 }}>←</button>}
         <div style={{ color: "#c8e6b8", fontWeight: 800, fontSize: 16 }}>🌼 Treatment Plan</div>
-        <div style={{ color: "#7a9a6a", fontSize: 11 }}>what we did last year → this year's tasks</div>
+        <div style={{ color: "#7a9a6a", fontSize: 11 }}>last year → this year's tasks</div>
       </div>
 
       <div style={{ maxWidth: 820, margin: "0 auto", padding: "16px 14px" }}>
-        {/* crop tabs */}
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
           {crops.map(c => <button key={c} onClick={() => setCrop(c)} style={{ border: `1.5px solid ${crop === c ? C.light : C.border}`, background: crop === c ? C.light : "#fff", color: crop === c ? "#fff" : C.dark, borderRadius: 999, padding: "6px 16px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>{c}</button>)}
         </div>
 
         <div style={{ background: "#eef6e7", border: `1px solid ${C.light}`, borderRadius: 10, padding: "10px 12px", fontSize: 12.5, color: "#2e3d28", marginBottom: 14 }}>
-          Your <strong>{crop} {lastYear}</strong> records ({recs.length}). Tap <strong>➕ {thisYear}</strong> on any treatment to drop it onto this year's <strong>Growing</strong> tasks (same date, fully editable). Or copy the whole plan and tweak.
+          Your <strong>{crop} {lastYear}</strong> records ({recs.length}). Tap a treatment to see it, add a <strong>plant-size photo</strong> + notes, set the date, and create this year's <strong>Growing</strong> task. <strong>➕ {thisYear}</strong> quick-adds at the same date (adjust after).
         </div>
 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
-          <button onClick={copyAll} disabled={busy === "all" || !recs.length} style={{ background: C.dark, color: "#fff", border: "none", borderRadius: 9, padding: "9px 15px", fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>{busy === "all" ? "Copying…" : `📋 Copy whole plan → ${thisYear}`}</button>
+          <button onClick={copyAll} disabled={busy === "all" || !recs.length} style={{ background: C.dark, color: "#fff", border: "none", borderRadius: 9, padding: "9px 15px", fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>{busy === "all" ? "Creating…" : `📋 Copy whole plan → ${thisYear}`}</button>
           <button onClick={() => setLogOpen(true)} style={{ background: "#fff", color: C.dark, border: `1.5px solid ${C.border}`, borderRadius: 9, padding: "9px 15px", fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>＋ Log a treatment</button>
         </div>
 
-        {/* around now last year */}
         {soon.length > 0 && (
           <div style={{ background: C.card, border: `2px solid ${C.light}`, borderRadius: 12, padding: "10px 14px 12px", marginBottom: 16 }}>
             <div style={{ fontSize: 12, fontWeight: 800, color: C.dark, textTransform: "uppercase", letterSpacing: .5, marginBottom: 2 }}>📅 Around now, last year</div>
-            <div style={{ fontSize: 11.5, color: C.muted, marginBottom: 4 }}>What you were doing on {crop} this time in {lastYear} — tap to schedule for {thisYear}.</div>
-            {soon.map(r => <Row key={r.id} r={r} compact />)}
+            <div style={{ fontSize: 11.5, color: C.muted, marginBottom: 4 }}>What you did on {crop} this time in {lastYear} — tap to schedule for {thisYear}.</div>
+            {soon.map(r => <Row key={r.id} r={r} />)}
           </div>
         )}
 
-        {/* full timeline */}
         <div style={{ fontSize: 12, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: .6, margin: "6px 0 4px" }}>Full {lastYear} plan</div>
         {Object.entries(byMonth).map(([m, rows]) => (
           <div key={m} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: "8px 14px 12px", marginBottom: 10 }}>
@@ -143,7 +169,103 @@ export default function TreatmentPlan({ onBack }) {
         {recs.length === 0 && <div style={{ color: C.muted, fontSize: 13, padding: "20px 0", textAlign: "center" }}>No {crop} records yet.</div>}
       </div>
 
+      {sel && <DetailModal sb={sb} rec={sel} crop={crop} thisYear={thisYear} defaultDate={targetDefault(sel)} taskId={added[sel.id]}
+        onConvert={(td) => convert(sel, td)} onUndo={() => undo(sel)} onChanged={async () => { await load(); }} onSyncSel={r => setSel(r)} onClose={() => setSel(null)} />}
       {logOpen && <LogModal crop={crop} year={thisYear} sb={sb} onClose={() => setLogOpen(false)} onSaved={() => { setLogOpen(false); load(); }} />}
+    </div>
+  );
+}
+
+// Detail window — read the treatment, add plant-size photos + notes, set the date, create/undo the task.
+function DetailModal({ sb, rec, crop, thisYear, defaultDate, taskId, onConvert, onUndo, onChanged, onSyncSel, onClose }) {
+  const [notes, setNotes] = useState(rec.notes || "");
+  const [date, setDate] = useState(defaultDate);
+  const [uploading, setUploading] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [added, setAdded] = useState(!!taskId);
+  useEffect(() => { setNotes(rec.notes || ""); }, [rec]);
+  const photos = rec.photos || [];
+
+  async function addPhoto(file) {
+    if (!file || !file.type.startsWith("image/")) return;
+    setUploading(true);
+    try {
+      const id = crypto.randomUUID();
+      const blob = await compressImage(file); // shrink before upload → fast
+      const path = `${rec.id}/${id}.jpg`;
+      const { error } = await sb.storage.from("treatment-photos").upload(path, blob, { contentType: "image/jpeg", cacheControl: "3600" });
+      if (!error) {
+        const url = sb.storage.from("treatment-photos").getPublicUrl(path).data.publicUrl;
+        const next = [...photos, { id, url, capturedAt: Date.now() }];
+        await sb.from("treatment_records").update({ photos: next }).eq("id", rec.id);
+        onSyncSel({ ...rec, photos: next }); onChanged();
+      } else window.alert("Upload failed: " + error.message);
+    } catch (e) { window.alert("Upload error"); }
+    setUploading(false);
+  }
+  async function delPhoto(pid) {
+    const next = photos.filter(p => p.id !== pid);
+    await sb.from("treatment_records").update({ photos: next }).eq("id", rec.id);
+    onSyncSel({ ...rec, photos: next }); onChanged();
+  }
+  async function saveNotes() {
+    await sb.from("treatment_records").update({ notes: notes.trim() || null }).eq("id", rec.id);
+    onSyncSel({ ...rec, notes: notes.trim() || null }); onChanged();
+  }
+  async function doConvert() { setBusy(true); const id = await onConvert(date); setBusy(false); if (id) setAdded(true); }
+  async function doUndo() { setBusy(true); await onUndo(); setBusy(false); setAdded(false); }
+
+  const lbl = { fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: .4, margin: "12px 0 4px" };
+  const inp = { width: "100%", boxSizing: "border-box", padding: "9px 11px", border: `1.5px solid #c8d8c0`, borderRadius: 9, fontSize: 14, fontFamily: "inherit" };
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 9999, display: "flex", alignItems: "flex-end", justifyContent: "center", overflow: "auto" }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: "16px 16px 0 0", padding: 18, width: "100%", maxWidth: 520, maxHeight: "92vh", overflow: "auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+          <div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              {rec.application && <span style={{ fontSize: 13, fontWeight: 800, color: "#fff", background: appColor(rec.application), borderRadius: 8, padding: "3px 11px" }}>{rec.application}{rec.rates ? ` · ${rec.rates}` : ""}</span>}
+              <span style={{ fontSize: 12, color: C.muted }}>{fmtDate(rec.rec_date)} '{String(rec.rec_date).slice(2, 4)}</span>
+            </div>
+            {rec.location && <div style={{ fontSize: 12, color: C.muted, marginTop: 4 }}>📍 {rec.location}</div>}
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, color: C.muted, cursor: "pointer", lineHeight: 1 }}>×</button>
+        </div>
+
+        {rec.crop_detail && <><div style={lbl}>Crop</div><div style={{ fontSize: 13.5, color: C.dark, ...wrap }}>{rec.crop_detail}</div></>}
+
+        <div style={lbl}>Plant-size photos <span style={{ fontWeight: 400, textTransform: "none" }}>· e.g. how big at treatment</span></div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {photos.map(p => (
+            <div key={p.id} style={{ position: "relative" }}>
+              <img src={p.url} alt="" onClick={() => window.open(p.url, "_blank")} style={{ width: 92, height: 92, objectFit: "cover", borderRadius: 8, border: `1px solid ${C.border}`, cursor: "pointer" }} />
+              <button onClick={() => delPhoto(p.id)} style={{ position: "absolute", top: 3, right: 3, background: "rgba(0,0,0,.55)", color: "#fff", border: "none", borderRadius: 14, width: 22, height: 22, fontSize: 13, cursor: "pointer" }}>×</button>
+            </div>
+          ))}
+          <label style={{ width: 92, height: 92, border: `2px dashed #c8d8c0`, borderRadius: 8, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", cursor: "pointer", color: C.muted, fontSize: 11, fontWeight: 700, background: "#fafcf8" }}>
+            {uploading ? "…" : <><div style={{ fontSize: 22 }}>📷</div>Add</>}
+            <input type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={e => addPhoto(e.target.files[0])} />
+          </label>
+        </div>
+
+        <div style={lbl}>Notes</div>
+        <textarea value={notes} onChange={e => setNotes(e.target.value)} onBlur={saveNotes} rows={2} placeholder="Size at treatment, what to watch, tweaks for this year…" style={{ ...inp, resize: "vertical", lineHeight: 1.5 }} />
+
+        <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 14, paddingTop: 12 }}>
+          <div style={lbl}>Schedule this year's task</div>
+          {!added ? (
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <input type="date" value={date} onChange={e => setDate(e.target.value)} style={{ ...inp, width: "auto", flex: "1 1 150px" }} />
+              <button onClick={doConvert} disabled={busy} style={{ background: C.light, color: "#fff", border: "none", borderRadius: 9, padding: "11px 18px", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>{busy ? "…" : `➕ Create ${thisYear} task`}</button>
+            </div>
+          ) : (
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: "#2e5c1e", background: "#eef6e7", borderRadius: 8, padding: "8px 12px" }}>✓ Task created — in Growing tasks</span>
+              <button onClick={doUndo} disabled={busy} style={{ background: "#fff", color: "#d94f3d", border: `1.5px solid ${C.border}`, borderRadius: 9, padding: "9px 14px", fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>{busy ? "…" : "Undo"}</button>
+            </div>
+          )}
+          <div style={{ fontSize: 11, color: C.muted, marginTop: 6 }}>Since {crop} treatments are size-triggered, set the date to when the plants actually reach size — you can also tweak it later in Growing tasks.</div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -155,7 +277,7 @@ function LogModal({ crop, year, sb, onClose, onSaved }) {
   const inp = { width: "100%", boxSizing: "border-box", padding: "9px 11px", border: "1.5px solid #c8d8c0", borderRadius: 9, fontSize: 14, fontFamily: "inherit", marginBottom: 10 };
   async function save() {
     if (!d.application && !d.crop_detail) { window.alert("Add at least a treatment or crop."); return; }
-    await sb.from("treatment_records").insert({ crop, year, ...d, source: "logged" });
+    await sb.from("treatment_records").insert({ crop, year, ...d, source: "logged", photos: [] });
     onSaved();
   }
   return (
