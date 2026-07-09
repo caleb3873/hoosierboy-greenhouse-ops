@@ -47,6 +47,7 @@ export default function TreatmentPlan({ onBack }) {
   const [recs, setRecs] = useState([]);
   const [busy, setBusy] = useState("");
   const [added, setAdded] = useState({}); // record id -> created task id (persisted via title match)
+  const [taskInfo, setTaskInfo] = useState({}); // record id -> { status, completedAt, completedBy }
   const [sel, setSel] = useState(null);   // record whose detail window is open
   const [logOpen, setLogOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -97,10 +98,12 @@ export default function TreatmentPlan({ onBack }) {
     setCrops([...new Set((cr || []).map(r => r.crop))].sort());
     const { data } = await sb.from("treatment_records").select("*").eq("crop", crop).order("rec_date");
     const list = data || []; setRecs(list);
-    // detect which are already scheduled (so ✓/undo persist across reloads) — match by title
-    const { data: existing } = await sb.from("manager_tasks").select("id,title,status,photos").eq("created_by", `${crop} Plan`);
-    const idx = {}; (existing || []).forEach(t => { idx[t.title] = t.id; });
-    const map = {}; list.forEach(r => { const id = idx[taskTitle(r)]; if (id) map[r.id] = id; }); setAdded(map);
+    // link each record to its scheduled task (by title) — for ✓/undo state + completion status
+    const { data: existing } = await sb.from("manager_tasks").select("id,title,status,completed_at,completed_by,photos").eq("created_by", `${crop} Plan`);
+    const byTitle = {}; (existing || []).forEach(t => { byTitle[t.title] = t; });
+    const map = {}, info = {};
+    list.forEach(r => { const t = byTitle[taskTitle(r)]; if (t) { map[r.id] = t.id; info[r.id] = { status: t.status, completedAt: t.completed_at, completedBy: t.completed_by }; } });
+    setAdded(map); setTaskInfo(info);
     pullTaskPhotos(list, existing || []); // copy back any completed-task photos (fire-and-forget)
   }, [sb, crop]); // pullTaskPhotos intentionally not a dep
   useEffect(() => { load(); }, [load]);
@@ -154,6 +157,7 @@ export default function TreatmentPlan({ onBack }) {
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
             {r.application && <span style={{ fontSize: 11.5, fontWeight: 800, color: "#fff", background: appColor(r.application), borderRadius: 7, padding: "2px 9px", ...wrap }}>{r.application}{r.rates ? ` · ${r.rates}` : ""}</span>}
+            {taskInfo[r.id]?.status === "completed" && <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: "#3a7d2c", borderRadius: 7, padding: "2px 8px" }}>✓ DONE{taskInfo[r.id].completedAt ? ` ${fmtDate(String(taskInfo[r.id].completedAt).slice(0, 10))}` : ""}</span>}
             {(r.photos || []).length > 0 && <span style={{ fontSize: 10.5, color: C.plum, fontWeight: 700 }}>📷 {(r.photos || []).length}</span>}
           </div>
           {r.crop_detail && <div style={{ fontSize: 12.5, color: C.dark, marginTop: 3, ...wrap, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{r.crop_detail}</div>}
@@ -163,10 +167,12 @@ export default function TreatmentPlan({ onBack }) {
         style={{ border: `1.5px solid ${C.plum}`, background: "#f5eefa", color: C.plum, borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap", flexShrink: 0 }}>
         Open ›
       </button>
-      <button onClick={() => (added[r.id] ? setSel(r) : convert(r))} disabled={busy === r.id}
-        style={{ border: added[r.id] ? `1.5px solid ${C.light}` : "none", background: added[r.id] ? "#eef6e7" : C.light, color: added[r.id] ? "#2e5c1e" : "#fff", borderRadius: 8, padding: "6px 11px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap", flexShrink: 0 }}>
-        {busy === r.id ? "…" : added[r.id] ? "✓ added" : `➕ ${thisYear}`}
-      </button>
+      {(() => { const done = taskInfo[r.id]?.status === "completed"; return (
+        <button onClick={() => (added[r.id] ? setSel(r) : convert(r))} disabled={busy === r.id}
+          style={{ border: done ? "none" : added[r.id] ? `1.5px solid ${C.light}` : "none", background: done ? "#3a7d2c" : added[r.id] ? "#eef6e7" : C.light, color: done ? "#fff" : added[r.id] ? "#2e5c1e" : "#fff", borderRadius: 8, padding: "6px 11px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap", flexShrink: 0 }}>
+          {busy === r.id ? "…" : done ? "✓ done" : added[r.id] ? "✓ added" : `➕ ${thisYear}`}
+        </button>
+      ); })()}
     </div>
   );
 
@@ -211,7 +217,7 @@ export default function TreatmentPlan({ onBack }) {
         {recs.length === 0 && <div style={{ color: C.muted, fontSize: 13, padding: "20px 0", textAlign: "center" }}>No {crop} records yet.</div>}
       </div>
 
-      {sel && <DetailModal sb={sb} rec={sel} crop={crop} thisYear={thisYear} defaultDate={targetDefault(sel)} taskId={added[sel.id]}
+      {sel && <DetailModal sb={sb} rec={sel} crop={crop} thisYear={thisYear} defaultDate={targetDefault(sel)} taskId={added[sel.id]} info={taskInfo[sel.id]}
         onConvert={(td) => convert(sel, td)} onUndo={() => undo(sel)} onChanged={async () => { await load(); }} onSyncSel={r => setSel(r)} onClose={() => setSel(null)} />}
       {logOpen && <LogModal crop={crop} year={thisYear} sb={sb} onClose={() => setLogOpen(false)} onSaved={() => { setLogOpen(false); load(); }} />}
       {helpOpen && <HelpModal crop={crop} year={thisYear} onClose={() => setHelpOpen(false)} />}
@@ -257,7 +263,7 @@ function HelpModal({ crop, year, onClose }) {
 }
 
 // Detail window — read the treatment, add plant-size photos + notes, set the date, create/undo the task.
-function DetailModal({ sb, rec, crop, thisYear, defaultDate, taskId, onConvert, onUndo, onChanged, onSyncSel, onClose }) {
+function DetailModal({ sb, rec, crop, thisYear, defaultDate, taskId, info, onConvert, onUndo, onChanged, onSyncSel, onClose }) {
   const splitVars = s => String(s || "").split(/[,;]/).map(x => x.trim()).filter(Boolean);
   const init = () => ({ application: rec.application || "", rates: rec.rates || "", location: rec.location || "", notes: rec.notes || "" });
   const [meta, setMeta] = useState(init);
@@ -385,7 +391,9 @@ function DetailModal({ sb, rec, crop, thisYear, defaultDate, taskId, onConvert, 
             </div>
           ) : (
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: "#2e5c1e", background: "#eef6e7", borderRadius: 8, padding: "8px 12px" }}>✓ Task created — in Growing tasks</span>
+              {info?.status === "completed"
+                ? <span style={{ fontSize: 13, fontWeight: 800, color: "#fff", background: "#3a7d2c", borderRadius: 8, padding: "8px 12px" }}>✓ Completed{info.completedAt ? ` ${fmtDate(String(info.completedAt).slice(0, 10))}` : ""}{info.completedBy ? ` · ${info.completedBy}` : ""}</span>
+                : <span style={{ fontSize: 13, fontWeight: 700, color: "#2e5c1e", background: "#eef6e7", borderRadius: 8, padding: "8px 12px" }}>✓ Task created — in Growing tasks</span>}
               <button onClick={doUndo} disabled={busy} style={{ background: "#fff", color: "#d94f3d", border: `1.5px solid ${C.border}`, borderRadius: 9, padding: "9px 14px", fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>{busy ? "…" : "Undo"}</button>
             </div>
           )}
