@@ -224,7 +224,7 @@ function HelpModal({ crop, year, onClose }) {
   const steps = [
     ["🌼", "It's last year's plan", `Every ${crop} treatment you did last season — Piccolo drenches, fertilizer step-downs, planting, netting — in order. Use it to do the same things again this year.`],
     ["👆", "Tap a treatment to open it", "See the full details, the varieties/sizes, location and rate. Nothing's cut off in the window."],
-    ["📷", "Add a plant-size photo", "Because treatments like Piccolo are size-triggered, snap a photo of how big the plants are. Last year's photo shows the target size; this year's builds the record. Photos are shrunk before upload so they're quick."],
+    ["📷", "A size photo per variety", "It's a by-variety plan — one treatment can cover several varieties. In the window there's a line for each variety with its own 📷; snap each one's size (Piccolo is size-triggered, so this is your reference). Use ＋ Add variety for more. Add as many photos as you like — they upload fast, and the crew's photos on the task come back here automatically."],
     ["📝", "Add notes", "Jot anything for next time — it saves right onto the record."],
     ["➕", `Create this year's task`, `Set the date (it defaults to the same day last year — change it to when the plants actually reach size) and create the task. It lands in Growing tasks, where the crew sees it on their phones and can upload their own photos as they do it.`],
     ["↩️", "Undo anytime", "A created treatment shows ✓ added. Open it and hit Undo to remove the task."],
@@ -258,20 +258,25 @@ function HelpModal({ crop, year, onClose }) {
 
 // Detail window — read the treatment, add plant-size photos + notes, set the date, create/undo the task.
 function DetailModal({ sb, rec, crop, thisYear, defaultDate, taskId, onConvert, onUndo, onChanged, onSyncSel, onClose }) {
-  const init = () => ({ application: rec.application || "", rates: rec.rates || "", crop_detail: rec.crop_detail || "", location: rec.location || "", notes: rec.notes || "" });
+  const splitVars = s => String(s || "").split(/[,;]/).map(x => x.trim()).filter(Boolean);
+  const init = () => ({ application: rec.application || "", rates: rec.rates || "", location: rec.location || "", notes: rec.notes || "" });
   const [meta, setMeta] = useState(init);
+  const [lines, setLines] = useState(() => { const v = splitVars(rec.crop_detail); return v.length ? v : [""]; });
   const [date, setDate] = useState(defaultDate);
-  const [uploading, setUploading] = useState(false);
+  const [uploading, setUploading] = useState("");
   const [busy, setBusy] = useState(false);
   const [added, setAdded] = useState(!!taskId);
-  useEffect(() => { setMeta(init()); setAdded(!!taskId); }, [rec, taskId]); // reset when a different record opens
+  useEffect(() => { setMeta(init()); const v = splitVars(rec.crop_detail); setLines(v.length ? v : [""]); setAdded(!!taskId); }, [rec, taskId]);
   const setM = (k, v) => setMeta(x => ({ ...x, [k]: v }));
+  const setLine = (i, v) => setLines(a => a.map((x, j) => j === i ? v : x));
+  const addLine = () => setLines(a => [...a, ""]);
+  const cropDetail = lines.map(s => s.trim()).filter(Boolean).join(", ");
   const photos = rec.photos || [];
-  const titlePreview = (["🌼", meta.application, meta.rates].filter(x => x && x.trim()).join(" ") + (meta.crop_detail.trim() ? ` — ${meta.crop_detail.trim()}` : "")).trim();
+  const titlePreview = (["🌼", meta.application, meta.rates].filter(x => x && x.trim()).join(" ") + (cropDetail ? ` — ${cropDetail}` : "")).trim();
 
-  async function addPhoto(file) {
+  async function addPhoto(file, variety) {
     if (!file || !file.type.startsWith("image/")) return;
-    setUploading(true);
+    setUploading(variety || "__general__");
     try {
       const id = crypto.randomUUID();
       const blob = await compressImage(file); // shrink before upload → fast
@@ -279,20 +284,22 @@ function DetailModal({ sb, rec, crop, thisYear, defaultDate, taskId, onConvert, 
       const { error } = await sb.storage.from("treatment-photos").upload(path, blob, { contentType: "image/jpeg", cacheControl: "3600" });
       if (!error) {
         const url = sb.storage.from("treatment-photos").getPublicUrl(path).data.publicUrl;
-        const next = [...photos, { id, url, capturedAt: Date.now() }];
+        const next = [...photos, { id, url, capturedAt: Date.now(), variety: variety || null }];
         await sb.from("treatment_records").update({ photos: next }).eq("id", rec.id);
         onSyncSel({ ...rec, photos: next }); onChanged();
       } else window.alert("Upload failed: " + error.message);
     } catch (e) { window.alert("Upload error"); }
-    setUploading(false);
+    setUploading("");
   }
   async function delPhoto(pid) {
     const next = photos.filter(p => p.id !== pid);
     await sb.from("treatment_records").update({ photos: next }).eq("id", rec.id);
     onSyncSel({ ...rec, photos: next }); onChanged();
   }
-  async function saveMeta() {
-    const clean = { application: meta.application.trim() || null, rates: meta.rates.trim() || null, crop_detail: meta.crop_detail.trim() || null, location: meta.location.trim() || null, notes: meta.notes.trim() || null };
+  const removeLine = i => { const next = lines.filter((_, j) => j !== i); const nn = next.length ? next : [""]; setLines(nn); saveMeta(nn); };
+  async function saveMeta(linesOverride) {
+    const cd = (linesOverride || lines).map(s => s.trim()).filter(Boolean).join(", ");
+    const clean = { application: meta.application.trim() || null, rates: meta.rates.trim() || null, crop_detail: cd || null, location: meta.location.trim() || null, notes: meta.notes.trim() || null };
     await sb.from("treatment_records").update(clean).eq("id", rec.id);
     onSyncSel({ ...rec, ...clean }); onChanged();
     // keep the created task's title/detail in sync if this treatment is already scheduled
@@ -317,31 +324,57 @@ function DetailModal({ sb, rec, crop, thisYear, defaultDate, taskId, onConvert, 
         </div>
         <div style={{ fontSize: 11.5, color: C.muted, marginTop: 2 }}>Last done {fmtDate(rec.rec_date)} '{String(rec.rec_date).slice(2, 4)}</div>
 
-        <div style={lbl}>Treatment <span style={{ fontWeight: 400, textTransform: "none" }}>· edit for different / new varieties</span></div>
+        <div style={lbl}>Application & rate</div>
         <div style={{ display: "flex", gap: 8 }}>
-          <input value={meta.application} onChange={e => setM("application", e.target.value)} onBlur={saveMeta} placeholder="Application (Piccolo…)" style={{ ...inp, flex: 2 }} />
-          <input value={meta.rates} onChange={e => setM("rates", e.target.value)} onBlur={saveMeta} placeholder="Rate (3ppm…)" style={{ ...inp, flex: 1 }} />
+          <input value={meta.application} onChange={e => setM("application", e.target.value)} onBlur={() => saveMeta()} placeholder="Application (Piccolo…)" style={{ ...inp, flex: 2 }} />
+          <input value={meta.rates} onChange={e => setM("rates", e.target.value)} onBlur={() => saveMeta()} placeholder="Rate (3ppm…)" style={{ ...inp, flex: 1 }} />
         </div>
-        <textarea value={meta.crop_detail} onChange={e => setM("crop_detail", e.target.value)} onBlur={saveMeta} rows={2} placeholder="Varieties / sizes — edit or add new ones" style={{ ...inp, marginTop: 8, resize: "vertical", lineHeight: 1.5, ...wrap }} />
-        <input value={meta.location} onChange={e => setM("location", e.target.value)} onBlur={saveMeta} placeholder="Location (West, North…)" style={{ ...inp, marginTop: 8 }} />
-
-        <div style={lbl}>Plant-size photos <span style={{ fontWeight: 400, textTransform: "none" }}>· e.g. how big at treatment</span></div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {photos.map(p => (
-            <div key={p.id} style={{ position: "relative" }}>
-              <img src={p.url} alt="" onClick={() => window.open(p.url, "_blank")} style={{ width: 92, height: 92, objectFit: "cover", borderRadius: 8, border: `1px solid ${C.border}`, cursor: "pointer" }} />
-              {p.fromTask && <span style={{ position: "absolute", bottom: 3, left: 3, background: "rgba(30,45,26,.8)", color: "#c8e6b8", fontSize: 8.5, fontWeight: 800, padding: "1px 5px", borderRadius: 4 }}>CREW</span>}
-              <button onClick={() => delPhoto(p.id)} style={{ position: "absolute", top: 3, right: 3, background: "rgba(0,0,0,.55)", color: "#fff", border: "none", borderRadius: 14, width: 22, height: 22, fontSize: 13, cursor: "pointer" }}>×</button>
+        <div style={lbl}>Varieties treated <span style={{ fontWeight: 400, textTransform: "none" }}>· a line each — add each variety's size photo(s)</span></div>
+        {(() => {
+          const tile = p => (
+            <div key={p.id} style={{ position: "relative", flexShrink: 0 }}>
+              <img src={p.url} alt="" onClick={() => window.open(p.url, "_blank")} style={{ width: 70, height: 70, objectFit: "cover", borderRadius: 8, border: `1px solid ${C.border}`, cursor: "pointer" }} />
+              {p.fromTask && <span style={{ position: "absolute", bottom: 2, left: 2, background: "rgba(30,45,26,.8)", color: "#c8e6b8", fontSize: 8, fontWeight: 800, padding: "1px 4px", borderRadius: 4 }}>CREW</span>}
+              <button onClick={() => delPhoto(p.id)} style={{ position: "absolute", top: 2, right: 2, background: "rgba(0,0,0,.55)", color: "#fff", border: "none", borderRadius: 11, width: 19, height: 19, fontSize: 12, cursor: "pointer" }}>×</button>
             </div>
-          ))}
-          <label style={{ width: 92, height: 92, border: `2px dashed #c8d8c0`, borderRadius: 8, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", cursor: "pointer", color: C.muted, fontSize: 11, fontWeight: 700, background: "#fafcf8" }}>
-            {uploading ? "…" : <><div style={{ fontSize: 22 }}>📷</div>Add</>}
-            <input type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={e => addPhoto(e.target.files[0])} />
-          </label>
-        </div>
+          );
+          return (<>
+            {lines.map((v, i) => {
+              const key = v.trim();
+              const list = key ? photos.filter(p => p.variety === key) : [];
+              return (
+                <div key={i} style={{ border: `1px solid ${C.border}`, borderRadius: 10, padding: 8, marginBottom: 8 }}>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <input value={v} onChange={e => setLine(i, e.target.value)} onBlur={() => saveMeta()} placeholder={'Variety (e.g. 9" Nicki)'} style={{ ...inp, flex: 1 }} />
+                    <label title={key ? "Add a size photo" : "Name the variety first"} style={{ background: key ? "#f5eefa" : "#f0f0f0", border: `1.5px solid ${key ? C.plum : C.border}`, color: key ? C.plum : C.muted, borderRadius: 8, padding: "9px 12px", fontSize: 15, cursor: key ? "pointer" : "default", flexShrink: 0 }}>
+                      {uploading === key && key ? "…" : "📷"}
+                      <input type="file" accept="image/*" capture="environment" disabled={!key} style={{ display: "none" }} onChange={e => addPhoto(e.target.files[0], key)} />
+                    </label>
+                    {lines.length > 1 && <button onClick={() => removeLine(i)} title="Remove variety" style={{ background: "none", border: "none", color: "#d94f3d", fontSize: 20, cursor: "pointer", flexShrink: 0, lineHeight: 1 }}>×</button>}
+                  </div>
+                  {list.length > 0 && <div style={{ display: "flex", gap: 6, overflowX: "auto", marginTop: 7 }}>{list.map(tile)}</div>}
+                </div>
+              );
+            })}
+            <button onClick={addLine} style={{ background: "#fff", color: C.dark, border: `1.5px dashed ${C.light}`, borderRadius: 9, padding: "9px 14px", fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit", width: "100%" }}>＋ Add variety</button>
+            {photos.some(p => !p.variety) && (
+              <div style={{ marginTop: 10 }}>
+                <div style={lbl}>General / crew photos</div>
+                <div style={{ display: "flex", gap: 6, overflowX: "auto" }}>
+                  {photos.filter(p => !p.variety).map(tile)}
+                  <label style={{ width: 70, height: 70, border: `2px dashed #c8d8c0`, borderRadius: 8, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", cursor: "pointer", color: C.muted, fontSize: 10, fontWeight: 700, background: "#fafcf8", flexShrink: 0 }}>
+                    {uploading === "__general__" ? "…" : <><div style={{ fontSize: 18 }}>📷</div>Add</>}
+                    <input type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={e => addPhoto(e.target.files[0], null)} />
+                  </label>
+                </div>
+              </div>
+            )}
+          </>);
+        })()}
+        <input value={meta.location} onChange={e => setM("location", e.target.value)} onBlur={() => saveMeta()} placeholder="Location (West, North…)" style={{ ...inp, marginTop: 10 }} />
 
         <div style={lbl}>Notes</div>
-        <textarea value={meta.notes} onChange={e => setM("notes", e.target.value)} onBlur={saveMeta} rows={2} placeholder="Size at treatment, what to watch, tweaks for this year…" style={{ ...inp, resize: "vertical", lineHeight: 1.5 }} />
+        <textarea value={meta.notes} onChange={e => setM("notes", e.target.value)} onBlur={() => saveMeta()} rows={2} placeholder="Size at treatment, what to watch, tweaks for this year…" style={{ ...inp, resize: "vertical", lineHeight: 1.5 }} />
 
         <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 14, paddingTop: 12 }}>
           <div style={lbl}>Schedule this year's task</div>
