@@ -374,6 +374,21 @@ function DetailModal({ sb, rec, thisYear, defaultDate, varTasks = [], onConvert,
   async function saveMeta(linesOverride) {
     const cd = (linesOverride || lines).map(s => s.trim()).filter(Boolean).join(", ");
     const clean = { application: meta.application.trim() || null, rates: meta.rates.trim() || null, crop_detail: cd || null, location: meta.location.trim() || null, notes: meta.notes.trim() || null };
+    // If already scheduled, warn before an edit that would REMOVE or RENAME a Growing task (the risky ones).
+    if (varTasks.length) {
+      const want = varsOf(clean).map(v => isAll(v) ? null : v);
+      const toRemove = varTasks.filter(t => !want.includes(t.variety));
+      const toAdd = want.filter(k => !varTasks.some(t => t.variety === k));
+      if (toRemove.length) {
+        const nm = k => (k == null || k === "(all)") ? "broad/location task" : `“${k}”`;
+        const rename = toAdd.length === 1 && toRemove.length === 1;
+        const doneN = toRemove.filter(t => t.status === "completed").length;
+        const msg = rename
+          ? `Rename ${nm(toRemove[0].variety)} → ${nm(toAdd[0])} on the scheduled Growing task?\n\nThe task and its size photo(s) move to the new name.${toRemove[0].status === "completed" ? "\n\n⚠️ That task is already marked DONE — it stays done under the new name." : ""}`
+          : `This treatment is already scheduled in Growing.\n\nSaving will REMOVE ${toRemove.length} task${toRemove.length > 1 ? "s" : ""} (${toRemove.map(t => nm(t.variety)).join(", ")})${toAdd.length ? ` and add ${toAdd.length} (${toAdd.map(nm).join(", ")})` : ""}.\n\nPhotos on removed varieties move to “General / crew photos” (not deleted).${doneN ? `\n\n⚠️ ${doneN} of them ${doneN > 1 ? "are" : "is"} already marked DONE.` : ""}\n\nContinue?`;
+        if (!window.confirm(msg)) { setMeta(init()); const v = splitVars(rec.crop_detail); setLines(v.length ? v : [""]); return; } // cancel → revert the edit
+      }
+    }
     await sb.from("treatment_records").update(clean).eq("id", rec.id);
     onSyncSel({ ...rec, ...clean });
     // if already scheduled, reconcile the per-variety tasks to the current lines (add/remove/rename + retag)
