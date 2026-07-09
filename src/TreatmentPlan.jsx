@@ -17,6 +17,18 @@ const appColor = a => { const x = (a || "").toLowerCase(); return x.includes("pi
 const C = { dark: "#1e2d1a", light: "#7fb069", muted: "#7a8c74", border: "#e0ead8", card: "#fff", plum: "#8e5aa8" };
 const wrap = { overflowWrap: "anywhere", wordBreak: "break-word" };
 
+const splitVars = s => String(s || "").split(/[,;]/).map(x => x.trim()).filter(Boolean);
+// PGRs (Piccolo etc.) are size-triggered and applied PER VARIETY — each variety needs its own size photo,
+// so we split those into one task per variety. Fertilizer and other broad applications go by LOCATION as a
+// single task (the crew treats the whole bench/house at once, not variety-by-variety).
+const isPGR = a => { const x = (a || "").toLowerCase(); return x.includes("piccolo") || x.includes("paclo") || x.includes("bonzi") || x.includes("sumagic") || x.includes("b-nine") || x.includes("b nine") || x.includes("bnine") || x.includes("dazide") || x.includes("cycocel") || x.includes("florel") || x.includes("pgr") || x.includes("a-rest") || x.includes("topflor"); };
+const perVariety = rec => isPGR(rec.application) && splitVars(rec.crop_detail).length > 0;
+// varieties this treatment becomes tasks for: per-variety list for PGRs, else a single "(all)" broad task
+const varsOf = rec => perVariety(rec) ? splitVars(rec.crop_detail) : ["(all)"];
+const isAll = v => !v || v === "(all)";
+const mkTitle = (rec, variety) => { const base = ["🌼", rec.application, rec.rates].filter(Boolean).join(" "); const suffix = isAll(variety) ? (rec.location || rec.crop_detail || "") : variety; return (base + (suffix ? ` — ${suffix}` : "")).trim(); };
+const mkDesc = (rec, variety) => [!isAll(variety) && `Variety: ${variety}`, isAll(variety) && rec.crop_detail && `Crop: ${rec.crop_detail}`, rec.location && `Location: ${rec.location}`, rec.application && `Treatment: ${rec.application}${rec.rates ? ` ${rec.rates}` : ""}`, rec.notes && `Note: ${rec.notes}`, `📷 Take a photo of ${isAll(variety) ? "the plant" : `${variety}'s`} size when treating.`].filter(Boolean).join("\n");
+
 // Resize + JPEG-compress in the browser BEFORE upload so a 4–8 MB phone photo becomes ~200–400 KB
 // (fast on a weak bench/booth connection). Falls back to the original file if anything fails.
 function compressImage(file, maxDim = 1280, quality = 0.8) {
@@ -46,26 +58,30 @@ export default function TreatmentPlan({ onBack }) {
   const [crops, setCrops] = useState(["Mum"]);
   const [recs, setRecs] = useState([]);
   const [busy, setBusy] = useState("");
-  const [added, setAdded] = useState({}); // record id -> created task id (persisted via title match)
-  const [taskInfo, setTaskInfo] = useState({}); // record id -> { status, completedAt, completedBy }
+  // record id -> [{ id, variety, status, completedAt, completedBy }] — one Growing task PER VARIETY (PGRs)
+  // or a single "(all)" task (fertilizer / broad applications, by location).
+  const [tasks, setTasks] = useState({});
   const [sel, setSel] = useState(null);   // record whose detail window is open
   const [logOpen, setLogOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const thisYear = new Date().getFullYear();
 
   const targetDefault = rec => `${thisYear}-${String(rec.rec_date).slice(5)}`; // same day, this year
-  const taskTitle = rec => (["🌼", rec.application, rec.rates].filter(Boolean).join(" ") + (rec.crop_detail ? ` — ${rec.crop_detail}` : "")).trim();
-  const taskDesc = rec => [rec.crop_detail && `Crop: ${rec.crop_detail}`, rec.location && `Location: ${rec.location}`, rec.rates && `Rate: ${rec.rates}`, rec.notes && `Note: ${rec.notes}`, "📷 Take a photo of the plant size when treating."].filter(Boolean).join("\n");
-  const toTask = (rec, id, td) => { const wi = isoWeek(td); return { id, title: taskTitle(rec), description: taskDesc(rec), category: "growing", status: "pending", priority: 10, week_number: wi.week, year: wi.year, target_date: td, bucket: null, carried_over: false, created_by: `${crop} Plan`, location: rec.location || null, assignees: [], photos: [] }; };
+  const toTask = (rec, id, td, variety) => { const wi = isoWeek(td); return { id, title: mkTitle(rec, variety), description: mkDesc(rec, variety), category: "growing", status: "pending", priority: 10, week_number: wi.week, year: wi.year, target_date: td, bucket: null, carried_over: false, created_by: `${crop} Plan`, location: rec.location || null, assignees: [], photos: [], source_record_id: rec.id, source_variety: isAll(variety) ? null : variety }; };
+  // old (pre-per-variety) title, for linking tasks created before this change
+  const oldTitle = rec => (["🌼", rec.application, rec.rates].filter(Boolean).join(" ") + (rec.crop_detail ? ` — ${rec.crop_detail}` : "")).trim();
+  const listOf = id => tasks[id] || [];
+  const doneN = id => listOf(id).filter(t => t.status === "completed").length;
 
   // Loop-back: when the crew completes a converted task with photos, copy those plant-size photos back
   // onto the treatment record (task-photos is private → physically copy into the public treatment-photos
   // bucket) so next year's plan shows how big the plants actually were. Idempotent via srcPath.
-  async function pullTaskPhotos(list, tasks) {
-    const byTitle = {}; tasks.forEach(t => { byTitle[t.title] = t; });
-    for (const rec of list) {
-      const t = byTitle[taskTitle(rec)];
-      if (!t || t.status !== "completed" || !(t.photos || []).length) continue;
+  async function pullTaskPhotos(list, tasksArr, recIdOf) {
+    const recById = {}; list.forEach(r => { recById[r.id] = { ...r, photos: r.photos || [] }; });
+    for (const t of tasksArr) {
+      const rid = recIdOf(t);
+      if (rid == null || t.status !== "completed" || !(t.photos || []).length) continue;
+      const rec = recById[rid]; if (!rec) continue;
       const have = new Set((rec.photos || []).map(p => p.srcPath).filter(Boolean));
       const toAdd = [];
       for (const ph of t.photos) {
@@ -82,12 +98,14 @@ export default function TreatmentPlan({ onBack }) {
             }
           } catch { /* skip this photo */ }
         }
-        if (url) toAdd.push({ id: uid(), url, capturedAt: Date.now(), fromTask: true, srcPath: ph });
+        // tag the looped-back photo with the task's variety → lands on the right variety line (else General)
+        if (url) toAdd.push({ id: uid(), url, capturedAt: Date.now(), fromTask: true, srcPath: ph, variety: t.source_variety || null });
       }
       if (toAdd.length) {
         const next = [...(rec.photos || []), ...toAdd];
         await sb.from("treatment_records").update({ photos: next }).eq("id", rec.id);
-        setRecs(prev => prev.map(r => r.id === rec.id ? { ...r, photos: next } : r));
+        recById[rid] = { ...rec, photos: next }; // accumulate across a record's per-variety tasks
+        setRecs(prev => prev.map(r => r.id === rid ? { ...r, photos: next } : r));
       }
     }
   }
@@ -98,45 +116,47 @@ export default function TreatmentPlan({ onBack }) {
     setCrops([...new Set((cr || []).map(r => r.crop))].sort());
     const { data } = await sb.from("treatment_records").select("*").eq("crop", crop).order("rec_date");
     const list = data || []; setRecs(list);
-    // link each record to its scheduled task (by title) — for ✓/undo state + completion status
-    const { data: existing } = await sb.from("manager_tasks").select("id,title,status,completed_at,completed_by,photos").eq("created_by", `${crop} Plan`);
-    const byTitle = {}; (existing || []).forEach(t => { byTitle[t.title] = t; });
-    const map = {}, info = {};
-    list.forEach(r => { const t = byTitle[taskTitle(r)]; if (t) { map[r.id] = t.id; info[r.id] = { status: t.status, completedAt: t.completed_at, completedBy: t.completed_by }; } });
-    setAdded(map); setTaskInfo(info);
-    pullTaskPhotos(list, existing || []); // copy back any completed-task photos (fire-and-forget)
+    // link each record to its scheduled tasks — for ✓/undo state + completion status + loop-back
+    const { data: existing } = await sb.from("manager_tasks").select("id,title,status,completed_at,completed_by,photos,source_record_id,source_variety").eq("created_by", `${crop} Plan`);
+    const byOldTitle = {}; list.forEach(r => { byOldTitle[oldTitle(r)] = r.id; }); // legacy fallback
+    const recIdOf = t => t.source_record_id != null ? t.source_record_id : (byOldTitle[t.title] ?? null);
+    const byRec = {};
+    (existing || []).forEach(t => { const rid = recIdOf(t); if (rid == null) return; (byRec[rid] = byRec[rid] || []).push({ id: t.id, variety: t.source_variety, status: t.status, completedAt: t.completed_at, completedBy: t.completed_by }); });
+    setTasks(byRec);
+    pullTaskPhotos(list, existing || [], recIdOf); // copy back any completed-task photos (fire-and-forget)
   }, [sb, crop]); // pullTaskPhotos intentionally not a dep
   useEffect(() => { load(); }, [load]);
 
   const lastYear = recs.length ? Math.max(...recs.map(r => +String(r.rec_date).slice(0, 4) || 0)) : thisYear - 1;
 
   async function convert(rec, td) {
-    if (!rec.rec_date || added[rec.id]) return added[rec.id];
-    const id = uid();
+    if (!rec.rec_date || listOf(rec.id).length) return false;
+    const rows = varsOf(rec).map(v => toTask(rec, uid(), td || targetDefault(rec), v));
     setBusy(rec.id);
-    const { error } = await sb.from("manager_tasks").insert(toTask(rec, id, td || targetDefault(rec)));
+    const { error } = await sb.from("manager_tasks").insert(rows);
     setBusy("");
-    if (error) { window.alert("Couldn't create task: " + error.message); return; }
-    setAdded(a => ({ ...a, [rec.id]: id }));
-    return id;
+    if (error) { window.alert("Couldn't create task: " + error.message); return false; }
+    setTasks(t => ({ ...t, [rec.id]: rows.map(r => ({ id: r.id, variety: r.source_variety, status: "pending" })) }));
+    return true;
   }
   async function undo(rec) {
-    const id = added[rec.id]; if (!id) return;
+    const list = listOf(rec.id); if (!list.length) return;
     setBusy(rec.id);
-    await sb.from("manager_tasks").delete().eq("id", id);
+    await sb.from("manager_tasks").delete().in("id", list.map(t => t.id));
     setBusy("");
-    setAdded(a => { const n = { ...a }; delete n[rec.id]; return n; });
+    setTasks(t => { const n = { ...t }; delete n[rec.id]; return n; });
   }
   async function copyAll() {
-    const pending = recs.filter(r => r.rec_date && !added[r.id]);
+    const pending = recs.filter(r => r.rec_date && !listOf(r.id).length);
     if (!pending.length) { window.alert("All treatments are already added to " + thisYear + "."); return; }
-    if (!window.confirm(`Create ${pending.length} ${crop} tasks in ${thisYear} (same dates as last year — adjust each in Growing or here)? `)) return;
+    const rows = [], local = {};
+    pending.forEach(r => { const made = varsOf(r).map(v => { const id = uid(); rows.push(toTask(r, id, targetDefault(r), v)); return { id, variety: isAll(v) ? null : v, status: "pending" }; }); local[r.id] = made; });
+    if (!window.confirm(`Create ${rows.length} ${crop} tasks in ${thisYear} (same dates as last year — Piccolo split per variety, fertilizer by location; adjust each in Growing or here)? `)) return;
     setBusy("all");
-    const map = { ...added }; const rows = pending.map(r => { const id = uid(); map[r.id] = id; return toTask(r, id, targetDefault(r)); });
     const { error } = await sb.from("manager_tasks").insert(rows);
     setBusy("");
     if (error) { window.alert("Copy failed: " + error.message); return; }
-    setAdded(map);
+    setTasks(t => ({ ...t, ...local }));
     window.alert(`Created ${rows.length} tasks in ${thisYear}. They're in Growing — adjust dates/notes as needed.`);
   }
 
@@ -147,7 +167,13 @@ export default function TreatmentPlan({ onBack }) {
   const byMonth = {};
   recs.forEach(r => { if (!r.rec_date) return; (byMonth[monthOf(r.rec_date)] = byMonth[monthOf(r.rec_date)] || []).push(r); });
 
-  const Row = ({ r }) => (
+  const Row = ({ r }) => {
+    const list = listOf(r.id);
+    const total = list.length, dN = doneN(r.id);
+    const scheduled = total > 0, allDone = scheduled && dN === total;
+    const lastDone = list.filter(t => t.completedAt).map(t => t.completedAt).sort().pop();
+    const pv = perVariety(r);
+    return (
     <div style={{ display: "flex", gap: 10, alignItems: "center", padding: "9px 4px", borderTop: `1px solid ${C.border}` }}>
       <div style={{ minWidth: 52, textAlign: "center", flexShrink: 0 }}>
         <div style={{ fontWeight: 800, color: C.dark, fontSize: 13 }}>{fmtDate(r.rec_date)}</div>
@@ -157,7 +183,9 @@ export default function TreatmentPlan({ onBack }) {
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
             {r.application && <span style={{ fontSize: 11.5, fontWeight: 800, color: "#fff", background: appColor(r.application), borderRadius: 7, padding: "2px 9px", ...wrap }}>{r.application}{r.rates ? ` · ${r.rates}` : ""}</span>}
-            {taskInfo[r.id]?.status === "completed" && <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: "#3a7d2c", borderRadius: 7, padding: "2px 8px" }}>✓ DONE{taskInfo[r.id].completedAt ? ` ${fmtDate(String(taskInfo[r.id].completedAt).slice(0, 10))}` : ""}</span>}
+            {pv && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.plum, background: "#f5eefa", border: `1px solid ${C.plum}`, borderRadius: 7, padding: "1px 6px" }}>{splitVars(r.crop_detail).length} varieties</span>}
+            {allDone && <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: "#3a7d2c", borderRadius: 7, padding: "2px 8px" }}>✓ DONE{lastDone ? ` ${fmtDate(String(lastDone).slice(0, 10))}` : ""}</span>}
+            {scheduled && !allDone && dN > 0 && <span style={{ fontSize: 10, fontWeight: 800, color: "#2e5c1e", background: "#eef6e7", borderRadius: 7, padding: "2px 8px" }}>{dN}/{total} done</span>}
             {(r.photos || []).length > 0 && <span style={{ fontSize: 10.5, color: C.plum, fontWeight: 700 }}>📷 {(r.photos || []).length}</span>}
           </div>
           {r.crop_detail && <div style={{ fontSize: 12.5, color: C.dark, marginTop: 3, ...wrap, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{r.crop_detail}</div>}
@@ -167,14 +195,12 @@ export default function TreatmentPlan({ onBack }) {
         style={{ border: `1.5px solid ${C.plum}`, background: "#f5eefa", color: C.plum, borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap", flexShrink: 0 }}>
         Open ›
       </button>
-      {(() => { const done = taskInfo[r.id]?.status === "completed"; return (
-        <button onClick={() => (added[r.id] ? setSel(r) : convert(r))} disabled={busy === r.id}
-          style={{ border: done ? "none" : added[r.id] ? `1.5px solid ${C.light}` : "none", background: done ? "#3a7d2c" : added[r.id] ? "#eef6e7" : C.light, color: done ? "#fff" : added[r.id] ? "#2e5c1e" : "#fff", borderRadius: 8, padding: "6px 11px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap", flexShrink: 0 }}>
-          {busy === r.id ? "…" : done ? "✓ done" : added[r.id] ? "✓ added" : `➕ ${thisYear}`}
-        </button>
-      ); })()}
+      <button onClick={() => (scheduled ? setSel(r) : convert(r))} disabled={busy === r.id}
+        style={{ border: allDone ? "none" : scheduled ? `1.5px solid ${C.light}` : "none", background: allDone ? "#3a7d2c" : scheduled ? "#eef6e7" : C.light, color: allDone ? "#fff" : scheduled ? "#2e5c1e" : "#fff", borderRadius: 8, padding: "6px 11px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap", flexShrink: 0 }}>
+        {busy === r.id ? "…" : allDone ? "✓ done" : scheduled ? (total > 1 ? `✓ ${dN}/${total}` : "✓ added") : `➕ ${thisYear}`}
+      </button>
     </div>
-  );
+  ); };
 
   return (
     <div style={{ fontFamily: "'DM Sans','Segoe UI',sans-serif", background: "#f2f5ef", minHeight: "100vh" }}>
@@ -217,7 +243,7 @@ export default function TreatmentPlan({ onBack }) {
         {recs.length === 0 && <div style={{ color: C.muted, fontSize: 13, padding: "20px 0", textAlign: "center" }}>No {crop} records yet.</div>}
       </div>
 
-      {sel && <DetailModal sb={sb} rec={sel} crop={crop} thisYear={thisYear} defaultDate={targetDefault(sel)} taskId={added[sel.id]} info={taskInfo[sel.id]}
+      {sel && <DetailModal sb={sb} rec={sel} thisYear={thisYear} defaultDate={targetDefault(sel)} varTasks={listOf(sel.id)}
         onConvert={(td) => convert(sel, td)} onUndo={() => undo(sel)} onChanged={async () => { await load(); }} onSyncSel={r => setSel(r)} onClose={() => setSel(null)} />}
       {logOpen && <LogModal crop={crop} year={thisYear} sb={sb} onClose={() => setLogOpen(false)} onSaved={() => { setLogOpen(false); load(); }} />}
       {helpOpen && <HelpModal crop={crop} year={thisYear} onClose={() => setHelpOpen(false)} />}
@@ -230,9 +256,9 @@ function HelpModal({ crop, year, onClose }) {
   const steps = [
     ["🌼", "It's last year's plan", `Every ${crop} treatment you did last season — Piccolo drenches, fertilizer step-downs, planting, netting — in order. Use it to do the same things again this year.`],
     ["👆", "Tap a treatment to open it", "See the full details, the varieties/sizes, location and rate. Nothing's cut off in the window."],
-    ["📷", "A size photo per variety", "It's a by-variety plan — one treatment can cover several varieties. In the window there's a line for each variety with its own 📷; snap each one's size (Piccolo is size-triggered, so this is your reference). Use ＋ Add variety for more. Add as many photos as you like — they upload fast, and the crew's photos on the task come back here automatically."],
+    ["📷", "A size photo per variety", "Piccolo (and other PGRs) are size-triggered and applied variety-by-variety. In the window there's a line for each variety with its own 📷; snap each one's size — that's your reference for next year. Use ＋ Add variety for more. Fertilizer and other broad sprays are one task by location, not per variety."],
     ["📝", "Add notes", "Jot anything for next time — it saves right onto the record."],
-    ["➕", `Create this year's task`, `Set the date (it defaults to the same day last year — change it to when the plants actually reach size) and create the task. It lands in Growing tasks, where the crew sees it on their phones and can upload their own photos as they do it.`],
+    ["➕", `Create this year's task(s)`, `Set the date (it defaults to the same day last year — change it to when the plants actually reach size) and create. A Piccolo treatment becomes one task per variety; fertilizer becomes a single task. They land in Growing tasks, where the crew sees them on their phones and uploads a size photo per variety as they do it.`],
     ["↩️", "Undo anytime", "A created treatment shows ✓ added. Open it and hit Undo to remove the task."],
     ["🔄", "It builds next year's plan by itself", "When the crew finishes the task in Growing and adds a photo of the plants, that plant-size photo automatically comes back onto this treatment record — so next year you'll see exactly how big they were when you treated, and the whole plan keeps improving."],
     ["📅", "Around now, last year", `At the top, the treatments from this point in the season last year — one tap to schedule.`],
@@ -263,16 +289,21 @@ function HelpModal({ crop, year, onClose }) {
 }
 
 // Detail window — read the treatment, add plant-size photos + notes, set the date, create/undo the task.
-function DetailModal({ sb, rec, crop, thisYear, defaultDate, taskId, info, onConvert, onUndo, onChanged, onSyncSel, onClose }) {
-  const splitVars = s => String(s || "").split(/[,;]/).map(x => x.trim()).filter(Boolean);
+function DetailModal({ sb, rec, thisYear, defaultDate, varTasks = [], onConvert, onUndo, onChanged, onSyncSel, onClose }) {
   const init = () => ({ application: rec.application || "", rates: rec.rates || "", location: rec.location || "", notes: rec.notes || "" });
   const [meta, setMeta] = useState(init);
   const [lines, setLines] = useState(() => { const v = splitVars(rec.crop_detail); return v.length ? v : [""]; });
   const [date, setDate] = useState(defaultDate);
   const [uploading, setUploading] = useState("");
   const [busy, setBusy] = useState(false);
-  const [added, setAdded] = useState(!!taskId);
-  useEffect(() => { setMeta(init()); const v = splitVars(rec.crop_detail); setLines(v.length ? v : [""]); setAdded(!!taskId); }, [rec, taskId]);
+  useEffect(() => { setMeta(init()); const v = splitVars(rec.crop_detail); setLines(v.length ? v : [""]); }, [rec]);
+  const scheduled = varTasks.length > 0;
+  const total = varTasks.length, dN = varTasks.filter(t => t.status === "completed").length;
+  const allDone = scheduled && dN === total;
+  const lastDone = varTasks.filter(t => t.completedAt).map(t => t.completedAt).sort().pop();
+  const lastBy = (varTasks.find(t => t.completedAt === lastDone) || {}).completedBy;
+  const taskFor = key => varTasks.find(t => t.variety === key); // per-variety task lookup
+  const pv = perVariety({ ...rec, ...meta, crop_detail: lines.map(s => s.trim()).filter(Boolean).join(", ") });
   const setM = (k, v) => setMeta(x => ({ ...x, [k]: v }));
   const setLine = (i, v) => setLines(a => a.map((x, j) => j === i ? v : x));
   const addLine = () => setLines(a => [...a, ""]);
@@ -308,16 +339,16 @@ function DetailModal({ sb, rec, crop, thisYear, defaultDate, taskId, info, onCon
     const clean = { application: meta.application.trim() || null, rates: meta.rates.trim() || null, crop_detail: cd || null, location: meta.location.trim() || null, notes: meta.notes.trim() || null };
     await sb.from("treatment_records").update(clean).eq("id", rec.id);
     onSyncSel({ ...rec, ...clean }); onChanged();
-    // keep the created task's title/detail in sync if this treatment is already scheduled
-    if (taskId) {
+    // keep each already-scheduled task's title/detail in sync (per its own variety)
+    if (varTasks.length) {
       const m = { ...rec, ...clean };
-      const title = (["🌼", m.application, m.rates].filter(x => x && String(x).trim()).join(" ") + (m.crop_detail ? ` — ${m.crop_detail}` : "")).trim();
-      const desc = [m.crop_detail && `Crop: ${m.crop_detail}`, m.location && `Location: ${m.location}`, m.rates && `Rate: ${m.rates}`, m.notes && `Note: ${m.notes}`, "📷 Take a photo of the plant size when treating."].filter(Boolean).join("\n");
-      await sb.from("manager_tasks").update({ title, description: desc, location: m.location || null }).eq("id", taskId);
+      for (const vt of varTasks) {
+        await sb.from("manager_tasks").update({ title: mkTitle(m, vt.variety || "(all)"), description: mkDesc(m, vt.variety || "(all)"), location: m.location || null }).eq("id", vt.id);
+      }
     }
   }
-  async function doConvert() { setBusy(true); const id = await onConvert(date); setBusy(false); if (id) setAdded(true); }
-  async function doUndo() { setBusy(true); await onUndo(); setBusy(false); setAdded(false); }
+  async function doConvert() { setBusy(true); await onConvert(date); setBusy(false); }
+  async function doUndo() { setBusy(true); await onUndo(); setBusy(false); }
 
   const lbl = { fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: .4, margin: "12px 0 4px" };
   const inp = { width: "100%", boxSizing: "border-box", padding: "9px 11px", border: `1.5px solid #c8d8c0`, borderRadius: 9, fontSize: 14, fontFamily: "inherit" };
@@ -335,7 +366,7 @@ function DetailModal({ sb, rec, crop, thisYear, defaultDate, taskId, info, onCon
           <input value={meta.application} onChange={e => setM("application", e.target.value)} onBlur={() => saveMeta()} placeholder="Application (Piccolo…)" style={{ ...inp, flex: 2 }} />
           <input value={meta.rates} onChange={e => setM("rates", e.target.value)} onBlur={() => saveMeta()} placeholder="Rate (3ppm…)" style={{ ...inp, flex: 1 }} />
         </div>
-        <div style={lbl}>Varieties treated <span style={{ fontWeight: 400, textTransform: "none" }}>· a line each — add each variety's size photo(s)</span></div>
+        <div style={lbl}>Varieties treated <span style={{ fontWeight: 400, textTransform: "none" }}>· {pv ? "PGR — one task per variety, each gets its own size photo" : "broad application — one task by location"}</span></div>
         {(() => {
           const tile = p => (
             <div key={p.id} style={{ position: "relative", flexShrink: 0 }}>
@@ -352,6 +383,7 @@ function DetailModal({ sb, rec, crop, thisYear, defaultDate, taskId, info, onCon
                 <div key={i} style={{ border: `1px solid ${C.border}`, borderRadius: 10, padding: 8, marginBottom: 8 }}>
                   <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                     <input value={v} onChange={e => setLine(i, e.target.value)} onBlur={() => saveMeta()} placeholder={'Variety (e.g. 9" Nicki)'} style={{ ...inp, flex: 1 }} />
+                    {pv && key && taskFor(key) && <span title={taskFor(key).status === "completed" ? "Crew completed this variety" : "Task scheduled — awaiting crew photo"} style={{ fontSize: 10, fontWeight: 800, color: taskFor(key).status === "completed" ? "#fff" : "#2e5c1e", background: taskFor(key).status === "completed" ? "#3a7d2c" : "#eef6e7", borderRadius: 7, padding: "3px 7px", flexShrink: 0 }}>{taskFor(key).status === "completed" ? "✓" : "•"}</span>}
                     <label title={key ? "Add a size photo" : "Name the variety first"} style={{ background: key ? "#f5eefa" : "#f0f0f0", border: `1.5px solid ${key ? C.plum : C.border}`, color: key ? C.plum : C.muted, borderRadius: 8, padding: "9px 12px", fontSize: 15, cursor: key ? "pointer" : "default", flexShrink: 0 }}>
                       {uploading === key && key ? "…" : "📷"}
                       <input type="file" accept="image/*" capture="environment" disabled={!key} style={{ display: "none" }} onChange={e => addPhoto(e.target.files[0], key)} />
@@ -383,21 +415,23 @@ function DetailModal({ sb, rec, crop, thisYear, defaultDate, taskId, info, onCon
         <textarea value={meta.notes} onChange={e => setM("notes", e.target.value)} onBlur={() => saveMeta()} rows={2} placeholder="Size at treatment, what to watch, tweaks for this year…" style={{ ...inp, resize: "vertical", lineHeight: 1.5 }} />
 
         <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 14, paddingTop: 12 }}>
-          <div style={lbl}>Schedule this year's task</div>
-          {!added ? (
+          <div style={lbl}>Schedule this year's {pv ? "tasks" : "task"}</div>
+          {!scheduled ? (
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <input type="date" value={date} onChange={e => setDate(e.target.value)} style={{ ...inp, width: "auto", flex: "1 1 150px" }} />
-              <button onClick={doConvert} disabled={busy} style={{ background: C.light, color: "#fff", border: "none", borderRadius: 9, padding: "11px 18px", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>{busy ? "…" : `➕ Create ${thisYear} task`}</button>
+              <button onClick={doConvert} disabled={busy} style={{ background: C.light, color: "#fff", border: "none", borderRadius: 9, padding: "11px 18px", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>{busy ? "…" : `➕ Create ${varsOf({ ...rec, ...meta, crop_detail: cropDetail }).length} ${thisYear} task${pv ? "s" : ""}`}</button>
             </div>
           ) : (
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              {info?.status === "completed"
-                ? <span style={{ fontSize: 13, fontWeight: 800, color: "#fff", background: "#3a7d2c", borderRadius: 8, padding: "8px 12px" }}>✓ Completed{info.completedAt ? ` ${fmtDate(String(info.completedAt).slice(0, 10))}` : ""}{info.completedBy ? ` · ${info.completedBy}` : ""}</span>
-                : <span style={{ fontSize: 13, fontWeight: 700, color: "#2e5c1e", background: "#eef6e7", borderRadius: 8, padding: "8px 12px" }}>✓ Task created — in Growing tasks</span>}
-              <button onClick={doUndo} disabled={busy} style={{ background: "#fff", color: "#d94f3d", border: `1.5px solid ${C.border}`, borderRadius: 9, padding: "9px 14px", fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>{busy ? "…" : "Undo"}</button>
+              {allDone
+                ? <span style={{ fontSize: 13, fontWeight: 800, color: "#fff", background: "#3a7d2c", borderRadius: 8, padding: "8px 12px" }}>✓ Completed{lastDone ? ` ${fmtDate(String(lastDone).slice(0, 10))}` : ""}{lastBy ? ` · ${lastBy}` : ""}</span>
+                : dN > 0
+                  ? <span style={{ fontSize: 13, fontWeight: 800, color: "#2e5c1e", background: "#eef6e7", borderRadius: 8, padding: "8px 12px" }}>{dN} of {total} varieties done</span>
+                  : <span style={{ fontSize: 13, fontWeight: 700, color: "#2e5c1e", background: "#eef6e7", borderRadius: 8, padding: "8px 12px" }}>✓ {total > 1 ? `${total} tasks` : "Task"} created — in Growing</span>}
+              <button onClick={doUndo} disabled={busy} style={{ background: "#fff", color: "#d94f3d", border: `1.5px solid ${C.border}`, borderRadius: 9, padding: "9px 14px", fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>{busy ? "…" : total > 1 ? "Undo all" : "Undo"}</button>
             </div>
           )}
-          <div style={{ fontSize: 11, color: C.muted, marginTop: 6 }}>Since {crop} treatments are size-triggered, set the date to when the plants actually reach size — you can also tweak it later in Growing tasks.</div>
+          <div style={{ fontSize: 11, color: C.muted, marginTop: 6 }}>{pv ? `Piccolo is size-triggered — each variety is its own task so the crew photographs each one's size. ` : ""}Set the date to when the plants actually reach size — you can also tweak it later in Growing tasks.</div>
         </div>
       </div>
     </div>
