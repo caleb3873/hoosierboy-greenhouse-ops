@@ -253,13 +253,16 @@ function HelpModal({ crop, year, onClose }) {
 
 // Detail window — read the treatment, add plant-size photos + notes, set the date, create/undo the task.
 function DetailModal({ sb, rec, crop, thisYear, defaultDate, taskId, onConvert, onUndo, onChanged, onSyncSel, onClose }) {
-  const [notes, setNotes] = useState(rec.notes || "");
+  const init = () => ({ application: rec.application || "", rates: rec.rates || "", crop_detail: rec.crop_detail || "", location: rec.location || "", notes: rec.notes || "" });
+  const [meta, setMeta] = useState(init);
   const [date, setDate] = useState(defaultDate);
   const [uploading, setUploading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [added, setAdded] = useState(!!taskId);
-  useEffect(() => { setNotes(rec.notes || ""); }, [rec]);
+  useEffect(() => { setMeta(init()); setAdded(!!taskId); }, [rec, taskId]); // reset when a different record opens
+  const setM = (k, v) => setMeta(x => ({ ...x, [k]: v }));
   const photos = rec.photos || [];
+  const titlePreview = (["🌼", meta.application, meta.rates].filter(x => x && x.trim()).join(" ") + (meta.crop_detail.trim() ? ` — ${meta.crop_detail.trim()}` : "")).trim();
 
   async function addPhoto(file) {
     if (!file || !file.type.startsWith("image/")) return;
@@ -283,9 +286,17 @@ function DetailModal({ sb, rec, crop, thisYear, defaultDate, taskId, onConvert, 
     await sb.from("treatment_records").update({ photos: next }).eq("id", rec.id);
     onSyncSel({ ...rec, photos: next }); onChanged();
   }
-  async function saveNotes() {
-    await sb.from("treatment_records").update({ notes: notes.trim() || null }).eq("id", rec.id);
-    onSyncSel({ ...rec, notes: notes.trim() || null }); onChanged();
+  async function saveMeta() {
+    const clean = { application: meta.application.trim() || null, rates: meta.rates.trim() || null, crop_detail: meta.crop_detail.trim() || null, location: meta.location.trim() || null, notes: meta.notes.trim() || null };
+    await sb.from("treatment_records").update(clean).eq("id", rec.id);
+    onSyncSel({ ...rec, ...clean }); onChanged();
+    // keep the created task's title/detail in sync if this treatment is already scheduled
+    if (taskId) {
+      const m = { ...rec, ...clean };
+      const title = (["🌼", m.application, m.rates].filter(x => x && String(x).trim()).join(" ") + (m.crop_detail ? ` — ${m.crop_detail}` : "")).trim();
+      const desc = [m.crop_detail && `Crop: ${m.crop_detail}`, m.location && `Location: ${m.location}`, m.rates && `Rate: ${m.rates}`, m.notes && `Note: ${m.notes}`, "📷 Take a photo of the plant size when treating."].filter(Boolean).join("\n");
+      await sb.from("manager_tasks").update({ title, description: desc, location: m.location || null }).eq("id", taskId);
+    }
   }
   async function doConvert() { setBusy(true); const id = await onConvert(date); setBusy(false); if (id) setAdded(true); }
   async function doUndo() { setBusy(true); await onUndo(); setBusy(false); setAdded(false); }
@@ -295,18 +306,19 @@ function DetailModal({ sb, rec, crop, thisYear, defaultDate, taskId, onConvert, 
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 9999, display: "flex", alignItems: "flex-end", justifyContent: "center", overflow: "auto" }}>
       <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: "16px 16px 0 0", padding: 18, width: "100%", maxWidth: 520, maxHeight: "92vh", overflow: "auto" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
-          <div>
-            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              {rec.application && <span style={{ fontSize: 13, fontWeight: 800, color: "#fff", background: appColor(rec.application), borderRadius: 8, padding: "3px 11px" }}>{rec.application}{rec.rates ? ` · ${rec.rates}` : ""}</span>}
-              <span style={{ fontSize: 12, color: C.muted }}>{fmtDate(rec.rec_date)} '{String(rec.rec_date).slice(2, 4)}</span>
-            </div>
-            {rec.location && <div style={{ fontSize: 12, color: C.muted, marginTop: 4 }}>📍 {rec.location}</div>}
-          </div>
-          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, color: C.muted, cursor: "pointer", lineHeight: 1 }}>×</button>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+          <div style={{ fontSize: 14.5, fontWeight: 800, color: C.dark, ...wrap }}>{titlePreview || "Treatment"}</div>
+          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, color: C.muted, cursor: "pointer", lineHeight: 1, flexShrink: 0 }}>×</button>
         </div>
+        <div style={{ fontSize: 11.5, color: C.muted, marginTop: 2 }}>Last done {fmtDate(rec.rec_date)} '{String(rec.rec_date).slice(2, 4)}</div>
 
-        {rec.crop_detail && <><div style={lbl}>Crop</div><div style={{ fontSize: 13.5, color: C.dark, ...wrap }}>{rec.crop_detail}</div></>}
+        <div style={lbl}>Treatment <span style={{ fontWeight: 400, textTransform: "none" }}>· edit for different / new varieties</span></div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <input value={meta.application} onChange={e => setM("application", e.target.value)} onBlur={saveMeta} placeholder="Application (Piccolo…)" style={{ ...inp, flex: 2 }} />
+          <input value={meta.rates} onChange={e => setM("rates", e.target.value)} onBlur={saveMeta} placeholder="Rate (3ppm…)" style={{ ...inp, flex: 1 }} />
+        </div>
+        <textarea value={meta.crop_detail} onChange={e => setM("crop_detail", e.target.value)} onBlur={saveMeta} rows={2} placeholder="Varieties / sizes — edit or add new ones" style={{ ...inp, marginTop: 8, resize: "vertical", lineHeight: 1.5, ...wrap }} />
+        <input value={meta.location} onChange={e => setM("location", e.target.value)} onBlur={saveMeta} placeholder="Location (West, North…)" style={{ ...inp, marginTop: 8 }} />
 
         <div style={lbl}>Plant-size photos <span style={{ fontWeight: 400, textTransform: "none" }}>· e.g. how big at treatment</span></div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -324,7 +336,7 @@ function DetailModal({ sb, rec, crop, thisYear, defaultDate, taskId, onConvert, 
         </div>
 
         <div style={lbl}>Notes</div>
-        <textarea value={notes} onChange={e => setNotes(e.target.value)} onBlur={saveNotes} rows={2} placeholder="Size at treatment, what to watch, tweaks for this year…" style={{ ...inp, resize: "vertical", lineHeight: 1.5 }} />
+        <textarea value={meta.notes} onChange={e => setM("notes", e.target.value)} onBlur={saveMeta} rows={2} placeholder="Size at treatment, what to watch, tweaks for this year…" style={{ ...inp, resize: "vertical", lineHeight: 1.5 }} />
 
         <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 14, paddingTop: 12 }}>
           <div style={lbl}>Schedule this year's task</div>
