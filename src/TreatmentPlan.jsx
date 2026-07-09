@@ -334,7 +334,9 @@ function DetailModal({ sb, rec, thisYear, defaultDate, varTasks = [], onConvert,
   const [date, setDate] = useState(defaultDate);
   const [uploading, setUploading] = useState("");
   const [busy, setBusy] = useState(false);
-  useEffect(() => { setMeta(init()); const v = splitVars(rec.crop_detail); setLines(v.length ? v : [""]); }, [rec]);
+  const [flash, setFlash] = useState("");
+  useEffect(() => { setMeta(init()); const v = splitVars(rec.crop_detail); setLines(v.length ? v : [""]); setFlash(""); }, [rec]);
+  useEffect(() => { if (!flash) return; const id = setTimeout(() => setFlash(""), 6000); return () => clearTimeout(id); }, [flash]);
   const scheduled = varTasks.length > 0;
   const total = varTasks.length, dN = varTasks.filter(t => t.status === "completed").length;
   const allDone = scheduled && dN === total;
@@ -376,10 +378,12 @@ function DetailModal({ sb, rec, thisYear, defaultDate, varTasks = [], onConvert,
     const cd = (linesOverride || lines).map(s => s.trim()).filter(Boolean).join(", ");
     const clean = { application: meta.application.trim() || null, rates: meta.rates.trim() || null, crop_detail: cd || null, location: meta.location.trim() || null, notes: meta.notes.trim() || null };
     // If already scheduled, warn before an edit that would REMOVE or RENAME a Growing task (the risky ones).
+    let addedVars = [];
     if (varTasks.length) {
       const want = varsOf(clean).map(v => isAll(v) ? null : v);
       const toRemove = varTasks.filter(t => !want.includes(t.variety));
       const toAdd = want.filter(k => !varTasks.some(t => t.variety === k));
+      addedVars = toAdd.filter(Boolean); // newly-named varieties → will get their own Growing task
       if (toRemove.length) {
         const nm = k => (k == null || k === "(all)") ? "broad/location task" : `“${k}”`;
         const rename = toAdd.length === 1 && toRemove.length === 1;
@@ -395,6 +399,7 @@ function DetailModal({ sb, rec, thisYear, defaultDate, varTasks = [], onConvert,
     // if already scheduled, reconcile the per-variety tasks to the current lines (add/remove/rename + retag)
     if (varTasks.length) await onReconcile({ ...rec, ...clean });
     onChanged();
+    if (addedVars.length) setFlash(`✓ Added ${addedVars.length > 1 ? `${addedVars.length} Growing tasks` : "a Growing task"} for ${addedVars.join(", ")} — set its date in Growing if it hits size on a different day.`);
   }
   async function doConvert() { setBusy(true); await onConvert(date); setBusy(false); }
   async function doUndo() { setBusy(true); await onUndo(); setBusy(false); }
@@ -409,6 +414,7 @@ function DetailModal({ sb, rec, thisYear, defaultDate, varTasks = [], onConvert,
           <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, color: C.muted, cursor: "pointer", lineHeight: 1, flexShrink: 0 }}>×</button>
         </div>
         <div style={{ fontSize: 11.5, color: C.muted, marginTop: 2 }}>Last done {fmtDate(rec.rec_date)} '{String(rec.rec_date).slice(2, 4)}</div>
+        {flash && <div style={{ marginTop: 8, background: "#eef6e7", border: `1px solid ${C.light}`, color: "#2e5c1e", borderRadius: 9, padding: "8px 11px", fontSize: 12.5, fontWeight: 700 }}>{flash}</div>}
 
         <div style={lbl}>Application & rate</div>
         <div style={{ display: "flex", gap: 8 }}>
@@ -443,7 +449,7 @@ function DetailModal({ sb, rec, thisYear, defaultDate, varTasks = [], onConvert,
                 </div>
               );
             })}
-            <button onClick={addLine} style={{ background: "#fff", color: C.dark, border: `1.5px dashed ${C.light}`, borderRadius: 9, padding: "9px 14px", fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit", width: "100%" }}>＋ Add variety</button>
+            <button onClick={addLine} style={{ background: "#fff", color: C.dark, border: `1.5px dashed ${C.light}`, borderRadius: 9, padding: "9px 14px", fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit", width: "100%" }}>＋ Add variety{scheduled && pv ? " (creates its task)" : ""}</button>
             {photos.some(p => !p.variety) && (
               <div style={{ marginTop: 10 }}>
                 <div style={lbl}>General / crew photos</div>
