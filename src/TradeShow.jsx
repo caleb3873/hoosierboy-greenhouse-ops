@@ -82,7 +82,8 @@ const uid = () => crypto.randomUUID();
 export default function TradeShow() {
   const { rows: sessions, update, remove, upsert, loading } = useTable("tradeshow_sessions", { orderBy: "created_at", ascending: false });
   const [view, setView]         = useState("list"); // list | session | capture | quickshot
-  const [mainTab, setMainTab]   = useState("sessions"); // sessions | gallery (shared booth photos from the capture app)
+  const [mainTab, setMainTab]   = useState(() => { try { return sessionStorage.getItem("ts_maintab_v1") || "sessions"; } catch { return "sessions"; } }); // sessions | gallery — remembered across refresh
+  useEffect(() => { try { sessionStorage.setItem("ts_maintab_v1", mainTab); } catch {} }, [mainTab]);
   const [activeId, setActiveId] = useState(null);
   const [showNewModal, setShowNewModal] = useState(false);
   const localAtMount = useRef(loadSessions()); // capture device-trial sessions before the mirror runs

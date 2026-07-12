@@ -264,7 +264,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
 
   const today = useMemo(() => getWeekInfo(), []);
   const [selectedWeek, setSelectedWeek] = useState(today);
-  const [category, setCategory] = useState(defaultCategory || (canCreateGrowing ? "growing" : "production")); // production | growing | brehob
+  const [category, setCategory] = useState(() => { try { return defaultCategory || localStorage.getItem("mtv_cat_v1") || (canCreateGrowing ? "growing" : "production"); } catch { return defaultCategory || (canCreateGrowing ? "growing" : "production"); } }); // production | growing | brehob
   const [statusFilter, setStatusFilter] = useState("pending"); // all | pending | completed
   // Asst-manager tabs: simplified to My Tasks / [Dept] Tasks / Done
   const [asstTab, setAsstTab] = useState("dept");
@@ -311,7 +311,13 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
   const [decliningRequest, setDecliningRequest] = useState(null);
   const [showOverdue, setShowOverdue] = useState(false);
   // Hub-first navigation. "hub" is the mobile home grid; the rest are focused sub-pages.
-  const [currentView, setCurrentView] = useState("hub"); // hub | tasks | vacation | messages | today | week | hr-inbox
+  // Remember the open module across a page refresh so reloading (e.g. inside Trade Show)
+  // keeps you where you were instead of dumping you back to the hub. Only restore modules
+  // that have a back-to-hub and aren't tightly role-gated, so a reload can't strand anyone.
+  const PERSISTABLE_VIEWS = ["tasks", "tradeshow", "treatment", "today", "week", "messages", "vacation", "evaluations", "receiving", "inventory", "reference-docs", "driver-schedule"];
+  const [currentView, setCurrentView] = useState(() => { try { const v = sessionStorage.getItem("mtv_view_v1"); return v && PERSISTABLE_VIEWS.includes(v) ? v : "hub"; } catch { return "hub"; } }); // hub | tasks | vacation | messages | today | week | hr-inbox
+  useEffect(() => { try { sessionStorage.setItem("mtv_view_v1", currentView); } catch {} }, [currentView]); // sessionStorage → survives refresh, resets on fresh open
+  useEffect(() => { try { localStorage.setItem("mtv_cat_v1", category); } catch {} }, [category]);
   const [showHrCompose, setShowHrCompose] = useState(false);
   const [showAssigned, setShowAssigned] = useState(false);
   const [showVacationForm, setShowVacationForm] = useState(false);
