@@ -360,8 +360,7 @@ function ShowGallery() {
     }
     const { error } = await sb.from("trade_show_photos").insert({ id, event_id: eventId, uploader_name: uploader_name || displayName || null, vendor_name: vendor_name || null, variety_name: variety_name || null, interest_level: interest_level || null, notes: notes || null, image_url, storage_path });
     if (error) { window.alert("Couldn't save: " + error.message); return false; }
-    setAddOpen(false);
-    await loadPhotos(eventId);
+    await loadPhotos(eventId); // modal decides whether to close (Save & close vs Save & add another)
     return true;
   }
   async function deletePhoto(p) {
@@ -547,29 +546,44 @@ function AddBoothPhotoModal({ event, defaultUploader, onAdd, onClose }) {
   const [notes, setNotes] = useState("");
   const [uploader, setUploader] = useState(defaultUploader || "");
   const [busy, setBusy] = useState(false);
+  const [savedCount, setSavedCount] = useState(0);
   const fileRef = useRef(null);
+  const dropRef = useRef(null);
   function pick(f) { if (!f || !f.type.startsWith("image/")) return; setFile(f); const r = new FileReader(); r.onload = e => setPreview(e.target.result); r.readAsDataURL(f); }
-  async function save() {
-    if (!file) { window.alert("Add a photo first."); return; }
+  // keepOpen = "Save & add another": keeps the caption (vendor/variety/interest/notes), clears just the
+  // photo, and puts you back on the camera tile so you can shoot the next pic of the same variety fast.
+  async function save(keepOpen) {
+    if (!file) { if (!keepOpen) { onClose(); return; } window.alert("Add a photo first."); return; } // Save & close w/ nothing pending → just close
     setBusy(true);
     const ok = await onAdd({ file, vendor_name: vendor.trim(), variety_name: variety.trim(), interest_level: interest, notes: notes.trim(), uploader_name: uploader.trim() });
     setBusy(false);
     if (ok === false) return;
+    if (keepOpen) {
+      setSavedCount(c => c + 1);
+      setFile(null); setPreview(null);
+      dropRef.current?.scrollIntoView({ block: "start" });
+    } else onClose();
   }
   const inp = { width: "100%", boxSizing: "border-box", padding: "11px 12px", border: "1.5px solid #c8d8c0", borderRadius: 10, fontSize: 15, fontFamily: "inherit", marginBottom: 12 };
   const lbl = { fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", marginBottom: 5 };
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 10001, display: "flex", alignItems: "flex-end", justifyContent: "center", overflow: "auto" }}>
       <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: "16px 16px 0 0", padding: 18, width: "100%", maxWidth: 480, maxHeight: "94vh", overflow: "auto" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <div ref={dropRef} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <div style={{ fontWeight: 800, fontSize: 17, color: "#1e2d1a" }}>Add photo · {event.name}</div>
           <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 24, color: "#7a8c74", cursor: "pointer", lineHeight: 1 }}>×</button>
         </div>
 
+        {savedCount > 0 && (
+          <div style={{ background: "#eef6e7", border: "1px solid #7fb069", color: "#2e5c1e", borderRadius: 10, padding: "9px 12px", fontSize: 12.5, fontWeight: 700, marginBottom: 12 }}>
+            ✓ {savedCount} photo{savedCount !== 1 ? "s" : ""} saved to {event.name}. Caption kept — snap the next one, or edit the fields for a different variety.
+          </div>
+        )}
+
         {preview
           ? <img src={preview} alt="" onClick={() => fileRef.current?.click()} style={{ width: "100%", maxHeight: 300, objectFit: "contain", borderRadius: 12, border: "1.5px solid #e0ead8", background: "#f0f5ee", marginBottom: 12, cursor: "pointer" }} />
           : <label style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, height: 180, border: "2px dashed #7fb069", borderRadius: 12, background: "#f4faf0", color: "#2e5c1e", fontWeight: 800, cursor: "pointer", marginBottom: 12 }}>
-              <div style={{ fontSize: 40 }}>📷</div>Tap to take / choose a photo
+              <div style={{ fontSize: 40 }}>📷</div>{savedCount > 0 ? "Tap for the next photo" : "Tap to take / choose a photo"}
               <input type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={e => pick(e.target.files[0])} />
             </label>}
         <input ref={fileRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={e => pick(e.target.files[0])} />
@@ -592,7 +606,10 @@ function AddBoothPhotoModal({ event, defaultUploader, onAdd, onClose }) {
         <div style={lbl}>Your name</div>
         <input value={uploader} onChange={e => setUploader(e.target.value)} placeholder="Who took this" style={inp} />
 
-        <button onClick={save} disabled={busy} style={{ width: "100%", background: busy ? "#a9c795" : "#7fb069", color: "#fff", border: "none", borderRadius: 10, padding: 14, fontWeight: 800, fontSize: 15, cursor: busy ? "default" : "pointer", fontFamily: "inherit" }}>{busy ? "Saving…" : "✓ Save photo"}</button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => save(true)} disabled={busy} style={{ flex: 2, background: busy ? "#a9c795" : "#7fb069", color: "#fff", border: "none", borderRadius: 10, padding: 14, fontWeight: 800, fontSize: 15, cursor: busy ? "default" : "pointer", fontFamily: "inherit" }}>{busy ? "Saving…" : "＋ Save & new"}</button>
+          <button onClick={() => save(false)} disabled={busy} style={{ flex: 1, background: "#fff", color: "#1e2d1a", border: "1.5px solid #1e2d1a", borderRadius: 10, padding: 14, fontWeight: 800, fontSize: 14, cursor: busy ? "default" : "pointer", fontFamily: "inherit" }}>Save & close</button>
+        </div>
       </div>
     </div>
   );
