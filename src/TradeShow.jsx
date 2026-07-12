@@ -1,5 +1,8 @@
 import { useState, useEffect, useRef } from "react";
-import { useTable, getSupabase } from "./supabase";
+import { useTable, getSupabase, getCultureClient } from "./supabase";
+
+// Capture app (separate project) — the no-login photo uploader the crew opens on their phones.
+const CAPTURE_BASE = "https://hoosier-boy-operations.vercel.app/show";
 
 // ── STORAGE KEY ────────────────────────────────────────────────────────────────
 // Supabase (tradeshow_sessions + tradeshow-photos bucket) is the source of truth; localStorage is a
@@ -58,6 +61,7 @@ const uid = () => crypto.randomUUID();
 export default function TradeShow() {
   const { rows: sessions, update, remove, upsert, loading } = useTable("tradeshow_sessions", { orderBy: "created_at", ascending: false });
   const [view, setView]         = useState("list"); // list | session | capture | quickshot
+  const [mainTab, setMainTab]   = useState("sessions"); // sessions | gallery (shared booth photos from the capture app)
   const [activeId, setActiveId] = useState(null);
   const [showNewModal, setShowNewModal] = useState(false);
   const localAtMount = useRef(loadSessions()); // capture device-trial sessions before the mirror runs
@@ -150,6 +154,19 @@ export default function TradeShow() {
         {/* ── LIST VIEW ── */}
         {view === "list" && (
           <>
+            {/* Tabs: my own sessions vs the shared show gallery (photos from the capture app) */}
+            <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+              {[["sessions", "🎪 My Sessions"], ["gallery", "🌸 Show Gallery"]].map(([id, label]) => (
+                <button key={id} onClick={() => setMainTab(id)}
+                  style={{ flex: 1, background: mainTab === id ? "#1e2d1a" : "#fff", color: mainTab === id ? "#c8e6b8" : "#7a8c74", border: `1.5px solid ${mainTab === id ? "#1e2d1a" : "#e0ead8"}`, borderRadius: 10, padding: "11px 12px", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {mainTab === "gallery" && <ShowGallery />}
+
+            {mainTab === "sessions" && (<>
             {/* Action buttons */}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 24 }}>
               <button onClick={() => setShowNewModal(true)}
@@ -228,6 +245,7 @@ export default function TradeShow() {
                 })}
               </div>
             )}
+            </>)}
           </>
         )}
 
@@ -250,6 +268,178 @@ export default function TradeShow() {
           />
         )}
       </div>
+    </div>
+  );
+}
+
+// ── SHOW GALLERY ──────────────────────────────────────────────────────────────
+// Read-only booth photos shared from the capture app (separate project), via the
+// cross-project culture client. Photos crew members snap on their phones at the show
+// flow into the same tables and appear here automatically. The upload PIN never
+// touches this UI — the public views can't expose it, so don't hardcode it here.
+const INTEREST = {
+  must_have:  { label: "🔥 Must have", bg: "#d94f3d", fg: "#fff" },
+  interested: { label: "Interested",   bg: "#7fb069", fg: "#fff" },
+  maybe:      { label: "Maybe",        bg: "#e89a3a", fg: "#fff" },
+  pass:       { label: "Pass",         bg: "#c8d0c2", fg: "#5a6a54" },
+};
+const interestOf = v => INTEREST[v] || (v ? { label: String(v).replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()), bg: "#7a8c74", fg: "#fff" } : null);
+const fmtShowDate = iso => iso ? new Date(iso + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "";
+
+function ShowGallery() {
+  const cc = getCultureClient();
+  const [events, setEvents]   = useState([]);
+  const [eventId, setEventId] = useState(null);
+  const [photos, setPhotos]   = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError]     = useState(null);
+  const [mustOnly, setMustOnly] = useState(false);
+  const [vendor, setVendor]   = useState("all");
+  const [lightbox, setLightbox] = useState(null);
+
+  const activeEvent = events.find(e => e.id === eventId) || null;
+
+  useEffect(() => {
+    if (!cc) { setError("Shared show database isn't configured in this app."); setLoading(false); return; }
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await cc.from("trade_show_events_public").select("*").order("created_at", { ascending: false });
+      if (cancelled) return;
+      if (error) { setError(error.message); setLoading(false); return; }
+      const list = data || [];
+      setEvents(list);
+      // default to the newest active event, else the newest event
+      setEventId((list.find(e => e.is_active) || list[0] || {}).id || null);
+      if (!list.length) setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [cc]);
+
+  const loadPhotos = async (id) => {
+    if (!cc || !id) return;
+    setLoading(true);
+    const { data, error } = await cc.from("trade_show_photos_public").select("*").eq("event_id", id).order("created_at", { ascending: false });
+    if (error) { setError(error.message); setPhotos([]); }
+    else { setError(null); setPhotos(data || []); }
+    setLoading(false);
+  };
+  useEffect(() => { if (eventId) { setVendor("all"); loadPhotos(eventId); } }, [eventId]); // loadPhotos intentionally not a dep
+
+  const vendors = [...new Set(photos.map(p => p.vendor_name).filter(Boolean))].sort();
+  const shown = photos.filter(p => (!mustOnly || p.interest_level === "must_have") && (vendor === "all" || p.vendor_name === vendor));
+  const captureUrl = activeEvent ? `${CAPTURE_BASE}/${activeEvent.event_code}` : null;
+
+  const card = { background: "#fff", border: "1.5px solid #e0ead8", borderRadius: 12, overflow: "hidden", cursor: "pointer" };
+  const pill = (on) => ({ background: on ? "#1e2d1a" : "#fff", color: on ? "#c8e6b8" : "#5a6a54", border: `1.5px solid ${on ? "#1e2d1a" : "#e0ead8"}`, borderRadius: 999, padding: "7px 14px", fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" });
+
+  if (error && !events.length) {
+    return <div style={{ textAlign: "center", padding: "50px 0", color: "#c87060", fontSize: 13.5, fontWeight: 600 }}>⚠️ {error}</div>;
+  }
+  if (!loading && !events.length) {
+    return <div style={{ textAlign: "center", padding: "60px 0", color: "#aabba0" }}>
+      <div style={{ fontSize: 46, marginBottom: 12 }}>🌸</div>
+      <div style={{ fontSize: 15, fontWeight: 700, color: "#7a8c74", marginBottom: 6 }}>No shows yet</div>
+      <div style={{ fontSize: 13 }}>Photos taken on the capture app will appear here.</div>
+    </div>;
+  }
+
+  return (
+    <div>
+      {/* Event selector (only if more than one) */}
+      {events.length > 1 && (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
+          {events.map(e => (
+            <button key={e.id} onClick={() => setEventId(e.id)}
+              style={{ ...pill(e.id === eventId), display: "flex", alignItems: "center", gap: 6 }}>
+              {e.name}{!e.is_active && <span style={{ fontSize: 9, opacity: .7 }}>(past)</span>}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Event header + add-photos link */}
+      {activeEvent && (
+        <div style={{ background: "#fff", border: "1.5px solid #e0ead8", borderRadius: 12, padding: "14px 16px", marginBottom: 14, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 15, fontWeight: 800, color: "#1e2d1a" }}>{activeEvent.name}</div>
+            <div style={{ fontSize: 11.5, color: "#7a8c74", marginTop: 2 }}>
+              {activeEvent.is_active ? <span style={{ color: "#2e5c1e", fontWeight: 800 }}>● Live</span> : "Past show"}
+              {activeEvent.starts_on && <span> · {fmtShowDate(activeEvent.starts_on)}{activeEvent.ends_on && activeEvent.ends_on !== activeEvent.starts_on ? `–${fmtShowDate(activeEvent.ends_on)}` : ""}</span>}
+              <span> · {photos.length} photo{photos.length !== 1 ? "s" : ""}</span>
+            </div>
+          </div>
+          {captureUrl && (
+            <a href={captureUrl} target="_blank" rel="noreferrer"
+              style={{ background: "#7fb069", color: "#fff", borderRadius: 9, padding: "10px 16px", fontSize: 13, fontWeight: 800, textDecoration: "none", whiteSpace: "nowrap" }}>
+              📷 Add photos
+            </a>
+          )}
+          <button onClick={() => loadPhotos(eventId)} title="Refresh"
+            style={{ background: "#f2f5ef", color: "#5a6a54", border: "1.5px solid #e0ead8", borderRadius: 9, padding: "10px 13px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>↻</button>
+        </div>
+      )}
+      {captureUrl && <div style={{ fontSize: 11, color: "#aabba0", margin: "-6px 2px 14px" }}>“Add photos” opens the booth uploader — no login. Crew can open it on their phones; photos appear here.</div>}
+
+      {/* Filters */}
+      {photos.length > 0 && (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 14 }}>
+          <button onClick={() => setMustOnly(m => !m)} style={pill(mustOnly)}>🔥 Must-haves only</button>
+          {vendors.length > 1 && (
+            <select value={vendor} onChange={e => setVendor(e.target.value)}
+              style={{ background: "#fff", color: "#1e2d1a", border: "1.5px solid #e0ead8", borderRadius: 999, padding: "7px 14px", fontSize: 12.5, fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}>
+              <option value="all">All booths ({vendors.length})</option>
+              {vendors.map(v => <option key={v} value={v}>{v}</option>)}
+            </select>
+          )}
+          <span style={{ fontSize: 12, color: "#7a8c74", fontWeight: 700 }}>{shown.length} shown</span>
+        </div>
+      )}
+
+      {loading ? (
+        <div style={{ textAlign: "center", padding: "50px 0", color: "#aabba0", fontSize: 14 }}>Loading photos…</div>
+      ) : shown.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "50px 0", color: "#aabba0", fontSize: 13.5 }}>
+          {photos.length === 0 ? "No photos yet — take some at the booth." : "No photos match these filters."}
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
+          {shown.map(p => {
+            const it = interestOf(p.interest_level);
+            return (
+              <div key={p.id} style={card} onClick={() => setLightbox(p)}>
+                <div style={{ position: "relative", background: "#f0f5ee" }}>
+                  <img src={p.image_url} alt={p.variety_name || "booth photo"} loading="lazy"
+                    style={{ width: "100%", aspectRatio: "1/1", objectFit: "cover", display: "block" }} />
+                  {it && <span style={{ position: "absolute", top: 6, left: 6, background: it.bg, color: it.fg, fontSize: 10, fontWeight: 800, padding: "2px 7px", borderRadius: 999 }}>{it.label}</span>}
+                </div>
+                <div style={{ padding: "9px 11px" }}>
+                  {p.vendor_name && <div style={{ fontSize: 11, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase", letterSpacing: .3 }}>{p.vendor_name}</div>}
+                  {p.variety_name && <div style={{ fontSize: 13.5, fontWeight: 800, color: "#1e2d1a", marginTop: 1, lineHeight: 1.25 }}>{p.variety_name}</div>}
+                  {p.notes && <div style={{ fontSize: 11.5, color: "#5a6a54", marginTop: 4, lineHeight: 1.4, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{p.notes}</div>}
+                  {p.uploader_name && <div style={{ fontSize: 10.5, color: "#aabba0", marginTop: 5 }}>— {p.uploader_name}</div>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Lightbox */}
+      {lightbox && (
+        <div onClick={() => setLightbox(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.85)", zIndex: 10000, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 16, overflow: "auto" }}>
+          <img src={lightbox.image_url} alt={lightbox.variety_name || ""} style={{ maxWidth: "100%", maxHeight: "72vh", objectFit: "contain", borderRadius: 10 }} onClick={e => e.stopPropagation()} />
+          <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 12, padding: "14px 18px", marginTop: 14, maxWidth: 480, width: "100%", boxSizing: "border-box" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              {interestOf(lightbox.interest_level) && <span style={{ background: interestOf(lightbox.interest_level).bg, color: interestOf(lightbox.interest_level).fg, fontSize: 11, fontWeight: 800, padding: "2px 9px", borderRadius: 999 }}>{interestOf(lightbox.interest_level).label}</span>}
+              {lightbox.vendor_name && <span style={{ fontSize: 12, fontWeight: 800, color: "#7a8c74", textTransform: "uppercase" }}>{lightbox.vendor_name}</span>}
+            </div>
+            {lightbox.variety_name && <div style={{ fontSize: 17, fontWeight: 800, color: "#1e2d1a", marginTop: 6 }}>{lightbox.variety_name}</div>}
+            {lightbox.notes && <div style={{ fontSize: 13.5, color: "#3a4a34", marginTop: 6, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{lightbox.notes}</div>}
+            {lightbox.uploader_name && <div style={{ fontSize: 12, color: "#aabba0", marginTop: 8 }}>Added by {lightbox.uploader_name}</div>}
+          </div>
+          <button onClick={() => setLightbox(null)} style={{ marginTop: 12, background: "#fff", border: "none", borderRadius: 999, padding: "9px 22px", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>Close</button>
+        </div>
+      )}
     </div>
   );
 }
