@@ -496,6 +496,14 @@ function ShowGallery() {
         </div>
       )}
 
+      {/* Floating camera — add a photo without scrolling back up to the header button */}
+      {activeEvent && !addOpen && !newShowOpen && !lightbox && (
+        <button onClick={() => setAddOpen(true)} title={`Add photo to ${activeEvent.name}`}
+          style={{ position: "fixed", bottom: 22, right: 20, width: 60, height: 60, borderRadius: "50%", background: "#7fb069", color: "#fff", border: "3px solid #fff", fontSize: 26, cursor: "pointer", boxShadow: "0 4px 16px rgba(0,0,0,.32)", zIndex: 9000, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit" }}>
+          📷
+        </button>
+      )}
+
       {newShowOpen && <NewShowModal onCreate={createShow} onClose={() => setNewShowOpen(false)} />}
       {addOpen && activeEvent && <AddBoothPhotoModal event={activeEvent} defaultUploader={displayName} onAdd={addPhoto} onClose={() => setAddOpen(false)} />}
     </div>
