@@ -1,8 +1,29 @@
 import { useState, useEffect, useRef } from "react";
-import { useTable, getSupabase, getCultureClient } from "./supabase";
+import { useTable, getSupabase } from "./supabase";
+import { useAuth } from "./Auth";
 
-// Capture app (separate project) — the no-login photo uploader the crew opens on their phones.
-const CAPTURE_BASE = "https://hoosier-boy-operations.vercel.app/show";
+// Resize + JPEG-compress a phone photo in the browser BEFORE upload (fast on a weak
+// booth connection). Falls back to the original file if anything fails.
+function compressPhoto(file, maxDim = 1600, quality = 0.82) {
+  return new Promise(resolve => {
+    try {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        let { width, height } = img;
+        const m = Math.max(width, height);
+        if (m > maxDim) { const s = maxDim / m; width = Math.round(width * s); height = Math.round(height * s); }
+        const canvas = document.createElement("canvas");
+        canvas.width = width; canvas.height = height;
+        canvas.getContext("2d").drawImage(img, 0, 0, width, height);
+        canvas.toBlob(b => resolve(b && b.size < file.size ? b : file), "image/jpeg", quality);
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+      img.src = url;
+    } catch { resolve(file); }
+  });
+}
 
 // ── STORAGE KEY ────────────────────────────────────────────────────────────────
 // Supabase (tradeshow_sessions + tradeshow-photos bucket) is the source of truth; localStorage is a
@@ -287,98 +308,129 @@ const interestOf = v => INTEREST[v] || (v ? { label: String(v).replace(/_/g, " "
 const fmtShowDate = iso => iso ? new Date(iso + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "";
 
 function ShowGallery() {
-  const cc = getCultureClient();
+  const sb = getSupabase();
+  const { displayName } = useAuth();
   const [events, setEvents]   = useState([]);
   const [eventId, setEventId] = useState(null);
   const [photos, setPhotos]   = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError]     = useState(null);
   const [mustOnly, setMustOnly] = useState(false);
   const [vendor, setVendor]   = useState("all");
   const [lightbox, setLightbox] = useState(null);
+  const [newShowOpen, setNewShowOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
 
   const activeEvent = events.find(e => e.id === eventId) || null;
 
-  useEffect(() => {
-    if (!cc) { setError("Shared show database isn't configured in this app."); setLoading(false); return; }
-    let cancelled = false;
-    (async () => {
-      const { data, error } = await cc.from("trade_show_events_public").select("*").order("created_at", { ascending: false });
-      if (cancelled) return;
-      if (error) { setError(error.message); setLoading(false); return; }
-      const list = data || [];
-      setEvents(list);
-      // default to the newest active event, else the newest event
-      setEventId((list.find(e => e.is_active) || list[0] || {}).id || null);
-      if (!list.length) setLoading(false);
-    })();
-    return () => { cancelled = true; };
-  }, [cc]);
-
+  const loadEvents = async (selectId) => {
+    const { data } = await sb.from("trade_show_events").select("*").order("is_active", { ascending: false }).order("created_at", { ascending: false });
+    const list = data || [];
+    setEvents(list);
+    setEventId(prev => selectId || prev || (list.find(e => e.is_active) || list[0] || {}).id || null);
+    if (!list.length) setLoading(false);
+    return list;
+  };
   const loadPhotos = async (id) => {
-    if (!cc || !id) return;
+    if (!id) { setPhotos([]); setLoading(false); return; }
     setLoading(true);
-    const { data, error } = await cc.from("trade_show_photos_public").select("*").eq("event_id", id).order("created_at", { ascending: false });
-    if (error) { setError(error.message); setPhotos([]); }
-    else { setError(null); setPhotos(data || []); }
+    const { data } = await sb.from("trade_show_photos").select("*").eq("event_id", id).order("created_at", { ascending: false });
+    setPhotos(data || []);
     setLoading(false);
   };
-  useEffect(() => { if (eventId) { setVendor("all"); loadPhotos(eventId); } }, [eventId]); // loadPhotos intentionally not a dep
+  useEffect(() => { loadEvents(); }, []); // eslint intentionally: run once
+  useEffect(() => { if (eventId) { setVendor("all"); loadPhotos(eventId); } else { setLoading(false); } }, [eventId]);
+
+  async function createShow({ name, starts, ends }) {
+    const id = crypto.randomUUID();
+    await sb.from("trade_show_events").insert({ id, name, starts_on: starts || null, ends_on: ends || null, is_active: true, created_by: displayName || null });
+    setNewShowOpen(false);
+    await loadEvents(id);
+  }
+  async function addPhoto({ file, vendor_name, variety_name, interest_level, notes, uploader_name }) {
+    const id = crypto.randomUUID();
+    let image_url = null, storage_path = null;
+    if (file) {
+      const blob = await compressPhoto(file);
+      const path = `showphotos/${eventId}/${id}.jpg`;
+      const { error } = await sb.storage.from("tradeshow-photos").upload(path, blob, { contentType: "image/jpeg", cacheControl: "3600" });
+      if (error) { window.alert("Photo upload failed: " + error.message); return false; }
+      image_url = sb.storage.from("tradeshow-photos").getPublicUrl(path).data.publicUrl;
+      storage_path = path;
+    }
+    const { error } = await sb.from("trade_show_photos").insert({ id, event_id: eventId, uploader_name: uploader_name || displayName || null, vendor_name: vendor_name || null, variety_name: variety_name || null, interest_level: interest_level || null, notes: notes || null, image_url, storage_path });
+    if (error) { window.alert("Couldn't save: " + error.message); return false; }
+    setAddOpen(false);
+    await loadPhotos(eventId);
+    return true;
+  }
+  async function deletePhoto(p) {
+    if (!window.confirm("Delete this photo?")) return;
+    await sb.from("trade_show_photos").delete().eq("id", p.id);
+    if (p.storage_path) sb.storage.from("tradeshow-photos").remove([p.storage_path]);
+    setLightbox(null);
+    await loadPhotos(eventId);
+  }
+  async function toggleActive() {
+    if (!activeEvent) return;
+    await sb.from("trade_show_events").update({ is_active: !activeEvent.is_active }).eq("id", activeEvent.id);
+    await loadEvents(activeEvent.id);
+  }
+  async function deleteShow() {
+    if (!activeEvent) return;
+    if (!window.confirm(`Delete "${activeEvent.name}" and all ${photos.length} of its photos? This can't be undone.`)) return;
+    await sb.from("trade_show_events").delete().eq("id", activeEvent.id);
+    setEventId(null);
+    const list = await loadEvents();
+    if (!list.length) setPhotos([]);
+  }
 
   const vendors = [...new Set(photos.map(p => p.vendor_name).filter(Boolean))].sort();
   const shown = photos.filter(p => (!mustOnly || p.interest_level === "must_have") && (vendor === "all" || p.vendor_name === vendor));
-  const captureUrl = activeEvent ? `${CAPTURE_BASE}/${activeEvent.event_code}` : null;
 
   const card = { background: "#fff", border: "1.5px solid #e0ead8", borderRadius: 12, overflow: "hidden", cursor: "pointer" };
   const pill = (on) => ({ background: on ? "#1e2d1a" : "#fff", color: on ? "#c8e6b8" : "#5a6a54", border: `1.5px solid ${on ? "#1e2d1a" : "#e0ead8"}`, borderRadius: 999, padding: "7px 14px", fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" });
 
-  if (error && !events.length) {
-    return <div style={{ textAlign: "center", padding: "50px 0", color: "#c87060", fontSize: 13.5, fontWeight: 600 }}>⚠️ {error}</div>;
-  }
-  if (!loading && !events.length) {
-    return <div style={{ textAlign: "center", padding: "60px 0", color: "#aabba0" }}>
-      <div style={{ fontSize: 46, marginBottom: 12 }}>🌸</div>
-      <div style={{ fontSize: 15, fontWeight: 700, color: "#7a8c74", marginBottom: 6 }}>No shows yet</div>
-      <div style={{ fontSize: 13 }}>Photos taken on the capture app will appear here.</div>
-    </div>;
-  }
-
   return (
     <div>
-      {/* Event selector (only if more than one) */}
-      {events.length > 1 && (
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
-          {events.map(e => (
-            <button key={e.id} onClick={() => setEventId(e.id)}
-              style={{ ...pill(e.id === eventId), display: "flex", alignItems: "center", gap: 6 }}>
-              {e.name}{!e.is_active && <span style={{ fontSize: 9, opacity: .7 }}>(past)</span>}
-            </button>
-          ))}
+      {/* Event selector + new show */}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14, alignItems: "center" }}>
+        {events.map(e => (
+          <button key={e.id} onClick={() => setEventId(e.id)}
+            style={{ ...pill(e.id === eventId), display: "flex", alignItems: "center", gap: 6 }}>
+            {e.name}{!e.is_active && <span style={{ fontSize: 9, opacity: .7 }}>(past)</span>}
+          </button>
+        ))}
+        <button onClick={() => setNewShowOpen(true)}
+          style={{ background: "#fff", color: "#2e5c1e", border: "1.5px dashed #7fb069", borderRadius: 999, padding: "7px 14px", fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>＋ New show</button>
+      </div>
+
+      {!events.length && !loading && (
+        <div style={{ textAlign: "center", padding: "50px 0", color: "#aabba0" }}>
+          <div style={{ fontSize: 46, marginBottom: 12 }}>🌸</div>
+          <div style={{ fontSize: 15, fontWeight: 700, color: "#7a8c74", marginBottom: 6 }}>No shows yet</div>
+          <div style={{ fontSize: 13 }}>Tap <strong style={{ color: "#2e5c1e" }}>＋ New show</strong> to start capturing booth photos.</div>
         </div>
       )}
 
-      {/* Event header + add-photos link */}
+      {/* Event header + add photo */}
       {activeEvent && (
         <div style={{ background: "#fff", border: "1.5px solid #e0ead8", borderRadius: 12, padding: "14px 16px", marginBottom: 14, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 15, fontWeight: 800, color: "#1e2d1a" }}>{activeEvent.name}</div>
             <div style={{ fontSize: 11.5, color: "#7a8c74", marginTop: 2 }}>
-              {activeEvent.is_active ? <span style={{ color: "#2e5c1e", fontWeight: 800 }}>● Live</span> : "Past show"}
+              <span onClick={toggleActive} title="Toggle live / past" style={{ cursor: "pointer", fontWeight: 800, color: activeEvent.is_active ? "#2e5c1e" : "#7a8c74" }}>{activeEvent.is_active ? "● Live" : "○ Past"}</span>
               {activeEvent.starts_on && <span> · {fmtShowDate(activeEvent.starts_on)}{activeEvent.ends_on && activeEvent.ends_on !== activeEvent.starts_on ? `–${fmtShowDate(activeEvent.ends_on)}` : ""}</span>}
               <span> · {photos.length} photo{photos.length !== 1 ? "s" : ""}</span>
             </div>
           </div>
-          {captureUrl && (
-            <a href={captureUrl} target="_blank" rel="noreferrer"
-              style={{ background: "#7fb069", color: "#fff", borderRadius: 9, padding: "10px 16px", fontSize: 13, fontWeight: 800, textDecoration: "none", whiteSpace: "nowrap" }}>
-              📷 Add photos
-            </a>
-          )}
+          <button onClick={() => setAddOpen(true)}
+            style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 9, padding: "10px 16px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>📷 Add photo</button>
           <button onClick={() => loadPhotos(eventId)} title="Refresh"
             style={{ background: "#f2f5ef", color: "#5a6a54", border: "1.5px solid #e0ead8", borderRadius: 9, padding: "10px 13px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>↻</button>
+          <button onClick={deleteShow} title="Delete show"
+            style={{ background: "none", color: "#c87060", border: "1px solid #f0d0c0", borderRadius: 9, padding: "10px 12px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>🗑</button>
         </div>
       )}
-      {captureUrl && <div style={{ fontSize: 11, color: "#aabba0", margin: "-6px 2px 14px" }}>“Add photos” opens the booth uploader — no login. Crew can open it on their phones; photos appear here.</div>}
 
       {/* Filters */}
       {photos.length > 0 && (
@@ -437,9 +489,110 @@ function ShowGallery() {
             {lightbox.notes && <div style={{ fontSize: 13.5, color: "#3a4a34", marginTop: 6, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{lightbox.notes}</div>}
             {lightbox.uploader_name && <div style={{ fontSize: 12, color: "#aabba0", marginTop: 8 }}>Added by {lightbox.uploader_name}</div>}
           </div>
-          <button onClick={() => setLightbox(null)} style={{ marginTop: 12, background: "#fff", border: "none", borderRadius: 999, padding: "9px 22px", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>Close</button>
+          <div onClick={e => e.stopPropagation()} style={{ display: "flex", gap: 10, marginTop: 12 }}>
+            <button onClick={() => deletePhoto(lightbox)} style={{ background: "none", border: "1.5px solid #e08070", color: "#ffb3a8", borderRadius: 999, padding: "9px 18px", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>🗑 Delete</button>
+            <button onClick={() => setLightbox(null)} style={{ background: "#fff", border: "none", borderRadius: 999, padding: "9px 22px", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>Close</button>
+          </div>
         </div>
       )}
+
+      {newShowOpen && <NewShowModal onCreate={createShow} onClose={() => setNewShowOpen(false)} />}
+      {addOpen && activeEvent && <AddBoothPhotoModal event={activeEvent} defaultUploader={displayName} onAdd={addPhoto} onClose={() => setAddOpen(false)} />}
+    </div>
+  );
+}
+
+// ── NEW SHOW MODAL ────────────────────────────────────────────────────────────
+function NewShowModal({ onCreate, onClose }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [name, setName] = useState("");
+  const [starts, setStarts] = useState(today);
+  const [ends, setEnds] = useState(today);
+  const [busy, setBusy] = useState(false);
+  const inp = { width: "100%", boxSizing: "border-box", padding: "11px 12px", border: "1.5px solid #c8d8c0", borderRadius: 10, fontSize: 15, fontFamily: "inherit", marginBottom: 12 };
+  async function save() { if (!name.trim()) { window.alert("Name the show."); return; } setBusy(true); await onCreate({ name: name.trim(), starts, ends }); setBusy(false); }
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.5)", zIndex: 10001, display: "flex", alignItems: "flex-end", justifyContent: "center", padding: 12 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 14, padding: 18, width: "100%", maxWidth: 440 }}>
+        <div style={{ fontWeight: 800, fontSize: 17, color: "#1e2d1a", marginBottom: 14 }}>New show</div>
+        <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", marginBottom: 5 }}>Show name</div>
+        <input value={name} onChange={e => setName(e.target.value)} placeholder="Cultivate '26" autoFocus style={inp} />
+        <div style={{ display: "flex", gap: 10 }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", marginBottom: 5 }}>Starts</div>
+            <input type="date" value={starts} onChange={e => setStarts(e.target.value)} style={inp} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", marginBottom: 5 }}>Ends</div>
+            <input type="date" value={ends} onChange={e => setEnds(e.target.value)} style={inp} />
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+          <button onClick={save} disabled={busy} style={{ flex: 1, background: "#7fb069", color: "#fff", border: "none", borderRadius: 10, padding: 13, fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>{busy ? "Creating…" : "Create show"}</button>
+          <button onClick={onClose} style={{ background: "none", border: "1.5px solid #c8d8c0", borderRadius: 10, padding: "13px 18px", fontWeight: 700, color: "#7a8c74", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── ADD BOOTH PHOTO MODAL ─────────────────────────────────────────────────────
+function AddBoothPhotoModal({ event, defaultUploader, onAdd, onClose }) {
+  const [preview, setPreview] = useState(null);
+  const [file, setFile] = useState(null);
+  const [vendor, setVendor] = useState("");
+  const [variety, setVariety] = useState("");
+  const [interest, setInterest] = useState("interested");
+  const [notes, setNotes] = useState("");
+  const [uploader, setUploader] = useState(defaultUploader || "");
+  const [busy, setBusy] = useState(false);
+  const fileRef = useRef(null);
+  function pick(f) { if (!f || !f.type.startsWith("image/")) return; setFile(f); const r = new FileReader(); r.onload = e => setPreview(e.target.result); r.readAsDataURL(f); }
+  async function save() {
+    if (!file) { window.alert("Add a photo first."); return; }
+    setBusy(true);
+    const ok = await onAdd({ file, vendor_name: vendor.trim(), variety_name: variety.trim(), interest_level: interest, notes: notes.trim(), uploader_name: uploader.trim() });
+    setBusy(false);
+    if (ok === false) return;
+  }
+  const inp = { width: "100%", boxSizing: "border-box", padding: "11px 12px", border: "1.5px solid #c8d8c0", borderRadius: 10, fontSize: 15, fontFamily: "inherit", marginBottom: 12 };
+  const lbl = { fontSize: 11, fontWeight: 700, color: "#7a8c74", textTransform: "uppercase", marginBottom: 5 };
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 10001, display: "flex", alignItems: "flex-end", justifyContent: "center", overflow: "auto" }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: "16px 16px 0 0", padding: 18, width: "100%", maxWidth: 480, maxHeight: "94vh", overflow: "auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <div style={{ fontWeight: 800, fontSize: 17, color: "#1e2d1a" }}>Add photo · {event.name}</div>
+          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 24, color: "#7a8c74", cursor: "pointer", lineHeight: 1 }}>×</button>
+        </div>
+
+        {preview
+          ? <img src={preview} alt="" onClick={() => fileRef.current?.click()} style={{ width: "100%", maxHeight: 300, objectFit: "contain", borderRadius: 12, border: "1.5px solid #e0ead8", background: "#f0f5ee", marginBottom: 12, cursor: "pointer" }} />
+          : <label style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, height: 180, border: "2px dashed #7fb069", borderRadius: 12, background: "#f4faf0", color: "#2e5c1e", fontWeight: 800, cursor: "pointer", marginBottom: 12 }}>
+              <div style={{ fontSize: 40 }}>📷</div>Tap to take / choose a photo
+              <input type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={e => pick(e.target.files[0])} />
+            </label>}
+        <input ref={fileRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={e => pick(e.target.files[0])} />
+
+        <div style={lbl}>Vendor / breeder</div>
+        <input value={vendor} onChange={e => setVendor(e.target.value)} placeholder="e.g. Dümmen Orange" style={inp} />
+        <div style={lbl}>Variety</div>
+        <input value={variety} onChange={e => setVariety(e.target.value)} placeholder="e.g. Petunia Itsy Magenta" style={inp} />
+
+        <div style={lbl}>Interest</div>
+        <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 12 }}>
+          {["must_have", "interested", "maybe", "pass"].map(k => {
+            const it = INTEREST[k], on = interest === k;
+            return <button key={k} onClick={() => setInterest(k)} style={{ background: on ? it.bg : "#fff", color: on ? it.fg : "#5a6a54", border: `1.5px solid ${on ? it.bg : "#e0ead8"}`, borderRadius: 999, padding: "8px 13px", fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>{it.label}</button>;
+          })}
+        </div>
+
+        <div style={lbl}>Notes <span style={{ fontWeight: 400, textTransform: "none" }}>· pricing, rep, availability…</span></div>
+        <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3} placeholder="Rep: Maria — $0.52/URC at 500+. Ships wk 2." style={{ ...inp, resize: "vertical", lineHeight: 1.45 }} />
+        <div style={lbl}>Your name</div>
+        <input value={uploader} onChange={e => setUploader(e.target.value)} placeholder="Who took this" style={inp} />
+
+        <button onClick={save} disabled={busy} style={{ width: "100%", background: busy ? "#a9c795" : "#7fb069", color: "#fff", border: "none", borderRadius: 10, padding: 14, fontWeight: 800, fontSize: 15, cursor: busy ? "default" : "pointer", fontFamily: "inherit" }}>{busy ? "Saving…" : "✓ Save photo"}</button>
+      </div>
     </div>
   );
 }
