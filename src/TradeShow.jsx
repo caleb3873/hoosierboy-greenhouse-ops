@@ -275,8 +275,8 @@ export default function TradeShow() {
         {view === "capture" && activeSession && (
           <CaptureView
             session={activeSession}
-            onAdd={(photo) => { addPhoto(activeSession.id, photo); setView("session"); }}
-            onCancel={() => setView("session")}
+            onAdd={(photo) => addPhoto(activeSession.id, photo)}   /* save only — no navigation */
+            onDone={() => setView("session")}                      /* Save & close / back to the session */
           />
         )}
 
@@ -558,17 +558,18 @@ function AddBoothPhotoModal({ event, defaultUploader, onAdd, onClose }) {
   const fileRef = useRef(null);
   const dropRef = useRef(null);
   function pick(f) { if (!f || !f.type.startsWith("image/")) return; setFile(f); const r = new FileReader(); r.onload = e => setPreview(e.target.result); r.readAsDataURL(f); }
-  // keepOpen = "Save & add another": keeps the caption (vendor/variety/interest/notes), clears just the
-  // photo, and puts you back on the camera tile so you can shoot the next pic of the same variety fast.
-  async function save(keepOpen) {
-    if (!file) { if (!keepOpen) { onClose(); return; } window.alert("Add a photo first."); return; } // Save & close w/ nothing pending → just close
+  // stay = keep capturing; keepFields = reuse the caption. Add more → same caption (more photos of the
+  // same variety); Save & new → clear vendor/variety/notes for the next variety; Save & close → save + exit.
+  async function save({ stay, keepFields }) {
+    if (!file) { if (!stay) { onClose(); return; } window.alert("Add a photo first."); return; }
     setBusy(true);
     const ok = await onAdd({ file, vendor_name: vendor.trim(), variety_name: variety.trim(), interest_level: interest, notes: notes.trim(), uploader_name: uploader.trim() });
     setBusy(false);
     if (ok === false) return;
-    if (keepOpen) {
+    if (stay) {
       setSavedCount(c => c + 1);
       setFile(null); setPreview(null);
+      if (!keepFields) { setVendor(""); setVariety(""); setNotes(""); setInterest("interested"); } // new variety
       dropRef.current?.scrollIntoView({ block: "start" });
     } else onClose();
   }
@@ -584,7 +585,7 @@ function AddBoothPhotoModal({ event, defaultUploader, onAdd, onClose }) {
 
         {savedCount > 0 && (
           <div style={{ background: "#eef6e7", border: "1px solid #7fb069", color: "#2e5c1e", borderRadius: 10, padding: "9px 12px", fontSize: 12.5, fontWeight: 700, marginBottom: 12 }}>
-            ✓ {savedCount} photo{savedCount !== 1 ? "s" : ""} saved to {event.name}. Caption kept — snap the next one, or edit the fields for a different variety.
+            ✓ {savedCount} photo{savedCount !== 1 ? "s" : ""} saved to {event.name}. <strong>Add more</strong> = same caption; <strong>Save &amp; new</strong> = new variety.
           </div>
         )}
 
@@ -614,22 +615,26 @@ function AddBoothPhotoModal({ event, defaultUploader, onAdd, onClose }) {
         <div style={lbl}>Your name</div>
         <input value={uploader} onChange={e => setUploader(e.target.value)} placeholder="Who took this" style={inp} />
 
-        <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={() => save(true)} disabled={busy} style={{ flex: 2, background: busy ? "#a9c795" : "#7fb069", color: "#fff", border: "none", borderRadius: 10, padding: 14, fontWeight: 800, fontSize: 15, cursor: busy ? "default" : "pointer", fontFamily: "inherit" }}>{busy ? "Saving…" : "＋ Save & new"}</button>
-          <button onClick={() => save(false)} disabled={busy} style={{ flex: 1, background: "#fff", color: "#1e2d1a", border: "1.5px solid #1e2d1a", borderRadius: 10, padding: 14, fontWeight: 800, fontSize: 14, cursor: busy ? "default" : "pointer", fontFamily: "inherit" }}>Save & close</button>
-        </div>
+        {(() => { const sub = { fontSize: 9.5, fontWeight: 700, opacity: .8, marginTop: 1 }; return (<>
+          <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+            <button onClick={() => save({ stay: true, keepFields: true })} disabled={busy} style={{ flex: 1, background: busy ? "#a9c795" : "#7fb069", color: "#fff", border: "none", borderRadius: 10, padding: "11px 8px", fontWeight: 800, fontSize: 14, cursor: busy ? "default" : "pointer", fontFamily: "inherit", lineHeight: 1.1 }}>{busy ? "Saving…" : "＋ Add more"}<div style={sub}>same caption</div></button>
+            <button onClick={() => save({ stay: true, keepFields: false })} disabled={busy} style={{ flex: 1, background: "#fff", color: "#2e5c1e", border: "1.5px solid #7fb069", borderRadius: 10, padding: "11px 8px", fontWeight: 800, fontSize: 14, cursor: busy ? "default" : "pointer", fontFamily: "inherit", lineHeight: 1.1 }}>Save &amp; new<div style={sub}>new variety</div></button>
+          </div>
+          <button onClick={() => save({ stay: false })} disabled={busy} style={{ width: "100%", background: "#1e2d1a", color: "#c8e6b8", border: "none", borderRadius: 10, padding: 13, fontWeight: 800, fontSize: 14, cursor: busy ? "default" : "pointer", fontFamily: "inherit" }}>✓ Save &amp; close</button>
+        </>); })()}
       </div>
     </div>
   );
 }
 
 // ── CAPTURE VIEW ──────────────────────────────────────────────────────────────
-function CaptureView({ session, onAdd, onCancel }) {
+function CaptureView({ session, onAdd, onDone }) {
   const [imgData,  setImgData ] = useState(null);
   const [file,     setFile    ] = useState(null);
   const [comment,  setComment ] = useState("");
   const [source,   setSource  ] = useState("camera"); // camera | upload
   const [uploading, setUploading] = useState(false);
+  const [savedCount, setSavedCount] = useState(0);
   const fileRef   = useRef(null);
   const cameraRef = useRef(null);
 
@@ -641,8 +646,12 @@ function CaptureView({ session, onAdd, onCancel }) {
     reader.readAsDataURL(f);
   }
 
-  async function submit() {
-    if (!imgData) return;
+  // stay = keep capturing; keepComment = reuse the caption (same variety) vs clear it (new variety).
+  //   Add more   → { stay:true,  keepComment:true }  (same variety, another picture)
+  //   Save & new → { stay:true,  keepComment:false } (clear caption for the next variety)
+  //   Save & close → { stay:false }                   (save and back to the session)
+  async function submit({ stay, keepComment }) {
+    if (!imgData) { if (!stay) onDone(); return; }
     const id = uid();
     let url = null;
     if (file) {
@@ -664,13 +673,20 @@ function CaptureView({ session, onAdd, onCancel }) {
       capturedAt: Date.now(),
       selected: false,
     });
+    if (stay) { setSavedCount(c => c + 1); setImgData(null); setFile(null); if (!keepComment) setComment(""); }
+    else onDone();
   }
 
   return (
     <div style={{ background: "#fff", borderRadius: 14, border: "1.5px solid #e0ead8", overflow: "hidden" }}>
       <div style={{ padding: "20px 24px" }}>
         <div style={{ fontFamily: "'Playfair Display',Georgia,serif", fontSize: 20, color: "#1e2d1a", marginBottom: 6 }}>Add Photo</div>
-        <div style={{ fontSize: 12, color: "#7a8c74", marginBottom: 20 }}>{session.name}</div>
+        <div style={{ fontSize: 12, color: "#7a8c74", marginBottom: savedCount > 0 ? 12 : 20 }}>{session.name}</div>
+        {savedCount > 0 && (
+          <div style={{ background: "#eef6e7", border: "1px solid #7fb069", color: "#2e5c1e", borderRadius: 10, padding: "9px 12px", fontSize: 12.5, fontWeight: 700, marginBottom: 16 }}>
+            ✓ {savedCount} photo{savedCount !== 1 ? "s" : ""} saved. Take the next one — <strong>Add more</strong> keeps this comment, <strong>Save &amp; new</strong> clears it for a new variety.
+          </div>
+        )}
 
         {/* Source toggle */}
         <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
@@ -723,17 +739,29 @@ function CaptureView({ session, onAdd, onCancel }) {
           />
         </div>
 
-        {/* Actions */}
-        <div style={{ display: "flex", gap: 10 }}>
-          <button onClick={submit} disabled={!imgData || uploading}
-            style={{ flex: 1, background: (imgData && !uploading) ? "#7fb069" : "#c8d8c0", color: "#fff", border: "none", borderRadius: 10, padding: 14, fontWeight: 700, fontSize: 14, cursor: (imgData && !uploading) ? "pointer" : "default", fontFamily: "inherit" }}>
-            {uploading ? "Uploading…" : "✓ Save Photo"}
-          </button>
-          <button onClick={onCancel}
-            style={{ background: "none", border: "1.5px solid #c8d8c0", borderRadius: 10, padding: "14px 20px", fontWeight: 600, fontSize: 13, color: "#7a8c74", cursor: "pointer", fontFamily: "inherit" }}>
-            Cancel
-          </button>
-        </div>
+        {/* Actions: Add more (same caption) · Save & new (new caption) · Save & close */}
+        {(() => {
+          const ready = imgData && !uploading;
+          const sub = { fontSize: 9.5, fontWeight: 700, opacity: .8, marginTop: 1 };
+          return (
+            <>
+              <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                <button onClick={() => submit({ stay: true, keepComment: true })} disabled={!ready}
+                  style={{ flex: 1, background: ready ? "#7fb069" : "#c8d8c0", color: "#fff", border: "none", borderRadius: 10, padding: "11px 8px", fontWeight: 800, fontSize: 14, cursor: ready ? "pointer" : "default", fontFamily: "inherit", lineHeight: 1.1 }}>
+                  {uploading ? "Uploading…" : "＋ Add more"}<div style={sub}>same caption</div>
+                </button>
+                <button onClick={() => submit({ stay: true, keepComment: false })} disabled={!ready}
+                  style={{ flex: 1, background: "#fff", color: ready ? "#2e5c1e" : "#aabba0", border: `1.5px solid ${ready ? "#7fb069" : "#e0ead8"}`, borderRadius: 10, padding: "11px 8px", fontWeight: 800, fontSize: 14, cursor: ready ? "pointer" : "default", fontFamily: "inherit", lineHeight: 1.1 }}>
+                  Save &amp; new<div style={sub}>new variety</div>
+                </button>
+              </div>
+              <button onClick={() => submit({ stay: false })} disabled={uploading}
+                style={{ width: "100%", background: "#1e2d1a", color: "#c8e6b8", border: "none", borderRadius: 10, padding: 13, fontWeight: 800, fontSize: 14, cursor: uploading ? "default" : "pointer", fontFamily: "inherit" }}>
+                {imgData ? "✓ Save & close" : "Done — back to session"}
+              </button>
+            </>
+          );
+        })()}
       </div>
     </div>
   );
@@ -1023,6 +1051,14 @@ function SessionView({ session, onUpdatePhoto, onDeletePhoto, onAddMore }) {
             </button>
           </div>
         </div>
+      )}
+
+      {/* Floating camera — add a photo without scrolling back up to the header button */}
+      {!lightbox && (
+        <button onClick={onAddMore} title="Add a photo"
+          style={{ position: "fixed", bottom: 22, right: 20, width: 60, height: 60, borderRadius: "50%", background: "#7fb069", color: "#fff", border: "3px solid #fff", fontSize: 26, cursor: "pointer", boxShadow: "0 4px 16px rgba(0,0,0,.32)", zIndex: 9000, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit" }}>
+          📷
+        </button>
       )}
     </div>
   );
