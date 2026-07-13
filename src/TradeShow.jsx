@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useTable, getSupabase } from "./supabase";
 import { useAuth } from "./Auth";
+import { FormattedNotes } from "./Meetings";
 
 // Resize + JPEG-compress a phone photo in the browser BEFORE upload (fast on a weak
 // booth connection). Falls back to the original file if anything fails.
@@ -176,17 +177,18 @@ export default function TradeShow() {
         {/* ── LIST VIEW ── */}
         {view === "list" && (
           <>
-            {/* Tabs: my own sessions vs the shared show gallery (photos from the capture app) */}
-            <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-              {[["sessions", "🎪 My Sessions"], ["gallery", "🌸 Show Gallery"]].map(([id, label]) => (
+            {/* Tabs: my photo sessions · shared show gallery · breeder/vendor meeting notes (read-only) */}
+            <div style={{ display: "flex", gap: 6, marginBottom: 20 }}>
+              {[["sessions", "🎪 Sessions"], ["gallery", "🌸 Gallery"], ["meetings", "📝 Meetings"]].map(([id, label]) => (
                 <button key={id} onClick={() => setMainTab(id)}
-                  style={{ flex: 1, background: mainTab === id ? "#1e2d1a" : "#fff", color: mainTab === id ? "#c8e6b8" : "#7a8c74", border: `1.5px solid ${mainTab === id ? "#1e2d1a" : "#e0ead8"}`, borderRadius: 10, padding: "11px 12px", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                  style={{ flex: 1, background: mainTab === id ? "#1e2d1a" : "#fff", color: mainTab === id ? "#c8e6b8" : "#7a8c74", border: `1.5px solid ${mainTab === id ? "#1e2d1a" : "#e0ead8"}`, borderRadius: 10, padding: "11px 6px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
                   {label}
                 </button>
               ))}
             </div>
 
             {mainTab === "gallery" && <ShowGallery />}
+            {mainTab === "meetings" && <ShowMeetings />}
 
             {mainTab === "sessions" && (<>
             {/* Action buttons */}
@@ -506,6 +508,72 @@ function ShowGallery() {
 
       {newShowOpen && <NewShowModal onCreate={createShow} onClose={() => setNewShowOpen(false)} />}
       {addOpen && activeEvent && <AddBoothPhotoModal event={activeEvent} defaultUploader={displayName} onAdd={addPhoto} onClose={() => setAddOpen(false)} />}
+    </div>
+  );
+}
+
+// ── MEETINGS (read-only) ──────────────────────────────────────────────────────
+// Breeder / vendor meeting notes captured at the show. Read-only here — the full
+// editor lives in the desktop Meetings feature ("planning" area). Shows meetings
+// typed "Breeder / Trade Show" or tagged trade show / cultivate.
+function ShowMeetings() {
+  const sb = getSupabase();
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [openId, setOpenId] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data } = await sb.from("meetings").select("*").order("meeting_date", { ascending: false });
+      if (cancelled) return;
+      const list = (data || []).filter(m => {
+        const t = String(m.type || "").toLowerCase();
+        const tags = Array.isArray(m.tags) ? m.tags.map(x => String(x).toLowerCase()) : [];
+        return t.includes("trade show") || t.includes("breeder") || tags.some(x => x.includes("trade show") || x.includes("cultivate"));
+      });
+      setRows(list); setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [sb]);
+
+  const fmt = d => d ? new Date(d + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "";
+
+  if (loading) return <div style={{ textAlign: "center", padding: "50px 0", color: "#aabba0", fontSize: 14 }}>Loading meetings…</div>;
+  if (!rows.length) return (
+    <div style={{ textAlign: "center", padding: "60px 0", color: "#aabba0" }}>
+      <div style={{ fontSize: 46, marginBottom: 12 }}>📝</div>
+      <div style={{ fontSize: 15, fontWeight: 700, color: "#7a8c74", marginBottom: 6 }}>No meeting notes yet</div>
+      <div style={{ fontSize: 13 }}>Breeder / vendor meetings are written on the desktop Meetings page and show up here.</div>
+    </div>
+  );
+
+  return (
+    <div>
+      <div style={{ fontSize: 11.5, color: "#7a8c74", marginBottom: 12, background: "#f6f9f3", border: "1px solid #e0ead8", borderRadius: 9, padding: "8px 12px" }}>
+        Read-only — write & edit meeting notes on the <strong>desktop Meetings page</strong>.
+      </div>
+      {rows.map(m => {
+        const isOpen = openId === m.id;
+        return (
+          <div key={m.id} style={{ background: "#fff", border: "1.5px solid #e0ead8", borderRadius: 12, marginBottom: 10, overflow: "hidden" }}>
+            <div onClick={() => setOpenId(isOpen ? null : m.id)} style={{ padding: "13px 15px", cursor: "pointer", display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 800, fontSize: 14.5, color: "#1e2d1a" }}>{m.title}</div>
+                <div style={{ fontSize: 11.5, color: "#7a8c74", marginTop: 2 }}>
+                  {fmt(m.meeting_date)}{m.type ? ` · ${m.type}` : ""}{m.attendees ? ` · ${m.attendees}` : ""}
+                </div>
+              </div>
+              <div style={{ fontSize: 18, color: "#7fb069", transform: isOpen ? "rotate(90deg)" : "none", transition: "transform .15s" }}>›</div>
+            </div>
+            {isOpen && (
+              <div style={{ padding: "2px 15px 15px", borderTop: "1px solid #f0f5ee" }}>
+                {m.summary && <div style={{ fontSize: 13, color: "#4a5a40", lineHeight: 1.6, background: "#f8faf6", borderRadius: 8, padding: "9px 12px", margin: "10px 0", whiteSpace: "pre-wrap" }}>{m.summary}</div>}
+                {m.notes ? <FormattedNotes text={m.notes} /> : (!m.summary && <div style={{ fontSize: 13, color: "#aabba0", padding: "10px 0" }}>No notes yet.</div>)}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

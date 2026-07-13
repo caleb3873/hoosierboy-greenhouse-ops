@@ -300,7 +300,7 @@ ECONOMICS & DECISION
 
 // Tiny, safe markdown renderer (no deps, no dangerouslySetInnerHTML) for meeting notes:
 // "## heading", "# heading", "- bullet" / "• bullet", and inline **bold**.
-function FormattedNotes({ text, style }) {
+export function FormattedNotes({ text, style }) {
   const inline = (s, key) => String(s).split(/(\*\*[^*]+\*\*)/g).map((p, i) =>
     p.startsWith("**") && p.endsWith("**") ? <strong key={`${key}-${i}`}>{p.slice(2, -2)}</strong> : <span key={`${key}-${i}`}>{p}</span>);
   const out = []; let bullets = null;
