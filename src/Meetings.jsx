@@ -298,6 +298,25 @@ ECONOMICS & DECISION
 - Decisions needed`,
 };
 
+// Tiny, safe markdown renderer (no deps, no dangerouslySetInnerHTML) for meeting notes:
+// "## heading", "# heading", "- bullet" / "• bullet", and inline **bold**.
+function FormattedNotes({ text, style }) {
+  const inline = (s, key) => String(s).split(/(\*\*[^*]+\*\*)/g).map((p, i) =>
+    p.startsWith("**") && p.endsWith("**") ? <strong key={`${key}-${i}`}>{p.slice(2, -2)}</strong> : <span key={`${key}-${i}`}>{p}</span>);
+  const out = []; let bullets = null;
+  const flush = (k) => { if (bullets) { out.push(<ul key={`ul-${k}`} style={{ margin: "2px 0 8px", paddingLeft: 20 }}>{bullets}</ul>); bullets = null; } };
+  String(text || "").split(/\r?\n/).forEach((raw, i) => {
+    const l = raw.trim();
+    if (l.startsWith("## ")) { flush(i); out.push(<div key={i} style={{ fontWeight: 800, fontSize: 14, color: "#1e2d1a", margin: "12px 0 4px" }}>{inline(l.slice(3), i)}</div>); }
+    else if (l.startsWith("# ")) { flush(i); out.push(<div key={i} style={{ fontWeight: 800, fontSize: 16, color: "#1e2d1a", margin: "14px 0 6px" }}>{inline(l.slice(2), i)}</div>); }
+    else if (l.startsWith("- ") || l.startsWith("• ")) { (bullets = bullets || []).push(<li key={i} style={{ fontSize: 13, color: "#3a4a34", lineHeight: 1.5, marginBottom: 2 }}>{inline(l.slice(2), i)}</li>); }
+    else if (!l) { flush(i); }
+    else { flush(i); out.push(<div key={i} style={{ fontSize: 13, color: "#3a4a34", lineHeight: 1.5, marginBottom: 6 }}>{inline(l, i)}</div>); }
+  });
+  flush("end");
+  return <div style={style}>{out}</div>;
+}
+
 function MeetingNotes() {
   const { rows: meetings, upsert, remove } = useMeetings();
   const [view, setView] = useState("list"); // list | edit
@@ -312,11 +331,11 @@ function MeetingNotes() {
   const todayStr = () => new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
 
   function startNew() {
-    setForm({ title: `Meeting — ${todayStr()}`, meetingDate: new Date().toISOString().slice(0, 10), type: "", attendees: "", agenda: "", transcript: "", summary: "", actionItems: [], tags: [] });
+    setForm({ title: `Meeting — ${todayStr()}`, meetingDate: new Date().toISOString().slice(0, 10), type: "", attendees: "", agenda: "", transcript: "", summary: "", notes: "", actionItems: [], tags: [] });
     setEditId(null); setSumErr(null); setView("edit");
   }
   function openMeeting(m) {
-    setForm({ title: m.title || "", meetingDate: m.meetingDate || new Date().toISOString().slice(0, 10), type: m.type || "", attendees: m.attendees || "", agenda: m.agenda || "", transcript: m.transcript || "", summary: m.summary || "", actionItems: m.actionItems || [], tags: m.tags || [] });
+    setForm({ title: m.title || "", meetingDate: m.meetingDate || new Date().toISOString().slice(0, 10), type: m.type || "", attendees: m.attendees || "", agenda: m.agenda || "", transcript: m.transcript || "", summary: m.summary || "", notes: m.notes || "", actionItems: m.actionItems || [], tags: m.tags || [] });
     setEditId(m.id); setSumErr(null); setView("edit");
   }
   async function saveMeeting() {
@@ -369,10 +388,23 @@ function MeetingNotes() {
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
           <div><div style={LBL}>Type</div>
             <select value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value }))} style={IS}>
-              <option value="">—</option><option>Vendor / Setup</option><option>Broker</option><option>Production</option><option>Internal</option><option>Other</option>
+              <option value="">—</option><option>Vendor / Setup</option><option>Broker</option><option>Breeder / Trade Show</option><option>Production</option><option>Internal</option><option>Other</option>
             </select>
           </div>
           <div><div style={LBL}>Attendees</div><input value={form.attendees} onChange={e => setForm(f => ({ ...f, attendees: e.target.value }))} style={IS} placeholder="who was there" /></div>
+        </div>
+
+        <div style={{ marginBottom: 14 }}>
+          <div style={LBL}>Notes <span style={{ fontWeight: 400, textTransform: "none", color: "#aabba0" }}>· formatted — <code>##</code> heading · <code>-</code> bullet · <code>**bold**</code></span></div>
+          <textarea value={form.notes || ""} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
+            style={{ ...IS, minHeight: 200, resize: "vertical", lineHeight: 1.5, fontFamily: "ui-monospace, Menlo, monospace", fontSize: 12.5 }}
+            placeholder={"## Salvia — best fit\n- **Midnight** — good for quarts · wk 16\n- **Salute** — great for combos, heavy pollinator traffic"} />
+          {(form.notes || "").trim() && (
+            <div style={{ marginTop: 8, border: "1.5px solid #e0ead8", borderRadius: 10, padding: "8px 14px 12px", background: "#fbfdfa" }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#aabba0", textTransform: "uppercase", letterSpacing: .5, marginBottom: 2 }}>Preview</div>
+              <FormattedNotes text={form.notes} />
+            </div>
+          )}
         </div>
 
         <div style={{ marginBottom: 14 }}>
@@ -459,6 +491,12 @@ function MeetingNotes() {
               {m.summary && (
                 <div style={{ fontSize: 13, color: "#4a5a40", lineHeight: 1.6, whiteSpace: "pre-wrap", background: "#f8faf6", borderRadius: 8, padding: "10px 14px", marginTop: 10, maxHeight: 220, overflow: "hidden" }}>
                   {m.summary.length > 600 ? m.summary.slice(0, 600) + "…" : m.summary}
+                </div>
+              )}
+              {m.notes && (
+                <div onClick={() => openMeeting(m)} style={{ marginTop: 10, cursor: "pointer", background: "#fbfdfa", border: "1px solid #e0ead8", borderRadius: 8, padding: "4px 14px 10px", maxHeight: 300, overflow: "hidden", position: "relative" }}>
+                  <FormattedNotes text={m.notes} />
+                  <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 44, background: "linear-gradient(transparent, #fbfdfa)" }} />
                 </div>
               )}
               {open > 0 && <div style={{ fontSize: 12, color: "#c8791a", fontWeight: 700, marginTop: 8 }}>{open} open action item{open === 1 ? "" : "s"}</div>}
