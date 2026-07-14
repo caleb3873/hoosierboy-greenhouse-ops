@@ -304,6 +304,7 @@ export default function TradeShow() {
             session={activeSession}
             uploader={displayName}
             onAdd={(photo) => addPhoto(activeSession.id, photo)}   /* save only — no navigation */
+            onAddMany={(photos) => addPhotos(activeSession.id, photos)} /* batch upload */
             onDone={() => setView("session")}                      /* Save & close / back to the session */
           />
         )}
@@ -726,7 +727,32 @@ function AddBoothPhotoModal({ event, defaultUploader, onAdd, onClose }) {
 }
 
 // ── CAPTURE VIEW ──────────────────────────────────────────────────────────────
-function CaptureView({ session, uploader, onAdd, onDone }) {
+function CaptureView({ session, uploader, onAdd, onAddMany, onDone }) {
+  // If several files are chosen from the "Upload" picker, batch-upload them (added in one write)
+  // and go straight back to the session; a single file keeps the caption flow below.
+  async function handleUploadFiles(fileList) {
+    const list = Array.from(fileList || []).filter(f => f.type && f.type.startsWith("image/"));
+    if (!list.length) return;
+    if (list.length === 1) { handleFile(list[0]); return; }
+    setUploading(true);
+    const sb = getSupabase();
+    const toDataUrl = b => new Promise(r => { const rd = new FileReader(); rd.onload = () => r(rd.result); rd.readAsDataURL(b); });
+    const added = [];
+    for (const f of list) {
+      const id = crypto.randomUUID();
+      let url = null, img = null;
+      try {
+        const blob = await compressPhoto(f);
+        const path = `${session.id}/${id}.jpg`;
+        const { error } = await sb.storage.from("tradeshow-photos").upload(path, blob, { contentType: "image/jpeg", upsert: true });
+        if (!error) url = sb.storage.from("tradeshow-photos").getPublicUrl(path).data.publicUrl;
+        else img = await toDataUrl(blob);
+      } catch { try { img = await toDataUrl(f); } catch { /* skip */ } }
+      added.push({ id, url, imgData: url ? null : img, comment: "", uploadedBy: uploader || null, capturedAt: Date.now(), selected: false });
+    }
+    setUploading(false);
+    if (added.length && onAddMany) { onAddMany(added); onDone(); }
+  }
   const [imgData,  setImgData ] = useState(null);
   const [file,     setFile    ] = useState(null);
   const [comment,  setComment ] = useState("");
@@ -807,15 +833,15 @@ function CaptureView({ session, uploader, onAdd, onDone }) {
             style={{ border: "2px dashed #c8d8c0", borderRadius: 12, padding: "48px 24px", textAlign: "center", cursor: "pointer", background: "#fafcf8", marginBottom: 20 }}>
             <div style={{ fontSize: 48, marginBottom: 12 }}>{source === "camera" ? "📷" : "📁"}</div>
             <div style={{ fontWeight: 700, fontSize: 15, color: "#1e2d1a", marginBottom: 6 }}>
-              {source === "camera" ? "Open Camera" : "Choose Photo"}
+              {source === "camera" ? "Open Camera" : "Choose Photos"}
             </div>
             <div style={{ fontSize: 12, color: "#aabba0" }}>
-              {source === "camera" ? "Tap to take a photo" : "Select from your device"}
+              {source === "camera" ? "Tap to take a photo" : "Select one or several (⌘/Shift-click on Mac)"}
             </div>
             <input ref={cameraRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }}
               onChange={e => handleFile(e.target.files[0])} />
-            <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }}
-              onChange={e => handleFile(e.target.files[0])} />
+            <input ref={fileRef} type="file" accept="image/*" multiple style={{ display: "none" }}
+              onChange={e => handleUploadFiles(e.target.files)} />
           </div>
         ) : (
           <div style={{ marginBottom: 20, position: "relative" }}>
