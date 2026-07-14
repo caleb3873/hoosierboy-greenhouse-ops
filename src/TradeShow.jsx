@@ -923,20 +923,26 @@ function SessionView({ session, onUpdatePhoto, onUpdateSession, onDeletePhoto, o
     onUpdateSession({ photos: session.photos.map(p => ({ ...p, selected: newVal })) });
   }
 
-  // Re-encode through a canvas that BAKES EXIF orientation (createImageBitmap from-image),
-  // so phone photos land right-side-up in the PPTX (pptxgenjs ignores EXIF rotation otherwise).
-  async function normalizedImage(src, maxDim = 1600) {
+  // Prepare a photo for the PPTX WITHOUT altering it:
+  //  • returns the ORIGINAL bytes untouched when no rotation is needed
+  //  • only when the phone stored it sideways (EXIF 90/270) do we re-encode to bake the
+  //    rotation — at full resolution, so pixels aren't downscaled/squished
+  // Also returns true width/height so we can place it aspect-correct (no stretching).
+  const blobToDataURL = b => new Promise(res => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(b); });
+  async function normalizedImage(src) {
     try {
       const blob = await (await fetch(src)).blob();
-      let bmp;
-      try { bmp = await createImageBitmap(blob, { imageOrientation: "from-image" }); }
-      catch { bmp = await createImageBitmap(blob); }
-      const s = Math.min(1, maxDim / Math.max(bmp.width, bmp.height));
-      const cw = Math.round(bmp.width * s), ch = Math.round(bmp.height * s);
-      const c = document.createElement("canvas"); c.width = cw; c.height = ch;
-      c.getContext("2d").drawImage(bmp, 0, 0, cw, ch);
-      if (bmp.close) bmp.close();
-      return c.toDataURL("image/jpeg", 0.86);
+      const oriented = await createImageBitmap(blob, { imageOrientation: "from-image" }).catch(() => null);
+      if (!oriented) { const data = await blobToDataURL(blob); return { data }; } // last resort, unmodified
+      const raw = await createImageBitmap(blob).catch(() => null);
+      const needsRotate = raw && (raw.width !== oriented.width || raw.height !== oriented.height);
+      if (raw && raw.close) raw.close();
+      const w = oriented.width, h = oriented.height;
+      if (!needsRotate) { if (oriented.close) oriented.close(); const data = await blobToDataURL(blob); return { data, w, h }; } // original bytes
+      const c = document.createElement("canvas"); c.width = w; c.height = h; // full res, only to bake rotation
+      c.getContext("2d").drawImage(oriented, 0, 0);
+      if (oriented.close) oriented.close();
+      return { data: c.toDataURL("image/jpeg", 0.92), w, h };
     } catch { return null; }
   }
 
@@ -1001,12 +1007,17 @@ function SessionView({ session, onUpdatePhoto, onUpdateSession, onDeletePhoto, o
       const imgW = hasComment ? 5.8 : 9.0;
       const imgX = 0.28;
 
-      const normalized = await normalizedImage(photo.url || photo.imgData); // orientation-corrected
-      slide.addImage({
-        ...(normalized ? { data: normalized } : (photo.url ? { path: photo.url } : { data: photo.imgData })),
-        x: imgX, y: 0.28, w: imgW, h: 5.065,
-        sizing: { type: "contain", w: imgW, h: 5.065 }
-      });
+      const boxH = 5.065, boxY = 0.28;
+      const nd = await normalizedImage(photo.url || photo.imgData);
+      if (nd && nd.data && nd.w && nd.h) {
+        // fit inside the box preserving the real aspect ratio (no stretch), then center it
+        const ar = nd.w / nd.h;
+        let dw = imgW, dh = imgW / ar;
+        if (dh > boxH) { dh = boxH; dw = boxH * ar; }
+        slide.addImage({ data: nd.data, x: imgX + (imgW - dw) / 2, y: boxY + (boxH - dh) / 2, w: dw, h: dh });
+      } else {
+        slide.addImage({ ...(nd && nd.data ? { data: nd.data } : (photo.url ? { path: photo.url } : { data: photo.imgData })), x: imgX, y: boxY, w: imgW, h: boxH, sizing: { type: "contain", w: imgW, h: boxH } });
+      }
 
       if (hasComment) {
         // Dark right panel
