@@ -886,6 +886,31 @@ function SessionView({ session, onUpdatePhoto, onDeletePhoto, onAddMore }) {
     setZipping(false);
   }
 
+  // Share via the OS share sheet (Messages, Mail, etc.) with the actual image file(s).
+  const [sharing, setSharing] = useState(false);
+  async function toFile(p) { const src = p.url || p.imgData; if (!src) return null; try { const b = await (await fetch(src)).blob(); return new File([b], fileNameFor(p, session.photos.indexOf(p)), { type: b.type || "image/jpeg" }); } catch { return null; } }
+  async function shareOne(photo, idx) {
+    const f = await toFile(photo);
+    try {
+      if (f && navigator.canShare && navigator.canShare({ files: [f] })) { await navigator.share({ files: [f], title: session.name }); return; }
+      if (navigator.share && photo.url) { await navigator.share({ title: session.name, text: session.name, url: photo.url }); return; }
+    } catch (e) { if (e && e.name === "AbortError") return; }
+    downloadOne(photo, idx); // desktop without file-share support → download instead
+  }
+  async function shareSelected() {
+    const all = selected.length ? selected : session.photos;
+    if (!all.length) return;
+    const list = all.slice(0, 12);
+    if (all.length > 12) window.alert("Sharing the first 12 — for the whole set use ⬇ Download (zip).");
+    setSharing(true);
+    try {
+      const files = (await Promise.all(list.map(toFile))).filter(Boolean);
+      if (files.length && navigator.canShare && navigator.canShare({ files })) { await navigator.share({ files, title: session.name, text: `${session.name} — trade show photos` }); }
+      else { downloadZip(); }
+    } catch (e) { if (!(e && e.name === "AbortError")) downloadZip(); }
+    setSharing(false);
+  }
+
   function toggleAll() {
     const newVal = !allSelected;
     session.photos.forEach(p => onUpdatePhoto(p.id, { selected: newVal }));
@@ -1034,6 +1059,12 @@ function SessionView({ session, onUpdatePhoto, onDeletePhoto, onAddMore }) {
               + Add Photo
             </button>
             {session.photos.length > 0 && (
+              <button onClick={shareSelected} disabled={sharing} title="Text or email these photos"
+                style={{ background: "#eef6e7", border: "1.5px solid #7fb069", borderRadius: 9, padding: "8px 14px", fontSize: 12, fontWeight: 700, color: "#2e5c1e", cursor: sharing ? "default" : "pointer", fontFamily: "inherit" }}>
+                {sharing ? "⏳ Sharing…" : selected.length ? `📤 Share ${selected.length}` : "📤 Share"}
+              </button>
+            )}
+            {session.photos.length > 0 && (
               <button onClick={downloadZip} disabled={zipping} title="Download photos to share / use in promo material"
                 style={{ background: "#eaf1fb", border: "1.5px solid #4a90d9", borderRadius: 9, padding: "8px 14px", fontSize: 12, fontWeight: 700, color: "#2b6cb0", cursor: zipping ? "default" : "pointer", fontFamily: "inherit" }}>
                 {zipping ? "⏳ Zipping…" : selected.length ? `⬇ Download ${selected.length}` : "⬇ Download all"}
@@ -1159,8 +1190,12 @@ function SessionView({ session, onUpdatePhoto, onDeletePhoto, onAddMore }) {
             onTouchEnd={e => { if (touchX.current == null) return; const dx = e.changedTouches[0].clientX - touchX.current; touchX.current = null; if (Math.abs(dx) > 40) nav(dx < 0 ? 1 : -1); }}
             style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.92)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
             <div style={{ position: "fixed", top: 16, left: 0, right: 0, textAlign: "center", color: "#c8e6b8", fontSize: 13, fontWeight: 700 }}>{lightbox + 1} / {photoCount}</div>
-            <button onClick={e => { e.stopPropagation(); downloadOne(cur, lightbox); }} title="Download this photo"
-              style={{ position: "fixed", top: 12, right: 14, background: "rgba(255,255,255,0.16)", color: "#fff", border: "none", borderRadius: 999, padding: "8px 15px", fontSize: 13, fontWeight: 800, cursor: "pointer", zIndex: 1002, fontFamily: "inherit" }}>⬇ Save</button>
+            <div onClick={e => e.stopPropagation()} style={{ position: "fixed", top: 12, right: 14, display: "flex", gap: 8, zIndex: 1002 }}>
+              <button onClick={() => shareOne(cur, lightbox)} title="Text or email this photo"
+                style={{ background: "rgba(255,255,255,0.16)", color: "#fff", border: "none", borderRadius: 999, padding: "8px 15px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>📤 Share</button>
+              <button onClick={() => downloadOne(cur, lightbox)} title="Download this photo"
+                style={{ background: "rgba(255,255,255,0.16)", color: "#fff", border: "none", borderRadius: 999, padding: "8px 15px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>⬇ Save</button>
+            </div>
             {photoCount > 1 && <button onClick={e => { e.stopPropagation(); nav(-1); }} style={arrow("left")}>‹</button>}
             <div onClick={e => e.stopPropagation()} style={{ maxWidth: "90vw", maxHeight: "90vh", position: "relative" }}>
               <img src={cur.url || cur.imgData} alt="Full size" style={{ maxWidth: "84vw", maxHeight: "80vh", objectFit: "contain", borderRadius: 8 }} />
