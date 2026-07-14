@@ -4,6 +4,7 @@ import { useAuth } from "./Auth";
 import { CompletionPromptModal, TaskViewer, TaskPhoto, uploadTaskPhoto, formatTargetDate, bucketToDate, ensureResponseCheck } from "./ManagerTasksView";
 import { NotificationBanner } from "./PushNotifications";
 import TreatmentPlan from "./TreatmentPlan";
+import TradeShow from "./TradeShow";
 import { BrehobWorkerView } from "./BrehobList";
 import { VacationRequestModal, OutThisWeekBanner } from "./Vacation";
 import { AnnouncementBanner, AnnouncementPopup, useAnnouncementPopup } from "./Announcements";
@@ -64,6 +65,7 @@ function WorkerChecklistViewInner({ onSwitchMode, onBackToApp, onOpenTaskCreator
   const [completingTask, setCompletingTask] = useState(null);
   const [viewingTask, setViewingTask] = useState(null);
   const [showResponses, setShowResponses] = useState(false);
+  const [showTradeShow, setShowTradeShow] = useState(false);
   const [releasingTask, setReleasingTask] = useState(null);
   const [suggesting, setSuggesting] = useState(false);
   const [showBrehob, setShowBrehob] = useState(false);
@@ -378,6 +380,14 @@ function WorkerChecklistViewInner({ onSwitchMode, onBackToApp, onOpenTaskCreator
   if (showResponses) {
     return <TreatmentPlan responsesOnly onBack={() => setShowResponses(false)} />;
   }
+  if (showTradeShow) {
+    return (
+      <div style={{ ...FONT, minHeight: "100vh", background: "#f2f5ef" }}>
+        <button onClick={() => setShowTradeShow(false)} style={{ background: "#1e2d1a", color: "#c8e6b8", border: "none", padding: "11px 16px", fontSize: 14, fontWeight: 700, cursor: "pointer", width: "100%", textAlign: "left", fontFamily: "inherit" }}>← Back</button>
+        <TradeShow />
+      </div>
+    );
+  }
 
   return (
     <div style={{ ...FONT, minHeight: "100vh", background: GREEN_DARK, color: "#fff", paddingBottom: 100 }}>
@@ -407,6 +417,9 @@ function WorkerChecklistViewInner({ onSwitchMode, onBackToApp, onOpenTaskCreator
               + Tasks
             </button>
           )}
+          <button onClick={() => setShowTradeShow(true)} style={{ background: "#dbeafe", border: "none", color: "#1e40af", padding: "6px 12px", borderRadius: 6, cursor: "pointer", fontWeight: 800, ...FONT }}>
+            📸 Trade Show
+          </button>
           <button onClick={() => setShowResponses(true)} style={{ background: "#e6d3f0", border: "none", color: "#5a2a72", padding: "6px 12px", borderRadius: 6, cursor: "pointer", fontWeight: 800, ...FONT }}>
             🌼 Treatments
           </button>
