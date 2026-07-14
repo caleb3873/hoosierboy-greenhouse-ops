@@ -52,7 +52,56 @@ function compressImage(file, maxDim = 1280, quality = 0.8) {
   });
 }
 
-export default function TreatmentPlan({ onBack, onGoToGrowing }) {
+// A completed treatment on the Responses view: at-treatment size photos + dated response photos.
+function ResponseCard({ rec, doneAt, doneBy, onAdd, onDel }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [date, setDate] = useState(today);
+  const [busy, setBusy] = useState(false);
+  const size = (rec.photos || []).filter(p => p.kind !== "response");
+  const resp = (rec.photos || []).filter(p => p.kind === "response");
+  const groups = {};
+  resp.forEach(p => { (groups[p.date || "—"] = groups[p.date || "—"] || []).push(p); });
+  const dates = Object.keys(groups).sort().reverse();
+  const title = (["🌼", rec.application, rec.rates].filter(Boolean).join(" ") + (rec.crop_detail ? ` — ${rec.crop_detail}` : "")).trim();
+  async function pick(e) { const files = Array.from(e.target.files || []); e.target.value = ""; if (!files.length) return; setBusy(true); await onAdd(date, files); setBusy(false); }
+  const tile = (p, removable) => (
+    <div key={p.id} style={{ position: "relative", flexShrink: 0 }}>
+      <img src={p.url} alt="" onClick={() => window.open(p.url, "_blank")} style={{ width: 74, height: 74, objectFit: "cover", borderRadius: 8, border: `1px solid ${C.border}`, cursor: "pointer" }} />
+      {removable && <button onClick={() => onDel(p.id)} style={{ position: "absolute", top: 2, right: 2, background: "rgba(0,0,0,.55)", color: "#fff", border: "none", borderRadius: 11, width: 19, height: 19, fontSize: 12, cursor: "pointer" }}>×</button>}
+    </div>
+  );
+  return (
+    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: "12px 14px", marginBottom: 10 }}>
+      <div style={{ fontSize: 14, fontWeight: 800, color: C.dark, ...wrap }}>{title}</div>
+      <div style={{ fontSize: 11.5, color: "#2e5c1e", fontWeight: 800, marginTop: 3 }}>✓ Treated{doneAt ? ` ${fmtDate(String(doneAt).slice(0, 10))}` : ""}{doneBy ? ` · ${doneBy}` : ""}</div>
+
+      {size.length > 0 && (<>
+        <div style={{ fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: .4, margin: "10px 0 4px" }}>At treatment</div>
+        <div style={{ display: "flex", gap: 6, overflowX: "auto" }}>{size.map(p => tile(p, false))}</div>
+      </>)}
+
+      <div style={{ fontSize: 10.5, fontWeight: 800, color: C.plum, textTransform: "uppercase", letterSpacing: .4, margin: "12px 0 4px" }}>Response{resp.length ? ` · ${resp.length}` : ""}</div>
+      {dates.map(d => (
+        <div key={d} style={{ marginBottom: 8 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.dark, marginBottom: 3 }}>{d === "—" ? "Undated" : fmtDate(d)}</div>
+          <div style={{ display: "flex", gap: 6, overflowX: "auto" }}>{groups[d].map(p => tile(p, true))}</div>
+        </div>
+      ))}
+      {resp.length === 0 && <div style={{ fontSize: 12, color: C.muted, marginBottom: 6 }}>No response photos yet — add the first when they start responding.</div>}
+
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 6 }}>
+        <input type="date" value={date} max={today} onChange={e => setDate(e.target.value)} style={{ padding: "8px 10px", borderRadius: 9, border: `1.5px solid #c8d8c0`, fontSize: 13, fontFamily: "inherit" }} />
+        <label style={{ background: busy ? "#a9c795" : C.plum, color: "#fff", borderRadius: 9, padding: "9px 14px", fontSize: 13, fontWeight: 800, cursor: busy ? "default" : "pointer" }}>
+          {busy ? "Uploading…" : "📸 Add response photos"}
+          <input type="file" accept="image/*" multiple disabled={busy} style={{ display: "none" }} onChange={pick} />
+        </label>
+      </div>
+      <div style={{ fontSize: 10.5, color: C.muted, marginTop: 5 }}>Set the date these were taken, then pick photos (compressed automatically). Take several over time to track the response.</div>
+    </div>
+  );
+}
+
+export default function TreatmentPlan({ onBack, onGoToGrowing, responsesOnly = false }) {
   const sb = getSupabase();
   const [crop, setCrop] = useState("Mum");
   const [crops, setCrops] = useState(["Mum"]);
@@ -64,6 +113,7 @@ export default function TreatmentPlan({ onBack, onGoToGrowing }) {
   const [sel, setSel] = useState(null);   // record whose detail window is open
   const [logOpen, setLogOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [view, setView] = useState(responsesOnly ? "responses" : "plan"); // plan | responses
   const thisYear = new Date().getFullYear();
 
   const targetDefault = rec => `${thisYear}-${String(rec.rec_date).slice(5)}`; // same day, this year
@@ -147,6 +197,31 @@ export default function TreatmentPlan({ onBack, onGoToGrowing }) {
     setTasks(t => { const n = { ...t }; delete n[rec.id]; return n; });
   }
   const setRecPhotos = (id, ph) => { setRecs(prev => prev.map(r => r.id === id ? { ...r, photos: ph } : r)); setSel(prev => prev && prev.id === id ? { ...prev, photos: ph } : prev); };
+
+  // Response photos: dated shots of how the plants responded AFTER the treatment. Compressed
+  // client-side (fast) → public treatment-photos bucket → stored on the record tagged kind:"response".
+  async function addResponsePhotos(rec, date, files) {
+    const list = Array.from(files || []).filter(f => f && f.type && f.type.startsWith("image/"));
+    if (!list.length) return;
+    let photos = rec.photos || [];
+    for (const f of list) {
+      const id = uid();
+      const blob = await compressImage(f); // <-- compression happens here
+      const path = `${rec.id}/response-${id}.jpg`;
+      const { error } = await sb.storage.from("treatment-photos").upload(path, blob, { contentType: "image/jpeg", cacheControl: "3600" });
+      if (error) { window.alert("Upload failed: " + error.message); continue; }
+      const url = sb.storage.from("treatment-photos").getPublicUrl(path).data.publicUrl;
+      photos = [...photos, { id, url, kind: "response", date, capturedAt: Date.now() }];
+    }
+    const { error } = await sb.from("treatment_records").update({ photos }).eq("id", rec.id);
+    if (error) { window.alert("Couldn't save: " + error.message); return; }
+    setRecPhotos(rec.id, photos);
+  }
+  async function delResponsePhoto(rec, pid) {
+    const photos = (rec.photos || []).filter(p => p.id !== pid);
+    await sb.from("treatment_records").update({ photos }).eq("id", rec.id);
+    setRecPhotos(rec.id, photos);
+  }
   // Keep a scheduled treatment's per-variety tasks in sync with its variety lines when they change AFTER
   // scheduling: add a task for a new variety, delete a removed one, and (single add+remove) treat it as a
   // rename — moving the task's variety + retagging its photos so the loop-back still lands on the right line.
@@ -203,6 +278,9 @@ export default function TreatmentPlan({ onBack, onGoToGrowing }) {
     .sort((a, b) => a.rec_date.slice(5).localeCompare(b.rec_date.slice(5)));
   const byMonth = {};
   recs.forEach(r => { if (!r.rec_date) return; (byMonth[monthOf(r.rec_date)] = byMonth[monthOf(r.rec_date)] || []).push(r); });
+  // completed treatments (≥1 completed task) → the Responses view, newest completion first
+  const lastDoneOf = id => listOf(id).filter(t => t.status === "completed").map(t => t.completedAt).filter(Boolean).sort().pop() || "";
+  const completedRecs = recs.filter(r => doneN(r.id) > 0).sort((a, b) => lastDoneOf(b.id).localeCompare(lastDoneOf(a.id)));
 
   const Row = ({ r }) => {
     const list = listOf(r.id);
@@ -243,8 +321,8 @@ export default function TreatmentPlan({ onBack, onGoToGrowing }) {
     <div style={{ fontFamily: "'DM Sans','Segoe UI',sans-serif", background: "#f2f5ef", minHeight: "100vh" }}>
       <div style={{ background: C.dark, padding: "12px 20px", display: "flex", alignItems: "center", gap: 12 }}>
         {onBack && <button onClick={onBack} style={{ background: "none", border: "none", color: "#7a9a6a", fontSize: 20, cursor: "pointer", padding: 0 }}>←</button>}
-        <div style={{ color: "#c8e6b8", fontWeight: 800, fontSize: 16 }}>🌼 Treatment Plan</div>
-        <div style={{ color: "#7a9a6a", fontSize: 11 }}>last year → this year's tasks</div>
+        <div style={{ color: "#c8e6b8", fontWeight: 800, fontSize: 16 }}>🌼 {responsesOnly ? "Treatment Responses" : "Treatment Plan"}</div>
+        <div style={{ color: "#7a9a6a", fontSize: 11 }}>{responsesOnly ? "add response photos" : "last year → this year's tasks"}</div>
       </div>
 
       <div style={{ maxWidth: 820, margin: "0 auto", padding: "16px 14px" }}>
@@ -252,6 +330,15 @@ export default function TreatmentPlan({ onBack, onGoToGrowing }) {
           {crops.map(c => <button key={c} onClick={() => setCrop(c)} style={{ border: `1.5px solid ${crop === c ? C.light : C.border}`, background: crop === c ? C.light : "#fff", color: crop === c ? "#fff" : C.dark, borderRadius: 999, padding: "6px 16px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>{c}</button>)}
         </div>
 
+        {!responsesOnly && (
+          <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+            {[["plan", "🌼 Plan"], ["responses", "📸 Responses"]].map(([id, label]) => (
+              <button key={id} onClick={() => setView(id)} style={{ flex: 1, background: view === id ? C.dark : "#fff", color: view === id ? "#c8e6b8" : C.muted, border: `1.5px solid ${view === id ? C.dark : C.border}`, borderRadius: 10, padding: "10px 12px", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>{label}{id === "responses" && completedRecs.length > 0 ? ` (${completedRecs.length})` : ""}</button>
+            ))}
+          </div>
+        )}
+
+        {view === "plan" && !responsesOnly && (<>
         <div style={{ background: "#eef6e7", border: `1px solid ${C.light}`, borderRadius: 10, padding: "10px 12px", fontSize: 12.5, color: "#2e3d28", marginBottom: 14 }}>
           Your <strong>{crop} {lastYear}</strong> records ({recs.length}). Tap a treatment or its <strong style={{ color: C.plum }}>Open ›</strong> button to open the window — edit varieties, add a <strong>plant-size photo</strong> + notes, set the date, and create this year's <strong>Growing</strong> task. <strong>➕ {thisYear}</strong> quick-adds at the same date.
         </div>
@@ -278,6 +365,21 @@ export default function TreatmentPlan({ onBack, onGoToGrowing }) {
           </div>
         ))}
         {recs.length === 0 && <div style={{ color: C.muted, fontSize: 13, padding: "20px 0", textAlign: "center" }}>No {crop} records yet.</div>}
+        </>)}
+
+        {view === "responses" && (<>
+          <div style={{ background: "#eef6e7", border: `1px solid ${C.light}`, borderRadius: 10, padding: "10px 12px", fontSize: 12.5, color: "#2e3d28", marginBottom: 14 }}>
+            Treatments you've <strong>completed</strong> show up here. Add <strong>dated response photos</strong> over the next days/weeks to record how the {crop.toLowerCase()}s responded — it builds the picture for next year.
+          </div>
+          {completedRecs.length === 0 ? (
+            <div style={{ color: C.muted, fontSize: 13, padding: "30px 0", textAlign: "center" }}>No completed {crop} treatments yet.<div style={{ fontSize: 11.5, marginTop: 4 }}>Mark a treatment task done in Growing and it appears here.</div></div>
+          ) : completedRecs.map(r => {
+            const done = listOf(r.id).filter(t => t.status === "completed");
+            const last = done.map(t => t.completedAt).filter(Boolean).sort().pop();
+            const by = (done.find(t => t.completedAt === last) || {}).completedBy;
+            return <ResponseCard key={r.id} rec={r} doneAt={last} doneBy={by} onAdd={(d, files) => addResponsePhotos(r, d, files)} onDel={(pid) => delResponsePhoto(r, pid)} />;
+          })}
+        </>)}
       </div>
 
       {sel && <DetailModal sb={sb} rec={sel} thisYear={thisYear} defaultDate={targetDefault(sel)} varTasks={listOf(sel.id)}

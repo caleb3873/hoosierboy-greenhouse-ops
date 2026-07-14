@@ -663,15 +663,16 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
     refresh();
   }
 
-  async function finishCompletion(notes, photo) {
+  async function finishCompletion(notes, newPhotos, completedAt) {
     if (!completingTask) return;
-    const photos = photo ? [...(completingTask.photos || []), photo] : (completingTask.photos || []);
+    const add = Array.isArray(newPhotos) ? newPhotos : (newPhotos ? [newPhotos] : []);
+    const photos = [...(completingTask.photos || []), ...add];
     const combinedNotes = notes ? ((completingTask.notes ? completingTask.notes + "\n" : "") + notes) : completingTask.notes;
     await upsert({
       ...completingTask,
       status: "completed",
       completedBy: displayName || "Manager",
-      completedAt: new Date().toISOString(),
+      completedAt: completedAt || new Date().toISOString(),
       notes: combinedNotes,
       photos,
     });
@@ -2058,75 +2059,83 @@ function HeaderIconButton({ emoji, title, badge = 0, onClick }) {
 // ── COMPLETION PROMPT MODAL ─────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════════════
 export function CompletionPromptModal({ task, onCancel, onSave }) {
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const yStr = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
   const [notes, setNotes] = useState("");
-  const [photo, setPhoto] = useState(null); // storage path
-  const [uploading, setUploading] = useState(false);
-  const [previewUrl, setPreviewUrl] = useState(null);
+  const [photos, setPhotos] = useState([]); // storage paths
+  const [uploading, setUploading] = useState(0);
+  const [doneDate, setDoneDate] = useState(todayStr); // back-dateable: exact date matters for next year
   const fileRef = useRef(null);
 
   async function handlePhoto(e) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    // Show local preview instantly
-    setPreviewUrl(URL.createObjectURL(file));
-    setUploading(true);
-    try {
-      const path = await uploadTaskPhoto(file);
-      setPhoto(path);
-    } catch (err) {
-      alert("Upload failed: " + err.message);
-      setPreviewUrl(null);
-    }
-    setUploading(false);
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";
+    if (!files.length) return;
+    setUploading(files.length);
+    const added = [];
+    for (const f of files) { try { added.push(await uploadTaskPhoto(f)); } catch (err) { /* skip */ } setUploading(n => Math.max(0, n - 1)); }
+    if (added.length) setPhotos(p => [...p, ...added]);
   }
+  function save() {
+    // keep full precision if done today; otherwise stamp the chosen day at noon
+    const completedAt = doneDate === todayStr ? new Date().toISOString() : `${doneDate}T12:00:00`;
+    onSave(notes.trim() || null, photos, completedAt);
+  }
+  const fmtLbl = d => new Date(d + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+  const dateChip = (val, label) => (
+    <button onClick={() => setDoneDate(val)} style={{ padding: "8px 12px", borderRadius: 999, fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", border: `1.5px solid ${doneDate === val ? "#1e2d1a" : "#c8d8c0"}`, background: doneDate === val ? "#1e2d1a" : "#fff", color: doneDate === val ? "#c8e6b8" : "#7a8c74" }}>{label}</button>
+  );
 
   return (
     <div onClick={onCancel}
       style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 9999, display: "flex", alignItems: "flex-end", justifyContent: "center", ...FONT }}>
       <div onClick={e => e.stopPropagation()} style={{
-        background: "#fff", borderRadius: "20px 20px 0 0", padding: 22, width: "100%", maxWidth: 500,
+        background: "#fff", borderRadius: "20px 20px 0 0", padding: 22, width: "100%", maxWidth: 500, maxHeight: "92vh", overflowY: "auto",
       }}>
         <div style={{ fontSize: 11, color: "#7fb069", fontWeight: 800, textTransform: "uppercase", letterSpacing: 1 }}>Completing</div>
         <div style={{ fontSize: 17, fontWeight: 800, color: "#1e2d1a", marginBottom: 14 }}>{task.title}</div>
+
+        <label style={{ fontSize: 12, fontWeight: 700, color: "#7a8c74" }}>When was this done?</label>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 6, marginBottom: 12 }}>
+          {dateChip(todayStr, "Today")}
+          {dateChip(yStr, "Yesterday")}
+          <input type="date" value={doneDate} max={todayStr} onChange={e => setDoneDate(e.target.value)}
+            style={{ padding: "8px 10px", borderRadius: 10, border: "1.5px solid #c8d8c0", fontSize: 13, fontFamily: "inherit" }} />
+          {doneDate !== todayStr && <span style={{ fontSize: 11.5, color: "#c8791a", fontWeight: 800 }}>← {fmtLbl(doneDate)}</span>}
+        </div>
 
         <label style={{ fontSize: 12, fontWeight: 700, color: "#7a8c74" }}>Any notes? (optional)</label>
         <textarea value={notes} onChange={e => setNotes(e.target.value)}
           placeholder="e.g. looked healthy, watered well"
           style={{
-            width: "100%", minHeight: 70, padding: 12, borderRadius: 10, border: "1.5px solid #c8d8c0",
+            width: "100%", minHeight: 62, padding: 12, borderRadius: 10, border: "1.5px solid #c8d8c0",
             fontSize: 14, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box", outline: "none",
             marginTop: 6, marginBottom: 12,
           }} />
 
-        <label style={{ fontSize: 12, fontWeight: 700, color: "#7a8c74" }}>Take a photo? (optional)</label>
-        <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={handlePhoto} style={{ display: "none" }} />
-        {previewUrl ? (
-          <div style={{ position: "relative", marginTop: 6 }}>
-            <img src={previewUrl} alt="" style={{ width: "100%", maxHeight: 180, objectFit: "cover", borderRadius: 10, opacity: uploading ? 0.6 : 1 }} />
-            {uploading && <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 800, textShadow: "0 0 4px rgba(0,0,0,0.8)" }}>Uploading...</div>}
-            {!uploading && (
-              <button onClick={() => { setPhoto(null); setPreviewUrl(null); }}
-                style={{ position: "absolute", top: 6, right: 6, background: "rgba(0,0,0,0.6)", border: "none", color: "#fff", borderRadius: "50%", width: 28, height: 28, cursor: "pointer", fontSize: 14 }}>×</button>
-            )}
+        <label style={{ fontSize: 12, fontWeight: 700, color: "#7a8c74" }}>Photos (optional)</label>
+        <input ref={fileRef} type="file" accept="image/*" multiple onChange={handlePhoto} style={{ display: "none" }} />
+        {photos.length > 0 && (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
+            {photos.map((p, i) => <TaskPhoto key={i} src={p} size={70} onRemove={() => setPhotos(ps => ps.filter((_, j) => j !== i))} />)}
           </div>
-        ) : (
-          <button onClick={() => fileRef.current?.click()} disabled={uploading}
-            style={{
-              width: "100%", padding: "14px", borderRadius: 10, border: "1.5px dashed #c8d8c0",
-              background: "#fafcf8", color: "#7a8c74", fontSize: 14, fontWeight: 700, cursor: uploading ? "default" : "pointer",
-              fontFamily: "inherit", marginTop: 6,
-            }}>
-            📷 Take Photo
-          </button>
         )}
+        <button onClick={() => fileRef.current?.click()} disabled={uploading > 0}
+          style={{
+            width: "100%", padding: "13px", borderRadius: 10, border: "1.5px dashed #c8d8c0",
+            background: "#fafcf8", color: "#7a8c74", fontSize: 14, fontWeight: 700, cursor: uploading ? "default" : "pointer",
+            fontFamily: "inherit", marginTop: 6,
+          }}>
+          {uploading > 0 ? `Uploading… ${uploading}` : "📷 Add photos"}
+        </button>
 
         <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
           <button onClick={onCancel}
             style={{ flex: 1, padding: "13px 0", borderRadius: 10, border: "1.5px solid #c8d8c0", background: "#fff", color: "#7a8c74", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
             Cancel
           </button>
-          <button onClick={() => onSave(notes.trim() || null, photo)}
-            style={{ flex: 2, padding: "13px 0", borderRadius: 10, border: "none", background: "#7fb069", color: "#1e2d1a", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+          <button onClick={save} disabled={uploading > 0}
+            style={{ flex: 2, padding: "13px 0", borderRadius: 10, border: "none", background: "#7fb069", color: "#1e2d1a", fontSize: 14, fontWeight: 800, cursor: uploading ? "default" : "pointer", fontFamily: "inherit" }}>
             ✓ Mark Done
           </button>
         </div>

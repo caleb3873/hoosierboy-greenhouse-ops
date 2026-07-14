@@ -3,6 +3,7 @@ import { useManagerTasks, useBrehobItems, useVacationRequests } from "./supabase
 import { useAuth } from "./Auth";
 import { CompletionPromptModal, TaskViewer, TaskPhoto, uploadTaskPhoto, formatTargetDate, bucketToDate } from "./ManagerTasksView";
 import { NotificationBanner } from "./PushNotifications";
+import TreatmentPlan from "./TreatmentPlan";
 import { BrehobWorkerView } from "./BrehobList";
 import { VacationRequestModal, OutThisWeekBanner } from "./Vacation";
 import { AnnouncementBanner, AnnouncementPopup, useAnnouncementPopup } from "./Announcements";
@@ -62,6 +63,7 @@ function WorkerChecklistViewInner({ onSwitchMode, onBackToApp, onOpenTaskCreator
   const [showDone, setShowDone] = useState(false);
   const [completingTask, setCompletingTask] = useState(null);
   const [viewingTask, setViewingTask] = useState(null);
+  const [showResponses, setShowResponses] = useState(false);
   const [releasingTask, setReleasingTask] = useState(null);
   const [suggesting, setSuggesting] = useState(false);
   const [showBrehob, setShowBrehob] = useState(false);
@@ -322,15 +324,16 @@ function WorkerChecklistViewInner({ onSwitchMode, onBackToApp, onOpenTaskCreator
     refresh();
   }
 
-  async function finishCompletion(notes, photo) {
+  async function finishCompletion(notes, newPhotos, completedAt) {
     if (!completingTask) return;
-    const photos = photo ? [...(completingTask.photos || []), photo] : (completingTask.photos || []);
+    const add = Array.isArray(newPhotos) ? newPhotos : (newPhotos ? [newPhotos] : []);
+    const photos = [...(completingTask.photos || []), ...add];
     const combinedNotes = notes ? ((completingTask.notes ? completingTask.notes + "\n" : "") + notes) : completingTask.notes;
     await upsert({
       ...completingTask,
       status: "completed",
       completedBy: displayName || "Worker",
-      completedAt: new Date().toISOString(),
+      completedAt: completedAt || new Date().toISOString(),
       claimedBy: null,
       claimedAt: null,
       notes: combinedNotes,
@@ -371,6 +374,9 @@ function WorkerChecklistViewInner({ onSwitchMode, onBackToApp, onOpenTaskCreator
   if (viewingTask) {
     return <TaskViewer task={viewingTask} onBack={() => setViewingTask(null)} onAppend={appendToTask} />;
   }
+  if (showResponses) {
+    return <TreatmentPlan responsesOnly onBack={() => setShowResponses(false)} />;
+  }
 
   return (
     <div style={{ ...FONT, minHeight: "100vh", background: GREEN_DARK, color: "#fff", paddingBottom: 100 }}>
@@ -400,6 +406,9 @@ function WorkerChecklistViewInner({ onSwitchMode, onBackToApp, onOpenTaskCreator
               + Tasks
             </button>
           )}
+          <button onClick={() => setShowResponses(true)} style={{ background: "#e6d3f0", border: "none", color: "#5a2a72", padding: "6px 12px", borderRadius: 6, cursor: "pointer", fontWeight: 800, ...FONT }}>
+            🌼 Treatments
+          </button>
           <button onClick={() => setShowBrehob(true)} style={{ background: "#c8e6b8", border: "none", color: GREEN_DARK, padding: "6px 12px", borderRadius: 6, cursor: "pointer", fontWeight: 800, ...FONT }}>
             🛒 Brehob
           </button>
