@@ -903,7 +903,25 @@ function SessionView({ session, currentUser, superUser, onAddPhotos, onUpdatePho
   // ONE atomic write (via onAddPhotos) so the batch can't race. Caption them afterward in the grid.
   const [bulkUploading, setBulkUploading] = useState(0);
   const [showBuilder, setShowBuilder] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
+  const [showTranscript, setShowTranscript] = useState(false);
   const bulkRef = useRef(null);
+
+  // AI-transcribe the session's slide photos into readable notes (for photographed presentations).
+  async function transcribeSlides() {
+    const urls = (session.photos || []).map(p => p.url || p.imgData).filter(Boolean);
+    if (!urls.length) return;
+    if (session.transcript && !window.confirm("Re-transcribe all slides? This replaces the current transcript.")) return;
+    setTranscribing(true);
+    try {
+      const r = await fetch("/api/transcribe-slides", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ images: urls, title: session.name }) });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || "failed");
+      onUpdateSession({ transcript: data.transcript });
+      setShowTranscript(true);
+    } catch (e) { window.alert("Transcription failed: " + (e.message || e)); }
+    setTranscribing(false);
+  }
   const blobToDataUrl = b => new Promise(res => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(b); });
   async function handleBulkUpload(e) {
     const files = Array.from(e.target.files || []).filter(f => f.type && f.type.startsWith("image/"));
@@ -1186,6 +1204,12 @@ function SessionView({ session, currentUser, superUser, onAddPhotos, onUpdatePho
             </button>
             <input ref={bulkRef} type="file" accept="image/*" multiple onChange={handleBulkUpload} style={{ display: "none" }} />
             {session.photos.length > 0 && (
+              <button onClick={transcribeSlides} disabled={transcribing} title="Read the text off photographed presentation slides"
+                style={{ background: "#efeaf7", border: "1.5px solid #8e5aa8", borderRadius: 9, padding: "8px 14px", fontSize: 12, fontWeight: 700, color: "#5a2a72", cursor: transcribing ? "default" : "pointer", fontFamily: "inherit" }}>
+                {transcribing ? "⏳ Transcribing…" : session.transcript ? "📝 Re-transcribe" : "📝 Transcribe slides"}
+              </button>
+            )}
+            {session.photos.length > 0 && (
               <button onClick={shareSelected} disabled={sharing} title="Text or email these photos"
                 style={{ background: "#eef6e7", border: "1.5px solid #7fb069", borderRadius: 9, padding: "8px 14px", fontSize: 12, fontWeight: 700, color: "#2e5c1e", cursor: sharing ? "default" : "pointer", fontFamily: "inherit" }}>
                 {sharing ? "⏳ Sharing…" : selected.length ? `📤 Share ${selected.length}` : "📤 Share"}
@@ -1224,6 +1248,20 @@ function SessionView({ session, currentUser, superUser, onAddPhotos, onUpdatePho
           </div>
         )}
       </div>
+
+      {/* Slide transcript (AI-read text off photographed presentation slides) */}
+      {session.transcript && (
+        <div style={{ background: "#fff", borderRadius: 14, border: "1.5px solid #d8c8e6", marginBottom: 20, overflow: "hidden" }}>
+          <div onClick={() => setShowTranscript(v => !v)} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", cursor: "pointer", background: "#f7f3fb" }}>
+            <div style={{ fontWeight: 800, fontSize: 14, color: "#5a2a72" }}>📝 Slide transcript</div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <button onClick={e => { e.stopPropagation(); navigator.clipboard?.writeText(session.transcript); }} style={{ background: "#fff", border: "1.5px solid #c8b0d8", borderRadius: 7, padding: "4px 10px", fontSize: 11.5, fontWeight: 700, color: "#5a2a72", cursor: "pointer", fontFamily: "inherit" }}>Copy</button>
+              <span style={{ color: "#8e5aa8", fontSize: 16, transform: showTranscript ? "rotate(90deg)" : "none", transition: "transform .15s" }}>›</span>
+            </div>
+          </div>
+          {showTranscript && <div style={{ padding: "10px 18px 16px", maxHeight: 460, overflow: "auto" }}><FormattedNotes text={session.transcript} /></div>}
+        </div>
+      )}
 
       {/* Empty state */}
       {session.photos.length === 0 && (
