@@ -130,6 +130,11 @@ export default function TradeShow() {
     const s = (sessions || []).find(x => x.id === sessionId); if (!s) return;
     update(sessionId, { photos: [...(s.photos || []), photo] });
   }
+  // Bulk add — one atomic update so a batch of uploads can't race/clobber each other.
+  function addPhotos(sessionId, photos) {
+    const s = (allSessions || []).find(x => x.id === sessionId); if (!s || !photos.length) return;
+    update(sessionId, { photos: [...(s.photos || []), ...photos] });
+  }
 
   function updatePhoto(sessionId, photoId, changes) {
     const s = (sessions || []).find(x => x.id === sessionId); if (!s) return;
@@ -309,6 +314,7 @@ export default function TradeShow() {
             session={activeSession}
             currentUser={displayName}
             superUser={isTsAdmin}
+            onAddPhotos={(photos) => addPhotos(activeSession.id, photos)}
             onUpdatePhoto={(photoId, changes) => updatePhoto(activeSession.id, photoId, changes)}
             onUpdateSession={(changes) => updateSession(activeSession.id, changes)}
             onDeletePhoto={(photoId) => deletePhoto(activeSession.id, photoId)}
@@ -861,10 +867,38 @@ function CaptureView({ session, uploader, onAdd, onDone }) {
 }
 
 // ── SESSION VIEW ──────────────────────────────────────────────────────────────
-function SessionView({ session, currentUser, superUser, onUpdatePhoto, onUpdateSession, onDeletePhoto, onAddMore }) {
+function SessionView({ session, currentUser, superUser, onAddPhotos, onUpdatePhoto, onUpdateSession, onDeletePhoto, onAddMore }) {
   // Only the person who uploaded a photo (or a super-user) may edit its caption / delete it.
   // Everyone can view. Legacy photos with no recorded uploader stay editable (can't attribute them).
   const canEdit = p => superUser || !p.uploadedBy || p.uploadedBy === currentUser;
+
+  // Upload MANY photos at once (from the camera roll). Each is compressed, uploaded, and added in
+  // ONE atomic write (via onAddPhotos) so the batch can't race. Caption them afterward in the grid.
+  const [bulkUploading, setBulkUploading] = useState(0);
+  const bulkRef = useRef(null);
+  const blobToDataUrl = b => new Promise(res => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(b); });
+  async function handleBulkUpload(e) {
+    const files = Array.from(e.target.files || []).filter(f => f.type && f.type.startsWith("image/"));
+    e.target.value = "";
+    if (!files.length) return;
+    const sb = getSupabase();
+    setBulkUploading(files.length);
+    const added = [];
+    for (const f of files) {
+      const id = crypto.randomUUID();
+      let url = null, imgData = null;
+      try {
+        const blob = await compressPhoto(f);
+        const path = `${session.id}/${id}.jpg`;
+        const { error } = await sb.storage.from("tradeshow-photos").upload(path, blob, { contentType: "image/jpeg", upsert: true });
+        if (!error) url = sb.storage.from("tradeshow-photos").getPublicUrl(path).data.publicUrl;
+        else imgData = await blobToDataUrl(blob); // offline fallback
+      } catch { try { imgData = await blobToDataUrl(f); } catch { /* skip */ } }
+      added.push({ id, url, imgData: url ? null : imgData, comment: "", uploadedBy: currentUser || null, capturedAt: Date.now(), selected: false });
+      setBulkUploading(n => Math.max(0, n - 1));
+    }
+    if (added.length) onAddPhotos(added);
+  }
   const [editingComment, setEditingComment] = useState(null);
   const [draftComment,   setDraftComment  ] = useState("");
   const [generating,     setGenerating    ] = useState(false);
@@ -1118,6 +1152,11 @@ function SessionView({ session, currentUser, superUser, onUpdatePhoto, onUpdateS
               style={{ background: "#f0f8eb", border: "1.5px solid #c8e0b8", borderRadius: 9, padding: "8px 16px", fontSize: 12, fontWeight: 700, color: "#2e5c1e", cursor: "pointer", fontFamily: "inherit" }}>
               + Add Photo
             </button>
+            <button onClick={() => bulkRef.current?.click()} disabled={bulkUploading > 0} title="Upload several photos at once from your camera roll"
+              style={{ background: "#eaf1fb", border: "1.5px solid #4a90d9", borderRadius: 9, padding: "8px 14px", fontSize: 12, fontWeight: 700, color: "#2b6cb0", cursor: bulkUploading ? "default" : "pointer", fontFamily: "inherit" }}>
+              {bulkUploading > 0 ? `⏳ Uploading… ${bulkUploading}` : "🖼 Upload photos"}
+            </button>
+            <input ref={bulkRef} type="file" accept="image/*" multiple onChange={handleBulkUpload} style={{ display: "none" }} />
             {session.photos.length > 0 && (
               <button onClick={shareSelected} disabled={sharing} title="Text or email these photos"
                 style={{ background: "#eef6e7", border: "1.5px solid #7fb069", borderRadius: 9, padding: "8px 14px", fontSize: 12, fontWeight: 700, color: "#2e5c1e", cursor: sharing ? "default" : "pointer", fontFamily: "inherit" }}>
