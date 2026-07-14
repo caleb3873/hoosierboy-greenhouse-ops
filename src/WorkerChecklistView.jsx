@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect, useRef } from "react";
 import { useManagerTasks, useBrehobItems, useVacationRequests } from "./supabase";
 import { useAuth } from "./Auth";
-import { CompletionPromptModal, TaskViewer, TaskPhoto, uploadTaskPhoto, formatTargetDate, bucketToDate } from "./ManagerTasksView";
+import { CompletionPromptModal, TaskViewer, TaskPhoto, uploadTaskPhoto, formatTargetDate, bucketToDate, ensureResponseCheck } from "./ManagerTasksView";
 import { NotificationBanner } from "./PushNotifications";
 import TreatmentPlan from "./TreatmentPlan";
 import { BrehobWorkerView } from "./BrehobList";
@@ -339,6 +339,7 @@ function WorkerChecklistViewInner({ onSwitchMode, onBackToApp, onOpenTaskCreator
       notes: combinedNotes,
       photos,
     });
+    try { await ensureResponseCheck(completingTask, completedAt); } catch (e) { /* non-blocking */ }
     // Water-in triggers: completing a Plant task spawns "water-in plants";
     // completing a Fill-pots task spawns "water-in dry pots" — at the same location/week.
     const ttl = completingTask.title || "";

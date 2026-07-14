@@ -60,6 +60,39 @@ export async function uploadTaskPhoto(file) {
   return path;
 }
 
+const _isoWeekOf = (iso) => {
+  const d = new Date(iso + "T12:00:00");
+  const dt = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const day = dt.getUTCDay() || 7; dt.setUTCDate(dt.getUTCDate() + 4 - day);
+  const ys = new Date(Date.UTC(dt.getUTCFullYear(), 0, 1));
+  return { week: Math.ceil((((dt - ys) / 86400000) + 1) / 7), year: dt.getUTCFullYear() };
+};
+// Close the loop: when a size-triggered PGR (Piccolo etc.) treatment task is completed, auto-schedule a
+// "Response check" task ~daysOut later, linked to the same treatment record + variety. When the crew
+// completes THAT with photos, the Treatment Plan loops them back as dated Response photos.
+export async function ensureResponseCheck(task, completedAtISO, daysOut = 12) {
+  const sb = getSupabase();
+  if (!sb || !task || !task.sourceRecordId || task.sourceKind === "response") return;
+  const pgr = /piccolo|paclo|bonzi|sumagic|b-?nine|dazide|cycocel|florel|pgr|a-rest|topflor/i.test(task.title || "");
+  if (!pgr) return; // only meaningful for size-triggered treatments
+  let q = sb.from("manager_tasks").select("id").eq("source_record_id", task.sourceRecordId).eq("source_kind", "response").limit(1);
+  q = task.sourceVariety ? q.eq("source_variety", task.sourceVariety) : q.is("source_variety", null);
+  const { data: existing } = await q;
+  if (existing && existing.length) return; // already scheduled
+  const base = completedAtISO ? new Date(completedAtISO) : new Date();
+  const td = new Date(base.getTime() + daysOut * 86400000).toISOString().slice(0, 10);
+  const wi = _isoWeekOf(td);
+  const v = task.sourceVariety;
+  await sb.from("manager_tasks").insert({
+    id: crypto.randomUUID(),
+    title: `📸 Response check${v ? ` — ${v}` : (task.location ? ` — ${task.location}` : "")}`,
+    description: `Photograph how ${v || "the plants"} responded to "${(task.title || "").replace(/^📸 |^🌼 /, "")}". Photos loop back to Treatment Plan → Responses.`,
+    category: "growing", status: "pending", priority: 10, week_number: wi.week, year: wi.year, target_date: td,
+    bucket: null, carried_over: false, created_by: task.createdBy || "Treatment Plan", location: task.location || null,
+    assignees: [], photos: [], source_record_id: task.sourceRecordId, source_variety: v || null, source_kind: "response",
+  });
+}
+
 export function TaskPhoto({ src, onRemove, size = 90 }) {
   const [url, setUrl] = useState(null);
   useEffect(() => {
@@ -676,6 +709,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       notes: combinedNotes,
       photos,
     });
+    try { await ensureResponseCheck(completingTask, completedAt); } catch (e) { /* non-blocking */ }
     setCompletingTask(null);
     refresh();
   }

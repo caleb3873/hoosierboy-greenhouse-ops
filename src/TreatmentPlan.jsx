@@ -117,7 +117,7 @@ export default function TreatmentPlan({ onBack, onGoToGrowing, responsesOnly = f
   const thisYear = new Date().getFullYear();
 
   const targetDefault = rec => `${thisYear}-${String(rec.rec_date).slice(5)}`; // same day, this year
-  const toTask = (rec, id, td, variety) => { const wi = isoWeek(td); return { id, title: mkTitle(rec, variety), description: mkDesc(rec, variety), category: "growing", status: "pending", priority: 10, week_number: wi.week, year: wi.year, target_date: td, bucket: null, carried_over: false, created_by: `${crop} Plan`, location: rec.location || null, assignees: [], photos: [], source_record_id: rec.id, source_variety: isAll(variety) ? null : variety }; };
+  const toTask = (rec, id, td, variety) => { const wi = isoWeek(td); return { id, title: mkTitle(rec, variety), description: mkDesc(rec, variety), category: "growing", status: "pending", priority: 10, week_number: wi.week, year: wi.year, target_date: td, bucket: null, carried_over: false, created_by: `${crop} Plan`, location: rec.location || null, assignees: [], photos: [], source_record_id: rec.id, source_variety: isAll(variety) ? null : variety, source_kind: "treatment" }; };
   // old (pre-per-variety) title, for linking tasks created before this change
   const oldTitle = rec => (["🌼", rec.application, rec.rates].filter(Boolean).join(" ") + (rec.crop_detail ? ` — ${rec.crop_detail}` : "")).trim();
   const listOf = id => tasks[id] || [];
@@ -132,6 +132,8 @@ export default function TreatmentPlan({ onBack, onGoToGrowing, responsesOnly = f
       const rid = recIdOf(t);
       if (rid == null || t.status !== "completed" || !(t.photos || []).length) continue;
       const rec = recById[rid]; if (!rec) continue;
+      const isResp = t.source_kind === "response"; // response-check task → dated Response photos
+      const respDate = isResp ? String(t.completed_at || "").slice(0, 10) : null;
       const have = new Set((rec.photos || []).map(p => p.srcPath).filter(Boolean));
       const toAdd = [];
       for (const ph of t.photos) {
@@ -148,8 +150,8 @@ export default function TreatmentPlan({ onBack, onGoToGrowing, responsesOnly = f
             }
           } catch { /* skip this photo */ }
         }
-        // tag the looped-back photo with the task's variety → lands on the right variety line (else General)
-        if (url) toAdd.push({ id: uid(), url, capturedAt: Date.now(), fromTask: true, srcPath: ph, variety: t.source_variety || null });
+        // response-check photos → kind:"response" + date; treatment photos → size photo tagged by variety
+        if (url) toAdd.push({ id: uid(), url, capturedAt: Date.now(), fromTask: true, srcPath: ph, variety: t.source_variety || null, ...(isResp ? { kind: "response", date: respDate || undefined } : {}) });
       }
       if (toAdd.length) {
         const next = [...(rec.photos || []), ...toAdd];
@@ -167,11 +169,12 @@ export default function TreatmentPlan({ onBack, onGoToGrowing, responsesOnly = f
     const { data } = await sb.from("treatment_records").select("*").eq("crop", crop).order("rec_date");
     const list = data || []; setRecs(list);
     // link each record to its scheduled tasks — for ✓/undo state + completion status + loop-back
-    const { data: existing } = await sb.from("manager_tasks").select("id,title,status,completed_at,completed_by,photos,target_date,source_record_id,source_variety").eq("created_by", `${crop} Plan`);
+    const { data: existing } = await sb.from("manager_tasks").select("id,title,status,completed_at,completed_by,photos,target_date,source_record_id,source_variety,source_kind").eq("created_by", `${crop} Plan`);
     const byOldTitle = {}; list.forEach(r => { byOldTitle[oldTitle(r)] = r.id; }); // legacy fallback
     const recIdOf = t => t.source_record_id != null ? t.source_record_id : (byOldTitle[t.title] ?? null);
     const byRec = {};
-    (existing || []).forEach(t => { const rid = recIdOf(t); if (rid == null) return; (byRec[rid] = byRec[rid] || []).push({ id: t.id, variety: t.source_variety, status: t.status, completedAt: t.completed_at, completedBy: t.completed_by, targetDate: t.target_date }); });
+    // scheduling map = TREATMENT tasks only; response-check tasks (source_kind='response') just feed loop-back
+    (existing || []).forEach(t => { if (t.source_kind === "response") return; const rid = recIdOf(t); if (rid == null) return; (byRec[rid] = byRec[rid] || []).push({ id: t.id, variety: t.source_variety, status: t.status, completedAt: t.completed_at, completedBy: t.completed_by, targetDate: t.target_date }); });
     setTasks(byRec);
     pullTaskPhotos(list, existing || [], recIdOf); // copy back any completed-task photos (fire-and-forget)
   }, [sb, crop]); // pullTaskPhotos intentionally not a dep
