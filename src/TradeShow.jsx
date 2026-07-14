@@ -840,7 +840,17 @@ function SessionView({ session, onUpdatePhoto, onDeletePhoto, onAddMore }) {
   const [editingComment, setEditingComment] = useState(null);
   const [draftComment,   setDraftComment  ] = useState("");
   const [generating,     setGenerating    ] = useState(false);
-  const [lightbox,       setLightbox      ] = useState(null);
+  const [lightbox,       setLightbox      ] = useState(null); // index of the open photo, or null
+  const touchX = useRef(null);
+  const photoCount = session.photos.length;
+  const nav = (d) => setLightbox(i => i === null ? i : (i + d + photoCount) % photoCount);
+  // arrow keys / Esc while the lightbox is open (desktop)
+  useEffect(() => {
+    if (lightbox === null) return;
+    const onKey = e => { if (e.key === "ArrowLeft") nav(-1); else if (e.key === "ArrowRight") nav(1); else if (e.key === "Escape") setLightbox(null); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [lightbox, photoCount]); // nav intentionally not a dep
 
   const selected = session.photos.filter(p => p.selected);
   const allSelected = session.photos.length > 0 && session.photos.every(p => p.selected);
@@ -1037,7 +1047,7 @@ function SessionView({ session, onUpdatePhoto, onDeletePhoto, onAddMore }) {
                 style={{ background: "#fff", borderRadius: 12, border: `2px solid ${photo.selected ? "#7fb069" : "#e0ead8"}`, overflow: "hidden", transition: "border-color .15s", boxShadow: photo.selected ? "0 2px 12px rgba(127,176,105,0.2)" : "none" }}>
 
                 {/* Image */}
-                <div style={{ position: "relative", cursor: "pointer" }} onClick={() => setLightbox(photo)}>
+                <div style={{ position: "relative", cursor: "pointer" }} onClick={() => setLightbox(idx)}>
                   <img src={photo.url || photo.imgData} alt={`Photo ${idx + 1}`}
                     style={{ width: "100%", height: 180, objectFit: "cover", display: "block" }} />
                   {/* Select checkbox overlay */}
@@ -1101,28 +1111,33 @@ function SessionView({ session, onUpdatePhoto, onDeletePhoto, onAddMore }) {
         </div>
       )}
 
-      {/* Lightbox */}
-      {lightbox && (
-        <div onClick={() => setLightbox(null)}
-          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.9)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, cursor: "zoom-out" }}>
-          <div onClick={e => e.stopPropagation()} style={{ maxWidth: "90vw", maxHeight: "90vh", position: "relative" }}>
-            <img src={lightbox.url || lightbox.imgData} alt="Full size"
-              style={{ maxWidth: "80vw", maxHeight: "80vh", objectFit: "contain", borderRadius: 8 }} />
-            {lightbox.comment && (
-              <div style={{ background: "rgba(0,0,0,0.75)", color: "#e8f4e0", padding: "10px 16px", borderRadius: "0 0 8px 8px", fontSize: 14, lineHeight: 1.5 }}>
-                {lightbox.comment}
-              </div>
-            )}
-            <button onClick={() => setLightbox(null)}
-              style={{ position: "absolute", top: -12, right: -12, background: "#fff", border: "none", borderRadius: 20, width: 28, height: 28, fontSize: 16, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 2px 8px rgba(0,0,0,0.3)" }}>
-              ×
-            </button>
+      {/* Lightbox — swipe left/right (or arrows / ‹ › / arrow keys) to move through photos */}
+      {lightbox !== null && session.photos[lightbox] && (() => {
+        const cur = session.photos[lightbox];
+        const arrow = side => ({ position: "fixed", [side]: 8, top: "50%", transform: "translateY(-50%)", background: "rgba(255,255,255,0.14)", color: "#fff", border: "none", borderRadius: "50%", width: 54, height: 54, fontSize: 36, lineHeight: 1, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1001 });
+        return (
+          <div
+            onClick={() => setLightbox(null)}
+            onTouchStart={e => { touchX.current = e.touches[0].clientX; }}
+            onTouchEnd={e => { if (touchX.current == null) return; const dx = e.changedTouches[0].clientX - touchX.current; touchX.current = null; if (Math.abs(dx) > 40) nav(dx < 0 ? 1 : -1); }}
+            style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.92)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+            <div style={{ position: "fixed", top: 16, left: 0, right: 0, textAlign: "center", color: "#c8e6b8", fontSize: 13, fontWeight: 700 }}>{lightbox + 1} / {photoCount}</div>
+            {photoCount > 1 && <button onClick={e => { e.stopPropagation(); nav(-1); }} style={arrow("left")}>‹</button>}
+            <div onClick={e => e.stopPropagation()} style={{ maxWidth: "90vw", maxHeight: "90vh", position: "relative" }}>
+              <img src={cur.url || cur.imgData} alt="Full size" style={{ maxWidth: "84vw", maxHeight: "80vh", objectFit: "contain", borderRadius: 8 }} />
+              {cur.comment && (
+                <div style={{ background: "rgba(0,0,0,0.75)", color: "#e8f4e0", padding: "10px 16px", borderRadius: "0 0 8px 8px", fontSize: 14, lineHeight: 1.5 }}>{cur.comment}</div>
+              )}
+              <button onClick={() => setLightbox(null)}
+                style={{ position: "absolute", top: -12, right: -12, background: "#fff", border: "none", borderRadius: 20, width: 28, height: 28, fontSize: 16, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 2px 8px rgba(0,0,0,0.3)" }}>×</button>
+            </div>
+            {photoCount > 1 && <button onClick={e => { e.stopPropagation(); nav(1); }} style={arrow("right")}>›</button>}
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Floating camera — add a photo without scrolling back up to the header button */}
-      {!lightbox && (
+      {lightbox === null && (
         <button onClick={onAddMore} title="Add a photo"
           style={{ position: "fixed", bottom: 22, right: 20, width: 60, height: 60, borderRadius: "50%", background: "#7fb069", color: "#fff", border: "3px solid #fff", fontSize: 26, cursor: "pointer", boxShadow: "0 4px 16px rgba(0,0,0,.32)", zIndex: 9000, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit" }}>
           📷
