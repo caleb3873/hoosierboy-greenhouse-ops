@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect, useRef } from "react";
 import { useManagerTasks, useBrehobItems, useVacationRequests } from "./supabase";
 import { useAuth } from "./Auth";
-import { CompletionPromptModal, TaskViewer, TaskPhoto, uploadTaskPhoto, formatTargetDate, bucketToDate, ensureResponseCheck } from "./ManagerTasksView";
+import { CompletionPromptModal, TaskViewer, TaskPhoto, uploadTaskPhoto, formatTargetDate, bucketToDate, ensureResponseCheck, loopBackToTreatment } from "./ManagerTasksView";
 import { NotificationBanner } from "./PushNotifications";
 import TreatmentPlan from "./TreatmentPlan";
 import TradeShow from "./TradeShow";
@@ -254,6 +254,8 @@ function WorkerChecklistViewInner({ onSwitchMode, onBackToApp, onOpenTaskCreator
       updated.rating = rating;
     }
     await upsert(updated);
+    // if photos were added to an already-completed treatment task, loop them back now
+    if (add.length && updated.status === "completed" && updated.sourceRecordId) loopBackToTreatment(updated, updated.completedAt);
     setViewingTask(updated);
     refresh();
   }
@@ -344,6 +346,7 @@ function WorkerChecklistViewInner({ onSwitchMode, onBackToApp, onOpenTaskCreator
       photos,
     });
     try { await ensureResponseCheck(completingTask, completedAt); } catch (e) { /* non-blocking */ }
+    loopBackToTreatment({ ...completingTask, photos }, completedAt); // fire-and-forget: photos → treatment record
     // Water-in triggers: completing a Plant task spawns "water-in plants";
     // completing a Fill-pots task spawns "water-in dry pots" — at the same location/week.
     const ttl = completingTask.title || "";

@@ -94,6 +94,38 @@ export async function ensureResponseCheck(task, completedAtISO, daysOut = 12) {
   });
 }
 
+// Copy a completed treatment task's photos onto its Treatment Plan record immediately (so they
+// don't wait for someone to open the Treatment Plan). Idempotent via srcPath; swallows errors.
+export async function loopBackToTreatment(task, completedAtISO) {
+  try {
+    const sb = getSupabase();
+    if (!sb || !task || !task.sourceRecordId || !(task.photos || []).length) return;
+    const { data: rec } = await sb.from("treatment_records").select("photos").eq("id", task.sourceRecordId).single();
+    if (!rec) return;
+    const photos = rec.photos || [];
+    const have = new Set(photos.map(p => p.srcPath).filter(Boolean));
+    const isResp = task.sourceKind === "response";
+    let changed = false;
+    for (const ph of task.photos) {
+      if (typeof ph !== "string" || have.has(ph)) continue;
+      let url = null;
+      if (ph.startsWith("http") || ph.startsWith("data:")) url = ph;
+      else {
+        try {
+          const { data: blob } = await sb.storage.from("task-photos").download(ph);
+          if (blob) {
+            const p2 = `${task.sourceRecordId}/fromtask-${crypto.randomUUID()}.jpg`;
+            const { error } = await sb.storage.from("treatment-photos").upload(p2, blob, { contentType: blob.type || "image/jpeg" });
+            if (!error) url = sb.storage.from("treatment-photos").getPublicUrl(p2).data.publicUrl;
+          }
+        } catch { /* skip */ }
+      }
+      if (url) { photos.push({ id: crypto.randomUUID(), url, capturedAt: Date.now(), fromTask: true, srcPath: ph, variety: task.sourceVariety || null, ...(isResp ? { kind: "response", date: String(completedAtISO || task.completedAt || "").slice(0, 10) || undefined } : {}) }); have.add(ph); changed = true; }
+    }
+    if (changed) await sb.from("treatment_records").update({ photos }).eq("id", task.sourceRecordId);
+  } catch { /* non-blocking */ }
+}
+
 export function TaskPhoto({ src, onRemove, size = 90 }) {
   const [url, setUrl] = useState(null);
   useEffect(() => {
@@ -711,6 +743,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       photos,
     });
     try { await ensureResponseCheck(completingTask, completedAt); } catch (e) { /* non-blocking */ }
+    loopBackToTreatment({ ...completingTask, photos }, completedAt); // fire-and-forget: photos → treatment record
     setCompletingTask(null);
     refresh();
   }
