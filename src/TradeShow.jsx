@@ -854,6 +854,37 @@ function SessionView({ session, onUpdatePhoto, onDeletePhoto, onAddMore }) {
 
   const selected = session.photos.filter(p => p.selected);
   const allSelected = session.photos.length > 0 && session.photos.every(p => p.selected);
+  const [zipping, setZipping] = useState(false);
+
+  const safeName = s => String(s || "").replace(/[^a-z0-9 _-]/gi, "").replace(/\s+/g, " ").trim().slice(0, 60);
+  const fileNameFor = (photo, idx) => `${safeName(session.name) || "photo"}_${String(idx + 1).padStart(2, "0")}${photo.comment ? " " + safeName(photo.comment) : ""}.jpg`;
+  // Save one photo to the device (fetch → blob so cross-origin download works, with a readable name).
+  async function downloadOne(photo, idx) {
+    const src = photo.url || photo.imgData; if (!src) return;
+    try {
+      const blob = await (await fetch(src)).blob();
+      const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = fileNameFor(photo, idx);
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    } catch { window.open(src, "_blank"); }
+  }
+  // Bulk: zip the selected photos (or all if none selected) into one download to share.
+  async function downloadZip() {
+    const list = selected.length ? selected : session.photos;
+    if (!list.length) return;
+    setZipping(true);
+    try {
+      await new Promise((res, rej) => { if (window.JSZip) return res(); const s = document.createElement("script"); s.src = "https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"; s.onload = res; s.onerror = rej; document.head.appendChild(s); });
+      const zip = new window.JSZip();
+      for (const p of list) {
+        const src = p.url || p.imgData; if (!src) continue;
+        try { zip.file(fileNameFor(p, session.photos.indexOf(p)), await (await fetch(src)).blob()); } catch { /* skip one */ }
+      }
+      const content = await zip.generateAsync({ type: "blob" });
+      const a = document.createElement("a"); a.href = URL.createObjectURL(content); a.download = `${safeName(session.name) || "trade-show"} photos.zip`;
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 8000);
+    } catch (e) { window.alert("Download failed: " + (e.message || e)); }
+    setZipping(false);
+  }
 
   function toggleAll() {
     const newVal = !allSelected;
@@ -1002,6 +1033,12 @@ function SessionView({ session, onUpdatePhoto, onDeletePhoto, onAddMore }) {
               style={{ background: "#f0f8eb", border: "1.5px solid #c8e0b8", borderRadius: 9, padding: "8px 16px", fontSize: 12, fontWeight: 700, color: "#2e5c1e", cursor: "pointer", fontFamily: "inherit" }}>
               + Add Photo
             </button>
+            {session.photos.length > 0 && (
+              <button onClick={downloadZip} disabled={zipping} title="Download photos to share / use in promo material"
+                style={{ background: "#eaf1fb", border: "1.5px solid #4a90d9", borderRadius: 9, padding: "8px 14px", fontSize: 12, fontWeight: 700, color: "#2b6cb0", cursor: zipping ? "default" : "pointer", fontFamily: "inherit" }}>
+                {zipping ? "⏳ Zipping…" : selected.length ? `⬇ Download ${selected.length}` : "⬇ Download all"}
+              </button>
+            )}
             {selected.length > 0 && (
               <button onClick={generatePPTX} disabled={generating}
                 style={{ background: generating ? "#c8d8c0" : "#1e2d1a", color: "#c8e6b8", border: "none", borderRadius: 9, padding: "8px 18px", fontSize: 12, fontWeight: 700, cursor: generating ? "default" : "pointer", fontFamily: "inherit" }}>
@@ -1122,6 +1159,8 @@ function SessionView({ session, onUpdatePhoto, onDeletePhoto, onAddMore }) {
             onTouchEnd={e => { if (touchX.current == null) return; const dx = e.changedTouches[0].clientX - touchX.current; touchX.current = null; if (Math.abs(dx) > 40) nav(dx < 0 ? 1 : -1); }}
             style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.92)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
             <div style={{ position: "fixed", top: 16, left: 0, right: 0, textAlign: "center", color: "#c8e6b8", fontSize: 13, fontWeight: 700 }}>{lightbox + 1} / {photoCount}</div>
+            <button onClick={e => { e.stopPropagation(); downloadOne(cur, lightbox); }} title="Download this photo"
+              style={{ position: "fixed", top: 12, right: 14, background: "rgba(255,255,255,0.16)", color: "#fff", border: "none", borderRadius: 999, padding: "8px 15px", fontSize: 13, fontWeight: 800, cursor: "pointer", zIndex: 1002, fontFamily: "inherit" }}>⬇ Save</button>
             {photoCount > 1 && <button onClick={e => { e.stopPropagation(); nav(-1); }} style={arrow("left")}>‹</button>}
             <div onClick={e => e.stopPropagation()} style={{ maxWidth: "90vw", maxHeight: "90vh", position: "relative" }}>
               <img src={cur.url || cur.imgData} alt="Full size" style={{ maxWidth: "84vw", maxHeight: "80vh", objectFit: "contain", borderRadius: 8 }} />
