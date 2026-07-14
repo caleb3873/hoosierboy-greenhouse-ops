@@ -52,51 +52,62 @@ function compressImage(file, maxDim = 1280, quality = 0.8) {
   });
 }
 
-// A completed treatment on the Responses view: at-treatment size photos + dated response photos.
-function ResponseCard({ rec, doneAt, doneBy, onAdd, onDel }) {
+const photoTile = (p, onDel) => (
+  <div key={p.id} style={{ position: "relative", flexShrink: 0 }}>
+    <img src={p.url} alt="" onClick={() => window.open(p.url, "_blank")} style={{ width: 72, height: 72, objectFit: "cover", borderRadius: 8, border: `1px solid ${C.border}`, cursor: "pointer" }} />
+    {onDel && <button onClick={() => onDel(p.id)} style={{ position: "absolute", top: 2, right: 2, background: "rgba(0,0,0,.55)", color: "#fff", border: "none", borderRadius: 11, width: 19, height: 19, fontSize: 12, cursor: "pointer" }}>×</button>}
+  </div>
+);
+
+// One variety's response track: its at-treatment size photo + its own dated response photos + add control.
+function VarietyResponse({ label, sizePhotos, respPhotos, onAdd, onDel }) {
   const today = new Date().toISOString().slice(0, 10);
   const [date, setDate] = useState(today);
   const [busy, setBusy] = useState(false);
-  const size = (rec.photos || []).filter(p => p.kind !== "response");
-  const resp = (rec.photos || []).filter(p => p.kind === "response");
   const groups = {};
-  resp.forEach(p => { (groups[p.date || "—"] = groups[p.date || "—"] || []).push(p); });
+  respPhotos.forEach(p => { (groups[p.date || "—"] = groups[p.date || "—"] || []).push(p); });
   const dates = Object.keys(groups).sort().reverse();
-  const title = (["🌼", rec.application, rec.rates].filter(Boolean).join(" ") + (rec.crop_detail ? ` — ${rec.crop_detail}` : "")).trim();
   async function pick(e) { const files = Array.from(e.target.files || []); e.target.value = ""; if (!files.length) return; setBusy(true); await onAdd(date, files); setBusy(false); }
-  const tile = (p, removable) => (
-    <div key={p.id} style={{ position: "relative", flexShrink: 0 }}>
-      <img src={p.url} alt="" onClick={() => window.open(p.url, "_blank")} style={{ width: 74, height: 74, objectFit: "cover", borderRadius: 8, border: `1px solid ${C.border}`, cursor: "pointer" }} />
-      {removable && <button onClick={() => onDel(p.id)} style={{ position: "absolute", top: 2, right: 2, background: "rgba(0,0,0,.55)", color: "#fff", border: "none", borderRadius: 11, width: 19, height: 19, fontSize: 12, cursor: "pointer" }}>×</button>}
+  return (
+    <div style={{ borderLeft: `3px solid ${C.plum}`, paddingLeft: 10, margin: "12px 0 4px" }}>
+      <div style={{ fontSize: 13, fontWeight: 800, color: C.plum, ...wrap }}>{label}</div>
+      {sizePhotos.length > 0 && (<>
+        <div style={{ fontSize: 9.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: .4, margin: "6px 0 3px" }}>At treatment</div>
+        <div style={{ display: "flex", gap: 6, overflowX: "auto" }}>{sizePhotos.map(p => photoTile(p, null))}</div>
+      </>)}
+      <div style={{ fontSize: 9.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: .4, margin: "8px 0 3px" }}>Response{respPhotos.length ? ` · ${respPhotos.length}` : ""}</div>
+      {dates.map(d => (
+        <div key={d} style={{ marginBottom: 6 }}>
+          <div style={{ fontSize: 10.5, fontWeight: 700, color: C.dark, marginBottom: 3 }}>{d === "—" ? "Undated" : fmtDate(d)}</div>
+          <div style={{ display: "flex", gap: 6, overflowX: "auto" }}>{groups[d].map(p => photoTile(p, () => onDel(p.id)))}</div>
+        </div>
+      ))}
+      {respPhotos.length === 0 && <div style={{ fontSize: 11.5, color: C.muted, marginBottom: 4 }}>No response photos for this variety yet.</div>}
+      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 4 }}>
+        <input type="date" value={date} max={today} onChange={e => setDate(e.target.value)} style={{ padding: "7px 9px", borderRadius: 8, border: `1.5px solid #c8d8c0`, fontSize: 12.5, fontFamily: "inherit" }} />
+        <label style={{ background: busy ? "#a9c795" : C.plum, color: "#fff", borderRadius: 8, padding: "8px 12px", fontSize: 12.5, fontWeight: 800, cursor: busy ? "default" : "pointer" }}>
+          {busy ? "Uploading…" : "📸 Add response"}
+          <input type="file" accept="image/*" multiple disabled={busy} style={{ display: "none" }} onChange={pick} />
+        </label>
+      </div>
     </div>
   );
+}
+
+// A completed treatment on the Responses view — each variety tracked SEPARATELY.
+function ResponseCard({ rec, varieties, doneAt, doneBy, onAdd, onDel }) {
+  const title = (["🌼", rec.application, rec.rates].filter(Boolean).join(" ")).trim();
+  const allPhotos = rec.photos || [];
   return (
     <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: "12px 14px", marginBottom: 10 }}>
       <div style={{ fontSize: 14, fontWeight: 800, color: C.dark, ...wrap }}>{title}</div>
       <div style={{ fontSize: 11.5, color: "#2e5c1e", fontWeight: 800, marginTop: 3 }}>✓ Treated{doneAt ? ` ${fmtDate(String(doneAt).slice(0, 10))}` : ""}{doneBy ? ` · ${doneBy}` : ""}</div>
-
-      {size.length > 0 && (<>
-        <div style={{ fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: .4, margin: "10px 0 4px" }}>At treatment</div>
-        <div style={{ display: "flex", gap: 6, overflowX: "auto" }}>{size.map(p => tile(p, false))}</div>
-      </>)}
-
-      <div style={{ fontSize: 10.5, fontWeight: 800, color: C.plum, textTransform: "uppercase", letterSpacing: .4, margin: "12px 0 4px" }}>Response{resp.length ? ` · ${resp.length}` : ""}</div>
-      {dates.map(d => (
-        <div key={d} style={{ marginBottom: 8 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: C.dark, marginBottom: 3 }}>{d === "—" ? "Undated" : fmtDate(d)}</div>
-          <div style={{ display: "flex", gap: 6, overflowX: "auto" }}>{groups[d].map(p => tile(p, true))}</div>
-        </div>
-      ))}
-      {resp.length === 0 && <div style={{ fontSize: 12, color: C.muted, marginBottom: 6 }}>No response photos yet — add the first when they start responding.</div>}
-
-      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 6 }}>
-        <input type="date" value={date} max={today} onChange={e => setDate(e.target.value)} style={{ padding: "8px 10px", borderRadius: 9, border: `1.5px solid #c8d8c0`, fontSize: 13, fontFamily: "inherit" }} />
-        <label style={{ background: busy ? "#a9c795" : C.plum, color: "#fff", borderRadius: 9, padding: "9px 14px", fontSize: 13, fontWeight: 800, cursor: busy ? "default" : "pointer" }}>
-          {busy ? "Uploading…" : "📸 Add response photos"}
-          <input type="file" accept="image/*" multiple disabled={busy} style={{ display: "none" }} onChange={pick} />
-        </label>
-      </div>
-      <div style={{ fontSize: 10.5, color: C.muted, marginTop: 5 }}>Set the date these were taken, then pick photos (compressed automatically). Take several over time to track the response.</div>
+      {varieties.map(v => {
+        const key = isAll(v) ? null : v;
+        const size = allPhotos.filter(p => p.kind !== "response" && (p.variety || null) === key);
+        const resp = allPhotos.filter(p => p.kind === "response" && (p.variety || null) === key);
+        return <VarietyResponse key={v || "__all"} label={isAll(v) ? "All / general" : v} sizePhotos={size} respPhotos={resp} onAdd={(d, files) => onAdd(v, d, files)} onDel={onDel} />;
+      })}
     </div>
   );
 }
@@ -203,9 +214,10 @@ export default function TreatmentPlan({ onBack, onGoToGrowing, responsesOnly = f
 
   // Response photos: dated shots of how the plants responded AFTER the treatment. Compressed
   // client-side (fast) → public treatment-photos bucket → stored on the record tagged kind:"response".
-  async function addResponsePhotos(rec, date, files) {
+  async function addResponsePhotos(rec, variety, date, files) {
     const list = Array.from(files || []).filter(f => f && f.type && f.type.startsWith("image/"));
     if (!list.length) return;
+    const vkey = isAll(variety) ? null : variety; // tag to the specific variety
     let photos = rec.photos || [];
     for (const f of list) {
       const id = uid();
@@ -214,7 +226,7 @@ export default function TreatmentPlan({ onBack, onGoToGrowing, responsesOnly = f
       const { error } = await sb.storage.from("treatment-photos").upload(path, blob, { contentType: "image/jpeg", cacheControl: "3600" });
       if (error) { window.alert("Upload failed: " + error.message); continue; }
       const url = sb.storage.from("treatment-photos").getPublicUrl(path).data.publicUrl;
-      photos = [...photos, { id, url, kind: "response", date, capturedAt: Date.now() }];
+      photos = [...photos, { id, url, kind: "response", date, variety: vkey, capturedAt: Date.now() }];
     }
     const { error } = await sb.from("treatment_records").update({ photos }).eq("id", rec.id);
     if (error) { window.alert("Couldn't save: " + error.message); return; }
@@ -380,7 +392,9 @@ export default function TreatmentPlan({ onBack, onGoToGrowing, responsesOnly = f
             const done = listOf(r.id).filter(t => t.status === "completed");
             const last = done.map(t => t.completedAt).filter(Boolean).sort().pop();
             const by = (done.find(t => t.completedAt === last) || {}).completedBy;
-            return <ResponseCard key={r.id} rec={r} doneAt={last} doneBy={by} onAdd={(d, files) => addResponsePhotos(r, d, files)} onDel={(pid) => delResponsePhoto(r, pid)} />;
+            // the varieties actually treated (from this record's treatment tasks) — track each separately
+            const vars = [...new Set(listOf(r.id).map(t => t.variety))];
+            return <ResponseCard key={r.id} rec={r} varieties={vars.length ? vars : [null]} doneAt={last} doneBy={by} onAdd={(variety, d, files) => addResponsePhotos(r, variety, d, files)} onDel={(pid) => delResponsePhoto(r, pid)} />;
           })}
         </>)}
       </div>
