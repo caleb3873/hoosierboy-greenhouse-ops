@@ -80,8 +80,15 @@ export function getSessionsWithPhotos() {
 const uid = () => crypto.randomUUID();
 
 // ── MAIN EXPORT ────────────────────────────────────────────────────────────────
+// Trade-show super-users: can hide sessions/events from everyone, and edit/delete any photo.
+const TS_ADMINS = ["Paul Schlegel", "Mario Mirelez"];
+
 export default function TradeShow() {
-  const { rows: sessions, update, remove, upsert, loading } = useTable("tradeshow_sessions", { orderBy: "created_at", ascending: false });
+  const { rows: allSessions, update, remove, upsert, loading } = useTable("tradeshow_sessions", { orderBy: "created_at", ascending: false });
+  const { displayName, isOwner } = useAuth(); // who's viewing — only the uploader (or a super-user) can edit/delete a photo
+  const isTsAdmin = !!(isOwner || (displayName && TS_ADMINS.includes(displayName)));
+  // Super-users see everything (incl. hidden); everyone else only sees non-hidden sessions.
+  const sessions = isTsAdmin ? allSessions : (allSessions || []).filter(s => !s.hidden);
   const [view, setView]         = useState("list"); // list | session | capture | quickshot
   const [mainTab, setMainTab]   = useState(() => { try { return sessionStorage.getItem("ts_maintab_v1") || "sessions"; } catch { return "sessions"; } }); // sessions | gallery — remembered across refresh
   useEffect(() => { try { sessionStorage.setItem("ts_maintab_v1", mainTab); } catch {} }, [mainTab]);
@@ -251,6 +258,7 @@ export default function TradeShow() {
                           <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
                             <span style={{ fontWeight: 800, fontSize: 14, color: "#1e2d1a" }}>{s.name}</span>
                             {s.type === "quickshot" && <span style={{ fontSize: 9, fontWeight: 800, background: "#f0f5ee", color: "#7a8c74", padding: "1px 6px", borderRadius: 4, textTransform: "uppercase", letterSpacing: .5 }}>Quick Shot</span>}
+                            {s.hidden && <span style={{ fontSize: 9, fontWeight: 800, background: "#3a2a44", color: "#e6d3f0", padding: "1px 6px", borderRadius: 4, textTransform: "uppercase", letterSpacing: .5 }}>🚫 Hidden</span>}
                           </div>
                           <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 3 }}>
                             {new Date(s.date + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
@@ -261,10 +269,18 @@ export default function TradeShow() {
                           </div>
                         </div>
                         <div style={{ display: "flex", gap: 8 }}>
-                          <button onClick={e => { e.stopPropagation(); deleteSession(s.id); }}
-                            style={{ background: "none", border: "1px solid #f0d0c0", borderRadius: 7, padding: "5px 12px", fontSize: 12, color: "#c87060", cursor: "pointer", fontFamily: "inherit" }}>
-                            Delete
-                          </button>
+                          {isTsAdmin && (
+                            <button onClick={e => { e.stopPropagation(); updateSession(s.id, { hidden: !s.hidden }); }} title="Hide/show this session from everyone else"
+                              style={{ background: "none", border: "1px solid #c8b0d8", borderRadius: 7, padding: "5px 12px", fontSize: 12, color: "#5a2a72", cursor: "pointer", fontFamily: "inherit" }}>
+                              {s.hidden ? "Show" : "Hide"}
+                            </button>
+                          )}
+                          {isTsAdmin && (
+                            <button onClick={e => { e.stopPropagation(); deleteSession(s.id); }}
+                              style={{ background: "none", border: "1px solid #f0d0c0", borderRadius: 7, padding: "5px 12px", fontSize: 12, color: "#c87060", cursor: "pointer", fontFamily: "inherit" }}>
+                              Delete
+                            </button>
+                          )}
                           <div style={{ background: "#f0f8eb", borderRadius: 7, padding: "5px 12px", fontSize: 12, fontWeight: 700, color: "#2e5c1e" }}>Open →</div>
                         </div>
                       </div>
@@ -281,6 +297,7 @@ export default function TradeShow() {
         {view === "capture" && activeSession && (
           <CaptureView
             session={activeSession}
+            uploader={displayName}
             onAdd={(photo) => addPhoto(activeSession.id, photo)}   /* save only — no navigation */
             onDone={() => setView("session")}                      /* Save & close / back to the session */
           />
@@ -290,6 +307,8 @@ export default function TradeShow() {
         {view === "session" && activeSession && (
           <SessionView
             session={activeSession}
+            currentUser={displayName}
+            superUser={isTsAdmin}
             onUpdatePhoto={(photoId, changes) => updatePhoto(activeSession.id, photoId, changes)}
             onUpdateSession={(changes) => updateSession(activeSession.id, changes)}
             onDeletePhoto={(photoId) => deletePhoto(activeSession.id, photoId)}
@@ -701,7 +720,7 @@ function AddBoothPhotoModal({ event, defaultUploader, onAdd, onClose }) {
 }
 
 // ── CAPTURE VIEW ──────────────────────────────────────────────────────────────
-function CaptureView({ session, onAdd, onDone }) {
+function CaptureView({ session, uploader, onAdd, onDone }) {
   const [imgData,  setImgData ] = useState(null);
   const [file,     setFile    ] = useState(null);
   const [comment,  setComment ] = useState("");
@@ -743,6 +762,7 @@ function CaptureView({ session, onAdd, onDone }) {
       url,                            // Supabase public URL (null if upload failed / no file)
       imgData: url ? null : imgData,  // keep base64 only as an offline fallback
       comment: comment.trim(),
+      uploadedBy: uploader || null,   // only this person (or a super-user) can later edit/delete it
       capturedAt: Date.now(),
       selected: false,
     });
@@ -841,7 +861,10 @@ function CaptureView({ session, onAdd, onDone }) {
 }
 
 // ── SESSION VIEW ──────────────────────────────────────────────────────────────
-function SessionView({ session, onUpdatePhoto, onUpdateSession, onDeletePhoto, onAddMore }) {
+function SessionView({ session, currentUser, superUser, onUpdatePhoto, onUpdateSession, onDeletePhoto, onAddMore }) {
+  // Only the person who uploaded a photo (or a super-user) may edit its caption / delete it.
+  // Everyone can view. Legacy photos with no recorded uploader stay editable (can't attribute them).
+  const canEdit = p => superUser || !p.uploadedBy || p.uploadedBy === currentUser;
   const [editingComment, setEditingComment] = useState(null);
   const [draftComment,   setDraftComment  ] = useState("");
   const [generating,     setGenerating    ] = useState(false);
@@ -1188,7 +1211,7 @@ function SessionView({ session, onUpdatePhoto, onUpdateSession, onDeletePhoto, o
                         </button>
                       </div>
                     </div>
-                  ) : (
+                  ) : canEdit(photo) ? (
                     <div onClick={() => { setEditingComment(photo.id); setDraftComment(photo.comment || ""); }}
                       style={{ cursor: "pointer", minHeight: 36 }}>
                       {photo.comment ? (
@@ -1197,17 +1220,26 @@ function SessionView({ session, onUpdatePhoto, onUpdateSession, onDeletePhoto, o
                         <div style={{ fontSize: 12, color: "#c8d8c0", fontStyle: "italic" }}>+ Add comment</div>
                       )}
                     </div>
+                  ) : (
+                    <div style={{ minHeight: 36 }}>
+                      {photo.comment
+                        ? <div style={{ fontSize: 12, color: "#1e2d1a", lineHeight: 1.5 }}>{photo.comment}</div>
+                        : <div style={{ fontSize: 12, color: "#c8d8c0", fontStyle: "italic" }}>No comment</div>}
+                    </div>
                   )}
 
                   {/* Footer */}
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8, paddingTop: 8, borderTop: "1px solid #f0f5ee" }}>
                     <div style={{ fontSize: 10, color: "#aabba0" }}>
                       {new Date(photo.capturedAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}
+                      {photo.uploadedBy ? ` · ${photo.uploadedBy}` : ""}
                     </div>
-                    <button onClick={() => { if (window.confirm("Remove this photo?")) onDeletePhoto(photo.id); }}
-                      style={{ background: "none", border: "none", color: "#e0b0a0", fontSize: 12, cursor: "pointer", fontFamily: "inherit", padding: 0 }}>
-                      Remove
-                    </button>
+                    {canEdit(photo) && (
+                      <button onClick={() => { if (window.confirm("Remove this photo?")) onDeletePhoto(photo.id); }}
+                        style={{ background: "none", border: "none", color: "#e0b0a0", fontSize: 12, cursor: "pointer", fontFamily: "inherit", padding: 0 }}>
+                        Remove
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
