@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useTable, getSupabase } from "./supabase";
 import { useAuth } from "./Auth";
 import { FormattedNotes } from "./Meetings";
+import { SlideshowBuilder } from "./Sharing";
 
 // Resize + JPEG-compress a phone photo in the browser BEFORE upload (fast on a weak
 // booth connection). Falls back to the original file if anything fails.
@@ -901,6 +902,7 @@ function SessionView({ session, currentUser, superUser, onAddPhotos, onUpdatePho
   // Upload MANY photos at once (from the camera roll). Each is compressed, uploaded, and added in
   // ONE atomic write (via onAddPhotos) so the batch can't race. Caption them afterward in the grid.
   const [bulkUploading, setBulkUploading] = useState(0);
+  const [showBuilder, setShowBuilder] = useState(false);
   const bulkRef = useRef(null);
   const blobToDataUrl = b => new Promise(res => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(b); });
   async function handleBulkUpload(e) {
@@ -1196,6 +1198,12 @@ function SessionView({ session, currentUser, superUser, onAddPhotos, onUpdatePho
               </button>
             )}
             {selected.length > 0 && (
+              <button onClick={() => setShowBuilder(true)}
+                style={{ background: "#7fb069", color: "#fff", border: "none", borderRadius: 9, padding: "8px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                🔗 Create slideshow link
+              </button>
+            )}
+            {selected.length > 0 && (
               <button onClick={generatePPTX} disabled={generating}
                 style={{ background: generating ? "#c8d8c0" : "#1e2d1a", color: "#c8e6b8", border: "none", borderRadius: 9, padding: "8px 18px", fontSize: 12, fontWeight: 700, cursor: generating ? "default" : "pointer", fontFamily: "inherit" }}>
                 {generating ? "⏳ Generating..." : `📊 Export ${selected.length} to PPTX`}
@@ -1351,6 +1359,8 @@ function SessionView({ session, currentUser, superUser, onAddPhotos, onUpdatePho
           📷
         </button>
       )}
+
+      {showBuilder && <SlideshowBuilder photos={selected.length ? selected : session.photos} createdBy={currentUser} onClose={() => setShowBuilder(false)} />}
     </div>
   );
 }

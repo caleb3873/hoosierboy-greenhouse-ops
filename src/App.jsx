@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { AuthProvider, LoginScreen, UserMenu, useAuth, RecoveryPasswordForm } from "./Auth";
+import { SharedGalleryViewer } from "./Sharing";
 import { ExtractionProvider, useExtraction } from "./ExtractionContext";
 import { CROP_STATUS } from "./shared";
 
@@ -413,6 +414,9 @@ function AppInner() {
 }
 
 export default function App() {
+  // Public shareable link (?g=<id>) — a slideshow / hot list a customer opens with NO login.
+  const shareId = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("g") : null;
+  if (shareId) return <SharedGalleryViewer id={shareId} />;
   return (
     <AuthProvider>
       <ExtractionProvider>
