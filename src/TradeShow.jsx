@@ -155,6 +155,10 @@ export default function TradeShow() {
           <div style={{ fontSize: 11, color: "#7a9a6a", letterSpacing: 1.2, textTransform: "uppercase" }}>
             {view === "list" ? "Trade Show / Trial Day" : view === "capture" ? "📸 Capture" : activeSession?.name || "Session"}
           </div>
+          {view === "session" && activeSession && (
+            <button onClick={() => { const n = window.prompt("Rename this session", activeSession.name); if (n && n.trim() && n.trim() !== activeSession.name) updateSession(activeSession.id, { name: n.trim() }); }}
+              title="Rename session" style={{ background: "none", border: "none", color: "#7a9a6a", fontSize: 15, cursor: "pointer", padding: 0 }}>✎</button>
+          )}
         </div>
         {view === "session" && activeSession && (
           <button onClick={() => setView("capture")}
@@ -287,6 +291,7 @@ export default function TradeShow() {
           <SessionView
             session={activeSession}
             onUpdatePhoto={(photoId, changes) => updatePhoto(activeSession.id, photoId, changes)}
+            onUpdateSession={(changes) => updateSession(activeSession.id, changes)}
             onDeletePhoto={(photoId) => deletePhoto(activeSession.id, photoId)}
             onAddMore={() => setView("capture")}
           />
@@ -836,7 +841,7 @@ function CaptureView({ session, onAdd, onDone }) {
 }
 
 // ── SESSION VIEW ──────────────────────────────────────────────────────────────
-function SessionView({ session, onUpdatePhoto, onDeletePhoto, onAddMore }) {
+function SessionView({ session, onUpdatePhoto, onUpdateSession, onDeletePhoto, onAddMore }) {
   const [editingComment, setEditingComment] = useState(null);
   const [draftComment,   setDraftComment  ] = useState("");
   const [generating,     setGenerating    ] = useState(false);
@@ -912,8 +917,27 @@ function SessionView({ session, onUpdatePhoto, onDeletePhoto, onAddMore }) {
   }
 
   function toggleAll() {
+    // One atomic update — the old per-photo loop raced (each write clobbered the others),
+    // so Select All only ever flipped one photo.
     const newVal = !allSelected;
-    session.photos.forEach(p => onUpdatePhoto(p.id, { selected: newVal }));
+    onUpdateSession({ photos: session.photos.map(p => ({ ...p, selected: newVal })) });
+  }
+
+  // Re-encode through a canvas that BAKES EXIF orientation (createImageBitmap from-image),
+  // so phone photos land right-side-up in the PPTX (pptxgenjs ignores EXIF rotation otherwise).
+  async function normalizedImage(src, maxDim = 1600) {
+    try {
+      const blob = await (await fetch(src)).blob();
+      let bmp;
+      try { bmp = await createImageBitmap(blob, { imageOrientation: "from-image" }); }
+      catch { bmp = await createImageBitmap(blob); }
+      const s = Math.min(1, maxDim / Math.max(bmp.width, bmp.height));
+      const cw = Math.round(bmp.width * s), ch = Math.round(bmp.height * s);
+      const c = document.createElement("canvas"); c.width = cw; c.height = ch;
+      c.getContext("2d").drawImage(bmp, 0, 0, cw, ch);
+      if (bmp.close) bmp.close();
+      return c.toDataURL("image/jpeg", 0.86);
+    } catch { return null; }
   }
 
   async function generatePPTX() {
@@ -961,7 +985,8 @@ function SessionView({ session, onUpdatePhoto, onDeletePhoto, onAddMore }) {
     });
 
     // ── PHOTO SLIDES ──
-    selected.forEach((photo, idx) => {
+    for (let idx = 0; idx < selected.length; idx++) {
+      const photo = selected[idx];
       const slide = pres.addSlide();
       slide.background = { color: "f2f5ef" };
 
@@ -976,8 +1001,9 @@ function SessionView({ session, onUpdatePhoto, onDeletePhoto, onAddMore }) {
       const imgW = hasComment ? 5.8 : 9.0;
       const imgX = 0.28;
 
+      const normalized = await normalizedImage(photo.url || photo.imgData); // orientation-corrected
       slide.addImage({
-        ...(photo.url ? { path: photo.url } : { data: photo.imgData }),
+        ...(normalized ? { data: normalized } : (photo.url ? { path: photo.url } : { data: photo.imgData })),
         x: imgX, y: 0.28, w: imgW, h: 5.065,
         sizing: { type: "contain", w: imgW, h: 5.065 }
       });
@@ -1027,11 +1053,11 @@ function SessionView({ session, onUpdatePhoto, onDeletePhoto, onAddMore }) {
           align: "right", margin: 0
         });
       }
-    });
+    }
 
     // Write file
-    const safeName = session.name.replace(/[^a-zA-Z0-9_\- ]/g, "").trim() || "TradeShow";
-    await pres.writeFile({ fileName: `${safeName}_${session.date}.pptx` });
+    const fileSafe = session.name.replace(/[^a-zA-Z0-9_\- ]/g, "").trim() || "TradeShow";
+    await pres.writeFile({ fileName: `${fileSafe}_${session.date}.pptx` });
     setGenerating(false);
   }
 
