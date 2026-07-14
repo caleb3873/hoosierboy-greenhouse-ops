@@ -19,6 +19,7 @@ import { SpecialMessagePopup, TaskSpecialMessageBanner } from "./SpecialMessages
 import ReconApprovalInbox from "./ReconApprovalInbox";
 import Evaluations from "./Evaluations";
 import TradeShow from "./TradeShow";
+import HotList from "./HotList";
 import TreatmentPlan from "./TreatmentPlan";
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
@@ -369,7 +370,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
   // Remember the open module across a page refresh so reloading (e.g. inside Trade Show)
   // keeps you where you were instead of dumping you back to the hub. Only restore modules
   // that have a back-to-hub and aren't tightly role-gated, so a reload can't strand anyone.
-  const PERSISTABLE_VIEWS = ["tasks", "tradeshow", "treatment", "today", "week", "messages", "vacation", "evaluations", "receiving", "inventory", "reference-docs", "driver-schedule"];
+  const PERSISTABLE_VIEWS = ["tasks", "tradeshow", "hotlist", "treatment", "today", "week", "messages", "vacation", "evaluations", "receiving", "inventory", "reference-docs", "driver-schedule"];
   const [currentView, setCurrentView] = useState(() => { try { const v = sessionStorage.getItem("mtv_view_v1"); return v && PERSISTABLE_VIEWS.includes(v) ? v : "hub"; } catch { return "hub"; } }); // hub | tasks | vacation | messages | today | week | hr-inbox
   useEffect(() => { try { sessionStorage.setItem("mtv_view_v1", currentView); } catch {} }, [currentView]); // sessionStorage → survives refresh, resets on fresh open
   useEffect(() => { try { localStorage.setItem("mtv_cat_v1", category); } catch {} }, [category]);
@@ -1271,6 +1272,13 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
                   <div className="hub-card-sub">Photo sessions + quick shots</div>
                 </div>
 
+                {/* Hot List — shareable weekly product lists for customers */}
+                <div className="hub-card" onClick={() => setCurrentView("hotlist")} style={{ borderTopColor: "#c0392b", borderTopWidth: 4 }}>
+                  <div className="hub-card-emoji">🔥</div>
+                  <div className="hub-card-title">Hot List</div>
+                  <div className="hub-card-sub">Share products with customers</div>
+                </div>
+
                 {/* Treatment Plan — last year's crop plan → this year's tasks */}
                 <div className="hub-card" onClick={() => setCurrentView("treatment")} style={{ borderTopColor: "#8e5aa8", borderTopWidth: 4 }}>
                   <div className="hub-card-emoji">🌼</div>
@@ -1783,6 +1791,8 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       {currentView === "reference-docs" && (
         <ReferenceDocs onBack={() => setCurrentView("hub")} />
       )}
+
+      {currentView === "hotlist" && <HotList onBack={() => setCurrentView("hub")} />}
 
       {currentView === "tradeshow" && (
         <div>
