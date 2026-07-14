@@ -27,13 +27,35 @@ const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
 // Photos are stored in Supabase storage bucket 'task-photos'.
 // The `photos` JSONB array on manager_tasks stores storage paths (new) or
 // data URLs (legacy). TaskPhoto component handles both.
+// Resize + JPEG-compress a phone photo in the browser BEFORE upload so a 4–8 MB shot
+// becomes ~200–400 KB — the difference between "instant" and "too slow" on greenhouse wifi.
+export function compressImage(file, maxDim = 1600, quality = 0.82) {
+  return new Promise(resolve => {
+    try {
+      if (!file || !file.type || !file.type.startsWith("image/")) { resolve(file); return; }
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        let { width, height } = img;
+        const m = Math.max(width, height);
+        if (m > maxDim) { const s = maxDim / m; width = Math.round(width * s); height = Math.round(height * s); }
+        const c = document.createElement("canvas"); c.width = width; c.height = height;
+        c.getContext("2d").drawImage(img, 0, 0, width, height);
+        c.toBlob(b => resolve(b && b.size < file.size ? b : file), "image/jpeg", quality);
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+      img.src = url;
+    } catch { resolve(file); }
+  });
+}
+
 export async function uploadTaskPhoto(file) {
   const sb = getSupabase();
   if (!sb) throw new Error("Supabase not configured");
-  const ts = Date.now();
-  const ext = (file.name || "photo.jpg").split(".").pop() || "jpg";
-  const path = `${ts}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
-  const { error } = await sb.storage.from("task-photos").upload(path, file, { contentType: file.type || "image/jpeg" });
+  const blob = await compressImage(file); // shrink first → fast upload
+  const path = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`;
+  const { error } = await sb.storage.from("task-photos").upload(path, blob, { contentType: "image/jpeg" });
   if (error) throw error;
   return path;
 }
@@ -2804,13 +2826,21 @@ function BenchNumbersEditor({ value, onChange }) {
 
 export function TaskViewer({ task, onBack, onAppend, readOnly = true }) {
   const [note, setNote] = useState("");
+  const [uploading, setUploading] = useState(0); // photos still uploading
   const fileRef = useRef(null);
-  function handlePhoto(e) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = ev => onAppend({ photo: ev.target.result });
-    reader.readAsDataURL(file);
+  // Multiple photos at once (whole camera roll), compressed + uploaded to the bucket (not
+  // stuffed into the DB row as base64) — fast, and lets the crew dump photos taken earlier.
+  async function handlePhoto(e) {
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";
+    if (!files.length) return;
+    setUploading(files.length);
+    const paths = [];
+    for (const f of files) {
+      try { paths.push(await uploadTaskPhoto(f)); } catch (err) { /* skip a bad file */ }
+      setUploading(n => Math.max(0, n - 1));
+    }
+    if (paths.length) onAppend({ photos: paths });
   }
   function saveNote() {
     if (!note.trim()) return;
@@ -2890,12 +2920,14 @@ export function TaskViewer({ task, onBack, onAppend, readOnly = true }) {
               style={{ flex: 1, padding: "12px 0", borderRadius: 10, border: "none", background: note.trim() ? "#1e2d1a" : "#c8d8c0", color: "#c8e6b8", fontSize: 14, fontWeight: 800, cursor: note.trim() ? "pointer" : "default", fontFamily: "inherit" }}>
               Save Note
             </button>
-            <button onClick={() => fileRef.current?.click()}
-              style={{ flex: 1, padding: "12px 0", borderRadius: 10, border: "1.5px solid #c8d8c0", background: "#fafcf8", color: "#7a8c74", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
-              📷 Add Photo
+            <button onClick={() => fileRef.current?.click()} disabled={uploading > 0}
+              style={{ flex: 1, padding: "12px 0", borderRadius: 10, border: "1.5px solid #c8d8c0", background: "#fafcf8", color: "#7a8c74", fontSize: 14, fontWeight: 800, cursor: uploading ? "default" : "pointer", fontFamily: "inherit" }}>
+              {uploading > 0 ? `Uploading… ${uploading}` : "📷 Add Photos"}
             </button>
-            <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={handlePhoto} style={{ display: "none" }} />
+            {/* no `capture` + multiple → OS lets you pick many from the library OR take one */}
+            <input ref={fileRef} type="file" accept="image/*" multiple onChange={handlePhoto} style={{ display: "none" }} />
           </div>
+          <div style={{ fontSize: 11, color: "#aabba0", marginTop: 6, textAlign: "center" }}>Tap to take a photo or pick several from your camera roll at once.</div>
         </div>
 
         <button onClick={onBack}
@@ -2943,18 +2975,16 @@ function TaskDetail({ task, onBack, onSave }) {
   };
 
   async function handlePhoto(e) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = Array.from(e.target.files || []);
+    e.target.value = ""; // allow re-selecting same file(s)
+    if (!files.length) return;
     setUploadingPhoto(true);
-    try {
-      const path = await uploadTaskPhoto(file);
-      const photos = [...(t.photos || []), path];
-      upd("photos", photos);
-    } catch (err) {
-      alert("Upload failed: " + err.message);
+    const added = [];
+    for (const f of files) {
+      try { added.push(await uploadTaskPhoto(f)); } catch (err) { /* skip a bad file */ }
     }
+    if (added.length) upd("photos", [...(t.photos || []), ...added]);
     setUploadingPhoto(false);
-    e.target.value = ""; // allow re-selecting same file
   }
 
   function removePhoto(idx) {
@@ -3049,8 +3079,8 @@ function TaskDetail({ task, onBack, onSave }) {
               </div>
             )}
             <label style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", boxSizing: "border-box", padding: "15px 16px", borderRadius: 10, border: "2px solid #7fb069", background: "#eef6e7", color: "#1e2d1a", fontSize: 15, fontWeight: 800, cursor: uploadingPhoto ? "default" : "pointer" }}>
-              {uploadingPhoto ? "Uploading…" : "📷 Take / add a photo"}
-              <input type="file" accept="image/*" capture="environment" disabled={uploadingPhoto} onChange={handlePhoto} style={{ display: "none" }} />
+              {uploadingPhoto ? "Uploading…" : "📷 Take / add photos"}
+              <input type="file" accept="image/*" multiple disabled={uploadingPhoto} onChange={handlePhoto} style={{ display: "none" }} />
             </label>
             <div style={{ fontSize: 12, color: "#7a8c74", marginTop: 6, textAlign: "center" }}>Snap the plant size now — it saves to this task when you go back.</div>
           </Section>
@@ -3143,7 +3173,7 @@ function TaskDetail({ task, onBack, onSave }) {
             ))}
             <label style={{ width: 90, height: 90, borderRadius: 10, border: "2px dashed #c8d8c0", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: 24, color: "#7a8c74", background: uploadingPhoto ? "#f0f5ee" : "#fafcf8" }}>
               {uploadingPhoto ? "..." : "+"}
-              <input type="file" accept="image/*" capture="environment" onChange={handlePhoto} style={{ display: "none" }} disabled={uploadingPhoto} />
+              <input type="file" accept="image/*" multiple onChange={handlePhoto} style={{ display: "none" }} disabled={uploadingPhoto} />
             </label>
           </div>
         </div>

@@ -233,15 +233,16 @@ function WorkerChecklistViewInner({ onSwitchMode, onBackToApp, onOpenTaskCreator
     evaluation: "Self Evaluation",
   };
 
-  async function appendToTask({ note, photo, rating }) {
+  async function appendToTask({ note, photo, photos, rating }) {
     if (!viewingTask) return;
     const updated = { ...viewingTask };
     if (note) {
       const stamp = `[${displayName || "Grower"} ${new Date().toLocaleString()}]`;
       updated.notes = (updated.notes ? updated.notes + "\n" : "") + `${stamp} ${note}`;
     }
-    if (photo) {
-      updated.photos = [...(updated.photos || []), photo];
+    const add = [...(photo ? [photo] : []), ...(Array.isArray(photos) ? photos : [])];
+    if (add.length) {
+      updated.photos = [...(updated.photos || []), ...add];
     }
     if (rating !== undefined) {
       updated.rating = rating;
