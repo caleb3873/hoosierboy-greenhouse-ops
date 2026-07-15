@@ -74,7 +74,7 @@ const _isoWeekOf = (iso) => {
 export async function ensureResponseCheck(task, completedAtISO, daysOut = 12) {
   const sb = getSupabase();
   if (!sb || !task || !task.sourceRecordId || task.sourceKind === "response") return;
-  const pgr = /piccolo|paclo|bonzi|sumagic|b-?nine|dazide|cycocel|florel|pgr|a-rest|topflor/i.test(task.title || "");
+  const pgr = /piccolo|paclo|bonzi|sumagic|b-?nine|\bb9\b|\bccc\b|dazide|cycocel|florel|pgr|a-rest|topflor/i.test(task.title || "");
   if (!pgr) return; // only meaningful for size-triggered treatments
   let q = sb.from("manager_tasks").select("id").eq("source_record_id", task.sourceRecordId).eq("source_kind", "response").limit(1);
   q = task.sourceVariety ? q.eq("source_variety", task.sourceVariety) : q.is("source_variety", null);

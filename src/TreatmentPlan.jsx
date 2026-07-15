@@ -13,7 +13,7 @@ const isoWeek = (iso) => {
 };
 const fmtDate = iso => new Date(iso + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
 const monthOf = iso => new Date(iso + "T12:00:00").toLocaleDateString("en-US", { month: "long" });
-const appColor = a => { const x = (a || "").toLowerCase(); return x.includes("piccolo") || x.includes("cleary") || x.includes("sprint") || x.includes("subdue") ? "#8e5aa8" : x.includes("plant") ? "#7fb069" : x.includes("ppm") || x.includes("fert") ? "#e89a3a" : x.includes("net") ? "#4a90d9" : "#7a8c74"; };
+const appColor = a => { const x = (a || "").toLowerCase(); return x.includes("piccolo") || x.includes("cleary") || x.includes("sprint") || x.includes("subdue") || /\bccc\b/.test(x) || /\bb9\b/.test(x) || x.includes("cycocel") || x.includes("bonzi") || x.includes("b-nine") || x.includes("fascinat") || x.includes("fasinat") ? "#8e5aa8" : x.includes("plant") ? "#7fb069" : x.includes("ppm") || x.includes("fert") ? "#e89a3a" : x.includes("net") ? "#4a90d9" : "#7a8c74"; };
 const C = { dark: "#1e2d1a", light: "#7fb069", muted: "#7a8c74", border: "#e0ead8", card: "#fff", plum: "#8e5aa8" };
 const wrap = { overflowWrap: "anywhere", wordBreak: "break-word" };
 
@@ -21,7 +21,7 @@ const splitVars = s => String(s || "").split(/[,;]/).map(x => x.trim()).filter(B
 // PGRs (Piccolo etc.) are size-triggered and applied PER VARIETY — each variety needs its own size photo,
 // so we split those into one task per variety. Fertilizer and other broad applications go by LOCATION as a
 // single task (the crew treats the whole bench/house at once, not variety-by-variety).
-const isPGR = a => { const x = (a || "").toLowerCase(); return x.includes("piccolo") || x.includes("paclo") || x.includes("bonzi") || x.includes("sumagic") || x.includes("b-nine") || x.includes("b nine") || x.includes("bnine") || x.includes("dazide") || x.includes("cycocel") || x.includes("florel") || x.includes("pgr") || x.includes("a-rest") || x.includes("topflor"); };
+const isPGR = a => { const x = (a || "").toLowerCase(); return x.includes("piccolo") || x.includes("paclo") || x.includes("bonzi") || x.includes("sumagic") || x.includes("b-nine") || x.includes("b nine") || x.includes("bnine") || /\bb9\b/.test(x) || /\bccc\b/.test(x) || x.includes("dazide") || x.includes("cycocel") || x.includes("florel") || x.includes("pgr") || x.includes("a-rest") || x.includes("topflor"); };
 const perVariety = rec => isPGR(rec.application) && splitVars(rec.crop_detail).length > 0;
 // varieties this treatment becomes tasks for: per-variety list for PGRs, else a single "(all)" broad task
 const varsOf = rec => perVariety(rec) ? splitVars(rec.crop_detail) : ["(all)"];
