@@ -112,6 +112,73 @@ function ResponseCard({ rec, varieties, doneAt, doneBy, onAdd, onDel }) {
   );
 }
 
+// Per-variety size reference (heights + drench rate + last-year photos) — the grower's "how big / what we did" card.
+const wkNum = k => +String(k).replace(/\D/g, "");
+function VarietyRefCard({ rec, onZoom }) {
+  const photos = rec.photos || [];
+  const weeks = Object.entries(rec.heights || {}).map(([k, v]) => [wkNum(k), +v]).filter(([, v]) => !isNaN(v)).sort((a, b) => a[0] - b[0]);
+  const max = Math.max(...weeks.map(w => w[1]), 1);
+  const first = weeks[0], last = weeks[weeks.length - 1];
+  return (
+    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: "11px 13px", marginBottom: 10 }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+        <div style={{ fontSize: 14.5, fontWeight: 800, color: C.dark, ...wrap }}>{rec.variety}</div>
+        {rec.drench_rate && <span style={{ fontSize: 11, fontWeight: 800, color: "#fff", background: C.plum, borderRadius: 999, padding: "2px 9px" }}>drench {rec.drench_rate}</span>}
+      </div>
+      {rec.location && <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>{rec.location}</div>}
+
+      {weeks.length > 0 && (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
+            <div style={{ fontSize: 9.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: .4 }}>Height by week ({rec.year})</div>
+            {first && last && <div style={{ fontSize: 11, fontWeight: 800, color: C.dark }}>{first[1]}″ → {last[1]}″</div>}
+          </div>
+          <div style={{ display: "flex", gap: 3, alignItems: "flex-end", height: 54, overflowX: "auto", paddingBottom: 2 }}>
+            {weeks.map(([wk, v]) => (
+              <div key={wk} title={`WK${wk}: ${v}″`} style={{ flex: "1 0 15px", minWidth: 15, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end" }}>
+                <div style={{ fontSize: 8, color: C.muted, marginBottom: 1 }}>{v}</div>
+                <div style={{ width: "100%", height: Math.max(3, (v / max) * 40), background: C.light, borderRadius: "2px 2px 0 0" }} />
+                <div style={{ fontSize: 7.5, color: C.muted, marginTop: 1 }}>{wk}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {rec.notes && <div style={{ fontSize: 12, color: "#4a5a44", marginTop: 8, lineHeight: 1.4, ...wrap }}>📝 {rec.notes}</div>}
+
+      {photos.length > 0 && (
+        <div style={{ display: "flex", gap: 6, overflowX: "auto", marginTop: 9 }}>
+          {photos.map((p, i) => (
+            <img key={i} src={p.url} alt="" onClick={() => onZoom(photos, i)} loading="lazy"
+              style={{ height: 108, width: 82, objectFit: "cover", borderRadius: 8, border: `1px solid ${C.border}`, cursor: "zoom-in", flexShrink: 0 }} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Full-screen photo viewer with swipe / arrows for the size reference.
+function RefLightbox({ photos, index, onClose, onIndex }) {
+  const tx = { start: 0 };
+  const go = d => onIndex((index + d + photos.length) % photos.length);
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.92)", zIndex: 10000, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ position: "absolute", top: 14, right: 18, color: "#fff", fontSize: 30, cursor: "pointer", lineHeight: 1 }}>×</div>
+      <div style={{ position: "absolute", top: 18, left: 18, color: "#cfe3c0", fontSize: 13, fontWeight: 800 }}>{index + 1} / {photos.length}</div>
+      <img src={photos[index].url} alt="" onClick={e => e.stopPropagation()}
+        onTouchStart={e => { tx.start = e.touches[0].clientX; }}
+        onTouchEnd={e => { const dx = e.changedTouches[0].clientX - tx.start; if (Math.abs(dx) > 45) go(dx < 0 ? 1 : -1); }}
+        style={{ maxWidth: "94vw", maxHeight: "84vh", objectFit: "contain", borderRadius: 8 }} />
+      {photos.length > 1 && <>
+        <div onClick={e => { e.stopPropagation(); go(-1); }} style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", color: "#fff", fontSize: 40, cursor: "pointer", padding: 10, userSelect: "none" }}>‹</div>
+        <div onClick={e => { e.stopPropagation(); go(1); }} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", color: "#fff", fontSize: 40, cursor: "pointer", padding: 10, userSelect: "none" }}>›</div>
+      </>}
+    </div>
+  );
+}
+
 export default function TreatmentPlan({ onBack, onGoToGrowing, responsesOnly = false }) {
   const sb = getSupabase();
   const [crop, setCrop] = useState("Mum");
@@ -124,7 +191,9 @@ export default function TreatmentPlan({ onBack, onGoToGrowing, responsesOnly = f
   const [sel, setSel] = useState(null);   // record whose detail window is open
   const [logOpen, setLogOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
-  const [view, setView] = useState(responsesOnly ? "responses" : "plan"); // plan | responses
+  const [view, setView] = useState(responsesOnly ? "responses" : "plan"); // plan | responses | reference
+  const [refs, setRefs] = useState([]);          // variety_reference rows for this crop
+  const [refZoom, setRefZoom] = useState(null);  // { photos, i }
   const thisYear = new Date().getFullYear();
 
   const targetDefault = rec => `${thisYear}-${String(rec.rec_date).slice(5)}`; // same day, this year
@@ -190,6 +259,7 @@ export default function TreatmentPlan({ onBack, onGoToGrowing, responsesOnly = f
     pullTaskPhotos(list, existing || [], recIdOf); // copy back any completed-task photos (fire-and-forget)
   }, [sb, crop]); // pullTaskPhotos intentionally not a dep
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { let ok = true; (async () => { const { data } = await sb.from("variety_reference").select("*").eq("crop", crop).order("sort"); if (ok) setRefs(data || []); })(); return () => { ok = false; }; }, [sb, crop]);
 
   const lastYear = recs.length ? Math.max(...recs.map(r => +String(r.rec_date).slice(0, 4) || 0)) : thisYear - 1;
 
@@ -345,10 +415,10 @@ export default function TreatmentPlan({ onBack, onGoToGrowing, responsesOnly = f
           {crops.map(c => <button key={c} onClick={() => setCrop(c)} style={{ border: `1.5px solid ${crop === c ? C.light : C.border}`, background: crop === c ? C.light : "#fff", color: crop === c ? "#fff" : C.dark, borderRadius: 999, padding: "6px 16px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>{c}</button>)}
         </div>
 
-        {!responsesOnly && (
+        {(!responsesOnly || refs.length > 0) && (
           <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-            {[["plan", "🌼 Plan"], ["responses", "📸 Responses"]].map(([id, label]) => (
-              <button key={id} onClick={() => setView(id)} style={{ flex: 1, background: view === id ? C.dark : "#fff", color: view === id ? "#c8e6b8" : C.muted, border: `1.5px solid ${view === id ? C.dark : C.border}`, borderRadius: 10, padding: "10px 12px", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>{label}{id === "responses" && completedRecs.length > 0 ? ` (${completedRecs.length})` : ""}</button>
+            {[...(responsesOnly ? [] : [["plan", "🌼 Plan"]]), ["responses", "📸 Responses"], ...(refs.length ? [["reference", "📏 Sizes"]] : [])].map(([id, label]) => (
+              <button key={id} onClick={() => setView(id)} style={{ flex: 1, background: view === id ? C.dark : "#fff", color: view === id ? "#c8e6b8" : C.muted, border: `1.5px solid ${view === id ? C.dark : C.border}`, borderRadius: 10, padding: "10px 12px", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>{label}{id === "responses" && completedRecs.length > 0 ? ` (${completedRecs.length})` : ""}{id === "reference" ? ` (${refs.length})` : ""}</button>
             ))}
           </div>
         )}
@@ -397,11 +467,21 @@ export default function TreatmentPlan({ onBack, onGoToGrowing, responsesOnly = f
             return <ResponseCard key={r.id} rec={r} varieties={vars.length ? vars : [null]} doneAt={last} doneBy={by} onAdd={(variety, d, files) => addResponsePhotos(r, variety, d, files)} onDel={(pid) => delResponsePhoto(r, pid)} />;
           })}
         </>)}
+
+        {view === "reference" && (<>
+          <div style={{ background: "#eef6e7", border: `1px solid ${C.light}`, borderRadius: 10, padding: "10px 12px", fontSize: 12.5, color: "#2e3d28", marginBottom: 14 }}>
+            How last year's <strong>{crop.toLowerCase()}s</strong> sized up, variety by variety — the <strong>weekly heights</strong>, the <strong>drench rate</strong> for that pot size, grower notes, and photos of how big they actually were. Use it to judge when to treat this year. Tap a photo to enlarge.
+          </div>
+          {[...refs].sort((a, b) => String(a.location || "~").localeCompare(String(b.location || "~")) || (a.sort - b.sort)).map(r => (
+            <VarietyRefCard key={r.id} rec={r} onZoom={(photos, i) => setRefZoom({ photos, i })} />
+          ))}
+        </>)}
       </div>
 
       {sel && <DetailModal sb={sb} rec={sel} thisYear={thisYear} defaultDate={targetDefault(sel)} varTasks={listOf(sel.id)}
         onConvert={(td) => convert(sel, td)} onUndo={() => undo(sel)} onReconcile={(r) => reconcile(r)} onChanged={async () => { await load(); }} onSyncSel={r => setSel(r)} onClose={() => setSel(null)}
         onGoToGrowing={onGoToGrowing} />}
+      {refZoom && <RefLightbox photos={refZoom.photos} index={refZoom.i} onClose={() => setRefZoom(null)} onIndex={i => setRefZoom({ ...refZoom, i })} />}
       {logOpen && <LogModal crop={crop} year={thisYear} sb={sb} onClose={() => setLogOpen(false)} onSaved={() => { setLogOpen(false); load(); }} />}
       {helpOpen && <HelpModal crop={crop} year={thisYear} onClose={() => setHelpOpen(false)} />}
     </div>
