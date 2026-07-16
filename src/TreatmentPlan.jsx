@@ -181,38 +181,14 @@ function RefLightbox({ photos, index, onClose, onIndex }) {
 
 // ── Growth curve: pick a variety, overlay seasons, mark the growth-regulator application ──
 const YEAR_PALETTE = ["#2e7d32", "#e89a3a", "#4a90d9", "#8e5aa8", "#d94f3d", "#0f9d8f"];
-const GENERIC_COLORS = new Set(["red", "white", "pink", "yellow", "rose", "peach", "orange", "gold", "copper", "fusion", "marble", "reds", "whites"]);
-const nameToks = v => String(v || "").toLowerCase().replace(/[0-9."/]+/g, " ").replace(/\bbloom\b/g, " ").split(/\s+/).filter(w => w.length > 2 && !GENERIC_COLORS.has(w));
-const inchOf = v => { const m = String(v).match(/(\d+(?:\.\d+)?)\s*"/); return m ? m[1] : null; };
-const bloomOf = v => { const m = String(v).match(/(\d+)\s*bloom/i); return m ? m[1] : null; };
-const segHasSize = s => /\d\s*"|\bbloom\b/i.test(s);
-// does a text segment's size include this variety's size? (inch w/ boundary; bloom handles "8/10 bloom" for both 8 & 10)
-const segMatchesSize = (seg, variety) => {
-  const inch = inchOf(variety); if (inch && new RegExp("(^|[^0-9.])" + inch.replace(".", "\\.") + '\\s*"').test(seg)) return true;
-  const bl = bloomOf(variety); if (bl && (new RegExp("(^|[^0-9])" + bl + "\\s*(?:/\\d+\\s*)?bloom").test(seg) || new RegExp("/\\s*" + bl + "\\s*bloom").test(seg))) return true;
-  return false;
+// application → color, matching the grower's color-coded Heights sheet legend
+const APP_COLOR = {
+  "1500 CCC/Altercel": "#d4b100", "1500 CCC + 1250 B9": "#00b3c6",
+  "2000 CCC/Altercel": "#ff9900", "2000 CCC + 1250 B9": "#e06666",
+  "Piccolo drench 0.1ppm": "#6aa84f", "Fascination 2ppm": "#9aa0a6",
 };
-// Does a treatment's crop_detail apply to this variety? Segment-aware: a named+sized segment ("prestigious red 6.5\"")
-// only hits its own size; a size-wide segment ("all 6.5\"") hits every variety of that size that isn't "except"-ed.
-// `allNames` = every distinctive variety-name token in the crop, so we can tell "another variety" from "this one".
-const treatmentHitsVariety = (cropDetail, variety, allNames) => {
-  const ntV = nameToks(variety);
-  for (const raw of String(cropDetail || "").toLowerCase().split(/[,;]/)) {
-    const seg = raw.trim(); if (!seg) continue;
-    const exceptAt = seg.indexOf("except");
-    const positive = exceptAt >= 0 ? seg.slice(0, exceptAt) : seg;
-    const exclusion = exceptAt >= 0 ? seg.slice(exceptAt) : "";
-    if (ntV.length && ntV.some(w => exclusion.includes(w))) continue;      // this variety explicitly excepted
-    const named = ntV.length > 0 && ntV.some(w => positive.includes(w));
-    const otherName = [...allNames].some(w => !ntV.includes(w) && positive.includes(w));
-    const sizeM = segMatchesSize(positive, variety);
-    if (named && (!segHasSize(positive) || sizeM)) return true;            // named for us, size-consistent
-    if (sizeM && !otherName) return true;                                  // size-wide ("all 6.5\"") and not about another variety
-  }
-  return false;
-};
-
-function GrowthChart({ refs, recs }) {
+const appColorFor = lbl => APP_COLOR[lbl] || "#8e5aa8";
+function GrowthChart({ refs }) {
   const varieties = [...new Set(refs.map(r => r.variety).filter(Boolean))].sort((a, b) => a.localeCompare(b));
   const [variety, setVariety] = useState("");
   const [selYears, setSelYears] = useState([]);
@@ -224,15 +200,16 @@ function GrowthChart({ refs, recs }) {
   const colorForYear = y => YEAR_PALETTE[allYears.indexOf(String(y)) % YEAR_PALETTE.length];
   useEffect(() => { setSelYears(yearsForVar); /* reset to all seasons on variety change */ }, [variety, refs.length]); // eslint wants yearsForVar; intentionally keyed on variety
 
-  // series (one per selected season) + growth-regulator markers matched to this variety
+  // series (one per selected season) — heights + that season's color-coded applications (from the Heights sheet)
   const series = forVar.filter(r => selYears.includes(String(r.year))).map(r => ({
     year: String(r.year),
     color: colorForYear(r.year),
+    apps: r.applications || {},
     points: Object.entries(r.heights || {}).map(([k, v]) => [+String(k).replace(/\D/g, ""), +v]).filter(([w, h]) => w && !isNaN(h)).sort((a, b) => a[0] - b[0]),
   })).filter(s => s.points.length);
-  const allNames = new Set(refs.flatMap(r => nameToks(r.variety)));
-  const markers = recs.filter(r => isPGR(r.application) && selYears.includes(String(r.rec_date).slice(0, 4)) && treatmentHitsVariety(r.crop_detail, variety, allNames))
-    .map(r => ({ year: String(r.rec_date).slice(0, 4), week: isoWeek(r.rec_date).week, date: r.rec_date, label: [r.application, r.rates].filter(Boolean).join(" "), color: colorForYear(String(r.rec_date).slice(0, 4)) }));
+  // application markers = each variety's own per-week applications, colored by application type (per the sheet legend)
+  const markers = series.flatMap(s => Object.entries(s.apps).map(([wk, label]) => ({ year: s.year, week: +String(wk).replace(/\D/g, ""), label, color: appColorFor(label) })).filter(m => m.week));
+  const appTypes = [...new Set(markers.map(m => m.label))];
 
   const allW = [...series.flatMap(s => s.points.map(p => p[0])), ...markers.map(m => m.week)];
   const allH = series.flatMap(s => s.points.map(p => p[1]));
@@ -295,13 +272,23 @@ function GrowthChart({ refs, recs }) {
         </div>
       )}
 
-      {/* legend + regulator applications + reference */}
+      {/* color legend for application types */}
+      {appTypes.length > 0 && (
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 8 }}>
+          {appTypes.map(lbl => (
+            <span key={lbl} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, color: "#3a2e42" }}>
+              <span style={{ width: 11, height: 11, borderRadius: 3, background: appColorFor(lbl), border: "1px solid rgba(0,0,0,.15)" }} />{lbl}
+            </span>
+          ))}
+        </div>
+      )}
+      {/* per-season application timeline */}
       {markers.length > 0 && (
-        <div style={{ marginTop: 10, background: "#f5eff7", border: `1px solid #e2d3ec`, borderRadius: 10, padding: "9px 12px" }}>
-          <div style={{ fontSize: 10.5, fontWeight: 800, color: C.plum, textTransform: "uppercase", letterSpacing: .4, marginBottom: 4 }}>▽ Growth-regulator applications</div>
-          {markers.sort((a, b) => a.date.localeCompare(b.date)).map((m, i) => (
+        <div style={{ marginTop: 10, background: "#faf7fc", border: `1px solid #ece2f2`, borderRadius: 10, padding: "9px 12px" }}>
+          <div style={{ fontSize: 10.5, fontWeight: 800, color: C.plum, textTransform: "uppercase", letterSpacing: .4, marginBottom: 4 }}>▽ Applications, week by week</div>
+          {markers.slice().sort((a, b) => (a.year.localeCompare(b.year)) || (a.week - b.week)).map((m, i) => (
             <div key={i} style={{ fontSize: 12.5, color: "#3a2e42", marginTop: 2, ...wrap }}>
-              <span style={{ fontWeight: 800, color: m.color }}>{m.year}</span> · WK{m.week} ({fmtDate(m.date)}) — {m.label}
+              <span style={{ fontWeight: 800, color: colorForYear(m.year) }}>{m.year}</span> · WK{m.week} — <span style={{ fontWeight: 700, color: m.color }}>■</span> {m.label}
             </div>
           ))}
         </div>
@@ -313,7 +300,7 @@ function GrowthChart({ refs, recs }) {
         </div>
       )}
       <div style={{ fontSize: 11.5, color: C.muted, marginTop: 10, lineHeight: 1.4 }}>
-        Each line is a season's weekly heights for <strong>{variety}</strong>; the dashed ▽ marks show when it got CCC / Piccolo. Toggle seasons to compare — as {new Date().getFullYear()} heights are logged they'll overlay here automatically.
+        Each line is a season's weekly heights for <strong>{variety}</strong>; the dashed ▽ marks are the applications from the color-coded Heights sheet (color = what was applied). Toggle seasons to compare — as {new Date().getFullYear()} heights are logged they'll overlay here automatically.
       </div>
     </div>
   );
@@ -621,7 +608,7 @@ export default function TreatmentPlan({ onBack, onGoToGrowing, responsesOnly = f
           <div style={{ background: "#eef6e7", border: `1px solid ${C.light}`, borderRadius: 10, padding: "10px 12px", fontSize: 12.5, color: "#2e3d28", marginBottom: 14 }}>
             Pick a variety to see its <strong>height growth over the season</strong>, with the <strong>growth-regulator (CCC / Piccolo) application marked</strong>. Turn seasons on/off to compare years and spot the pattern.
           </div>
-          <GrowthChart refs={refs} recs={recs} />
+          <GrowthChart refs={refs} />
         </>)}
       </div>
 
