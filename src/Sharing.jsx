@@ -119,8 +119,8 @@ export function SharedGalleryViewer({ id }) {
   const [err, setErr] = useState(null);
   const [idx, setIdx] = useState(0);
   const [zoom, setZoom] = useState(false);
+  const carRef = useRef(null);
   const stripRef = useRef(null);
-  const touchX = useRef(0);
 
   useEffect(() => {
     const sb = getSupabase();
@@ -134,12 +134,10 @@ export function SharedGalleryViewer({ id }) {
   // hot list → newest week first; otherwise the saved order
   const items = g ? [...(g.items || [])].sort((a, b) => (isHot ? String(b.week || "").localeCompare(String(a.week || "")) : 0) || (a.sort ?? 0) - (b.sort ?? 0)) : [];
   const active = items[idx] || items[0];
-  const go = d => setIdx(i => (items.length ? (i + d + items.length) % items.length : 0));
+  const goTo = i => { const el = carRef.current; if (el) el.scrollTo({ left: i * el.clientWidth, behavior: "smooth" }); };
+  const onScroll = () => { const el = carRef.current; if (!el) return; const i = Math.round(el.scrollLeft / el.clientWidth); if (i !== idx) setIdx(i); };
 
-  useEffect(() => { if (idx >= items.length && items.length) setIdx(0); }, [items.length, idx]);
-  // preload the neighbours at viewing size so swiping feels instant
-  useEffect(() => { items.slice(Math.max(0, idx - 1), idx + 2).forEach(it => { const im = new Image(); im.src = tx(it.url, 1400, 82); }); }, [idx, items.length]); // preload neighbours; items derived from g
-  useEffect(() => { const h = e => { if (e.key === "ArrowLeft") go(-1); else if (e.key === "ArrowRight") go(1); else if (e.key === "Escape") setZoom(false); }; window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h); });
+  useEffect(() => { const h = e => { if (e.key === "ArrowLeft") goTo(Math.max(0, idx - 1)); else if (e.key === "ArrowRight") goTo(Math.min(items.length - 1, idx + 1)); else if (e.key === "Escape") setZoom(false); }; window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h); });
   useEffect(() => { const el = stripRef.current && stripRef.current.children[idx]; if (el) el.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" }); }, [idx]);
 
   const S = { fontFamily: "'DM Sans','Segoe UI',sans-serif", background: C.paper, minHeight: "100vh", color: C.dark };
@@ -158,39 +156,42 @@ export function SharedGalleryViewer({ id }) {
         <div style={{ color: C.cream, fontWeight: 800, fontSize: 15, letterSpacing: .3 }}>Hoosier Boy Greenhouse</div>
       </div>
 
-      <div style={{ maxWidth: 760, margin: "0 auto", padding: "24px 14px 54px" }}>
-        <div style={{ marginBottom: 18 }}>
+      <div style={{ maxWidth: 720, margin: "0 auto", padding: "22px 12px 54px" }}>
+        <div style={{ marginBottom: 16, padding: "0 4px" }}>
           {isHot && <div style={{ display: "inline-block", background: "#fdecef", color: "#c0392b", fontWeight: 800, fontSize: 12, padding: "4px 12px", borderRadius: 999, marginBottom: 10 }}>🔥 HOT LIST</div>}
-          <div style={{ fontFamily: "'DM Serif Display',Georgia,serif", fontSize: 32, lineHeight: 1.12, color: C.dark, ...wrap }}>{g.title || (isHot ? "Hot List" : "Selections")}</div>
+          <div style={{ fontFamily: "'DM Serif Display',Georgia,serif", fontSize: 30, lineHeight: 1.12, color: C.dark, ...wrap }}>{g.title || (isHot ? "Hot List" : "Selections")}</div>
           {g.recipient && <div style={{ fontSize: 15, color: C.light, fontWeight: 800, marginTop: 8 }}>Prepared for {g.recipient}</div>}
           {g.subtitle && <div style={{ fontSize: 14, color: C.muted, marginTop: 6, lineHeight: 1.5, ...wrap }}>{g.subtitle}</div>}
           <div style={{ fontSize: 12.5, color: "#a9b3a0", marginTop: 8 }}>{items.length} item{items.length !== 1 ? "s" : ""} · {fmtDate(g.updated_at || g.created_at)}</div>
         </div>
 
         {active && (<>
-          {/* Stage — one right-sized image at a time (tap for full quality) */}
-          <div style={{ position: "relative", background: "#fff", borderRadius: 16, overflow: "hidden", border: "1px solid #ece7da", boxShadow: "0 2px 16px rgba(30,45,26,.07)" }}>
-            <div onTouchStart={e => { touchX.current = e.touches[0].clientX; }} onTouchEnd={e => { const dx = e.changedTouches[0].clientX - touchX.current; if (Math.abs(dx) > 45) go(dx < 0 ? 1 : -1); }}
-              style={{ position: "relative", width: "100%", aspectRatio: "4 / 3", background: "#f3f1ea", cursor: "zoom-in" }} onClick={() => setZoom(true)}>
-              <img key={active.id} src={tx(active.url, 1400, 82)} alt={active.caption || ""} loading="eager" decoding="async"
-                style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }} />
-              {isHot && active.week && <div style={{ position: "absolute", top: 10, left: 10, background: "rgba(192,57,43,.92)", color: "#fff", fontSize: 11, fontWeight: 800, padding: "3px 10px", borderRadius: 999 }}>{weekLabel(active.week)}</div>}
+          {/* Native swipe carousel — slides pre-laid-out, portrait-friendly tall stage, lazy-loaded */}
+          <div style={{ position: "relative", borderRadius: 16, overflow: "hidden", background: "#14170f", boxShadow: "0 2px 16px rgba(30,45,26,.12)" }}>
+            <div ref={carRef} onScroll={onScroll} style={{ display: "flex", overflowX: "auto", scrollSnapType: "x mandatory", WebkitOverflowScrolling: "touch", scrollbarWidth: "none" }}>
+              {items.map((it, i) => (
+                <div key={it.id} style={{ flex: "0 0 100%", scrollSnapAlign: "center", height: "66vh", maxHeight: 620, minHeight: 300, display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}>
+                  <img src={tx(it.url, 1000, 74)} alt={it.caption || ""} loading={i <= 1 ? "eager" : "lazy"} decoding="async" onClick={() => setZoom(true)}
+                    style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", display: "block", cursor: "zoom-in" }} />
+                  {isHot && it.week && <div style={{ position: "absolute", top: 10, left: 10, background: "rgba(192,57,43,.92)", color: "#fff", fontSize: 11, fontWeight: 800, padding: "3px 10px", borderRadius: 999 }}>{weekLabel(it.week)}</div>}
+                </div>
+              ))}
             </div>
             {items.length > 1 && <>
-              <div onClick={() => go(-1)} style={{ position: "absolute", left: 6, top: "50%", transform: "translateY(-50%)", width: 38, height: 38, borderRadius: "50%", background: "rgba(255,255,255,.85)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, color: C.dark, cursor: "pointer", boxShadow: "0 1px 5px rgba(0,0,0,.2)", userSelect: "none" }}>‹</div>
-              <div onClick={() => go(1)} style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", width: 38, height: 38, borderRadius: "50%", background: "rgba(255,255,255,.85)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, color: C.dark, cursor: "pointer", boxShadow: "0 1px 5px rgba(0,0,0,.2)", userSelect: "none" }}>›</div>
-              <div style={{ position: "absolute", bottom: 8, right: 10, background: "rgba(30,45,26,.7)", color: "#fff", fontSize: 11, fontWeight: 800, padding: "2px 9px", borderRadius: 999 }}>{idx + 1} / {items.length}</div>
+              {idx > 0 && <div onClick={() => goTo(idx - 1)} style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", width: 40, height: 40, borderRadius: "50%", background: "rgba(255,255,255,.9)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, color: C.dark, cursor: "pointer", boxShadow: "0 1px 6px rgba(0,0,0,.3)", userSelect: "none" }}>‹</div>}
+              {idx < items.length - 1 && <div onClick={() => goTo(idx + 1)} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", width: 40, height: 40, borderRadius: "50%", background: "rgba(255,255,255,.9)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, color: C.dark, cursor: "pointer", boxShadow: "0 1px 6px rgba(0,0,0,.3)", userSelect: "none" }}>›</div>}
+              <div style={{ position: "absolute", bottom: 8, right: 10, background: "rgba(0,0,0,.55)", color: "#fff", fontSize: 11, fontWeight: 800, padding: "2px 9px", borderRadius: 999 }}>{idx + 1} / {items.length}</div>
             </>}
           </div>
-          {active.caption && <div style={{ padding: "12px 4px 0", fontSize: 16, lineHeight: 1.5, color: "#2e3d28", ...wrap }}>{active.caption}</div>}
+          {active.caption && <div style={{ padding: "12px 6px 0", fontSize: 16, lineHeight: 1.5, color: "#2e3d28", ...wrap }}>{active.caption}</div>}
 
-          {/* Thumbnail strip — tiny, lazy-loaded; tap to jump */}
+          {/* Thumbnail strip — tiny, lazy; tap to jump */}
           {items.length > 1 && (
             <div ref={stripRef} style={{ display: "flex", gap: 8, overflowX: "auto", marginTop: 14, paddingBottom: 4, WebkitOverflowScrolling: "touch" }}>
               {items.map((it, i) => (
-                <button key={it.id} onClick={() => setIdx(i)} style={{ flex: "0 0 auto", padding: 0, border: `2.5px solid ${i === idx ? C.light : "transparent"}`, borderRadius: 10, background: "none", cursor: "pointer", lineHeight: 0 }}>
-                  <img src={tx(it.url, 150, 45)} alt="" loading="lazy" decoding="async"
-                    style={{ width: 62, height: 62, objectFit: "cover", borderRadius: 8, opacity: i === idx ? 1 : .72, display: "block" }} />
+                <button key={it.id} onClick={() => goTo(i)} style={{ flex: "0 0 auto", padding: 0, border: `2.5px solid ${i === idx ? C.light : "transparent"}`, borderRadius: 10, background: "none", cursor: "pointer", lineHeight: 0 }}>
+                  <img src={tx(it.url, 140, 45)} alt="" loading="lazy" decoding="async"
+                    style={{ width: 60, height: 60, objectFit: "cover", borderRadius: 8, opacity: i === idx ? 1 : .68, display: "block" }} />
                 </button>
               ))}
             </div>
@@ -203,9 +204,8 @@ export function SharedGalleryViewer({ id }) {
       </div>
 
       {zoom && active && (
-        <div onClick={() => setZoom(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.92)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 14, cursor: "zoom-out" }}>
-          <img src={tx(active.url, 2000, 88)} alt="" onTouchStart={e => { touchX.current = e.touches[0].clientX; }} onTouchEnd={e => { const dx = e.changedTouches[0].clientX - touchX.current; if (Math.abs(dx) > 45) go(dx < 0 ? 1 : -1); }}
-            style={{ maxWidth: "100%", maxHeight: "92vh", objectFit: "contain", borderRadius: 8 }} onClick={e => e.stopPropagation()} />
+        <div onClick={() => setZoom(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.94)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 14, cursor: "zoom-out" }}>
+          <img src={tx(active.url, 1800, 86)} alt="" style={{ maxWidth: "100%", maxHeight: "92vh", objectFit: "contain", borderRadius: 8 }} onClick={e => e.stopPropagation()} />
           <a href={active.url} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}
             style={{ position: "absolute", bottom: 16, right: 16, background: "rgba(255,255,255,.9)", color: C.dark, fontSize: 12.5, fontWeight: 800, padding: "7px 13px", borderRadius: 999, textDecoration: "none" }}>⬇ Full quality</a>
         </div>
