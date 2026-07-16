@@ -114,47 +114,74 @@ function ResponseCard({ rec, varieties, doneAt, doneBy, onAdd, onDel }) {
 
 // Per-variety size reference (heights + drench rate + last-year photos) — the grower's "how big / what we did" card.
 const wkNum = k => +String(k).replace(/\D/g, "");
-function VarietyRefCard({ rec, onZoom }) {
+// one season × greenhouse of a variety: heights + treatments + photos + editable notes
+function YearDetail({ rec, tint, onZoom, onSaveNote }) {
   const photos = rec.photos || [];
   const weeks = Object.entries(rec.heights || {}).map(([k, v]) => [wkNum(k), +v]).filter(([, v]) => !isNaN(v)).sort((a, b) => a[0] - b[0]);
   const max = Math.max(...weeks.map(w => w[1]), 1);
   const first = weeks[0], last = weeks[weeks.length - 1];
+  const apps = Object.entries(rec.applications || {}).map(([k, v]) => [wkNum(k), v]).sort((a, b) => a[0] - b[0]);
+  const [text, setText] = useState(rec.notes || "");
+  const [busy, setBusy] = useState(false);
+  const dirty = text !== (rec.notes || "");
   return (
-    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: "11px 13px", marginBottom: 10 }}>
+    <div style={{ background: "#fafcf8", border: `1px solid ${C.border}`, borderLeft: `3px solid ${tint}`, borderRadius: 10, padding: "9px 11px", marginTop: 8 }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
-        <div style={{ fontSize: 14.5, fontWeight: 800, color: C.dark, ...wrap }}>{rec.variety}</div>
-        {rec.drench_rate && <span style={{ fontSize: 11, fontWeight: 800, color: "#fff", background: C.plum, borderRadius: 999, padding: "2px 9px" }}>drench {rec.drench_rate}</span>}
+        <span style={{ fontSize: 12.5, fontWeight: 800, color: tint }}>{rec.year}</span>
+        {rec.location && <span style={{ fontSize: 11, color: C.muted }}>{rec.location}</span>}
+        {rec.drench_rate && <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: C.plum, borderRadius: 999, padding: "1px 8px" }}>drench {rec.drench_rate}</span>}
+        {first && last && <span style={{ fontSize: 11, fontWeight: 800, color: C.dark, marginLeft: "auto" }}>{first[1]}″→{last[1]}″</span>}
       </div>
-      {rec.location && <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>{rec.location}</div>}
-
       {weeks.length > 0 && (
-        <div style={{ marginTop: 10 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
-            <div style={{ fontSize: 9.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: .4 }}>Height by week ({rec.year})</div>
-            {first && last && <div style={{ fontSize: 11, fontWeight: 800, color: C.dark }}>{first[1]}″ → {last[1]}″</div>}
-          </div>
-          <div style={{ display: "flex", gap: 3, alignItems: "flex-end", height: 54, overflowX: "auto", paddingBottom: 2 }}>
-            {weeks.map(([wk, v]) => (
-              <div key={wk} title={`WK${wk}: ${v}″`} style={{ flex: "1 0 15px", minWidth: 15, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end" }}>
-                <div style={{ fontSize: 8, color: C.muted, marginBottom: 1 }}>{v}</div>
-                <div style={{ width: "100%", height: Math.max(3, (v / max) * 40), background: C.light, borderRadius: "2px 2px 0 0" }} />
-                <div style={{ fontSize: 7.5, color: C.muted, marginTop: 1 }}>{wk}</div>
-              </div>
-            ))}
-          </div>
+        <div style={{ display: "flex", gap: 3, alignItems: "flex-end", height: 50, overflowX: "auto", marginTop: 8, paddingBottom: 2 }}>
+          {weeks.map(([wk, v]) => {
+            const app = (rec.applications || {})["WK" + wk];
+            return <div key={wk} title={`WK${wk}: ${v}″${app ? " · " + app : ""}`} style={{ flex: "1 0 14px", minWidth: 14, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end" }}>
+              <div style={{ width: 6, height: 6, borderRadius: "50%", background: app ? appColorFor(app) : "transparent", marginBottom: 1 }} />
+              <div style={{ width: "100%", height: Math.max(3, (v / max) * 36), background: tint, opacity: .8, borderRadius: "2px 2px 0 0" }} />
+              <div style={{ fontSize: 7, color: C.muted, marginTop: 1 }}>{wk}</div>
+            </div>;
+          })}
         </div>
       )}
-
-      {rec.notes && <div style={{ fontSize: 12, color: "#4a5a44", marginTop: 8, lineHeight: 1.4, ...wrap }}>📝 {rec.notes}</div>}
-
+      {apps.length > 0 && (
+        <div style={{ fontSize: 11, color: "#3a2e42", marginTop: 6, ...wrap }}>
+          <span style={{ fontWeight: 800, color: C.muted }}>Treatments: </span>
+          {apps.map(([wk, label], i) => <span key={wk}>{i ? " · " : ""}WK{wk} <span style={{ color: appColorFor(label) }} title={label}>●</span></span>)}
+        </div>
+      )}
       {photos.length > 0 && (
-        <div style={{ display: "flex", gap: 6, overflowX: "auto", marginTop: 9 }}>
-          {photos.map((p, i) => (
-            <img key={i} src={p.url} alt="" onClick={() => onZoom(photos, i)} loading="lazy"
-              style={{ height: 108, width: 82, objectFit: "cover", borderRadius: 8, border: `1px solid ${C.border}`, cursor: "zoom-in", flexShrink: 0 }} />
-          ))}
+        <div style={{ display: "flex", gap: 6, overflowX: "auto", marginTop: 8 }}>
+          {photos.map((p, i) => <img key={i} src={p.url} alt="" onClick={() => onZoom(photos, i)} loading="lazy" style={{ height: 96, width: 72, objectFit: "cover", borderRadius: 8, border: `1px solid ${C.border}`, cursor: "zoom-in", flexShrink: 0 }} />)}
         </div>
       )}
+      <div style={{ marginTop: 8 }}>
+        <textarea value={text} onChange={e => setText(e.target.value)} placeholder="Add notes for this variety / season…" rows={2}
+          style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.border}`, borderRadius: 8, padding: "6px 8px", fontSize: 12.5, fontFamily: "inherit", resize: "vertical", color: C.dark }} />
+        {dirty && <button onClick={async () => { setBusy(true); await onSaveNote(rec.id, text); setBusy(false); }} disabled={busy}
+          style={{ marginTop: 4, background: C.dark, color: "#fff", border: "none", borderRadius: 7, padding: "5px 12px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>{busy ? "Saving…" : "Save note"}</button>}
+      </div>
+    </div>
+  );
+}
+// group a variety's seasons/houses under one drill-in card, with year badges
+function VarietyGroup({ variety, rows, yearColor, onZoom, onSaveNote }) {
+  const [open, setOpen] = useState(false);
+  const years = [...new Set(rows.map(r => String(r.year)))].sort();
+  const drench = (rows.find(r => r.drench_rate) || {}).drench_rate;
+  const sorted = [...rows].sort((a, b) => String(b.year).localeCompare(String(a.year)) || String(a.location || "").localeCompare(String(b.location || "")));
+  return (
+    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: "10px 13px", marginBottom: 10 }}>
+      <div onClick={() => setOpen(o => !o)} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", cursor: "pointer" }}>
+        <span style={{ fontSize: 14.5, fontWeight: 800, color: C.dark, ...wrap }}>{variety}</span>
+        {drench && <span style={{ fontSize: 10.5, fontWeight: 800, color: "#fff", background: C.plum, borderRadius: 999, padding: "1px 8px" }}>drench {drench}</span>}
+        <span style={{ display: "flex", gap: 4, marginLeft: "auto" }}>
+          {years.map(y => <span key={y} style={{ fontSize: 10.5, fontWeight: 800, color: "#fff", background: yearColor(y), borderRadius: 999, padding: "2px 9px" }}>{y}</span>)}
+          {years.length === 1 && <span style={{ fontSize: 10, color: C.muted, alignSelf: "center" }}>only</span>}
+          <span style={{ color: C.muted, fontWeight: 800, fontSize: 14, marginLeft: 2 }}>{open ? "⌄" : "›"}</span>
+        </span>
+      </div>
+      {open && sorted.map(r => <YearDetail key={r.id} rec={r} tint={yearColor(r.year)} onZoom={onZoom} onSaveNote={onSaveNote} />)}
     </div>
   );
 }
@@ -188,30 +215,33 @@ const APP_COLOR = {
   "Piccolo drench 0.1ppm": "#6aa84f", "Fascination 2ppm": "#9aa0a6",
 };
 const appColorFor = lbl => APP_COLOR[lbl] || "#8e5aa8";
+const shortLoc = l => String(l || "").replace(/\s*House/i, "").replace(/:\s*/, " ").replace(/\s*side/i, "").trim() || "—";
+const LINE_DASH = ["", "7 4", "2 3", "9 4 2 4"];
 function GrowthChart({ refs }) {
   const varieties = [...new Set(refs.map(r => r.variety).filter(Boolean))].sort((a, b) => a.localeCompare(b));
   const [variety, setVariety] = useState("");
-  const [selYears, setSelYears] = useState([]);
+  const [off, setOff] = useState({});   // seriesKey -> true when hidden
   useEffect(() => { if (varieties.length && !varieties.includes(variety)) setVariety(varieties[0]); }, [varieties, variety]);
+  useEffect(() => { setOff({}); }, [variety]);   // show all lines when variety changes
 
-  const forVar = refs.filter(r => r.variety === variety);
-  const yearsForVar = [...new Set(forVar.map(r => String(r.year)))].sort();
   const allYears = [...new Set(refs.map(r => String(r.year)))].sort();
   const colorForYear = y => YEAR_PALETTE[allYears.indexOf(String(y)) % YEAR_PALETTE.length];
-  useEffect(() => { setSelYears(yearsForVar); /* reset to all seasons on variety change */ }, [variety, refs.length]); // eslint wants yearsForVar; intentionally keyed on variety
 
-  // series (one per selected season) — heights + that season's color-coded applications (from the Heights sheet)
-  const series = forVar.filter(r => selYears.includes(String(r.year))).map(r => ({
-    year: String(r.year),
-    color: colorForYear(r.year),
-    apps: r.applications || {},
-    points: Object.entries(r.heights || {}).map(([k, v]) => [+String(k).replace(/\D/g, ""), +v]).filter(([w, h]) => w && !isNaN(h)).sort((a, b) => a[0] - b[0]),
-  })).filter(s => s.points.length);
-  // application markers = each variety's own per-week applications, colored by application type (per the sheet legend)
-  const markers = series.flatMap(s => Object.entries(s.apps).map(([wk, label]) => ({ year: s.year, week: +String(wk).replace(/\D/g, ""), label, color: appColorFor(label) })).filter(m => m.week));
-  const appTypes = [...new Set(markers.map(m => m.label))];
+  const forVar = refs.filter(r => r.variety === variety);
+  const multiLoc = new Set(forVar.map(r => r.location || "")).size > 1;
+  // one series per (season × greenhouse); color = year, dash distinguishes houses within a year
+  const dashIx = {};
+  const all = forVar.map(r => {
+    const year = String(r.year), location = r.location || "";
+    dashIx[year] = dashIx[year] || {}; if (!(location in dashIx[year])) dashIx[year][location] = Object.keys(dashIx[year]).length;
+    return { key: year + "·" + location, year, location, apps: r.applications || {},
+      points: Object.entries(r.heights || {}).map(([k, v]) => [+String(k).replace(/\D/g, ""), +v]).filter(([w, h]) => w && !isNaN(h)).sort((a, b) => a[0] - b[0]) };
+  }).filter(s => s.points.length).sort((a, b) => a.year.localeCompare(b.year) || a.location.localeCompare(b.location));
+  all.forEach(s => { s.color = colorForYear(s.year); s.dash = LINE_DASH[dashIx[s.year][s.location] % LINE_DASH.length]; s.label = s.year + (multiLoc ? " · " + shortLoc(s.location) : ""); });
+  const series = all.filter(s => !off[s.key]);
+  const heightAt = (s, w) => { const p = s.points.find(pp => pp[0] === w); return p ? p[1] : null; };
 
-  const allW = [...series.flatMap(s => s.points.map(p => p[0])), ...markers.map(m => m.week)];
+  const allW = series.flatMap(s => s.points.map(p => p[0]));
   const allH = series.flatMap(s => s.points.map(p => p[1]));
   const wkMin = allW.length ? Math.min(...allW) : 32, wkMax = allW.length ? Math.max(...allW) : 46;
   const yMax = Math.max(10, Math.ceil((allH.length ? Math.max(...allH) : 10) / 5) * 5);
@@ -221,6 +251,7 @@ function GrowthChart({ refs }) {
   const yFor = h => padT + plotH - (h / yMax) * plotH;
   const yTicks = []; for (let t = 0; t <= yMax; t += 5) yTicks.push(t);
   const weeks = []; for (let w = wkMin; w <= wkMax; w++) weeks.push(w);
+  const appTypes = [...new Set(series.flatMap(s => Object.values(s.apps)))];
 
   return (
     <div>
@@ -230,18 +261,18 @@ function GrowthChart({ refs }) {
           {varieties.map(v => <option key={v} value={v}>{v}</option>)}
         </select>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-          <span style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: .4 }}>Seasons:</span>
-          {yearsForVar.map(y => {
-            const on = selYears.includes(y);
-            return <button key={y} onClick={() => setSelYears(on ? selYears.filter(x => x !== y) : [...selYears, y])}
-              style={{ display: "flex", alignItems: "center", gap: 5, border: `1.5px solid ${on ? colorForYear(y) : C.border}`, background: on ? colorForYear(y) : "#fff", color: on ? "#fff" : C.muted, borderRadius: 999, padding: "5px 12px", fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
-              <span style={{ width: 8, height: 8, borderRadius: 2, background: on ? "#fff" : colorForYear(y) }} />{y}</button>;
+          <span style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: .4 }}>Show:</span>
+          {all.map(s => {
+            const on = !off[s.key];
+            return <button key={s.key} onClick={() => setOff(o => ({ ...o, [s.key]: on }))}
+              style={{ display: "flex", alignItems: "center", gap: 6, border: `1.5px solid ${on ? s.color : C.border}`, background: on ? s.color : "#fff", color: on ? "#fff" : C.muted, borderRadius: 999, padding: "5px 12px", fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+              <svg width="16" height="8"><line x1="0" y1="4" x2="16" y2="4" stroke={on ? "#fff" : s.color} strokeWidth="2.4" strokeDasharray={s.dash} /></svg>{s.label}</button>;
           })}
         </div>
       </div>
 
       {series.length === 0 ? (
-        <div style={{ color: C.muted, fontSize: 13, padding: "24px 0", textAlign: "center" }}>No height data for the selected season(s).</div>
+        <div style={{ color: C.muted, fontSize: 13, padding: "24px 0", textAlign: "center" }}>No height data for the selected lines.</div>
       ) : (
         <div style={{ overflowX: "auto", background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: "6px 4px" }}>
           <svg width={W} height={H} style={{ display: "block" }}>
@@ -255,40 +286,49 @@ function GrowthChart({ refs }) {
               <text key={w} x={xFor(w)} y={H - padB + 15} textAnchor="middle" fontSize="9.5" fill={C.muted}>{w}</text>
             ))}
             <text x={padL + plotW / 2} y={H - 6} textAnchor="middle" fontSize="10.5" fontWeight="800" fill={C.muted}>Week of year</text>
-            {markers.map((m, i) => (
-              <g key={i}>
-                <line x1={xFor(m.week)} y1={padT} x2={xFor(m.week)} y2={padT + plotH} stroke={m.color} strokeWidth={1.4} strokeDasharray="4 3" opacity={0.7} />
-                <polygon points={`${xFor(m.week) - 4},${padT} ${xFor(m.week) + 4},${padT} ${xFor(m.week)},${padT + 6}`} fill={m.color} />
-              </g>
-            ))}
             {series.map(s => (
-              <g key={s.year}>
-                <polyline fill="none" stroke={s.color} strokeWidth={2.4} strokeLinejoin="round" strokeLinecap="round"
+              <g key={s.key}>
+                <polyline fill="none" stroke={s.color} strokeWidth={2.2} strokeDasharray={s.dash} strokeLinejoin="round" strokeLinecap="round"
                   points={s.points.map(([w, h]) => `${xFor(w)},${yFor(h)}`).join(" ")} />
-                {s.points.map(([w, h], i) => <circle key={i} cx={xFor(w)} cy={yFor(h)} r={2.6} fill={s.color} />)}
+                {s.points.map(([w, h], i) => <circle key={i} cx={xFor(w)} cy={yFor(h)} r={2.2} fill={s.color} />)}
+                {/* treatments sit ON this line's curve → the line tells you the year, the fill tells you the chemical */}
+                {Object.entries(s.apps).map(([wk, label]) => {
+                  const w = +String(wk).replace(/\D/g, ""), h = heightAt(s, w); if (h == null) return null;
+                  return <circle key={wk} cx={xFor(w)} cy={yFor(h)} r={5} fill={appColorFor(label)} stroke={s.color} strokeWidth={2}><title>{`${s.label} · WK${w} · ${label}`}</title></circle>;
+                })}
               </g>
             ))}
           </svg>
         </div>
       )}
 
-      {/* color legend for application types */}
+      {/* legend: lines (season × house) + application-dot colors */}
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 8, alignItems: "center" }}>
+        {all.filter(s => !off[s.key]).map(s => (
+          <span key={s.key} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 800, color: C.dark }}>
+            <svg width="18" height="8"><line x1="0" y1="4" x2="18" y2="4" stroke={s.color} strokeWidth="2.4" strokeDasharray={s.dash} /></svg>{s.label}</span>
+        ))}
+      </div>
       {appTypes.length > 0 && (
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 8 }}>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 6 }}>
+          <span style={{ fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: .4 }}>Treatment ●</span>
           {appTypes.map(lbl => (
             <span key={lbl} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, color: "#3a2e42" }}>
-              <span style={{ width: 11, height: 11, borderRadius: 3, background: appColorFor(lbl), border: "1px solid rgba(0,0,0,.15)" }} />{lbl}
+              <span style={{ width: 12, height: 12, borderRadius: "50%", background: appColorFor(lbl), border: "1.5px solid #888" }} />{lbl}
             </span>
           ))}
         </div>
       )}
-      {/* per-season application timeline */}
-      {markers.length > 0 && (
+      {/* application timeline grouped by line (season · house) */}
+      {series.some(s => Object.keys(s.apps).length) && (
         <div style={{ marginTop: 10, background: "#faf7fc", border: `1px solid #ece2f2`, borderRadius: 10, padding: "9px 12px" }}>
-          <div style={{ fontSize: 10.5, fontWeight: 800, color: C.plum, textTransform: "uppercase", letterSpacing: .4, marginBottom: 4 }}>▽ Applications, week by week</div>
-          {markers.slice().sort((a, b) => (a.year.localeCompare(b.year)) || (a.week - b.week)).map((m, i) => (
-            <div key={i} style={{ fontSize: 12.5, color: "#3a2e42", marginTop: 2, ...wrap }}>
-              <span style={{ fontWeight: 800, color: colorForYear(m.year) }}>{m.year}</span> · WK{m.week} — <span style={{ fontWeight: 700, color: m.color }}>■</span> {m.label}
+          <div style={{ fontSize: 10.5, fontWeight: 800, color: C.plum, textTransform: "uppercase", letterSpacing: .4, marginBottom: 4 }}>Applications, week by week</div>
+          {series.filter(s => Object.keys(s.apps).length).map(s => (
+            <div key={s.key} style={{ marginTop: 4 }}>
+              <span style={{ fontWeight: 800, color: s.color, fontSize: 12 }}>{s.label}:</span>{" "}
+              {Object.entries(s.apps).sort((a, b) => +a[0].replace(/\D/g, "") - +b[0].replace(/\D/g, "")).map(([wk, label], i) => (
+                <span key={wk} style={{ fontSize: 12, color: "#3a2e42" }}>{i ? " · " : " "}WK{wk.replace(/\D/g, "")} <span style={{ color: appColorFor(label) }}>●</span></span>
+              ))}
             </div>
           ))}
         </div>
@@ -300,7 +340,7 @@ function GrowthChart({ refs }) {
         </div>
       )}
       <div style={{ fontSize: 11.5, color: C.muted, marginTop: 10, lineHeight: 1.4 }}>
-        Each line is a season's weekly heights for <strong>{variety}</strong>; the dashed ▽ marks are the applications from the color-coded Heights sheet (color = what was applied). Toggle seasons to compare — as {new Date().getFullYear()} heights are logged they'll overlay here automatically.
+        Each line is one season × greenhouse of weekly heights for <strong>{variety}</strong>. The bigger <strong>colored dots sit on the line they belong to</strong> — the line's color/style tells you the season &amp; house, the dot's fill tells you the treatment. Tap a chip to show/hide a line.
       </div>
     </div>
   );
@@ -595,14 +635,21 @@ export default function TreatmentPlan({ onBack, onGoToGrowing, responsesOnly = f
           })}
         </>)}
 
-        {view === "reference" && (<>
-          <div style={{ background: "#eef6e7", border: `1px solid ${C.light}`, borderRadius: 10, padding: "10px 12px", fontSize: 12.5, color: "#2e3d28", marginBottom: 14 }}>
-            How last year's <strong>{crop.toLowerCase()}s</strong> sized up, variety by variety — the <strong>weekly heights</strong>, the <strong>drench rate</strong> for that pot size, grower notes, and photos of how big they actually were. Use it to judge when to treat this year. Tap a photo to enlarge.
-          </div>
-          {[...refs].sort((a, b) => String(a.location || "~").localeCompare(String(b.location || "~")) || (a.sort - b.sort)).map(r => (
-            <VarietyRefCard key={r.id} rec={r} onZoom={(photos, i) => setRefZoom({ photos, i })} />
-          ))}
-        </>)}
+        {view === "reference" && (() => {
+          const refYears = [...new Set(refs.map(r => String(r.year)))].sort();
+          const yearColor = y => YEAR_PALETTE[refYears.indexOf(String(y)) % YEAR_PALETTE.length];
+          const saveRefNote = async (id, notes) => { await sb.from("variety_reference").update({ notes }).eq("id", id); setRefs(rs => rs.map(r => r.id === id ? { ...r, notes } : r)); };
+          const byVar = {}; refs.forEach(r => { (byVar[r.variety] = byVar[r.variety] || []).push(r); });
+          const groups = Object.keys(byVar).sort((a, b) => a.localeCompare(b));
+          return (<>
+            <div style={{ background: "#eef6e7", border: `1px solid ${C.light}`, borderRadius: 10, padding: "10px 12px", fontSize: 12.5, color: "#2e3d28", marginBottom: 14 }}>
+              How the <strong>{crop.toLowerCase()}s</strong> sized up, variety by variety. Each row shows which <strong>seasons</strong> you grew it (the year badges). <strong>Tap a variety to drill in</strong> — see each season &amp; greenhouse, the weekly heights, treatments, photos, and <strong>add your own notes</strong>. Tap a photo to enlarge.
+            </div>
+            {groups.map(v => (
+              <VarietyGroup key={v} variety={v} rows={byVar[v]} yearColor={yearColor} onZoom={(photos, i) => setRefZoom({ photos, i })} onSaveNote={saveRefNote} />
+            ))}
+          </>);
+        })()}
 
         {view === "growth" && (<>
           <div style={{ background: "#eef6e7", border: `1px solid ${C.light}`, borderRadius: 10, padding: "10px 12px", fontSize: 12.5, color: "#2e3d28", marginBottom: 14 }}>
