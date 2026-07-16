@@ -179,6 +179,146 @@ function RefLightbox({ photos, index, onClose, onIndex }) {
   );
 }
 
+// ── Growth curve: pick a variety, overlay seasons, mark the growth-regulator application ──
+const YEAR_PALETTE = ["#2e7d32", "#e89a3a", "#4a90d9", "#8e5aa8", "#d94f3d", "#0f9d8f"];
+const GENERIC_COLORS = new Set(["red", "white", "pink", "yellow", "rose", "peach", "orange", "gold", "copper", "fusion", "marble", "reds", "whites"]);
+const nameToks = v => String(v || "").toLowerCase().replace(/[0-9."/]+/g, " ").replace(/\bbloom\b/g, " ").split(/\s+/).filter(w => w.length > 2 && !GENERIC_COLORS.has(w));
+const inchOf = v => { const m = String(v).match(/(\d+(?:\.\d+)?)\s*"/); return m ? m[1] : null; };
+const bloomOf = v => { const m = String(v).match(/(\d+)\s*bloom/i); return m ? m[1] : null; };
+const segHasSize = s => /\d\s*"|\bbloom\b/i.test(s);
+// does a text segment's size include this variety's size? (inch w/ boundary; bloom handles "8/10 bloom" for both 8 & 10)
+const segMatchesSize = (seg, variety) => {
+  const inch = inchOf(variety); if (inch && new RegExp("(^|[^0-9.])" + inch.replace(".", "\\.") + '\\s*"').test(seg)) return true;
+  const bl = bloomOf(variety); if (bl && (new RegExp("(^|[^0-9])" + bl + "\\s*(?:/\\d+\\s*)?bloom").test(seg) || new RegExp("/\\s*" + bl + "\\s*bloom").test(seg))) return true;
+  return false;
+};
+// Does a treatment's crop_detail apply to this variety? Segment-aware: a named+sized segment ("prestigious red 6.5\"")
+// only hits its own size; a size-wide segment ("all 6.5\"") hits every variety of that size that isn't "except"-ed.
+// `allNames` = every distinctive variety-name token in the crop, so we can tell "another variety" from "this one".
+const treatmentHitsVariety = (cropDetail, variety, allNames) => {
+  const ntV = nameToks(variety);
+  for (const raw of String(cropDetail || "").toLowerCase().split(/[,;]/)) {
+    const seg = raw.trim(); if (!seg) continue;
+    const exceptAt = seg.indexOf("except");
+    const positive = exceptAt >= 0 ? seg.slice(0, exceptAt) : seg;
+    const exclusion = exceptAt >= 0 ? seg.slice(exceptAt) : "";
+    if (ntV.length && ntV.some(w => exclusion.includes(w))) continue;      // this variety explicitly excepted
+    const named = ntV.length > 0 && ntV.some(w => positive.includes(w));
+    const otherName = [...allNames].some(w => !ntV.includes(w) && positive.includes(w));
+    const sizeM = segMatchesSize(positive, variety);
+    if (named && (!segHasSize(positive) || sizeM)) return true;            // named for us, size-consistent
+    if (sizeM && !otherName) return true;                                  // size-wide ("all 6.5\"") and not about another variety
+  }
+  return false;
+};
+
+function GrowthChart({ refs, recs }) {
+  const varieties = [...new Set(refs.map(r => r.variety).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const [variety, setVariety] = useState("");
+  const [selYears, setSelYears] = useState([]);
+  useEffect(() => { if (varieties.length && !varieties.includes(variety)) setVariety(varieties[0]); }, [varieties, variety]);
+
+  const forVar = refs.filter(r => r.variety === variety);
+  const yearsForVar = [...new Set(forVar.map(r => String(r.year)))].sort();
+  const allYears = [...new Set(refs.map(r => String(r.year)))].sort();
+  const colorForYear = y => YEAR_PALETTE[allYears.indexOf(String(y)) % YEAR_PALETTE.length];
+  useEffect(() => { setSelYears(yearsForVar); /* reset to all seasons on variety change */ }, [variety, refs.length]); // eslint wants yearsForVar; intentionally keyed on variety
+
+  // series (one per selected season) + growth-regulator markers matched to this variety
+  const series = forVar.filter(r => selYears.includes(String(r.year))).map(r => ({
+    year: String(r.year),
+    color: colorForYear(r.year),
+    points: Object.entries(r.heights || {}).map(([k, v]) => [+String(k).replace(/\D/g, ""), +v]).filter(([w, h]) => w && !isNaN(h)).sort((a, b) => a[0] - b[0]),
+  })).filter(s => s.points.length);
+  const allNames = new Set(refs.flatMap(r => nameToks(r.variety)));
+  const markers = recs.filter(r => isPGR(r.application) && selYears.includes(String(r.rec_date).slice(0, 4)) && treatmentHitsVariety(r.crop_detail, variety, allNames))
+    .map(r => ({ year: String(r.rec_date).slice(0, 4), week: isoWeek(r.rec_date).week, date: r.rec_date, label: [r.application, r.rates].filter(Boolean).join(" "), color: colorForYear(String(r.rec_date).slice(0, 4)) }));
+
+  const allW = [...series.flatMap(s => s.points.map(p => p[0])), ...markers.map(m => m.week)];
+  const allH = series.flatMap(s => s.points.map(p => p[1]));
+  const wkMin = allW.length ? Math.min(...allW) : 32, wkMax = allW.length ? Math.max(...allW) : 46;
+  const yMax = Math.max(10, Math.ceil((allH.length ? Math.max(...allH) : 10) / 5) * 5);
+  const W = 700, H = 340, padL = 40, padR = 16, padT = 16, padB = 46;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const xFor = w => padL + (wkMax === wkMin ? plotW / 2 : ((w - wkMin) / (wkMax - wkMin)) * plotW);
+  const yFor = h => padT + plotH - (h / yMax) * plotH;
+  const yTicks = []; for (let t = 0; t <= yMax; t += 5) yTicks.push(t);
+  const weeks = []; for (let w = wkMin; w <= wkMax; w++) weeks.push(w);
+
+  return (
+    <div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
+        <select value={variety} onChange={e => setVariety(e.target.value)}
+          style={{ padding: "10px 12px", borderRadius: 10, border: `1.5px solid ${C.border}`, fontSize: 14.5, fontWeight: 800, color: C.dark, background: "#fff", fontFamily: "inherit" }}>
+          {varieties.map(v => <option key={v} value={v}>{v}</option>)}
+        </select>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+          <span style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: .4 }}>Seasons:</span>
+          {yearsForVar.map(y => {
+            const on = selYears.includes(y);
+            return <button key={y} onClick={() => setSelYears(on ? selYears.filter(x => x !== y) : [...selYears, y])}
+              style={{ display: "flex", alignItems: "center", gap: 5, border: `1.5px solid ${on ? colorForYear(y) : C.border}`, background: on ? colorForYear(y) : "#fff", color: on ? "#fff" : C.muted, borderRadius: 999, padding: "5px 12px", fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+              <span style={{ width: 8, height: 8, borderRadius: 2, background: on ? "#fff" : colorForYear(y) }} />{y}</button>;
+          })}
+        </div>
+      </div>
+
+      {series.length === 0 ? (
+        <div style={{ color: C.muted, fontSize: 13, padding: "24px 0", textAlign: "center" }}>No height data for the selected season(s).</div>
+      ) : (
+        <div style={{ overflowX: "auto", background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: "6px 4px" }}>
+          <svg width={W} height={H} style={{ display: "block" }}>
+            {yTicks.map(t => (
+              <g key={t}>
+                <line x1={padL} y1={yFor(t)} x2={W - padR} y2={yFor(t)} stroke={t === 0 ? C.muted : "#eef2ea"} strokeWidth={1} />
+                <text x={padL - 6} y={yFor(t) + 3.5} textAnchor="end" fontSize="10" fill={C.muted}>{t}″</text>
+              </g>
+            ))}
+            {weeks.map(w => (
+              <text key={w} x={xFor(w)} y={H - padB + 15} textAnchor="middle" fontSize="9.5" fill={C.muted}>{w}</text>
+            ))}
+            <text x={padL + plotW / 2} y={H - 6} textAnchor="middle" fontSize="10.5" fontWeight="800" fill={C.muted}>Week of year</text>
+            {markers.map((m, i) => (
+              <g key={i}>
+                <line x1={xFor(m.week)} y1={padT} x2={xFor(m.week)} y2={padT + plotH} stroke={m.color} strokeWidth={1.4} strokeDasharray="4 3" opacity={0.7} />
+                <polygon points={`${xFor(m.week) - 4},${padT} ${xFor(m.week) + 4},${padT} ${xFor(m.week)},${padT + 6}`} fill={m.color} />
+              </g>
+            ))}
+            {series.map(s => (
+              <g key={s.year}>
+                <polyline fill="none" stroke={s.color} strokeWidth={2.4} strokeLinejoin="round" strokeLinecap="round"
+                  points={s.points.map(([w, h]) => `${xFor(w)},${yFor(h)}`).join(" ")} />
+                {s.points.map(([w, h], i) => <circle key={i} cx={xFor(w)} cy={yFor(h)} r={2.6} fill={s.color} />)}
+              </g>
+            ))}
+          </svg>
+        </div>
+      )}
+
+      {/* legend + regulator applications + reference */}
+      {markers.length > 0 && (
+        <div style={{ marginTop: 10, background: "#f5eff7", border: `1px solid #e2d3ec`, borderRadius: 10, padding: "9px 12px" }}>
+          <div style={{ fontSize: 10.5, fontWeight: 800, color: C.plum, textTransform: "uppercase", letterSpacing: .4, marginBottom: 4 }}>▽ Growth-regulator applications</div>
+          {markers.sort((a, b) => a.date.localeCompare(b.date)).map((m, i) => (
+            <div key={i} style={{ fontSize: 12.5, color: "#3a2e42", marginTop: 2, ...wrap }}>
+              <span style={{ fontWeight: 800, color: m.color }}>{m.year}</span> · WK{m.week} ({fmtDate(m.date)}) — {m.label}
+            </div>
+          ))}
+        </div>
+      )}
+      {forVar[0] && (forVar[0].drench_rate || forVar[0].notes) && (
+        <div style={{ fontSize: 12, color: "#4a5a44", marginTop: 8, lineHeight: 1.45, ...wrap }}>
+          {forVar[0].drench_rate && <span style={{ fontWeight: 800 }}>Drench {forVar[0].drench_rate}. </span>}
+          {forVar[0].notes && <>📝 {forVar[0].notes}</>}
+        </div>
+      )}
+      <div style={{ fontSize: 11.5, color: C.muted, marginTop: 10, lineHeight: 1.4 }}>
+        Each line is a season's weekly heights for <strong>{variety}</strong>; the dashed ▽ marks show when it got CCC / Piccolo. Toggle seasons to compare — as {new Date().getFullYear()} heights are logged they'll overlay here automatically.
+      </div>
+    </div>
+  );
+}
+
 export default function TreatmentPlan({ onBack, onGoToGrowing, responsesOnly = false }) {
   const sb = getSupabase();
   const [crop, setCrop] = useState("Mum");
@@ -417,8 +557,8 @@ export default function TreatmentPlan({ onBack, onGoToGrowing, responsesOnly = f
 
         {(!responsesOnly || refs.length > 0) && (
           <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-            {[...(responsesOnly ? [] : [["plan", "🌼 Plan"]]), ["responses", "📸 Responses"], ...(refs.length ? [["reference", "📏 Sizes"]] : [])].map(([id, label]) => (
-              <button key={id} onClick={() => setView(id)} style={{ flex: 1, background: view === id ? C.dark : "#fff", color: view === id ? "#c8e6b8" : C.muted, border: `1.5px solid ${view === id ? C.dark : C.border}`, borderRadius: 10, padding: "10px 12px", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>{label}{id === "responses" && completedRecs.length > 0 ? ` (${completedRecs.length})` : ""}{id === "reference" ? ` (${refs.length})` : ""}</button>
+            {[...(responsesOnly ? [] : [["plan", "🌼 Plan"]]), ["responses", "📸 Responses"], ...(refs.length ? [["reference", "📏 Sizes"], ["growth", "📈 Growth"]] : [])].map(([id, label]) => (
+              <button key={id} onClick={() => setView(id)} style={{ flex: 1, background: view === id ? C.dark : "#fff", color: view === id ? "#c8e6b8" : C.muted, border: `1.5px solid ${view === id ? C.dark : C.border}`, borderRadius: 10, padding: "9px 8px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>{label}{id === "responses" && completedRecs.length > 0 ? ` (${completedRecs.length})` : ""}{id === "reference" ? ` (${refs.length})` : ""}</button>
             ))}
           </div>
         )}
@@ -475,6 +615,13 @@ export default function TreatmentPlan({ onBack, onGoToGrowing, responsesOnly = f
           {[...refs].sort((a, b) => String(a.location || "~").localeCompare(String(b.location || "~")) || (a.sort - b.sort)).map(r => (
             <VarietyRefCard key={r.id} rec={r} onZoom={(photos, i) => setRefZoom({ photos, i })} />
           ))}
+        </>)}
+
+        {view === "growth" && (<>
+          <div style={{ background: "#eef6e7", border: `1px solid ${C.light}`, borderRadius: 10, padding: "10px 12px", fontSize: 12.5, color: "#2e3d28", marginBottom: 14 }}>
+            Pick a variety to see its <strong>height growth over the season</strong>, with the <strong>growth-regulator (CCC / Piccolo) application marked</strong>. Turn seasons on/off to compare years and spot the pattern.
+          </div>
+          <GrowthChart refs={refs} recs={recs} />
         </>)}
       </div>
 
