@@ -236,22 +236,25 @@ function GrowthChart({ refs }) {
     dashIx[year] = dashIx[year] || {}; if (!(location in dashIx[year])) dashIx[year][location] = Object.keys(dashIx[year]).length;
     return { key: year + "·" + location, year, location, apps: r.applications || {},
       points: Object.entries(r.heights || {}).map(([k, v]) => [+String(k).replace(/\D/g, ""), +v]).filter(([w, h]) => w && !isNaN(h)).sort((a, b) => a[0] - b[0]) };
-  }).filter(s => s.points.length).sort((a, b) => a.year.localeCompare(b.year) || a.location.localeCompare(b.location));
+  }).filter(s => s.points.length).sort((a, b) => b.year.localeCompare(a.year) || a.location.localeCompare(b.location)); // most recent season first
   all.forEach(s => { s.color = colorForYear(s.year); s.dash = LINE_DASH[dashIx[s.year][s.location] % LINE_DASH.length]; s.label = s.year + (multiLoc ? " · " + shortLoc(s.location) : ""); });
   const series = all.filter(s => !off[s.key]);
-  const heightAt = (s, w) => { const p = s.points.find(pp => pp[0] === w); return p ? p[1] : null; };
 
   const allW = series.flatMap(s => s.points.map(p => p[0]));
   const allH = series.flatMap(s => s.points.map(p => p[1]));
   const wkMin = allW.length ? Math.min(...allW) : 32, wkMax = allW.length ? Math.max(...allW) : 46;
   const yMax = Math.max(10, Math.ceil((allH.length ? Math.max(...allH) : 10) / 5) * 5);
-  const W = 700, H = 340, padL = 40, padR = 16, padT = 16, padB = 46;
-  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const W = 700, padL = 54, padR = 16, padT = 14, plotH = 200;
+  const plotW = W - padL - padR, axisY = padT + plotH;
+  const laneRows = series.filter(s => Object.keys(s.apps).length);
+  const laneH = 17, bandTop = axisY + 30;
+  const H = bandTop + Math.max(laneRows.length, 1) * laneH + 4;
   const xFor = w => padL + (wkMax === wkMin ? plotW / 2 : ((w - wkMin) / (wkMax - wkMin)) * plotW);
   const yFor = h => padT + plotH - (h / yMax) * plotH;
   const yTicks = []; for (let t = 0; t <= yMax; t += 5) yTicks.push(t);
   const weeks = []; for (let w = wkMin; w <= wkMax; w++) weeks.push(w);
   const appTypes = [...new Set(series.flatMap(s => Object.values(s.apps)))];
+  const laneLabel = s => "'" + s.year.slice(2) + (multiLoc ? " " + shortLoc(s.location).slice(0, 4) : "");
 
   return (
     <div>
@@ -276,28 +279,39 @@ function GrowthChart({ refs }) {
       ) : (
         <div style={{ overflowX: "auto", background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: "6px 4px" }}>
           <svg width={W} height={H} style={{ display: "block" }}>
+            {/* faint week gridlines spanning the plot + treatment band so treatments line up under the curves */}
+            {weeks.map(w => <line key={"g" + w} x1={xFor(w)} y1={padT} x2={xFor(w)} y2={bandTop + laneRows.length * laneH} stroke="#f3f6ef" strokeWidth={1} />)}
             {yTicks.map(t => (
               <g key={t}>
                 <line x1={padL} y1={yFor(t)} x2={W - padR} y2={yFor(t)} stroke={t === 0 ? C.muted : "#eef2ea"} strokeWidth={1} />
                 <text x={padL - 6} y={yFor(t) + 3.5} textAnchor="end" fontSize="10" fill={C.muted}>{t}″</text>
               </g>
             ))}
-            {weeks.map(w => (
-              <text key={w} x={xFor(w)} y={H - padB + 15} textAnchor="middle" fontSize="9.5" fill={C.muted}>{w}</text>
-            ))}
-            <text x={padL + plotW / 2} y={H - 6} textAnchor="middle" fontSize="10.5" fontWeight="800" fill={C.muted}>Week of year</text>
+            {weeks.map(w => <text key={w} x={xFor(w)} y={axisY + 13} textAnchor="middle" fontSize="9" fill={C.muted}>{w}</text>)}
+            <text x={padL - 6} y={axisY + 13} textAnchor="end" fontSize="8.5" fill={C.muted}>wk</text>
+            {/* clean height curves */}
             {series.map(s => (
               <g key={s.key}>
                 <polyline fill="none" stroke={s.color} strokeWidth={2.2} strokeDasharray={s.dash} strokeLinejoin="round" strokeLinecap="round"
                   points={s.points.map(([w, h]) => `${xFor(w)},${yFor(h)}`).join(" ")} />
-                {s.points.map(([w, h], i) => <circle key={i} cx={xFor(w)} cy={yFor(h)} r={2.2} fill={s.color} />)}
-                {/* treatments sit ON this line's curve → the line tells you the year, the fill tells you the chemical */}
-                {Object.entries(s.apps).map(([wk, label]) => {
-                  const w = +String(wk).replace(/\D/g, ""), h = heightAt(s, w); if (h == null) return null;
-                  return <circle key={wk} cx={xFor(w)} cy={yFor(h)} r={5} fill={appColorFor(label)} stroke={s.color} strokeWidth={2}><title>{`${s.label} · WK${w} · ${label}`}</title></circle>;
-                })}
+                {s.points.map(([w, h], i) => <circle key={i} cx={xFor(w)} cy={yFor(h)} r={2} fill={s.color} />)}
               </g>
             ))}
+            {/* treatments — one lane per season, newest on top; each dot's fill = the chemical */}
+            {laneRows.length > 0 && <text x={padL - 6} y={axisY + 26} textAnchor="end" fontSize="8.5" fontWeight="800" fill={C.muted}>Rx</text>}
+            {laneRows.map((s, li) => {
+              const y = bandTop + li * laneH + laneH / 2;
+              return (
+                <g key={s.key}>
+                  <line x1={padL} y1={y} x2={W - padR} y2={y} stroke={s.color} strokeWidth={1} opacity={0.25} />
+                  <text x={padL - 6} y={y + 3.5} textAnchor="end" fontSize="9.5" fontWeight="800" fill={s.color}>{laneLabel(s)}</text>
+                  {Object.entries(s.apps).map(([wk, label]) => {
+                    const w = +String(wk).replace(/\D/g, "");
+                    return <circle key={wk} cx={xFor(w)} cy={y} r={4.2} fill={appColorFor(label)} stroke={s.color} strokeWidth={1.5}><title>{`${s.label} · WK${w} · ${label}`}</title></circle>;
+                  })}
+                </g>
+              );
+            })}
           </svg>
         </div>
       )}
@@ -340,7 +354,7 @@ function GrowthChart({ refs }) {
         </div>
       )}
       <div style={{ fontSize: 11.5, color: C.muted, marginTop: 10, lineHeight: 1.4 }}>
-        Each line is one season × greenhouse of weekly heights for <strong>{variety}</strong>. The bigger <strong>colored dots sit on the line they belong to</strong> — the line's color/style tells you the season &amp; house, the dot's fill tells you the treatment. Tap a chip to show/hide a line.
+        Top: weekly-height lines, one per season × greenhouse (newest first). Below the week axis, the <strong>Rx band</strong> gives each season its own row of <strong>treatment dots</strong> — lined up under the weeks, colored by chemical. Tap a chip to show/hide a line.
       </div>
     </div>
   );
