@@ -1,5 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { getSupabase } from "./supabase";
+
+// Serve a right-sized version of a stored photo via Supabase image transforms (keeps the 4MB original
+// for download). Non-storage URLs pass through untouched.
+export const tx = (url, w, q = 72) => (url && url.includes("/object/public/")) ? url.replace("/object/public/", "/render/image/public/") + `?width=${w}&quality=${q}` : url;
 
 // ── Shared galleries (slideshows + hot lists) behind a public link ──────────────
 export const shareUrlFor = id => `${window.location.origin}/?g=${id}`;
@@ -96,7 +100,7 @@ export function SlideshowBuilder({ photos, createdBy, kind = "slideshow", onClos
                 <span style={{ fontWeight: 800 }}>{i + 1}</span>
                 <button onClick={() => move(i, 1)} style={{ border: "none", background: "none", cursor: "pointer", fontSize: 14, color: "#7a8c74", padding: 0 }}>▼</button>
               </div>
-              <img src={it.url} alt="" style={{ width: 64, height: 64, objectFit: "cover", borderRadius: 8, flexShrink: 0 }} />
+              <img src={tx(it.url, 130, 55)} alt="" loading="lazy" style={{ width: 64, height: 64, objectFit: "cover", borderRadius: 8, flexShrink: 0 }} />
               <textarea value={it.caption} onChange={e => setCap(i, e.target.value)} placeholder="Caption…" rows={2} style={{ flex: 1, padding: "7px 9px", border: "1.5px solid #c8d8c0", borderRadius: 8, fontSize: 12.5, fontFamily: "inherit", resize: "vertical" }} />
               <button onClick={() => removeItem(i)} title="Remove from this share" style={{ background: "none", border: "none", color: "#d94f3d", fontSize: 18, cursor: "pointer", lineHeight: 1 }}>×</button>
             </div>
@@ -113,7 +117,11 @@ export function SlideshowBuilder({ photos, createdBy, kind = "slideshow", onClos
 export function SharedGalleryViewer({ id }) {
   const [g, setG] = useState(null);
   const [err, setErr] = useState(null);
-  const [lightbox, setLightbox] = useState(null);
+  const [idx, setIdx] = useState(0);
+  const [zoom, setZoom] = useState(false);
+  const stripRef = useRef(null);
+  const touchX = useRef(0);
+
   useEffect(() => {
     const sb = getSupabase();
     if (!sb) { setErr("unavailable"); return; }
@@ -121,6 +129,18 @@ export function SharedGalleryViewer({ id }) {
       if (error || !data) setErr("notfound"); else setG(data);
     });
   }, [id]);
+
+  const isHot = g && g.kind === "hotlist";
+  // hot list → newest week first; otherwise the saved order
+  const items = g ? [...(g.items || [])].sort((a, b) => (isHot ? String(b.week || "").localeCompare(String(a.week || "")) : 0) || (a.sort ?? 0) - (b.sort ?? 0)) : [];
+  const active = items[idx] || items[0];
+  const go = d => setIdx(i => (items.length ? (i + d + items.length) % items.length : 0));
+
+  useEffect(() => { if (idx >= items.length && items.length) setIdx(0); }, [items.length, idx]);
+  // preload the neighbours at viewing size so swiping feels instant
+  useEffect(() => { items.slice(Math.max(0, idx - 1), idx + 2).forEach(it => { const im = new Image(); im.src = tx(it.url, 1400, 82); }); }, [idx, items.length]); // preload neighbours; items derived from g
+  useEffect(() => { const h = e => { if (e.key === "ArrowLeft") go(-1); else if (e.key === "ArrowRight") go(1); else if (e.key === "Escape") setZoom(false); }; window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h); });
+  useEffect(() => { const el = stripRef.current && stripRef.current.children[idx]; if (el) el.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" }); }, [idx]);
 
   const S = { fontFamily: "'DM Sans','Segoe UI',sans-serif", background: C.paper, minHeight: "100vh", color: C.dark };
   if (err) return (
@@ -130,65 +150,64 @@ export function SharedGalleryViewer({ id }) {
   );
   if (!g) return <div style={{ ...S, display: "flex", alignItems: "center", justifyContent: "center", color: C.muted }}>Loading…</div>;
 
-  const items = [...(g.items || [])].sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0));
-  const isHot = g.kind === "hotlist";
-  // hot list → group by week (newest first); slideshow/personalized → single list
-  const groups = [];
-  if (isHot) {
-    const byWeek = {};
-    items.forEach(it => { const w = it.week || "—"; (byWeek[w] = byWeek[w] || []).push(it); });
-    Object.keys(byWeek).sort().reverse().forEach((w, i) => groups.push({ week: w, latest: i === 0, items: byWeek[w] }));
-  } else groups.push({ items });
-
-  const Card = it => (
-    <div key={it.id} style={{ background: "#fff", borderRadius: 16, overflow: "hidden", border: "1px solid #ece7da", boxShadow: "0 2px 14px rgba(30,45,26,.06)", marginBottom: 18 }}>
-      <img src={it.url} alt={it.caption || ""} onClick={() => setLightbox(it.url)}
-        style={{ width: "100%", height: "auto", display: "block", cursor: "zoom-in" }} />
-      {it.caption && <div style={{ padding: "14px 18px", fontSize: 16, lineHeight: 1.5, color: "#2e3d28", ...wrap }}>{it.caption}</div>}
-    </div>
-  );
-
   return (
     <div style={S}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;600;700;800&display=swap" rel="stylesheet" />
-      {/* Brand bar */}
       <div style={{ background: C.dark, padding: "16px 20px", display: "flex", alignItems: "center", gap: 12 }}>
         <img src="/favicon-512.png" alt="" style={{ width: 40, height: 40, borderRadius: 9 }} />
         <div style={{ color: C.cream, fontWeight: 800, fontSize: 15, letterSpacing: .3 }}>Hoosier Boy Greenhouse</div>
       </div>
 
-      <div style={{ maxWidth: 680, margin: "0 auto", padding: "26px 16px 60px" }}>
-        {/* Title block */}
-        <div style={{ marginBottom: 22 }}>
+      <div style={{ maxWidth: 760, margin: "0 auto", padding: "24px 14px 54px" }}>
+        <div style={{ marginBottom: 18 }}>
           {isHot && <div style={{ display: "inline-block", background: "#fdecef", color: "#c0392b", fontWeight: 800, fontSize: 12, padding: "4px 12px", borderRadius: 999, marginBottom: 10 }}>🔥 HOT LIST</div>}
-          <div style={{ fontFamily: "'DM Serif Display',Georgia,serif", fontSize: 34, lineHeight: 1.12, color: C.dark, ...wrap }}>{g.title || (isHot ? "Hot List" : "Selections")}</div>
+          <div style={{ fontFamily: "'DM Serif Display',Georgia,serif", fontSize: 32, lineHeight: 1.12, color: C.dark, ...wrap }}>{g.title || (isHot ? "Hot List" : "Selections")}</div>
           {g.recipient && <div style={{ fontSize: 15, color: C.light, fontWeight: 800, marginTop: 8 }}>Prepared for {g.recipient}</div>}
           {g.subtitle && <div style={{ fontSize: 14, color: C.muted, marginTop: 6, lineHeight: 1.5, ...wrap }}>{g.subtitle}</div>}
           <div style={{ fontSize: 12.5, color: "#a9b3a0", marginTop: 8 }}>{items.length} item{items.length !== 1 ? "s" : ""} · {fmtDate(g.updated_at || g.created_at)}</div>
         </div>
 
-        {groups.map((grp, gi) => (
-          <div key={gi}>
-            {isHot && (
-              <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "22px 0 12px" }}>
-                <div style={{ fontSize: 13, fontWeight: 800, color: grp.latest ? "#c0392b" : C.muted, textTransform: "uppercase", letterSpacing: .6 }}>
-                  {grp.latest ? "This week" : (grp.week === "—" ? "Earlier" : weekLabel(grp.week))}
-                </div>
-                <div style={{ flex: 1, height: 1, background: "#e6e0d3" }} />
-              </div>
-            )}
-            {grp.items.map(Card)}
+        {active && (<>
+          {/* Stage — one right-sized image at a time (tap for full quality) */}
+          <div style={{ position: "relative", background: "#fff", borderRadius: 16, overflow: "hidden", border: "1px solid #ece7da", boxShadow: "0 2px 16px rgba(30,45,26,.07)" }}>
+            <div onTouchStart={e => { touchX.current = e.touches[0].clientX; }} onTouchEnd={e => { const dx = e.changedTouches[0].clientX - touchX.current; if (Math.abs(dx) > 45) go(dx < 0 ? 1 : -1); }}
+              style={{ position: "relative", width: "100%", aspectRatio: "4 / 3", background: "#f3f1ea", cursor: "zoom-in" }} onClick={() => setZoom(true)}>
+              <img key={active.id} src={tx(active.url, 1400, 82)} alt={active.caption || ""} loading="eager" decoding="async"
+                style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }} />
+              {isHot && active.week && <div style={{ position: "absolute", top: 10, left: 10, background: "rgba(192,57,43,.92)", color: "#fff", fontSize: 11, fontWeight: 800, padding: "3px 10px", borderRadius: 999 }}>{weekLabel(active.week)}</div>}
+            </div>
+            {items.length > 1 && <>
+              <div onClick={() => go(-1)} style={{ position: "absolute", left: 6, top: "50%", transform: "translateY(-50%)", width: 38, height: 38, borderRadius: "50%", background: "rgba(255,255,255,.85)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, color: C.dark, cursor: "pointer", boxShadow: "0 1px 5px rgba(0,0,0,.2)", userSelect: "none" }}>‹</div>
+              <div onClick={() => go(1)} style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", width: 38, height: 38, borderRadius: "50%", background: "rgba(255,255,255,.85)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, color: C.dark, cursor: "pointer", boxShadow: "0 1px 5px rgba(0,0,0,.2)", userSelect: "none" }}>›</div>
+              <div style={{ position: "absolute", bottom: 8, right: 10, background: "rgba(30,45,26,.7)", color: "#fff", fontSize: 11, fontWeight: 800, padding: "2px 9px", borderRadius: 999 }}>{idx + 1} / {items.length}</div>
+            </>}
           </div>
-        ))}
+          {active.caption && <div style={{ padding: "12px 4px 0", fontSize: 16, lineHeight: 1.5, color: "#2e3d28", ...wrap }}>{active.caption}</div>}
+
+          {/* Thumbnail strip — tiny, lazy-loaded; tap to jump */}
+          {items.length > 1 && (
+            <div ref={stripRef} style={{ display: "flex", gap: 8, overflowX: "auto", marginTop: 14, paddingBottom: 4, WebkitOverflowScrolling: "touch" }}>
+              {items.map((it, i) => (
+                <button key={it.id} onClick={() => setIdx(i)} style={{ flex: "0 0 auto", padding: 0, border: `2.5px solid ${i === idx ? C.light : "transparent"}`, borderRadius: 10, background: "none", cursor: "pointer", lineHeight: 0 }}>
+                  <img src={tx(it.url, 150, 45)} alt="" loading="lazy" decoding="async"
+                    style={{ width: 62, height: 62, objectFit: "cover", borderRadius: 8, opacity: i === idx ? 1 : .72, display: "block" }} />
+                </button>
+              ))}
+            </div>
+          )}
+        </>)}
 
         <div style={{ textAlign: "center", color: "#a9b3a0", fontSize: 12, marginTop: 34, lineHeight: 1.6 }}>
           Hoosier Boy Greenhouse · Indianapolis<br />Questions? Reach out to your sales rep.
         </div>
       </div>
 
-      {lightbox && (
-        <div onClick={() => setLightbox(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.9)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, cursor: "zoom-out" }}>
-          <img src={lightbox} alt="" style={{ maxWidth: "100%", maxHeight: "92vh", objectFit: "contain", borderRadius: 8 }} />
+      {zoom && active && (
+        <div onClick={() => setZoom(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.92)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 14, cursor: "zoom-out" }}>
+          <img src={tx(active.url, 2000, 88)} alt="" onTouchStart={e => { touchX.current = e.touches[0].clientX; }} onTouchEnd={e => { const dx = e.changedTouches[0].clientX - touchX.current; if (Math.abs(dx) > 45) go(dx < 0 ? 1 : -1); }}
+            style={{ maxWidth: "100%", maxHeight: "92vh", objectFit: "contain", borderRadius: 8 }} onClick={e => e.stopPropagation()} />
+          <a href={active.url} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}
+            style={{ position: "absolute", bottom: 16, right: 16, background: "rgba(255,255,255,.9)", color: C.dark, fontSize: 12.5, fontWeight: 800, padding: "7px 13px", borderRadius: 999, textDecoration: "none" }}>⬇ Full quality</a>
         </div>
       )}
     </div>

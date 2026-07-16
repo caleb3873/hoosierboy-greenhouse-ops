@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { getSupabase } from "./supabase";
 import { useAuth } from "./Auth";
-import { createGallery, updateGallery, shareUrlFor } from "./Sharing";
+import { createGallery, updateGallery, shareUrlFor, tx } from "./Sharing";
 import { compressImage } from "./ManagerTasksView";
 
 const C = { dark: "#1e2d1a", cream: "#c8e6b8", light: "#7fb069", muted: "#7a8c74", border: "#e0ead8", red: "#c0392b" };
@@ -135,7 +135,7 @@ function HotListEditor({ gallery, displayName, onBack, onChanged }) {
 
   const tile = it => (
     <div key={it.id} style={{ background: "#fff", border: `1px solid ${C.border}`, borderRadius: 10, overflow: "hidden", marginBottom: 8 }}>
-      {it.url && <img src={it.url} alt="" style={{ width: "100%", maxHeight: 220, objectFit: "cover", display: "block" }} />}
+      {it.url && <img src={tx(it.url, 700, 68)} alt="" loading="lazy" style={{ width: "100%", maxHeight: 220, objectFit: "cover", display: "block" }} />}
       <div style={{ padding: 8 }}>
         <textarea value={it.caption || ""} onChange={e => setCaption(it.id, e.target.value)} placeholder="Comment about this product…" rows={2}
           style={{ width: "100%", boxSizing: "border-box", padding: "7px 9px", border: "1.5px solid #c8d8c0", borderRadius: 8, fontSize: 12.5, fontFamily: "inherit", resize: "vertical" }} />
