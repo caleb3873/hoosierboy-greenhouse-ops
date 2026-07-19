@@ -27,8 +27,11 @@ export async function ensureRenditions(galleryId) {
       const thumb = await compressImage(new File([blob], "p.jpg", { type: blob.type || "image/jpeg" }), 240, 0.68);
       const up = async (suffix, data) => {
         const p = `${base}__${suffix}.jpg`;
-        const { error } = await sb.storage.from(sp.bucket).upload(p, data, { contentType: "image/jpeg", upsert: true });
-        return error ? null : sb.storage.from(sp.bucket).getPublicUrl(p).data.publicUrl;
+        const pub = sb.storage.from(sp.bucket).getPublicUrl(p).data.publicUrl;
+        // bucket RLS allows INSERT but not UPDATE — reuse an existing rendition (shared photos)
+        try { if ((await fetch(pub, { method: "HEAD" })).ok) return pub; } catch { /* fall through */ }
+        const { error } = await sb.storage.from(sp.bucket).upload(p, data, { contentType: "image/jpeg" });
+        return error ? null : pub;
       };
       const v = await up("view", view), t = await up("thumb", thumb);
       if (v) { it.view = v; changed = true; }

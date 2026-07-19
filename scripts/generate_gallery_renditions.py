@@ -30,9 +30,13 @@ def storage_path(url):
     return (m.group(1), m.group(2)) if m else (None, None)
 
 def upload(bucket, path, data):
-    r = requests.post(f"{URL}/storage/v1/object/{bucket}/{path}", headers={**H, "Content-Type": "image/jpeg", "x-upsert": "true"}, data=data)
+    pub = f"{URL}/storage/v1/object/public/{bucket}/{path}"
+    # anon can INSERT but not UPDATE on this bucket — if the rendition already exists (e.g. two
+    # galleries sharing the same photos), reuse it instead of upserting (which 403s).
+    if requests.head(pub, timeout=30).status_code == 200: return pub
+    r = requests.post(f"{URL}/storage/v1/object/{bucket}/{path}", headers={**H, "Content-Type": "image/jpeg"}, data=data)
     if r.status_code not in (200, 201): raise RuntimeError(f"upload {path}: {r.status_code} {r.text[:120]}")
-    return f"{URL}/storage/v1/object/public/{bucket}/{path}"
+    return pub
 
 gals = requests.get(f"{URL}/rest/v1/shared_galleries?select=id,title,items", headers=H).json()
 total = done = skipped = failed = 0
