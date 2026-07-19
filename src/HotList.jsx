@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { getSupabase } from "./supabase";
 import { useAuth } from "./Auth";
-import { createGallery, updateGallery, shareUrlFor, tx } from "./Sharing";
+import { createGallery, updateGallery, shareUrlFor, thumbSrc } from "./Sharing";
 import { compressImage } from "./ManagerTasksView";
 
 const C = { dark: "#1e2d1a", cream: "#c8e6b8", light: "#7fb069", muted: "#7a8c74", border: "#e0ead8", red: "#c0392b" };
@@ -111,14 +111,19 @@ function HotListEditor({ gallery, displayName, onBack, onChanged }) {
     const added = [];
     for (const f of list) {
       const id = uid();
-      let url = null;
+      let url = null, thumb = null;
       try {
         const blob = await compressImage(f);
         const path = `hotlist/${g.id}/${id}.jpg`;
         const { error } = await sb.storage.from("tradeshow-photos").upload(path, blob, { contentType: "image/jpeg", upsert: true });
         if (!error) url = sb.storage.from("tradeshow-photos").getPublicUrl(path).data.publicUrl;
+        // tiny thumb rendition so the shared viewer's strip + placeholders paint instantly
+        const tBlob = await compressImage(f, 240, 0.68);
+        const tPath = `hotlist/${g.id}/${id}__thumb.jpg`;
+        const { error: tErr } = await sb.storage.from("tradeshow-photos").upload(tPath, tBlob, { contentType: "image/jpeg", upsert: true });
+        if (!tErr) thumb = sb.storage.from("tradeshow-photos").getPublicUrl(tPath).data.publicUrl;
       } catch { /* skip */ }
-      added.push({ id, url, caption: list.length === 1 ? (caption || "") : "", week: isHot ? wk : null, sort: (g.items || []).length + added.length, addedBy: displayName || null });
+      added.push({ id, url, view: url, thumb, caption: list.length === 1 ? (caption || "") : "", week: isHot ? wk : null, sort: (g.items || []).length + added.length, addedBy: displayName || null });
     }
     await persist([...(g.items || []), ...added]);
   }
@@ -135,7 +140,7 @@ function HotListEditor({ gallery, displayName, onBack, onChanged }) {
 
   const tile = it => (
     <div key={it.id} style={{ background: "#fff", border: `1px solid ${C.border}`, borderRadius: 10, overflow: "hidden", marginBottom: 8 }}>
-      {it.url && <img src={tx(it.url, 700, 68)} alt="" loading="lazy" style={{ width: "100%", maxHeight: 220, objectFit: "cover", display: "block" }} />}
+      {it.url && <img src={thumbSrc(it)} alt="" loading="lazy" style={{ width: "100%", maxHeight: 220, objectFit: "cover", display: "block" }} />}
       <div style={{ padding: 8 }}>
         <textarea value={it.caption || ""} onChange={e => setCaption(it.id, e.target.value)} placeholder="Comment about this product…" rows={2}
           style={{ width: "100%", boxSizing: "border-box", padding: "7px 9px", border: "1.5px solid #c8d8c0", borderRadius: 8, fontSize: 12.5, fontFamily: "inherit", resize: "vertical" }} />

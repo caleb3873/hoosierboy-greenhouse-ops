@@ -1,9 +1,42 @@
 import { useState, useEffect, useRef } from "react";
 import { getSupabase } from "./supabase";
+import { compressImage } from "./ManagerTasksView";
 
-// Serve a right-sized version of a stored photo via Supabase image transforms (keeps the 4MB original
-// for download). Non-storage URLs pass through untouched.
-export const tx = (url, w, q = 72) => (url && url.includes("/object/public/")) ? url.replace("/object/public/", "/render/image/public/") + `?width=${w}&quality=${q}` : url;
+// ⚠️ Do NOT use the /render/image transform endpoint on this project — it distorts (forces width,
+// keeps height; `height` param 404s). We pre-generate real renditions instead: `view` (~1200px) and
+// `thumb` (~240px) stored next to the original. Fall back to the original URL when absent.
+export const viewSrc = it => it.view || it.url;
+export const thumbSrc = it => it.thumb || it.view || it.url;
+
+const storagePath = url => { const m = String(url || "").match(/\/object\/public\/([^/]+)\/(.+)$/); return m ? { bucket: m[1], path: m[2] } : null; };
+
+// Generate any missing view/thumb renditions for a gallery, client-side (canvas), and save them onto
+// the items. Fire-and-forget after link creation — the viewer falls back to originals until done.
+export async function ensureRenditions(galleryId) {
+  const sb = getSupabase(); if (!sb) return;
+  const { data: g } = await sb.from("shared_galleries").select("items").eq("id", galleryId).single();
+  const items = (g && g.items) || [];
+  let changed = false;
+  for (const it of items) {
+    if (it.view && it.thumb) continue;
+    const sp = storagePath(it.url); if (!sp) continue;
+    try {
+      const blob = await (await fetch(it.url)).blob();
+      const base = sp.path.replace(/\.[a-zA-Z0-9]+$/, "");
+      const view = await compressImage(new File([blob], "p.jpg", { type: blob.type || "image/jpeg" }), 1200, 0.78);
+      const thumb = await compressImage(new File([blob], "p.jpg", { type: blob.type || "image/jpeg" }), 240, 0.68);
+      const up = async (suffix, data) => {
+        const p = `${base}__${suffix}.jpg`;
+        const { error } = await sb.storage.from(sp.bucket).upload(p, data, { contentType: "image/jpeg", upsert: true });
+        return error ? null : sb.storage.from(sp.bucket).getPublicUrl(p).data.publicUrl;
+      };
+      const v = await up("view", view), t = await up("thumb", thumb);
+      if (v) { it.view = v; changed = true; }
+      if (t) { it.thumb = t; changed = true; }
+    } catch { /* keep original as fallback */ }
+  }
+  if (changed) await sb.from("shared_galleries").update({ items, updated_at: new Date().toISOString() }).eq("id", galleryId);
+}
 
 // ── Shared galleries (slideshows + hot lists) behind a public link ──────────────
 export const shareUrlFor = id => `${window.location.origin}/?g=${id}`;
@@ -43,7 +76,7 @@ const weekLabel = w => {
 
 // Builder modal: pick order + captions + who it's for, then create a shareable link.
 export function SlideshowBuilder({ photos, createdBy, kind = "slideshow", onClose }) {
-  const [items, setItems] = useState(() => (photos || []).map(p => ({ id: p.id || crypto.randomUUID(), url: p.url || p.imgData, caption: p.comment || "" })));
+  const [items, setItems] = useState(() => (photos || []).map(p => ({ id: p.id || crypto.randomUUID(), url: p.url || p.imgData, view: p.view || null, thumb: p.thumb || null, caption: p.comment || "" })));
   const [title, setTitle] = useState("");
   const [recipient, setRecipient] = useState("");
   const [subtitle, setSubtitle] = useState("");
@@ -63,6 +96,7 @@ export function SlideshowBuilder({ photos, createdBy, kind = "slideshow", onClos
     try {
       const id = await createGallery({ kind, title: title.trim(), recipient: recipient.trim(), subtitle: subtitle.trim(), items, createdBy });
       setLink(shareUrlFor(id));
+      ensureRenditions(id); // fire-and-forget: generate fast mobile renditions for any photos missing them
     } catch (e) { window.alert("Couldn't create link: " + (e.message || e)); }
     setBusy(false);
   }
@@ -105,7 +139,7 @@ export function SlideshowBuilder({ photos, createdBy, kind = "slideshow", onClos
                 <span style={{ fontWeight: 800 }}>{i + 1}</span>
                 <button onClick={() => move(i, 1)} style={{ border: "none", background: "none", cursor: "pointer", fontSize: 14, color: "#7a8c74", padding: 0 }}>▼</button>
               </div>
-              <img src={tx(it.url, 130, 55)} alt="" loading="lazy" style={{ width: 64, height: 64, objectFit: "cover", borderRadius: 8, flexShrink: 0 }} />
+              <img src={thumbSrc(it)} alt="" loading="lazy" style={{ width: 64, height: 64, objectFit: "cover", borderRadius: 8, flexShrink: 0 }} />
               <textarea value={it.caption} onChange={e => setCap(i, e.target.value)} placeholder="Caption…" rows={2} style={{ flex: 1, padding: "7px 9px", border: "1.5px solid #c8d8c0", borderRadius: 8, fontSize: 12.5, fontFamily: "inherit", resize: "vertical" }} />
               <button onClick={() => removeItem(i)} title="Remove from this share" style={{ background: "none", border: "none", color: "#d94f3d", fontSize: 18, cursor: "pointer", lineHeight: 1 }}>×</button>
             </div>
@@ -165,6 +199,7 @@ export function SharedGalleryViewer({ id }) {
 
   return (
     <div style={S}>
+      <link rel="preconnect" href={(storagePath(active && active.url) && new URL(active.url).origin) || "https://gganxbvtbqheyxvedjko.supabase.co"} crossOrigin="anonymous" />
       <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400&family=Geist:wght@300;400;500;600&display=swap" rel="stylesheet" />
 
       {/* Brand bar — deep pine, blurred, like the retail site header */}
@@ -173,7 +208,7 @@ export function SharedGalleryViewer({ id }) {
         <div style={{ color: "#f2ede4", ...EYEBROW, fontSize: 12.5, letterSpacing: "0.22em" }}>Hoosier Boy</div>
       </div>
 
-      <div style={{ maxWidth: 720, margin: "0 auto", padding: "0 14px 60px" }}>
+      <div style={{ maxWidth: 720, margin: "0 auto", padding: "0 14px calc(60px + env(safe-area-inset-bottom))" }}>
         {/* Cover — editorial title block */}
         <div style={{ textAlign: "center", padding: "42px 8px 30px" }}>
           <div style={{ ...EYEBROW, color: HB.terra }}>{eyebrowText}{weekNow ? ` · ${weekNow}` : ""}</div>
@@ -192,9 +227,11 @@ export function SharedGalleryViewer({ id }) {
           <div style={{ position: "relative", borderRadius: 14, overflow: "hidden", background: HB.pine, boxShadow: "0 18px 44px -18px rgba(22,64,58,.45)" }}>
             <div ref={carRef} onScroll={onScroll} style={{ display: "flex", overflowX: "auto", scrollSnapType: "x mandatory", WebkitOverflowScrolling: "touch", scrollbarWidth: "none" }}>
               {items.map((it, i) => (
-                <div key={it.id} style={{ flex: "0 0 100%", scrollSnapAlign: "center", height: "68vh", maxHeight: 640, minHeight: 320, display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}>
-                  <img src={tx(it.url, 1000, 74)} alt={it.caption || ""} loading={i <= 1 ? "eager" : "lazy"} decoding="async" onClick={() => setZoom(true)}
-                    style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", display: "block", cursor: "zoom-in" }} />
+                <div key={it.id} style={{ flex: "0 0 100%", scrollSnapAlign: "center", height: "68vh", maxHeight: 640, minHeight: 320, display: "flex", alignItems: "center", justifyContent: "center", position: "relative", overflow: "hidden" }}>
+                  {/* ambient blurred placeholder — paints instantly from the tiny thumb while the view loads */}
+                  {it.thumb && <div aria-hidden style={{ position: "absolute", inset: -24, backgroundImage: `url(${it.thumb})`, backgroundSize: "cover", backgroundPosition: "center", filter: "blur(28px) brightness(.62) saturate(1.1)", opacity: .55 }} />}
+                  <img src={viewSrc(it)} alt={it.caption || ""} loading={i <= 1 ? "eager" : "lazy"} fetchPriority={i === 0 ? "high" : undefined} decoding="async" onClick={() => setZoom(true)}
+                    style={{ position: "relative", maxWidth: "100%", maxHeight: "100%", objectFit: "contain", display: "block", cursor: "zoom-in" }} />
                   {isHot && it.week && <div style={{ position: "absolute", top: 12, left: 12, background: HB.terra, color: "#fff", ...EYEBROW, fontSize: 10, padding: "5px 12px", borderRadius: 999 }}>{weekLabel(it.week)}</div>}
                 </div>
               ))}
@@ -216,7 +253,7 @@ export function SharedGalleryViewer({ id }) {
             <div ref={stripRef} style={{ display: "flex", gap: 8, overflowX: "auto", marginTop: 16, paddingBottom: 6, WebkitOverflowScrolling: "touch" }}>
               {items.map((it, i) => (
                 <button key={it.id} onClick={() => goTo(i)} style={{ flex: "0 0 auto", padding: 0, border: `2px solid ${i === idx ? HB.terra : "transparent"}`, borderRadius: 10, background: "none", cursor: "pointer", lineHeight: 0 }}>
-                  <img src={tx(it.url, 140, 45)} alt="" loading="lazy" decoding="async"
+                  <img src={thumbSrc(it)} alt="" loading="lazy" decoding="async"
                     style={{ width: 58, height: 58, objectFit: "cover", borderRadius: 8, opacity: i === idx ? 1 : .55, display: "block", transition: "opacity .2s" }} />
                 </button>
               ))}
@@ -241,7 +278,7 @@ export function SharedGalleryViewer({ id }) {
 
       {zoom && active && (
         <div onClick={() => setZoom(false)} style={{ position: "fixed", inset: 0, background: "rgba(16,30,26,.96)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 14, cursor: "zoom-out" }}>
-          <img src={tx(active.url, 1800, 86)} alt="" style={{ maxWidth: "100%", maxHeight: "92vh", objectFit: "contain", borderRadius: 6 }} onClick={e => e.stopPropagation()} />
+          <img src={active.url} alt="" style={{ maxWidth: "100%", maxHeight: "92vh", objectFit: "contain", borderRadius: 6 }} onClick={e => e.stopPropagation()} />
           <a href={active.url} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}
             style={{ position: "absolute", bottom: 18, right: 18, background: "rgba(250,248,245,.94)", color: HB.forest, fontSize: 12.5, fontWeight: 600, fontFamily: SANS, padding: "8px 15px", borderRadius: 999, textDecoration: "none" }}>⬇ Full quality</a>
         </div>
