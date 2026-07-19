@@ -28,6 +28,11 @@ export async function updateGallery(id, changes) {
 }
 
 const C = { dark: "#1e2d1a", cream: "#c8e6b8", light: "#7fb069", muted: "#7a8c74", paper: "#faf7f0" };
+// hoosierboy.com brand tokens (retail site) — the public viewer wears THIS language, not the ops palette
+const HB = { pine: "#16403A", forest: "#1a4731", terra: "#c2703e", paper: "#faf8f5", border: "#e8e2da", stone: "#6b7570", ink: "#22302a" };
+const SERIF = "'Playfair Display',Georgia,serif";
+const SANS = "'Geist','Inter','Segoe UI',system-ui,sans-serif";
+const EYEBROW = { fontFamily: SANS, textTransform: "uppercase", letterSpacing: "0.16em", fontWeight: 600, fontSize: 11.5 };
 const wrap = { overflowWrap: "anywhere", wordBreak: "break-word" };
 const fmtDate = iso => { try { return new Date(iso).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }); } catch { return ""; } };
 const weekLabel = w => {
@@ -140,74 +145,105 @@ export function SharedGalleryViewer({ id }) {
   useEffect(() => { const h = e => { if (e.key === "ArrowLeft") goTo(Math.max(0, idx - 1)); else if (e.key === "ArrowRight") goTo(Math.min(items.length - 1, idx + 1)); else if (e.key === "Escape") setZoom(false); }; window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h); });
   useEffect(() => { const el = stripRef.current && stripRef.current.children[idx]; if (el) el.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" }); }, [idx]);
 
-  const S = { fontFamily: "'DM Sans','Segoe UI',sans-serif", background: C.paper, minHeight: "100vh", color: C.dark };
+  const S = { fontFamily: SANS, background: HB.paper, minHeight: "100vh", color: HB.ink };
   if (err) return (
-    <div style={{ ...S, display: "flex", alignItems: "center", justifyContent: "center", textAlign: "center", padding: 30 }}>
-      <div><div style={{ fontSize: 44 }}>🌿</div><div style={{ marginTop: 10, color: C.muted }}>This link isn't available anymore.</div></div>
+    <div style={S}>
+      <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400&family=Geist:wght@300;400;500;600&display=swap" rel="stylesheet" />
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", textAlign: "center", padding: 30 }}>
+        <div>
+          <div style={{ fontFamily: SERIF, fontSize: 30, color: HB.forest }}>Hoosier Boy</div>
+          <div style={{ marginTop: 12, color: HB.stone, fontSize: 15 }}>This link isn't available anymore.</div>
+          <a href="https://hoosierboy.com" style={{ display: "inline-block", marginTop: 20, background: HB.terra, color: "#fff", padding: "10px 22px", borderRadius: 8, textDecoration: "none", fontWeight: 600, fontSize: 14 }}>Visit hoosierboy.com</a>
+        </div>
+      </div>
     </div>
   );
-  if (!g) return <div style={{ ...S, display: "flex", alignItems: "center", justifyContent: "center", color: C.muted }}>Loading…</div>;
+  if (!g) return <div style={{ ...S, display: "flex", alignItems: "center", justifyContent: "center", color: HB.stone }}>Loading…</div>;
+
+  const eyebrowText = isHot ? "The Hot List" : "New & Noteworthy";
+  const weekNow = isHot && items[0] && items[0].week ? weekLabel(items[0].week) : null;
 
   return (
     <div style={S}>
-      <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;600;700;800&display=swap" rel="stylesheet" />
-      <div style={{ background: C.dark, padding: "16px 20px", display: "flex", alignItems: "center", gap: 12 }}>
-        <img src="/favicon-512.png" alt="" style={{ width: 40, height: 40, borderRadius: 9 }} />
-        <div style={{ color: C.cream, fontWeight: 800, fontSize: 15, letterSpacing: .3 }}>Hoosier Boy Greenhouse</div>
+      <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400&family=Geist:wght@300;400;500;600&display=swap" rel="stylesheet" />
+
+      {/* Brand bar — deep pine, blurred, like the retail site header */}
+      <div style={{ position: "sticky", top: 0, zIndex: 50, background: "rgba(22,64,58,.95)", backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)", padding: "13px 20px", display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+        <img src="/favicon-512.png" alt="" style={{ width: 26, height: 26, borderRadius: 6 }} />
+        <div style={{ color: "#f2ede4", ...EYEBROW, fontSize: 12.5, letterSpacing: "0.22em" }}>Hoosier Boy</div>
       </div>
 
-      <div style={{ maxWidth: 720, margin: "0 auto", padding: "22px 12px 54px" }}>
-        <div style={{ marginBottom: 16, padding: "0 4px" }}>
-          {isHot && <div style={{ display: "inline-block", background: "#fdecef", color: "#c0392b", fontWeight: 800, fontSize: 12, padding: "4px 12px", borderRadius: 999, marginBottom: 10 }}>🔥 HOT LIST</div>}
-          <div style={{ fontFamily: "'DM Serif Display',Georgia,serif", fontSize: 30, lineHeight: 1.12, color: C.dark, ...wrap }}>{g.title || (isHot ? "Hot List" : "Selections")}</div>
-          {g.recipient && <div style={{ fontSize: 15, color: C.light, fontWeight: 800, marginTop: 8 }}>Prepared for {g.recipient}</div>}
-          {g.subtitle && <div style={{ fontSize: 14, color: C.muted, marginTop: 6, lineHeight: 1.5, ...wrap }}>{g.subtitle}</div>}
-          <div style={{ fontSize: 12.5, color: "#a9b3a0", marginTop: 8 }}>{items.length} item{items.length !== 1 ? "s" : ""} · {fmtDate(g.updated_at || g.created_at)}</div>
+      <div style={{ maxWidth: 720, margin: "0 auto", padding: "0 14px 60px" }}>
+        {/* Cover — editorial title block */}
+        <div style={{ textAlign: "center", padding: "42px 8px 30px" }}>
+          <div style={{ ...EYEBROW, color: HB.terra }}>{eyebrowText}{weekNow ? ` · ${weekNow}` : ""}</div>
+          <h1 style={{ fontFamily: SERIF, fontWeight: 500, fontSize: "clamp(30px, 7vw, 44px)", lineHeight: 1.15, color: HB.forest, margin: "14px 0 0", ...wrap }}>{g.title || (isHot ? "This Week's Picks" : "A Look at What's Coming")}</h1>
+          {g.recipient && <div style={{ fontFamily: SERIF, fontStyle: "italic", fontSize: 17, color: HB.terra, marginTop: 14 }}>Prepared for {g.recipient}</div>}
+          {g.subtitle && <div style={{ fontSize: 15, color: HB.stone, marginTop: 12, lineHeight: 1.65, maxWidth: 480, marginLeft: "auto", marginRight: "auto", ...wrap }}>{g.subtitle}</div>}
+          <div style={{ display: "flex", alignItems: "center", gap: 14, justifyContent: "center", marginTop: 22 }}>
+            <div style={{ width: 44, height: 1, background: HB.border }} />
+            <div style={{ ...EYEBROW, fontSize: 10.5, color: "#a8a094" }}>{items.length} selection{items.length !== 1 ? "s" : ""} · {fmtDate(g.updated_at || g.created_at)}</div>
+            <div style={{ width: 44, height: 1, background: HB.border }} />
+          </div>
         </div>
 
         {active && (<>
-          {/* Native swipe carousel — slides pre-laid-out, portrait-friendly tall stage, lazy-loaded */}
-          <div style={{ position: "relative", borderRadius: 16, overflow: "hidden", background: "#14170f", boxShadow: "0 2px 16px rgba(30,45,26,.12)" }}>
+          {/* Native swipe carousel — portrait-friendly stage on deep pine */}
+          <div style={{ position: "relative", borderRadius: 14, overflow: "hidden", background: HB.pine, boxShadow: "0 18px 44px -18px rgba(22,64,58,.45)" }}>
             <div ref={carRef} onScroll={onScroll} style={{ display: "flex", overflowX: "auto", scrollSnapType: "x mandatory", WebkitOverflowScrolling: "touch", scrollbarWidth: "none" }}>
               {items.map((it, i) => (
-                <div key={it.id} style={{ flex: "0 0 100%", scrollSnapAlign: "center", height: "66vh", maxHeight: 620, minHeight: 300, display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}>
+                <div key={it.id} style={{ flex: "0 0 100%", scrollSnapAlign: "center", height: "68vh", maxHeight: 640, minHeight: 320, display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}>
                   <img src={tx(it.url, 1000, 74)} alt={it.caption || ""} loading={i <= 1 ? "eager" : "lazy"} decoding="async" onClick={() => setZoom(true)}
                     style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", display: "block", cursor: "zoom-in" }} />
-                  {isHot && it.week && <div style={{ position: "absolute", top: 10, left: 10, background: "rgba(192,57,43,.92)", color: "#fff", fontSize: 11, fontWeight: 800, padding: "3px 10px", borderRadius: 999 }}>{weekLabel(it.week)}</div>}
+                  {isHot && it.week && <div style={{ position: "absolute", top: 12, left: 12, background: HB.terra, color: "#fff", ...EYEBROW, fontSize: 10, padding: "5px 12px", borderRadius: 999 }}>{weekLabel(it.week)}</div>}
                 </div>
               ))}
             </div>
             {items.length > 1 && <>
-              {idx > 0 && <div onClick={() => goTo(idx - 1)} style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", width: 40, height: 40, borderRadius: "50%", background: "rgba(255,255,255,.9)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, color: C.dark, cursor: "pointer", boxShadow: "0 1px 6px rgba(0,0,0,.3)", userSelect: "none" }}>‹</div>}
-              {idx < items.length - 1 && <div onClick={() => goTo(idx + 1)} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", width: 40, height: 40, borderRadius: "50%", background: "rgba(255,255,255,.9)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, color: C.dark, cursor: "pointer", boxShadow: "0 1px 6px rgba(0,0,0,.3)", userSelect: "none" }}>›</div>}
-              <div style={{ position: "absolute", bottom: 8, right: 10, background: "rgba(0,0,0,.55)", color: "#fff", fontSize: 11, fontWeight: 800, padding: "2px 9px", borderRadius: 999 }}>{idx + 1} / {items.length}</div>
+              {idx > 0 && <div onClick={() => goTo(idx - 1)} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", width: 40, height: 40, borderRadius: "50%", background: "rgba(250,248,245,.92)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, color: HB.forest, cursor: "pointer", boxShadow: "0 2px 10px rgba(0,0,0,.25)", userSelect: "none" }}>‹</div>}
+              {idx < items.length - 1 && <div onClick={() => goTo(idx + 1)} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", width: 40, height: 40, borderRadius: "50%", background: "rgba(250,248,245,.92)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, color: HB.forest, cursor: "pointer", boxShadow: "0 2px 10px rgba(0,0,0,.25)", userSelect: "none" }}>›</div>}
             </>}
           </div>
-          {active.caption && <div style={{ padding: "12px 6px 0", fontSize: 16, lineHeight: 1.5, color: "#2e3d28", ...wrap }}>{active.caption}</div>}
 
-          {/* Thumbnail strip — tiny, lazy; tap to jump */}
+          {/* Caption plate — numbered like a catalog */}
+          <div style={{ display: "flex", gap: 14, alignItems: "baseline", padding: "16px 6px 0", minHeight: 30 }}>
+            <div style={{ fontFamily: SERIF, fontStyle: "italic", fontSize: 15, color: HB.terra, flexShrink: 0 }}>No. {idx + 1} <span style={{ color: "#c9c2b6" }}>of {items.length}</span></div>
+            {active.caption && <div style={{ fontSize: 15.5, lineHeight: 1.55, color: HB.ink, ...wrap }}>{active.caption}</div>}
+          </div>
+
+          {/* Thumbnail strip */}
           {items.length > 1 && (
-            <div ref={stripRef} style={{ display: "flex", gap: 8, overflowX: "auto", marginTop: 14, paddingBottom: 4, WebkitOverflowScrolling: "touch" }}>
+            <div ref={stripRef} style={{ display: "flex", gap: 8, overflowX: "auto", marginTop: 16, paddingBottom: 6, WebkitOverflowScrolling: "touch" }}>
               {items.map((it, i) => (
-                <button key={it.id} onClick={() => goTo(i)} style={{ flex: "0 0 auto", padding: 0, border: `2.5px solid ${i === idx ? C.light : "transparent"}`, borderRadius: 10, background: "none", cursor: "pointer", lineHeight: 0 }}>
+                <button key={it.id} onClick={() => goTo(i)} style={{ flex: "0 0 auto", padding: 0, border: `2px solid ${i === idx ? HB.terra : "transparent"}`, borderRadius: 10, background: "none", cursor: "pointer", lineHeight: 0 }}>
                   <img src={tx(it.url, 140, 45)} alt="" loading="lazy" decoding="async"
-                    style={{ width: 60, height: 60, objectFit: "cover", borderRadius: 8, opacity: i === idx ? 1 : .68, display: "block" }} />
+                    style={{ width: 58, height: 58, objectFit: "cover", borderRadius: 8, opacity: i === idx ? 1 : .55, display: "block", transition: "opacity .2s" }} />
                 </button>
               ))}
             </div>
           )}
         </>)}
 
-        <div style={{ textAlign: "center", color: "#a9b3a0", fontSize: 12, marginTop: 34, lineHeight: 1.6 }}>
-          Hoosier Boy Greenhouse · Indianapolis<br />Questions? Reach out to your sales rep.
+        {/* Sign-off */}
+        <div style={{ textAlign: "center", marginTop: 52 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 14, justifyContent: "center", marginBottom: 24 }}>
+            <div style={{ width: 60, height: 1, background: HB.border }} />
+            <div style={{ color: HB.terra, fontSize: 14 }}>❦</div>
+            <div style={{ width: 60, height: 1, background: HB.border }} />
+          </div>
+          <div style={{ fontFamily: SERIF, fontSize: 24, color: HB.forest }}>Hoosier Boy</div>
+          <div style={{ ...EYEBROW, fontSize: 10, color: "#a8a094", marginTop: 6 }}>By Schlegel Greenhouse · Indianapolis</div>
+          <div style={{ fontSize: 14, color: HB.stone, marginTop: 18, lineHeight: 1.6 }}>Questions or ready to order?<br />Reach out to your sales rep — we'd love to grow with you.</div>
+          <a href="https://hoosierboy.com" target="_blank" rel="noopener noreferrer"
+            style={{ display: "inline-block", marginTop: 20, background: HB.terra, color: "#fff", padding: "11px 26px", borderRadius: 8, textDecoration: "none", fontWeight: 600, fontSize: 14, boxShadow: "0 6px 18px -6px rgba(194,112,62,.5)" }}>Explore hoosierboy.com</a>
         </div>
       </div>
 
       {zoom && active && (
-        <div onClick={() => setZoom(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.94)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 14, cursor: "zoom-out" }}>
-          <img src={tx(active.url, 1800, 86)} alt="" style={{ maxWidth: "100%", maxHeight: "92vh", objectFit: "contain", borderRadius: 8 }} onClick={e => e.stopPropagation()} />
+        <div onClick={() => setZoom(false)} style={{ position: "fixed", inset: 0, background: "rgba(16,30,26,.96)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 14, cursor: "zoom-out" }}>
+          <img src={tx(active.url, 1800, 86)} alt="" style={{ maxWidth: "100%", maxHeight: "92vh", objectFit: "contain", borderRadius: 6 }} onClick={e => e.stopPropagation()} />
           <a href={active.url} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}
-            style={{ position: "absolute", bottom: 16, right: 16, background: "rgba(255,255,255,.9)", color: C.dark, fontSize: 12.5, fontWeight: 800, padding: "7px 13px", borderRadius: 999, textDecoration: "none" }}>⬇ Full quality</a>
+            style={{ position: "absolute", bottom: 18, right: 18, background: "rgba(250,248,245,.94)", color: HB.forest, fontSize: 12.5, fontWeight: 600, fontFamily: SANS, padding: "8px 15px", borderRadius: 999, textDecoration: "none" }}>⬇ Full quality</a>
         </div>
       )}
     </div>
