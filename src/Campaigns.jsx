@@ -152,11 +152,15 @@ function Composer({ sb, me, onBack }) {
     for (let i = 0; i < recips.length; i += 500) await sb.from("campaign_recipients").insert(recips.slice(i, i + 500));
     return c;
   }
+  async function authHeaders() {
+    const { data } = await sb.auth.getSession();
+    return { "Content-Type": "application/json", Authorization: `Bearer ${data?.session?.access_token || ""}` };
+  }
   async function sendTest() {
     if (!me.email) { window.alert("No staff email on your login."); return; }
     setBusy("test");
     try {
-      const r = await fetch("/api/campaign-test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to: me.email, subject, html: effHtml }) });
+      const r = await fetch("/api/campaign-test", { method: "POST", headers: await authHeaders(), body: JSON.stringify({ to: me.email, subject, html: effHtml }) });
       const out = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(out.error || "Send failed");
       window.alert(`Test sent to ${me.email}${out.note ? "\n\n" + out.note : ""}`);
@@ -168,9 +172,10 @@ function Composer({ sb, me, onBack }) {
     setBusy("send");
     const c = await saveCampaign("draft");
     if (c) {
-      const r = await fetch("/api/campaign-dispatch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ campaignId: c.id }) }).catch(() => null);
-      if (r && r.ok) { window.alert("Sending!"); onBack(); }
-      else { window.alert("Draft saved. The send pipeline is the next build step — this draft will be sendable from its detail page once it lands."); onBack(); }
+      const r = await fetch("/api/campaign-dispatch", { method: "POST", headers: await authHeaders(), body: JSON.stringify({ campaignId: c.id }) }).catch(() => null);
+      const out = r ? await r.json().catch(() => ({})) : {};
+      if (r && r.ok) { window.alert(`Sending! ${out.sent ?? "?"} sent, ${out.skipped ?? 0} skipped (unsubscribed), ${out.failed ?? 0} failed.${out.sandbox ? "\n\n⚠️ Sandbox sender — recipients outside your inbox won't get it until RESEND_FROM is live." : ""}`); onBack(); }
+      else { window.alert(out.error || "Send failed — the draft is saved and sendable from its detail page."); onBack(); }
     }
     setBusy("");
   }
@@ -290,9 +295,11 @@ function CampaignDetail({ sb, campaign: c, stats, onBack }) {
     setBusy(kind);
     if (kind === "cancel") { await sb.from("campaigns").update({ status: "canceled" }).eq("id", c.id).in("status", ["draft", "scheduled"]); onBack(); }
     if (kind === "send") {
-      const r = await fetch("/api/campaign-dispatch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ campaignId: c.id }) }).catch(() => null);
-      if (r && r.ok) { window.alert("Sending!"); onBack(); }
-      else window.alert("The send pipeline is the next build step — this campaign stays ready to go.");
+      const { data } = await sb.auth.getSession();
+      const r = await fetch("/api/campaign-dispatch", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${data?.session?.access_token || ""}` }, body: JSON.stringify({ campaignId: c.id }) }).catch(() => null);
+      const out = r ? await r.json().catch(() => ({})) : {};
+      if (r && r.ok) { window.alert(`Sending! ${out.sent ?? "?"} sent, ${out.skipped ?? 0} skipped, ${out.failed ?? 0} failed.`); onBack(); }
+      else window.alert(out.error || "Send failed.");
     }
     setBusy("");
   }
