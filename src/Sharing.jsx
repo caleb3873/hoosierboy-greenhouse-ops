@@ -71,6 +71,9 @@ const SANS = "'Geist','Inter','Segoe UI',system-ui,sans-serif";
 const EYEBROW = { fontFamily: SANS, textTransform: "uppercase", letterSpacing: "0.16em", fontWeight: 600, fontSize: 11.5 };
 const wrap = { overflowWrap: "anywhere", wordBreak: "break-word" };
 const fmtDate = iso => { try { return new Date(iso).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }); } catch { return ""; } };
+// anonymous per-device identity for favorites + view tracking (no login on the public viewer)
+const visitorId = () => { try { let v = localStorage.getItem("hb_visitor"); if (!v) { v = crypto.randomUUID(); localStorage.setItem("hb_visitor", v); } return v; } catch { return "anon"; } };
+const storedName = () => { try { return localStorage.getItem("hb_visitor_name") || ""; } catch { return ""; } };
 const weekLabel = w => {
   if (!w) return "";
   const m = String(w).match(/^(\d{4})-W(\d{1,2})$/);
@@ -161,6 +164,10 @@ export function SharedGalleryViewer({ id }) {
   const [err, setErr] = useState(null);
   const [idx, setIdx] = useState(0);
   const [zoom, setZoom] = useState(false);
+  const [favs, setFavs] = useState(() => new Set());
+  const [askName, setAskName] = useState(false);
+  const [nameDraft, setNameDraft] = useState("");
+  const [picksOnly, setPicksOnly] = useState(false);
   const carRef = useRef(null);
   const stripRef = useRef(null);
 
@@ -172,12 +179,53 @@ export function SharedGalleryViewer({ id }) {
     });
   }, [id]);
 
+  // engagement: restore this device's favorites + log the open (at most once per half hour per device)
+  useEffect(() => {
+    if (!g) return;
+    const sb = getSupabase(); if (!sb) return;
+    const vid = visitorId();
+    sb.from("gallery_favorites").select("item_id").eq("gallery_id", id).eq("visitor", vid)
+      .then(({ data }) => { if (data) setFavs(new Set(data.map(r => r.item_id))); });
+    try {
+      const k = `hb_seen_${id}`;
+      if (Date.now() - +(localStorage.getItem(k) || 0) > 30 * 60 * 1000) {
+        localStorage.setItem(k, String(Date.now()));
+        sb.from("gallery_visits").insert({ gallery_id: id, visitor: vid, name: storedName() || g.recipient || null }).then(() => { });
+      }
+    } catch { /* private browsing */ }
+  }, [g, id]);
+
+  async function toggleFav(it) {
+    const sb = getSupabase(); if (!sb || !it) return;
+    const vid = visitorId();
+    const had = favs.has(it.id);
+    setFavs(s => { const n = new Set(s); if (had) n.delete(it.id); else n.add(it.id); return n; });
+    if (had) await sb.from("gallery_favorites").delete().eq("gallery_id", id).eq("item_id", it.id).eq("visitor", vid);
+    else {
+      await sb.from("gallery_favorites").insert({ gallery_id: id, item_id: it.id, visitor: vid, name: storedName() || g.recipient || null });
+      if (!storedName() && !g.recipient && favs.size === 0) { setNameDraft(""); setAskName(true); }
+    }
+  }
+  async function saveName() {
+    const n = nameDraft.trim(); setAskName(false); if (!n) return;
+    try { localStorage.setItem("hb_visitor_name", n); } catch { /* ok */ }
+    const sb = getSupabase(); if (!sb) return;
+    const vid = visitorId();
+    await sb.from("gallery_favorites").update({ name: n }).eq("gallery_id", id).eq("visitor", vid);
+    await sb.from("gallery_visits").update({ name: n }).eq("gallery_id", id).eq("visitor", vid);
+  }
+
   const isHot = g && g.kind === "hotlist";
   // hot list → newest week first; otherwise the saved order
-  const items = g ? [...(g.items || [])].sort((a, b) => (isHot ? String(b.week || "").localeCompare(String(a.week || "")) : 0) || (a.sort ?? 0) - (b.sort ?? 0)) : [];
+  const allItems = g ? [...(g.items || [])].sort((a, b) => (isHot ? String(b.week || "").localeCompare(String(a.week || "")) : 0) || (a.sort ?? 0) - (b.sort ?? 0)) : [];
+  const items = picksOnly ? allItems.filter(it => favs.has(it.id)) : allItems;
+  const favCount = allItems.filter(it => favs.has(it.id)).length;
   const active = items[idx] || items[0];
   const goTo = i => { const el = carRef.current; if (el) el.scrollTo({ left: i * el.clientWidth, behavior: "smooth" }); };
   const onScroll = () => { const el = carRef.current; if (!el) return; const i = Math.round(el.scrollLeft / el.clientWidth); if (i !== idx) setIdx(i); };
+  const togglePicksOnly = () => { setPicksOnly(v => { const el = carRef.current; if (el) el.scrollTo({ left: 0 }); return !v; }); setIdx(0); };
+  useEffect(() => { if (items.length && idx >= items.length) setIdx(0); }, [items.length, idx]);
+  useEffect(() => { if (picksOnly && !items.length) setPicksOnly(false); }, [picksOnly, items.length]);
 
   useEffect(() => { const h = e => { if (e.key === "ArrowLeft") goTo(Math.max(0, idx - 1)); else if (e.key === "ArrowRight") goTo(Math.min(items.length - 1, idx + 1)); else if (e.key === "Escape") setZoom(false); }; window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h); });
   useEffect(() => { const el = stripRef.current && stripRef.current.children[idx]; if (el) el.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" }); }, [idx]);
@@ -243,6 +291,11 @@ export function SharedGalleryViewer({ id }) {
               {idx > 0 && <div onClick={() => goTo(idx - 1)} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", width: 40, height: 40, borderRadius: "50%", background: "rgba(250,248,245,.92)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, color: HB.forest, cursor: "pointer", boxShadow: "0 2px 10px rgba(0,0,0,.25)", userSelect: "none" }}>‹</div>}
               {idx < items.length - 1 && <div onClick={() => goTo(idx + 1)} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", width: 40, height: 40, borderRadius: "50%", background: "rgba(250,248,245,.92)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, color: HB.forest, cursor: "pointer", boxShadow: "0 2px 10px rgba(0,0,0,.25)", userSelect: "none" }}>›</div>}
             </>}
+            {/* ♥ save-to-picks — Pixieset-style favoriting for the rep to see */}
+            <button onClick={() => toggleFav(active)} aria-label="Save to your picks"
+              style={{ position: "absolute", left: 12, bottom: 12, width: 44, height: 44, borderRadius: "50%", border: "none", background: "rgba(250,248,245,.94)", boxShadow: "0 2px 10px rgba(0,0,0,.28)", cursor: "pointer", fontSize: 22, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center", color: favs.has(active.id) ? HB.terra : "#b7b0a4", fontFamily: SANS }}>
+              {favs.has(active.id) ? "♥" : "♡"}
+            </button>
           </div>
 
           {/* Caption plate — numbered like a catalog */}
@@ -255,13 +308,15 @@ export function SharedGalleryViewer({ id }) {
           {items.length > 1 && (
             <div ref={stripRef} style={{ display: "flex", gap: 8, overflowX: "auto", marginTop: 16, paddingBottom: 6, WebkitOverflowScrolling: "touch" }}>
               {items.map((it, i) => (
-                <button key={it.id} onClick={() => goTo(i)} style={{ flex: "0 0 auto", padding: 0, border: `2px solid ${i === idx ? HB.terra : "transparent"}`, borderRadius: 10, background: "none", cursor: "pointer", lineHeight: 0 }}>
+                <button key={it.id} onClick={() => goTo(i)} style={{ position: "relative", flex: "0 0 auto", padding: 0, border: `2px solid ${i === idx ? HB.terra : "transparent"}`, borderRadius: 10, background: "none", cursor: "pointer", lineHeight: 0 }}>
                   <img src={thumbSrc(it)} alt="" loading="lazy" decoding="async"
                     style={{ width: 58, height: 58, objectFit: "cover", borderRadius: 8, opacity: i === idx ? 1 : .55, display: "block", transition: "opacity .2s" }} />
+                  {favs.has(it.id) && <span style={{ position: "absolute", top: 1, right: 3, color: HB.terra, fontSize: 13, textShadow: "0 0 4px #fff, 0 0 2px #fff" }}>♥</span>}
                 </button>
               ))}
             </div>
           )}
+          {favCount === 0 && <div style={{ textAlign: "center", marginTop: 14, fontSize: 12.5, color: "#a8a094", fontFamily: SANS }}>♡ Tap the heart on any photo to save it for your rep</div>}
         </>)}
 
         {/* Sign-off */}
@@ -278,6 +333,30 @@ export function SharedGalleryViewer({ id }) {
             style={{ display: "inline-block", marginTop: 20, background: HB.terra, color: "#fff", padding: "11px 26px", borderRadius: 8, textDecoration: "none", fontWeight: 600, fontSize: 14, boxShadow: "0 6px 18px -6px rgba(194,112,62,.5)" }}>Explore hoosierboy.com</a>
         </div>
       </div>
+
+      {/* picks bar — persistent reassurance + filter, Pixieset-style */}
+      {favCount > 0 && (
+        <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 900, display: "flex", justifyContent: "center", padding: "0 12px calc(12px + env(safe-area-inset-bottom))", pointerEvents: "none" }}>
+          <div style={{ pointerEvents: "auto", display: "flex", alignItems: "center", gap: 10, background: HB.pine, borderRadius: 999, padding: "9px 9px 9px 18px", boxShadow: "0 12px 32px -8px rgba(22,64,58,.55)" }}>
+            <span style={{ color: "#f2ede4", fontSize: 13.5, fontFamily: SANS }}><span style={{ color: "#eba173" }}>♥</span> {favCount} pick{favCount !== 1 ? "s" : ""} — saved for your rep</span>
+            <button onClick={togglePicksOnly} style={{ background: HB.terra, color: "#fff", border: "none", borderRadius: 999, padding: "8px 15px", fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: SANS }}>{picksOnly ? "Show all" : "View picks"}</button>
+          </div>
+        </div>
+      )}
+
+      {/* optional name capture on the first pick (skipped when the link is already personalized) */}
+      {askName && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(16,30,26,.55)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+          <div style={{ background: HB.paper, borderRadius: 16, padding: "26px 22px", width: "100%", maxWidth: 360, textAlign: "center", boxShadow: "0 24px 60px -12px rgba(0,0,0,.4)" }}>
+            <div style={{ fontFamily: SERIF, fontSize: 22, color: HB.forest }}>Nice pick!</div>
+            <div style={{ fontSize: 13.5, color: HB.stone, marginTop: 8, lineHeight: 1.55 }}>Tell us who you are so we can set your favorites aside for you.</div>
+            <input value={nameDraft} onChange={e => setNameDraft(e.target.value)} onKeyDown={e => { if (e.key === "Enter") saveName(); }} placeholder="Your name or company" autoFocus
+              style={{ width: "100%", boxSizing: "border-box", marginTop: 16, padding: "12px 14px", borderRadius: 10, border: `1.5px solid ${HB.border}`, fontSize: 15, fontFamily: SANS, background: "#fff", color: HB.ink }} />
+            <button onClick={saveName} style={{ width: "100%", marginTop: 12, background: HB.terra, color: "#fff", border: "none", borderRadius: 10, padding: 13, fontSize: 14.5, fontWeight: 600, cursor: "pointer", fontFamily: SANS }}>Save my picks</button>
+            <button onClick={() => setAskName(false)} style={{ background: "none", border: "none", color: HB.stone, fontSize: 13, cursor: "pointer", fontFamily: SANS, marginTop: 10 }}>Skip for now</button>
+          </div>
+        </div>
+      )}
 
       {zoom && active && (
         <div onClick={() => setZoom(false)} style={{ position: "fixed", inset: 0, background: "rgba(16,30,26,.96)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 14, cursor: "zoom-out" }}>

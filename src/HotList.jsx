@@ -22,17 +22,33 @@ const fmtDate = iso => { try { return new Date(iso).toLocaleDateString("en-US", 
 export default function HotList({ onBack }) {
   const sb = getSupabase();
   const { displayName } = useAuth();
-  const [tab, setTab] = useState("hotlist"); // hotlist | personalized
+  const [tab, setTab] = useState("hotlist"); // hotlist | personalized | slideshow
   const [rows, setRows] = useState([]);
   const [openId, setOpenId] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [engage, setEngage] = useState({ visits: [], favs: [] }); // customer opens + ♥ picks across all links
 
   const load = useCallback(async () => {
     if (!sb) return;
-    const { data } = await sb.from("shared_galleries").select("*").in("kind", ["hotlist", "personalized"]).order("updated_at", { ascending: false });
+    const { data } = await sb.from("shared_galleries").select("*").in("kind", ["hotlist", "personalized", "slideshow"]).order("updated_at", { ascending: false });
     setRows(data || []); setLoading(false);
+    const ids = (data || []).map(r => r.id);
+    if (ids.length) {
+      const [{ data: vs }, { data: fs }] = await Promise.all([
+        sb.from("gallery_visits").select("gallery_id,visitor,name,created_at").in("gallery_id", ids),
+        sb.from("gallery_favorites").select("gallery_id,item_id,visitor,name,created_at").in("gallery_id", ids),
+      ]);
+      setEngage({ visits: vs || [], favs: fs || [] });
+    }
   }, [sb]);
   useEffect(() => { load(); }, [load]);
+
+  const statsFor = gid => {
+    const vs = engage.visits.filter(v => v.gallery_id === gid);
+    const fs = engage.favs.filter(f => f.gallery_id === gid);
+    const last = vs.map(v => v.created_at).sort().pop();
+    return { opens: vs.length, viewers: new Set(vs.map(v => v.visitor)).size, last, picks: fs.length };
+  };
 
   const list = rows.filter(r => r.kind === tab);
   const open = rows.find(r => r.id === openId);
@@ -59,32 +75,40 @@ export default function HotList({ onBack }) {
 
       <div style={{ maxWidth: 760, margin: "0 auto", padding: "16px 14px" }}>
         <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-          {[["hotlist", "🔥 Hot Lists"], ["personalized", "👤 Personalized"]].map(([id, label]) => (
-            <button key={id} onClick={() => setTab(id)} style={{ flex: 1, background: tab === id ? C.dark : "#fff", color: tab === id ? C.cream : C.muted, border: `1.5px solid ${tab === id ? C.dark : C.border}`, borderRadius: 10, padding: "10px 12px", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>{label}</button>
+          {[["hotlist", "🔥 Hot Lists"], ["personalized", "👤 Personalized"], ["slideshow", "📸 Slideshows"]].map(([id, label]) => (
+            <button key={id} onClick={() => setTab(id)} style={{ flex: 1, background: tab === id ? C.dark : "#fff", color: tab === id ? C.cream : C.muted, border: `1.5px solid ${tab === id ? C.dark : C.border}`, borderRadius: 10, padding: "10px 8px", fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>{label}</button>
           ))}
         </div>
 
         <div style={{ background: "#eef6e7", border: `1px solid ${C.light}`, borderRadius: 10, padding: "9px 12px", fontSize: 12.5, color: "#2e3d28", marginBottom: 14 }}>
           {tab === "hotlist"
             ? <>A <strong>weekly hot list</strong> you share with your top customers — add this week's items and the same link updates, keeping prior weeks on record.</>
-            : <>One-off <strong>personalized</strong> lists for an individual customer — same idea, just addressed to one person.</>}
+            : tab === "personalized"
+            ? <>One-off <strong>personalized</strong> lists for an individual customer — same idea, just addressed to one person.</>
+            : <>Slideshow links created from <strong>Trade Show</strong> photos. See who's opened each one and which items they ♥'d.</>}
         </div>
 
-        <button onClick={makeNew} style={{ background: C.dark, color: "#fff", border: "none", borderRadius: 9, padding: "10px 16px", fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit", marginBottom: 14 }}>＋ New {tab === "hotlist" ? "hot list" : "personalized list"}</button>
+        {tab !== "slideshow" && <button onClick={makeNew} style={{ background: C.dark, color: "#fff", border: "none", borderRadius: 9, padding: "10px 16px", fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit", marginBottom: 14 }}>＋ New {tab === "hotlist" ? "hot list" : "personalized list"}</button>}
 
         {loading ? <div style={{ color: C.muted, textAlign: "center", padding: 30 }}>Loading…</div>
-          : !list.length ? <div style={{ color: C.muted, fontSize: 13, textAlign: "center", padding: "30px 0" }}>None yet — tap ＋ New to start.</div>
-          : list.map(g => (
-            <div key={g.id} onClick={() => setOpenId(g.id)} style={{ background: "#fff", border: `1px solid ${C.border}`, borderRadius: 12, padding: "12px 14px", marginBottom: 10, cursor: "pointer", display: "flex", alignItems: "center", gap: 10 }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 800, fontSize: 14.5, color: C.dark, ...wrap }}>{g.title || "Untitled"}</div>
-                <div style={{ fontSize: 11.5, color: C.muted, marginTop: 2 }}>
-                  {g.recipient ? `For ${g.recipient} · ` : ""}{(g.items || []).length} item{(g.items || []).length !== 1 ? "s" : ""} · updated {fmtDate(g.updated_at)}{g.created_by ? ` · ${g.created_by}` : ""}
+          : !list.length ? <div style={{ color: C.muted, fontSize: 13, textAlign: "center", padding: "30px 0" }}>{tab === "slideshow" ? "No slideshow links yet — create one from Trade Show photos." : "None yet — tap ＋ New to start."}</div>
+          : list.map(g => {
+            const st = statsFor(g.id);
+            return (
+              <div key={g.id} onClick={() => setOpenId(g.id)} style={{ background: "#fff", border: `1px solid ${C.border}`, borderRadius: 12, padding: "12px 14px", marginBottom: 10, cursor: "pointer", display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 800, fontSize: 14.5, color: C.dark, ...wrap }}>{g.title || "Untitled"}</div>
+                  <div style={{ fontSize: 11.5, color: C.muted, marginTop: 2 }}>
+                    {g.recipient ? `For ${g.recipient} · ` : ""}{(g.items || []).length} item{(g.items || []).length !== 1 ? "s" : ""} · updated {fmtDate(g.updated_at)}{g.created_by ? ` · ${g.created_by}` : ""}
+                  </div>
+                  <div style={{ fontSize: 11.5, marginTop: 3, fontWeight: 700, color: st.opens ? "#2e5c1e" : "#aab5a2" }}>
+                    {st.opens ? <>👁 {st.viewers} viewer{st.viewers !== 1 ? "s" : ""} · {st.opens} open{st.opens !== 1 ? "s" : ""}{st.last ? ` · last ${fmtDate(st.last)}` : ""}{st.picks ? <span style={{ color: C.red }}> · ♥ {st.picks} pick{st.picks !== 1 ? "s" : ""}</span> : ""}</> : "Not opened yet"}
+                  </div>
                 </div>
+                <div style={{ background: "#f0f8eb", borderRadius: 7, padding: "5px 12px", fontSize: 12, fontWeight: 800, color: "#2e5c1e" }}>Open →</div>
               </div>
-              <div style={{ background: "#f0f8eb", borderRadius: 7, padding: "5px 12px", fontSize: 12, fontWeight: 800, color: "#2e5c1e" }}>Open →</div>
-            </div>
-          ))}
+            );
+          })}
       </div>
     </div>
   );
@@ -96,7 +120,24 @@ function HotListEditor({ gallery, displayName, onBack, onChanged }) {
   const [g, setG] = useState(gallery);
   const [adding, setAdding] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [visits, setVisits] = useState([]);
+  const [favs, setFavs] = useState([]);
   useEffect(() => { setG(gallery); }, [gallery]);
+  useEffect(() => {
+    if (!sb) return; let ok = true;
+    (async () => {
+      const [{ data: vs }, { data: fs }] = await Promise.all([
+        sb.from("gallery_visits").select("visitor,name,created_at").eq("gallery_id", gallery.id),
+        sb.from("gallery_favorites").select("item_id,visitor,name,created_at").eq("gallery_id", gallery.id),
+      ]);
+      if (ok) { setVisits(vs || []); setFavs(fs || []); }
+    })();
+    return () => { ok = false; };
+  }, [sb, gallery.id]);
+  const favsByItem = {}; favs.forEach(f => { (favsByItem[f.item_id] = favsByItem[f.item_id] || []).push(f); });
+  const pickerLabel = f => f.name || "A customer";
+  const lastOpen = visits.map(v => v.created_at).sort().pop();
+  const viewers = new Set(visits.map(v => v.visitor)).size;
   const link = shareUrlFor(g.id);
   const isHot = g.kind === "hotlist";
 
@@ -139,8 +180,13 @@ function HotListEditor({ gallery, displayName, onBack, onChanged }) {
   else groups.push({ items });
 
   const tile = it => (
-    <div key={it.id} style={{ background: "#fff", border: `1px solid ${C.border}`, borderRadius: 10, overflow: "hidden", marginBottom: 8 }}>
+    <div key={it.id} style={{ background: "#fff", border: `1px solid ${C.border}`, borderRadius: 10, overflow: "hidden", marginBottom: 8, position: "relative" }}>
       {it.url && <img src={thumbSrc(it)} alt="" loading="lazy" style={{ width: "100%", maxHeight: 220, objectFit: "cover", display: "block" }} />}
+      {(favsByItem[it.id] || []).length > 0 && (
+        <div title={(favsByItem[it.id] || []).map(pickerLabel).join(", ")} style={{ position: "absolute", top: 8, right: 8, background: "#fff", border: `1px solid ${C.border}`, borderRadius: 999, padding: "3px 10px", fontSize: 12, fontWeight: 800, color: C.red, boxShadow: "0 1px 5px rgba(0,0,0,.15)" }}>
+          ♥ {(favsByItem[it.id] || []).length}<span style={{ color: C.muted, fontWeight: 700 }}> {(favsByItem[it.id] || []).slice(0, 2).map(pickerLabel).join(", ")}{(favsByItem[it.id] || []).length > 2 ? "…" : ""}</span>
+        </div>
+      )}
       <div style={{ padding: 8 }}>
         <textarea value={it.caption || ""} onChange={e => setCaption(it.id, e.target.value)} placeholder="Comment about this product…" rows={2}
           style={{ width: "100%", boxSizing: "border-box", padding: "7px 9px", border: "1.5px solid #c8d8c0", borderRadius: 8, fontSize: 12.5, fontFamily: "inherit", resize: "vertical" }} />
@@ -172,6 +218,29 @@ function HotListEditor({ gallery, displayName, onBack, onChanged }) {
             <button onClick={copy} style={{ flex: 1, background: "#fff", color: C.dark, border: `1.5px solid ${C.dark}`, borderRadius: 9, padding: 11, fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>{copied ? "Copied!" : "Copy"}</button>
             <a href={link} target="_blank" rel="noreferrer" style={{ display: "flex", alignItems: "center", padding: "0 8px", fontSize: 12.5, color: "#2b6cb0", fontWeight: 700 }}>Preview ›</a>
           </div>
+        </div>
+
+        {/* Engagement — who's opened it + what they ♥'d */}
+        <div style={{ background: "#fff", border: `1px solid ${C.border}`, borderRadius: 12, padding: "10px 12px", marginBottom: 14 }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: .4, marginBottom: 6 }}>Customer activity</div>
+          {!visits.length && !favs.length
+            ? <div style={{ fontSize: 12.5, color: "#aab5a2" }}>Not opened yet — you'll see opens and ♥ picks here once it's viewed.</div>
+            : <>
+              <div style={{ fontSize: 13, color: "#2e5c1e", fontWeight: 700 }}>👁 {viewers} viewer{viewers !== 1 ? "s" : ""} · {visits.length} open{visits.length !== 1 ? "s" : ""}{lastOpen ? ` · last ${new Date(lastOpen).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : ""}</div>
+              {favs.length > 0 && (() => {
+                const byPicker = {}; favs.forEach(f => { const k = pickerLabel(f); (byPicker[k] = byPicker[k] || []).push(f); });
+                return (
+                  <div style={{ marginTop: 6 }}>
+                    {Object.entries(byPicker).map(([who, fs2]) => (
+                      <div key={who} style={{ fontSize: 12.5, color: C.dark, marginTop: 2 }}>
+                        <span style={{ color: C.red, fontWeight: 800 }}>♥ {fs2.length}</span> — <strong>{who}</strong>
+                      </div>
+                    ))}
+                    <div style={{ fontSize: 11, color: C.muted, marginTop: 4 }}>♥ counts also show on each item below.</div>
+                  </div>
+                );
+              })()}
+            </>}
         </div>
 
         <AddItem adding={adding} setAdding={setAdding} isHot={isHot} onAdd={addItems} />
