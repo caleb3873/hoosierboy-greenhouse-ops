@@ -26,6 +26,8 @@ import OwnerDashboard       from "./OwnerDashboard";
 import FallProgram          from "./FallProgram";
 import ProductionPlans, { SourcingPage } from "./ProductionPlans";
 import ShippingCustomers    from "./shipping/ShippingCustomers";
+import Reservations         from "./Reservations";
+import CustomerProfiles     from "./CustomerProfile";
 import ShippingDrivers      from "./shipping/ShippingDrivers";
 import ShippingTrucks       from "./shipping/ShippingTrucks";
 import ShipperTasksView     from "./shipping/ShipperTasksView";
@@ -95,6 +97,13 @@ const NAV_GROUPS = [
   },
   {
     id: "houseplants", label: "Houseplants", icon: "🌿", solo: true,
+  },
+  {
+    id: "sales", label: "Sales", icon: "🤝",
+    items: [
+      { id: "customer-profiles", label: "Customer Profiles" },
+      { id: "reservations",      label: "Reservations" },
+    ],
   },
   {
     id: "shipping", label: "Shipping", icon: "🚚",
@@ -256,6 +265,8 @@ function PlannerShell() {
         {page === "plans"      && <ProductionPlans />}
         {page === "sourcing"   && <SourcingPage />}
         {page === "houseplants" && <HouseplantAvailability />}
+        {page === "customer-profiles" && <CustomerProfiles />}
+        {page === "reservations"      && <Reservations />}
         {page === "ship-command"   && <ShippingCommand />}
         {page === "ship-routes"    && <ShippingRoutes />}
         {page === "ship-dashboard" && <ShippingDashboard />}
