@@ -15,9 +15,20 @@ module.exports = async (req, res) => {
   const secret = process.env.CRON_SECRET;
   const auth = req.headers.authorization || "";
   if (!secret || auth !== `Bearer ${secret}`) return res.status(401).json({ error: "Unauthorized" });
-  const out = { campaigns: [], reminders: [] };
+  const out = { reconciled: [], campaigns: [], reminders: [] };
   try {
     const db = svc();
+
+    // 0. keep the B2B layer in lockstep with planning: absorb new varieties/rows/ship-weeks
+    //    (only plans already opted in via backfill — i.e. that have production_items)
+    const { data: plans } = await db.from("production_plans").select("id,name").in("status", ["draft", "active"]);
+    for (const pl of plans || []) {
+      const { count } = await db.from("production_items").select("id", { count: "exact", head: true }).eq("plan_id", pl.id);
+      if (!count) continue;
+      const { data: r, error } = await db.rpc("reconcile_production_items", { p_plan: pl.id });
+      if (error) out.reconciled.push({ plan: pl.name, error: error.message });
+      else if (r && r[0] && (r[0].new_items || r[0].linked_rows || r[0].new_groups || r[0].refreshed_profiles)) out.reconciled.push({ plan: pl.name, ...r[0] });
+    }
 
     // 1. due scheduled campaigns
     const { data: due } = await db.from("campaigns").select("id,name").eq("status", "scheduled").lte("scheduled_at", new Date().toISOString());
