@@ -29,6 +29,7 @@ import ShippingCustomers    from "./shipping/ShippingCustomers";
 import Reservations         from "./Reservations";
 import CustomerProfiles     from "./CustomerProfile";
 import Campaigns            from "./Campaigns";
+import CatalogViewer        from "./CatalogViewer";
 import ShippingDrivers      from "./shipping/ShippingDrivers";
 import ShippingTrucks       from "./shipping/ShippingTrucks";
 import ShipperTasksView     from "./shipping/ShipperTasksView";
@@ -105,6 +106,7 @@ const NAV_GROUPS = [
       { id: "customer-profiles", label: "Customer Profiles" },
       { id: "reservations",      label: "Reservations" },
       { id: "campaigns",         label: "📣 Campaigns" },
+      { id: "catalog",           label: "📦 Catalog" },
     ],
   },
   {
@@ -270,6 +272,7 @@ function PlannerShell() {
         {page === "customer-profiles" && <CustomerProfiles />}
         {page === "reservations"      && <Reservations />}
         {page === "campaigns"          && <Campaigns />}
+        {page === "catalog"            && <CatalogViewer />}
         {page === "ship-command"   && <ShippingCommand />}
         {page === "ship-routes"    && <ShippingRoutes />}
         {page === "ship-dashboard" && <ShippingDashboard />}
