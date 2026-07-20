@@ -145,7 +145,7 @@ export default function Reservations() {
               <span style={{ color: C.muted, fontWeight: 800 }}>{open ? "⌄" : "›"}</span>
             </div>
             {open && <div style={{ marginTop: 8 }}>{ls.map(l => <LineRow key={l.line_id} l={l} />)}
-              <AddLine sb={sb} orderId={o.id} onAdded={load} /></div>}
+              <AddLine sb={sb} orderId={o.id} customerId={o.customer_id} onAdded={load} /></div>}
           </div>
         );
       })}
@@ -157,7 +157,7 @@ export default function Reservations() {
 }
 
 // Item search against the sellable catalog (production_items + profiles), qty, insert line.
-function AddLine({ sb, orderId, onAdded }) {
+function AddLine({ sb, orderId, customerId, onAdded }) {
   const [q, setQ] = useState("");
   const [hits, setHits] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -173,7 +173,13 @@ function AddLine({ sb, orderId, onAdded }) {
     const qty = parseInt(window.prompt(`Reserve how many of ${p.display_name}?`, "50") || "", 10);
     if (!qty || qty < 1) return;
     setBusy(true);
-    await sb.from("customer_order_lines").insert({ order_id: orderId, production_item_id: p.production_item_id, qty, unit_price: p.price, price_source: "list" });
+    // resolve the CUSTOMER's price (contract > level > breaks > list) and snapshot which rule fired
+    let unit = p.price, src = "list";
+    try {
+      const { data: rp } = await sb.rpc("resolve_unit_price", { p_customer: customerId || null, p_profile: p.id, p_qty: qty });
+      if (rp && rp[0]) { unit = rp[0].unit_price; src = rp[0].price_source; }
+    } catch { /* fall back to list */ }
+    await sb.from("customer_order_lines").insert({ order_id: orderId, production_item_id: p.production_item_id, qty, unit_price: unit, price_source: src });
     setQ(""); setHits([]); setBusy(false); onAdded();
   }
   return (

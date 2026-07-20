@@ -92,4 +92,28 @@ async function bridgeOrdersToDeliveries(db) {
   return { bridged };
 }
 
-module.exports = { generateCountTasks, harvestCountTasks, bridgeOrdersToDeliveries };
+// 4. Reverse bridge: shipping outcomes flow back to the order so availability stays true.
+//    delivered/shipped delivery → order 'shipped' (frees committed → shipped-actuals math);
+//    cancelled delivery → order back to 'confirmed' with an event (staff decides next move;
+//    delivery_id is kept so it doesn't auto-recreate a new delivery).
+async function syncDeliveriesBack(db) {
+  const { data: linked } = await db.from("customer_orders")
+    .select("id, status, delivery_id")
+    .in("status", ["confirmed", "picking"]).not("delivery_id", "is", null);
+  let shipped = 0, cancelled = 0;
+  for (const o of linked || []) {
+    const { data: d } = await db.from("deliveries").select("delivered_at, shipped_at, lifecycle").eq("id", o.delivery_id).single();
+    if (!d) continue;
+    if (d.delivered_at || d.shipped_at) {
+      await db.from("customer_orders").update({ status: "shipped", updated_at: new Date().toISOString() }).eq("id", o.id);
+      await db.from("customer_order_events").insert({ order_id: o.id, from_status: o.status, to_status: "shipped", actor: "system", note: "Delivery shipped/delivered in Shipping Command" });
+      shipped++;
+    } else if (d.lifecycle === "cancelled") {
+      await db.from("customer_order_events").insert({ order_id: o.id, from_status: o.status, to_status: o.status, actor: "system", note: "Linked delivery was cancelled in Shipping Command — review the order" });
+      cancelled++;
+    }
+  }
+  return { shipped, cancelled };
+}
+
+module.exports = { generateCountTasks, harvestCountTasks, bridgeOrdersToDeliveries, syncDeliveriesBack };
