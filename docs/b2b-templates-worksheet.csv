@@ -1,0 +1,4 @@
+template_name,tier_posture(value|mixed|premium),pct_color_annuals,pct_perennials,pct_veggies_herbs,pct_specialty,pct_combos,size_ratio_flat,size_ratio_4.5",size_ratio_quart,size_ratio_gallon,size_ratio_hb,size_ratio_planter,notes
+EXAMPLE — Budget garden center,value,55,15,15,5,10,3,3,1,0,1,1,delete or edit these examples; add your real templates below
+EXAMPLE — Premium garden center,premium,40,25,5,5,25,1,2,1,1,2,2,
+EXAMPLE — Hardware / farm store,mixed,60,10,20,5,5,4,2,1,0,1,0,
