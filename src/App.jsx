@@ -309,6 +309,8 @@ function FloorAppRouter({ role, isManager, growerProfile, signOut }) {
   const name = growerProfile?.name || "";
   const isReese = name === "Reese Morris";
   const isAsstManager = role === "assistant_manager";
+  // The head grower owns the growing program — same task app, creator side.
+  const isHeadGrower = role === "head_grower";
   // Default category comes from the staff member's GROUP in floor_codes (Production / Growing / etc.)
   // Falls back to legacy name-based list for anyone without a group set.
   const group = (growerProfile?.group || "").toUpperCase();
@@ -318,15 +320,16 @@ function FloorAppRouter({ role, isManager, growerProfile, signOut }) {
   else if (group === "MAINTENANCE") defaultCategory = "maintenance";
   else if (group === "SALES") defaultCategory = "sales";
   else if (["Evie", "Sam", "Ryan", "Nick", "Tyler"].some(n => name.includes(n))) defaultCategory = "production";
-  // Manager + Reese start in task creator. Other workers start in worker checklist.
-  const initial = isManager || isReese ? "creator" : "worker";
+  if (isHeadGrower && !defaultCategory) defaultCategory = "growing";
+  // Manager + Reese + head grower start in task creator. Other workers start in worker checklist.
+  const initial = isManager || isReese || isHeadGrower ? "creator" : "worker";
   const [view, setView] = useState(initial);
 
   if (view === "creator") {
     return <ManagerTasksView
       onSwitchMode={signOut}
       onBackToApp={() => setView("app")}
-      canCreateGrowing={isManager || isReese}
+      canCreateGrowing={isManager || isReese || isHeadGrower}
       defaultCategory={defaultCategory}
       isAsstManager={isAsstManager}
     />;
@@ -335,7 +338,7 @@ function FloorAppRouter({ role, isManager, growerProfile, signOut }) {
     return <WorkerChecklistView
       onSwitchMode={signOut}
       onBackToApp={() => setView("app")}
-      onOpenTaskCreator={isManager || isReese ? () => setView("creator") : undefined}
+      onOpenTaskCreator={isManager || isReese || isHeadGrower ? () => setView("creator") : undefined}
     />;
   }
   // Full operator app with a floating "Tasks" button to re-open the task view
@@ -343,7 +346,7 @@ function FloorAppRouter({ role, isManager, growerProfile, signOut }) {
     <div style={{ position: "relative" }}>
       <OperatorView onSwitchMode={signOut} />
       <button
-        onClick={() => setView(isManager || isReese ? "creator" : "worker")}
+        onClick={() => setView(isManager || isReese || isHeadGrower ? "creator" : "worker")}
         style={{
           position: "fixed", bottom: 20, left: 20, zIndex: 900,
           background: "#7fb069", color: "#1e2d1a", border: "3px solid #fff",
@@ -386,9 +389,6 @@ function AppInner() {
   // Admin → full planner
   if (isAdmin) return <PlannerShell />;
 
-  // Head grower → chemical-program command center
-  if (role === "head_grower") return <HeadGrowerView onSwitchMode={signOut} />;
-
   // Grower → grower mobile view
   if (role === "grower") return <GrowerView onSwitchMode={signOut} />;
 
@@ -398,8 +398,10 @@ function AppInner() {
   // Seasonal Drivers → delivery requests + availability picker
   if (role === "seasonal_driver") return <DriverHub onSwitchMode={signOut} />;
 
-  // Manager + Asst Manager + Reese get the unified manager hub. Workers get the growing checklist first.
-  if (isManager || (isOperator && growerProfile?.name)) {
+  // Manager + Asst Manager + Reese + head grower get the unified manager hub —
+  // the head grower creates grower tasks from the same task app everyone uses.
+  // The program tools (rotation, products, costs, records) live on the planner side.
+  if (isManager || role === "head_grower" || (isOperator && growerProfile?.name)) {
     return <FloorAppRouter role={role} isManager={isManager} growerProfile={growerProfile} signOut={signOut} />;
   }
 
