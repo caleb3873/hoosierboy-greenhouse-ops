@@ -19,15 +19,24 @@ function verifySvix(secret, headers, payload) {
   } catch { return false; }
 }
 
+async function readRaw(req) {
+  // svix signs the exact raw bytes; if the platform already parsed the body we fall back to
+  // re-serialization (usually byte-identical for compact JSON), else read the stream.
+  if (req.body !== undefined) return typeof req.body === "string" ? req.body : JSON.stringify(req.body || {});
+  return await new Promise((resolve, reject) => {
+    let d = ""; req.on("data", c => d += c); req.on("end", () => resolve(d)); req.on("error", reject);
+  });
+}
+
 module.exports = async (req, res) => {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
   const secret = process.env.RESEND_WEBHOOK_SECRET;
   if (!secret) return res.status(500).json({ error: "RESEND_WEBHOOK_SECRET not set" });
-  const raw = typeof req.body === "string" ? req.body : JSON.stringify(req.body || {});
+  const raw = await readRaw(req);
   if (!verifySvix(secret, req.headers, raw)) return res.status(401).json({ error: "Bad signature" });
 
   try {
-    const evt = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
+    const evt = JSON.parse(raw);
     const type = evt.type || "";
     const pid = evt.data && (evt.data.email_id || evt.data.id);
     if (!pid) return res.status(200).json({ ok: true, note: "no message id" });
@@ -54,3 +63,5 @@ module.exports = async (req, res) => {
     return res.status(200).json({ ok: true });
   } catch (e) { return res.status(500).json({ error: e.message || "Failed" }); }
 };
+
+module.exports.config = { api: { bodyParser: false } };  // raw body for signature verification

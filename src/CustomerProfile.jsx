@@ -51,6 +51,7 @@ function Profile({ customer, onBack, onChanged }) {
   const [orders, setOrders] = useState([]);
   const [levels, setLevels] = useState([]);
   const [picks, setPicks] = useState([]);
+  const [delivYears, setDelivYears] = useState([]);
   const [noteDraft, setNoteDraft] = useState("");
 
   const load = useCallback(async () => {
@@ -63,6 +64,11 @@ function Profile({ customer, onBack, onChanged }) {
       sb.from("price_levels").select("*").order("sort"),
       customer.company_name ? sb.from("gallery_favorites").select("item_id,name,created_at,gallery_id").ilike("name", `%${customer.company_name.split(" ")[0]}%`).order("created_at", { ascending: false }).limit(10) : Promise.resolve({ data: [] }),
     ]);
+    // delivery history: the pre-B2B sales record, aggregated by year
+    const { data: dels } = await sb.from("deliveries").select("delivery_date, order_value_cents, status").eq("customer_id", customer.id).limit(1000);
+    const byYear = {};
+    (dels || []).forEach(d => { const y = String(d.delivery_date || "").slice(0, 4); if (!y) return; const b = (byYear[y] = byYear[y] || { n: 0, cents: 0 }); b.n++; b.cents += d.order_value_cents || 0; });
+    setDelivYears(Object.entries(byYear).sort((a, b) => b[0].localeCompare(a[0])).map(([y, v]) => ({ year: y, ...v })));
     setNotes(n.data || []); setRecs(r.data || []); setReservations(rv.data || []);
     setSeasons(ss.data || []); setOrders(o.data || []); setLevels(lv.data || []); setPicks(gf.data || []);
   }, [sb, customer.id, customer.company_name]);
@@ -165,6 +171,17 @@ function Profile({ customer, onBack, onChanged }) {
               </div>
             ))}
             {!reservations.length && <div style={{ fontSize: 12.5, color: C.muted }}>No reservation lines — start one in the Reservations hub for high-volume commitments.</div>}
+          </Panel>
+
+          <Panel title="Delivery history">
+            {delivYears.map(d => (
+              <div key={d.year} style={{ display: "flex", gap: 10, padding: "5px 0", borderTop: `1px solid ${C.border}`, fontSize: 13 }}>
+                <span style={{ fontWeight: 800, color: C.dark, flex: 1 }}>{d.year}</span>
+                <span>{d.n} deliver{d.n !== 1 ? "ies" : "y"}</span>
+                <span style={{ fontWeight: 800 }}>${(d.cents / 100).toLocaleString()}</span>
+              </div>
+            ))}
+            {!delivYears.length && <div style={{ fontSize: 12.5, color: C.muted }}>No delivery history on file.</div>}
           </Panel>
 
           <Panel title="Season summaries">

@@ -2181,6 +2181,13 @@ export function CompletionPromptModal({ task, onCancel, onSave }) {
           {doneDate !== todayStr && <span style={{ fontSize: 11.5, color: "#c8791a", fontWeight: 800 }}>← {fmtLbl(doneDate)}</span>}
         </div>
 
+        {(task.sourceKind === "count" || task.source_kind === "count") ? (<>
+          {/* blind cycle count: a dedicated number field (stored as the notes; the cron harvests it) */}
+          <label style={{ fontSize: 12, fontWeight: 700, color: "#7a8c74" }}>How many did you count? (total units)</label>
+          <input type="number" inputMode="numeric" min="0" value={notes} onChange={e => setNotes(e.target.value.replace(/[^0-9]/g, ""))}
+            placeholder="e.g. 182"
+            style={{ width: "100%", padding: 12, borderRadius: 10, border: "1.5px solid #c8d8c0", fontSize: 18, fontWeight: 800, fontFamily: "inherit", boxSizing: "border-box", outline: "none", marginTop: 6, marginBottom: 12 }} />
+        </>) : (<>
         <label style={{ fontSize: 12, fontWeight: 700, color: "#7a8c74" }}>Any notes? (optional)</label>
         <textarea value={notes} onChange={e => setNotes(e.target.value)}
           placeholder="e.g. looked healthy, watered well"
@@ -2189,6 +2196,7 @@ export function CompletionPromptModal({ task, onCancel, onSave }) {
             fontSize: 14, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box", outline: "none",
             marginTop: 6, marginBottom: 12,
           }} />
+        </>)}
 
         <label style={{ fontSize: 12, fontWeight: 700, color: "#7a8c74" }}>Photos (optional)</label>
         <input ref={fileRef} type="file" accept="image/*" multiple onChange={handlePhoto} style={{ display: "none" }} />

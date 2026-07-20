@@ -135,6 +135,16 @@ export default function CatalogViewer() {
           {Object.entries(STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
         </select>
         <span style={{ alignSelf: "center", fontSize: 12, color: C.muted }}>{filtered.length} shown</span>
+        <button onClick={async () => {
+          const targets = filtered.filter(r => r.p.status !== "published" && r.p.price != null);
+          const skipped = filtered.filter(r => r.p.status !== "published" && r.p.price == null).length;
+          if (!targets.length) { window.alert("Nothing publishable in this filter (drafts need a price)."); return; }
+          if (!window.confirm(`Publish ${targets.length} filtered draft(s)?${skipped ? ` (${skipped} skipped — no price.)` : ""}\n\nPublished profiles FREEZE (plan changes stop updating them) and become customer-visible.`)) return;
+          for (let i = 0; i < targets.length; i += 100) {
+            await sb.from("product_profiles").update({ status: "published" }).in("id", targets.slice(i, i + 100).map(r => r.p.id));
+          }
+          load();
+        }} style={{ ...sel, fontWeight: 800, cursor: "pointer", color: "#1e7a4f", borderColor: "#1e7a4f" }}>⚡ Publish all filtered</button>
       </div>
 
       {loading ? <div style={{ color: C.muted, padding: 30, textAlign: "center" }}>Loading catalog…</div> : (
