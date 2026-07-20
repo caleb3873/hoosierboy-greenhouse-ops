@@ -48,8 +48,8 @@ const btn = (bg = GREEN_DARK, color = "#c8e6b8") => ({
   fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
 });
 
-export default function WorkRecords({ embedded }) {
-  const [tab, setTab] = useState("records");
+export default function WorkRecords({ embedded, initialTab }) {
+  const [tab, setTab] = useState(initialTab || "records");
   return (
     <div style={{ fontFamily: FONT, ...(embedded ? {} : { maxWidth: 980, margin: "0 auto" }) }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
@@ -215,6 +215,8 @@ function ProductsTab() {
               {p.productType === "fertigation" ? "🧪" : "💧"} {p.name}
             </span>
             <span style={{ fontSize: 11, background: "#f0f5ee", borderRadius: 6, padding: "2px 8px", color: MUTED, fontWeight: 700, textTransform: "capitalize" }}>{p.productType}</span>
+            {p.moa && <span style={{ fontSize: 11, background: "#e6ecf7", borderRadius: 6, padding: "2px 8px", color: "#3a5a9a", fontWeight: 800 }}>{p.moa}</span>}
+            {p.productType !== "fertigation" && p.reiHours == null && <span style={{ fontSize: 11, background: "#fde4e1", borderRadius: 6, padding: "2px 8px", color: RED, fontWeight: 800 }}>REI missing</span>}
             {p.signalWord && <span style={{ fontSize: 11, background: "#fdf0e0", borderRadius: 6, padding: "2px 8px", color: "#a86a10", fontWeight: 800, textTransform: "uppercase" }}>{p.signalWord}</span>}
             {p.active === false && <span style={{ fontSize: 11, background: "#eee", borderRadius: 6, padding: "2px 8px", color: "#888", fontWeight: 700 }}>inactive</span>}
           </div>
@@ -250,6 +252,7 @@ function ProductEditModal({ product, onClose, onSave }) {
     defaultRate: product?.defaultRate || "",
     reiHours: product?.reiHours ?? "",
     signalWord: product?.signalWord || "",
+    moa: product?.moa || "",
     notes: product?.notes || "",
     active: product?.active !== false,
   }));
@@ -282,6 +285,8 @@ function ProductEditModal({ product, onClose, onSave }) {
             <input style={input} value={f.activeIngredient} onChange={e => set("activeIngredient", e.target.value)} />
             <span style={label}>Signal word</span>
             <input style={input} value={f.signalWord} onChange={e => set("signalWord", e.target.value)} placeholder="Caution / Warning / Danger" />
+            <span style={label}>MOA group (IRAC / FRAC)</span>
+            <input style={input} value={f.moa} onChange={e => set("moa", e.target.value)} placeholder="e.g. IRAC 4A, FRAC 11, PGR, Biological" />
           </>
         )}
         <span style={label}>Default rate</span>
@@ -302,6 +307,7 @@ function ProductEditModal({ product, onClose, onSave }) {
               defaultRate: f.defaultRate.trim() || null,
               reiHours: f.reiHours !== "" ? Number(f.reiHours) : null,
               signalWord: f.signalWord.trim() || null,
+              moa: f.moa.trim() || null,
               notes: f.notes.trim() || null,
             })}
             style={{ ...btn(), flex: 2, opacity: f.name.trim() ? 1 : 0.5 }}>

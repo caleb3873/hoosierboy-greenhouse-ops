@@ -343,6 +343,7 @@ export function NewWorkModal({ tasks, upsert, createdBy, defaultLocation = "bluf
                         {selectedProduct.epaRegNumber ? `EPA ${selectedProduct.epaRegNumber}` : "No EPA # on file"}
                         {selectedProduct.activeIngredient ? ` · ${selectedProduct.activeIngredient}` : ""}
                         {selectedProduct.reiHours != null ? ` · REI ${selectedProduct.reiHours}h` : ""}
+                        {selectedProduct.moa ? ` · ${selectedProduct.moa}` : ""}
                       </div>
                     )}
                   </>

@@ -110,6 +110,7 @@ Hybrid system in `src/Auth.jsx`:
 **Grower — Managers:**
 - `9999999` — Paul Schlegel → `manager` → ManagerTasksView
 - `8888888` — Amanda Kirsop → `manager` → ManagerTasksView
+- `5555555` — Head Grower (placeholder name, rename on hire) → `head_grower` → HeadGrowerView
 
 **Grower — Workers:**
 - `4444444` — Reese Morris → `operator` (task creator access via name match)
@@ -198,6 +199,13 @@ Hybrid system in `src/Auth.jsx`:
 - **Auto-compliance**: completing an application/fertigation task calls `logWorkCompliance()` → inserts `spray_records` row (idempotent per `task_id`; applicator = completer, applied_at = completion time, REI expiry computed). If REI active → `rei_started` push to ALL (exempt from quiet hours) + red `ReiBanner` on worker/manager views listing restricted areas until expiry.
 - **Work Records page** (Operations → 💧 Work Records, replaces Spray Log nav; `SprayLog.jsx` retired from nav but file kept): 📒 Records (filters + state-chemist XLSX export), 🧪 Product Library (`chem_products`: EPA #, AI, default rate, REI hrs, signal word), 🔬 Purdue Samples (`sample_submissions` + fills the official PPDL-006-004 PDF via lazy-loaded `pdf-lib` from `public/ppdl-form-006-004.pdf`; "chemicals applied" auto-fills from the last 60 days of records; submitter info remembered in localStorage; draft→printed→sent→results lifecycle).
 - Migration: `20260720150000_grower_work_hub.sql`. JSONB keys: `work_payload`, `form_data`.
+- **`chem_products` seeded** (65 products from 2024-25 spray_records: EPA #, AI, rates; + 4 fertigation staples). ALL `rei_hours` NULL — must be filled from labels (REI alerts inert until then). `moa` column holds IRAC/FRAC group (61 tagged).
+
+### Head Grower (`HeadGrowerView.jsx`)
+- Role `head_grower` (floor code `5555555`, placeholder name) → dedicated view; also PlannerShell → Operations → 🌿 Head Grower (embedded).
+- **📋 Board**: active-REI count, products-missing-REI worklist (deep-links to library), response checks due, overdue growing tasks, this week's application/fertigation tasks w/ status + MOA chips + rotation warnings, New Work FAB.
+- **🔄 Rotation**: per-target-pest MOA sequence (90-day spray_records history + planned tasks); ⚠ flags back-to-back same IRAC/FRAC group (biologicals/PGRs exempt).
+- **📒 Records**: full WorkRecords embedded (`initialTab` prop deep-links to products).
 
 ### Fall Program, Crop Planning, Combo Designer, Houseplant Availability, Fundraiser tools
 All under PlannerShell's nav groups. See individual files for details.

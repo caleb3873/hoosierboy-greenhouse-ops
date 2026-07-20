@@ -20,6 +20,7 @@ import Export              from "./Export";
 import GrowerManagement   from "./GrowerManagement";
 import WateringPlan        from "./WateringPlan";
 import WorkRecords         from "./WorkRecords";
+import HeadGrowerView      from "./HeadGrowerView";
 import SoilCalculator      from "./SoilCalculator";
 import HouseplantAvailability from "./HouseplantAvailability";
 import OwnerDashboard       from "./OwnerDashboard";
@@ -77,6 +78,7 @@ const NAV_GROUPS = [
     icon: "⚙",
     items: [
       { id: "spraylog",  label: "💧 Work Records" },
+      { id: "head-grower", label: "🌿 Head Grower" },
       { id: "watering",  label: "Watering" },
       { id: "scouting",  label: "Scouting" },
       { id: "growers",   label: "Growers" },
@@ -255,6 +257,7 @@ function PlannerShell() {
       <div style={{ maxWidth: 1100, margin: "0 auto", padding: "28px 24px" }}>
         {page === "home"       && <PlannerHome    onNavigate={setPage} />}
         {page === "spraylog"  && <WorkRecords />}
+        {page === "head-grower" && <HeadGrowerView embedded />}
         {page === "watering"  && <WateringPlan />}
         {page === "scouting"  && <div style={{ padding: 40, textAlign: "center", color: "#7a8c74" }}>Scouting — coming soon</div>}
         {page === "growers"   && <GrowerManagement />}
@@ -382,6 +385,9 @@ function AppInner() {
 
   // Admin → full planner
   if (isAdmin) return <PlannerShell />;
+
+  // Head grower → chemical-program command center
+  if (role === "head_grower") return <HeadGrowerView onSwitchMode={signOut} />;
 
   // Grower → grower mobile view
   if (role === "grower") return <GrowerView onSwitchMode={signOut} />;
