@@ -21,6 +21,7 @@ import Evaluations from "./Evaluations";
 import TradeShow from "./TradeShow";
 import HotList from "./HotList";
 import TreatmentPlan from "./TreatmentPlan";
+import { NewWorkModal, ReiBanner, logWorkCompliance } from "./WorkHub";
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
 
@@ -407,6 +408,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
   useEffect(() => { try { sessionStorage.setItem("mtv_view_v1", currentView); } catch {} }, [currentView]); // sessionStorage → survives refresh, resets on fresh open
   useEffect(() => { try { localStorage.setItem("mtv_cat_v1", category); } catch {} }, [category]);
   const [showHrCompose, setShowHrCompose] = useState(false);
+  const [showNewWork, setShowNewWork] = useState(false);
   const [showAssigned, setShowAssigned] = useState(false);
   const [showVacationForm, setShowVacationForm] = useState(false);
   const [showVacationInbox, setShowVacationInbox] = useState(false);
@@ -744,6 +746,8 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
     });
     try { await ensureResponseCheck(completingTask, completedAt); } catch (e) { /* non-blocking */ }
     loopBackToTreatment({ ...completingTask, photos }, completedAt); // fire-and-forget: photos → treatment record
+    // Application/fertigation tasks auto-write their state-chemist compliance record
+    try { await logWorkCompliance(completingTask, displayName || "Manager", completedAt || new Date().toISOString()); } catch { /* non-blocking */ }
     setCompletingTask(null);
     refresh();
   }
@@ -1162,6 +1166,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
             </div>
             <AnnouncementBanner />
             <OutThisWeekBanner />
+            <ReiBanner />
 
             {isAsstManager ? (
               /* ── ASSISTANT MANAGER HUB — simplified, 4 main cards ── */
@@ -1317,6 +1322,14 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
                   <div className="hub-card-emoji">🌼</div>
                   <div className="hub-card-title">Treatment Plan</div>
                   <div className="hub-card-sub">Last year's plan → this year's tasks</div>
+                </div>
+
+                {/* New Work — application / fertigation / hand work quick-create.
+                    Applications log themselves for state records on completion. */}
+                <div className="hub-card" onClick={() => setShowNewWork(true)} style={{ borderTopColor: "#4a90d9", borderTopWidth: 4 }}>
+                  <div className="hub-card-emoji">🧪</div>
+                  <div className="hub-card-title">New Work</div>
+                  <div className="hub-card-sub">Application · fertigation · hand work</div>
                 </div>
 
                 {/* Vacation */}
@@ -1855,6 +1868,16 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       )}
 
       {showRecorder && <VoiceRecorderModal onSave={createTask} onCancel={() => setShowRecorder(false)} defaultLocation={defaultLocation} />}
+      {showNewWork && (
+        <NewWorkModal
+          tasks={tasks}
+          upsert={upsert}
+          createdBy={displayName || "Manager"}
+          defaultLocation={defaultLocation}
+          onClose={() => setShowNewWork(false)}
+          onCreated={() => refresh()}
+        />
+      )}
       {showCodes && <CodesModal onClose={() => setShowCodes(false)} />}
       {showRequests && (
         <RequestsModal

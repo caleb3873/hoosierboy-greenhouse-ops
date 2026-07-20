@@ -27,8 +27,9 @@ module.exports = async (req, res) => {
   const { event, title, category, bucket, requester, customer, proposer } = req.body || {};
   if (!event) return res.status(400).json({ error: "event required" });
 
-  // Check quiet hours — skip sending, notifications will fire on next in-hours action
-  if (isQuietHours()) {
+  // Check quiet hours — skip sending, notifications will fire on next in-hours action.
+  // REI safety alerts are exempt: a re-entry restriction matters MORE after hours.
+  if (event !== "rei_started" && isQuietHours()) {
     return res.status(200).json({ event, skipped: true, reason: "quiet_hours", message: "Notifications paused outside 7:00am–4:30pm ET" });
   }
 
@@ -72,6 +73,18 @@ module.exports = async (req, res) => {
         url: "/",
         tag: "delivery_approved",
         targets: proposer ? [proposer] : "shipping",
+      };
+      break;
+
+    case "rei_started":
+      // Fired when an application task completes with an REI — warns everyone
+      // (growers AND managers) to stay out of the treated area.
+      pushPayload = {
+        title: "⚠️ Re-Entry Restricted",
+        body: title || "An area is under a re-entry interval",
+        url: "/",
+        tag: "rei_started",
+        targets: "all",
       };
       break;
 

@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { useAuth } from "./Auth";
 import { GROWER_ROLES } from "./shared";
-import SprayLog from "./SprayLog";
+import WorkRecords from "./WorkRecords";
 import WateringPlan from "./WateringPlan";
 
 const FONT = "'DM Sans','Segoe UI',sans-serif";
@@ -90,7 +90,7 @@ export default function GrowerView({ onSwitchMode }) {
       {/* Content */}
       <div style={{ padding: 16 }}>
         {tab === "dashboard" && <GrowerDashboard growerProfile={growerProfile} />}
-        {tab === "spray"     && <SprayLog embedded />}
+        {tab === "spray"     && <WorkRecords embedded />}
         {tab === "watering"  && <WateringPlan embedded />}
         {tab === "scouting"  && <div style={{ color: "#7a8c74", textAlign: "center", padding: 40 }}>Scouting — coming soon</div>}
         {tab === "meetings"  && <div style={{ color: "#7a8c74", textAlign: "center", padding: 40 }}>Meetings — coming soon</div>}

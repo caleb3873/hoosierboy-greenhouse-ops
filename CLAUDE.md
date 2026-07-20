@@ -193,6 +193,12 @@ Hybrid system in `src/Auth.jsx`:
 - Carryover: stale pending tasks auto-roll to today with red "OVERDUE" badge
 - Push notification triggers on task create + approve
 
+### Work Hub (`WorkHub.jsx` + `WorkRecords.jsx`) — grower-initiated work + compliance
+- **🧪 New Work** (worker FAB + manager hub card): structured quick-create in 3 kinds — 💧 Application (product from `chem_products` library, method, rate, target pest, REI), 🧪 Fertigation, ✋ Hand Work (pinch/space/clean/trim/stick/weed/move). Creates `manager_tasks` rows (`category='growing'`, `source_kind='application'|'fertigation'|'handwork'`, structured `work_payload` jsonb) — direct to board, no approval.
+- **Auto-compliance**: completing an application/fertigation task calls `logWorkCompliance()` → inserts `spray_records` row (idempotent per `task_id`; applicator = completer, applied_at = completion time, REI expiry computed). If REI active → `rei_started` push to ALL (exempt from quiet hours) + red `ReiBanner` on worker/manager views listing restricted areas until expiry.
+- **Work Records page** (Operations → 💧 Work Records, replaces Spray Log nav; `SprayLog.jsx` retired from nav but file kept): 📒 Records (filters + state-chemist XLSX export), 🧪 Product Library (`chem_products`: EPA #, AI, default rate, REI hrs, signal word), 🔬 Purdue Samples (`sample_submissions` + fills the official PPDL-006-004 PDF via lazy-loaded `pdf-lib` from `public/ppdl-form-006-004.pdf`; "chemicals applied" auto-fills from the last 60 days of records; submitter info remembered in localStorage; draft→printed→sent→results lifecycle).
+- Migration: `20260720150000_grower_work_hub.sql`. JSONB keys: `work_payload`, `form_data`.
+
 ### Fall Program, Crop Planning, Combo Designer, Houseplant Availability, Fundraiser tools
 All under PlannerShell's nav groups. See individual files for details.
 

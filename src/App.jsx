@@ -19,7 +19,7 @@ import TradeShow           from "./TradeShow";
 import Export              from "./Export";
 import GrowerManagement   from "./GrowerManagement";
 import WateringPlan        from "./WateringPlan";
-import SprayLog            from "./SprayLog";
+import WorkRecords         from "./WorkRecords";
 import SoilCalculator      from "./SoilCalculator";
 import HouseplantAvailability from "./HouseplantAvailability";
 import OwnerDashboard       from "./OwnerDashboard";
@@ -76,7 +76,7 @@ const NAV_GROUPS = [
     label: "Operations",
     icon: "⚙",
     items: [
-      { id: "spraylog",  label: "Spray Log" },
+      { id: "spraylog",  label: "💧 Work Records" },
       { id: "watering",  label: "Watering" },
       { id: "scouting",  label: "Scouting" },
       { id: "growers",   label: "Growers" },
@@ -254,7 +254,7 @@ function PlannerShell() {
       {/* Page content */}
       <div style={{ maxWidth: 1100, margin: "0 auto", padding: "28px 24px" }}>
         {page === "home"       && <PlannerHome    onNavigate={setPage} />}
-        {page === "spraylog"  && <SprayLog />}
+        {page === "spraylog"  && <WorkRecords />}
         {page === "watering"  && <WateringPlan />}
         {page === "scouting"  && <div style={{ padding: 40, textAlign: "center", color: "#7a8c74" }}>Scouting — coming soon</div>}
         {page === "growers"   && <GrowerManagement />}

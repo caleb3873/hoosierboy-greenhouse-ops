@@ -9,6 +9,7 @@ import HotList from "./HotList";
 import { BrehobWorkerView } from "./BrehobList";
 import { VacationRequestModal, OutThisWeekBanner } from "./Vacation";
 import { AnnouncementBanner, AnnouncementPopup, useAnnouncementPopup } from "./Announcements";
+import { NewWorkModal, ReiBanner, logWorkCompliance } from "./WorkHub";
 import InventoryView from "./InventoryView";
 import ReferenceDocs from "./ReferenceDocs";
 import Evaluations from "./Evaluations";
@@ -70,6 +71,7 @@ function WorkerChecklistViewInner({ onSwitchMode, onBackToApp, onOpenTaskCreator
   const [showHotList, setShowHotList] = useState(false);
   const [releasingTask, setReleasingTask] = useState(null);
   const [suggesting, setSuggesting] = useState(false);
+  const [newWork, setNewWork] = useState(false);
   const [showBrehob, setShowBrehob] = useState(false);
   const [showVacationForm, setShowVacationForm] = useState(false);
   const { rows: vacationReqs, upsert: upsertVacation } = useVacationRequests();
@@ -210,7 +212,7 @@ function WorkerChecklistViewInner({ onSwitchMode, onBackToApp, onOpenTaskCreator
       hi: "Hi", thisWeek: "This Week's Tasks", toDo: "To Do", done: "Done",
       nothingDone: "Nothing completed yet.", noGrowing: "No growing tasks assigned yet.",
       claim: "Claim Task", markDone: "Mark Done", release: "Release", mine: "MINE",
-      suggestTask: "Suggest Task", signOut: "Sign out",
+      suggestTask: "Suggest Task", newWork: "New Work", signOut: "Sign out",
       today: "Today", tomorrow: "Tomorrow", dayAfter: "Day After", weekly: "This Week",
       evaluation: "Self Evaluation",
     },
@@ -218,7 +220,7 @@ function WorkerChecklistViewInner({ onSwitchMode, onBackToApp, onOpenTaskCreator
       hi: "Hola", thisWeek: "Tareas de esta semana", toDo: "Por hacer", done: "Hechas",
       nothingDone: "Nada completado aún.", noGrowing: "No hay tareas asignadas.",
       claim: "Tomar tarea", markDone: "Marcar hecha", release: "Liberar", mine: "MÍA",
-      suggestTask: "Sugerir tarea", signOut: "Salir",
+      suggestTask: "Sugerir tarea", newWork: "Nuevo trabajo", signOut: "Salir",
       today: "Hoy", tomorrow: "Mañana", dayAfter: "Pasado mañana", weekly: "Esta semana",
       evaluation: "Autoevaluación",
     },
@@ -226,7 +228,7 @@ function WorkerChecklistViewInner({ onSwitchMode, onBackToApp, onOpenTaskCreator
       hi: "မင်္ဂလာပါ", thisWeek: "ဤအပတ်လုပ်ငန်းများ", toDo: "လုပ်ရန်", done: "ပြီးပြီ",
       nothingDone: "ဘာမှမပြီးသေးပါ။", noGrowing: "လုပ်ငန်းမရှိသေးပါ။",
       claim: "လုပ်ငန်းယူပါ", markDone: "ပြီးပြီဟုသတ်မှတ်ပါ", release: "ပြန်ပေးပါ", mine: "ကျွန်တော်",
-      suggestTask: "လုပ်ငန်းအကြံပြုပါ", signOut: "ထွက်ပါ",
+      suggestTask: "လုပ်ငန်းအကြံပြုပါ", newWork: "အလုပ်အသစ်", signOut: "ထွက်ပါ",
       today: "ယနေ့", tomorrow: "မနက်ဖြန်", dayAfter: "သန်ဘက်ခါ", weekly: "ဤအပတ်",
       evaluation: "ကိုယ်တိုင် အကဲဖြတ်ချက်",
     },
@@ -234,7 +236,7 @@ function WorkerChecklistViewInner({ onSwitchMode, onBackToApp, onOpenTaskCreator
     hi: "Hi", thisWeek: "This Week's Tasks", toDo: "To Do", done: "Done",
     nothingDone: "Nothing completed yet.", noGrowing: "No growing tasks assigned yet.",
     claim: "Claim Task", markDone: "Mark Done", release: "Release", mine: "MINE",
-    suggestTask: "Suggest Task", signOut: "Sign out",
+    suggestTask: "Suggest Task", newWork: "New Work", signOut: "Sign out",
     today: "Today", tomorrow: "Tomorrow", dayAfter: "Day After", weekly: "This Week",
     evaluation: "Self Evaluation",
   };
@@ -347,6 +349,8 @@ function WorkerChecklistViewInner({ onSwitchMode, onBackToApp, onOpenTaskCreator
     });
     try { await ensureResponseCheck(completingTask, completedAt); } catch (e) { /* non-blocking */ }
     loopBackToTreatment({ ...completingTask, photos }, completedAt); // fire-and-forget: photos → treatment record
+    // Application/fertigation tasks auto-write their state-chemist compliance record
+    try { await logWorkCompliance(completingTask, displayName || "Worker", completedAt || new Date().toISOString()); } catch { /* non-blocking */ }
     // Water-in triggers: completing a Plant task spawns "water-in plants";
     // completing a Fill-pots task spawns "water-in dry pots" — at the same location/week.
     const ttl = completingTask.title || "";
@@ -456,6 +460,7 @@ function WorkerChecklistViewInner({ onSwitchMode, onBackToApp, onOpenTaskCreator
 
       <AnnouncementBanner />
       <OutThisWeekBanner />
+      <ReiBanner />
 
       {/* Inventory shortcut — opens InventoryView, defaults to Locked mode so
           growers can browse / take photos / leave notes without changing counts. */}
@@ -665,6 +670,19 @@ function WorkerChecklistViewInner({ onSwitchMode, onBackToApp, onOpenTaskCreator
         })()}
       </div>
 
+      {/* Floating "new work" button — applications / fertigations / hand work go
+          straight to the board (and log themselves for state records on completion) */}
+      <button onClick={() => setNewWork(true)}
+        title="Start an application, fertigation, or hand-work task"
+        style={{
+          position: "fixed", bottom: 84, right: 20, padding: "14px 20px", borderRadius: 999,
+          background: "#e89a3a", border: "3px solid #fff", color: GREEN_DARK, fontSize: 14, fontWeight: 800,
+          cursor: "pointer", boxShadow: "0 4px 20px rgba(0,0,0,.3)", zIndex: 200, fontFamily: "'DM Sans',sans-serif",
+          display: "flex", alignItems: "center", gap: 8,
+        }}>
+        🧪 {t_ui.newWork}
+      </button>
+
       {/* Floating "suggest task" button */}
       <button onClick={() => setSuggesting(true)}
         title="Suggest a task for the manager to approve"
@@ -676,6 +694,16 @@ function WorkerChecklistViewInner({ onSwitchMode, onBackToApp, onOpenTaskCreator
         }}>
         ➕ {t_ui.suggestTask}
       </button>
+
+      {newWork && (
+        <NewWorkModal
+          tasks={tasks}
+          upsert={upsert}
+          createdBy={displayName || "Grower"}
+          onClose={() => setNewWork(false)}
+          onCreated={() => refresh()}
+        />
+      )}
 
       {completingTask && (
         <CompletionPromptModal
