@@ -5,6 +5,7 @@
 //     per customer bundling all their at-risk lines. Closes the last manual gap
 //     in the auto-lapse design: reserve → warned → take it or it releases.
 const { svc, dispatchCampaign, sendOne, buildReservationReminder } = require("./_campaigns");
+const { generateCountTasks, harvestCountTasks, bridgeOrdersToDeliveries } = require("./_b2btasks");
 
 function hourInIndy() {
   try { return +new Intl.DateTimeFormat("en-US", { timeZone: "America/Indiana/Indianapolis", hour: "numeric", hour12: false }).format(new Date()); }
@@ -29,6 +30,13 @@ module.exports = async (req, res) => {
       if (error) out.reconciled.push({ plan: pl.name, error: error.message });
       else if (r && r[0] && (r[0].new_items || r[0].linked_rows || r[0].new_groups || r[0].refreshed_profiles)) out.reconciled.push({ plan: pl.name, ...r[0] });
     }
+
+    // 0b. task flows: blind-count tasks out, completed counts harvested in, confirmed orders → shipping
+    out.tasks = {
+      counts: await generateCountTasks(db).catch(e => ({ error: String(e.message || e) })),
+      harvest: await harvestCountTasks(db).catch(e => ({ error: String(e.message || e) })),
+      bridge: await bridgeOrdersToDeliveries(db).catch(e => ({ error: String(e.message || e) })),
+    };
 
     // 1. due scheduled campaigns
     const { data: due } = await db.from("campaigns").select("id,name").eq("status", "scheduled").lte("scheduled_at", new Date().toISOString());
