@@ -1,172 +1,66 @@
 sku,name,genus,kind,size,category,tier_guess,price,planned,has_culture,needs_image,mixed_combo_review,gap_count
-S27-0988,1801S RETAIL VIOLA SORBET XP JUMP UP MIX,Viola,straight,,,,,48,,1,,6
-S27-0982,1801S RETAIL VIOLA SORBET XP DENIM JUMP UP,Viola,straight,,,,,38,,1,,6
-S27-0998,1801S RETAIL VIOLA SORBET XP YELLOW BEACON,Viola,straight,,,,,33,,1,,6
-S27-0990,1801S RETAIL VIOLA SORBET XP ORANGE JUMP UP,Viola,straight,,,,,23,,1,,6
-S27-0985,1801S RETAIL VIOLA SORBET XP LEMON JUMP UP,Viola,straight,,,,,18,,1,,6
-S27-0994,1801S RETAIL VIOLA SORBET XP PURPLE FACE,Viola,straight,,,,,17,,1,,6
-S27-0996,1801S RETAIL VIOLA SORBET XP WHITE,Viola,straight,,,,,17,,1,,6
-S27-0154,1801S RETAIL BELLIS BELLISIMA MIXTURE,Bellis,straight,,,,,16,,1,,6
-S27-0155,1801S RETAIL BELLIS BELLISIMA ROSE,Bellis,straight,,,,,16,,1,,6
-S27-1000,1801S RETAIL VIOLA SORBET XP YELLOW PINK JUMP UP,Viola,straight,,,,,11,,1,,6
-S27-0578,"4.5"" IVY HEDERA MARY BETH",Ivy,straight,"4.5""",,,,1200,,1,,5
-S27-0577,"4.5"" IVY HEDERA GOLDCHILD",Ivy,straight,"4.5""",,,,700,,1,,5
-S27-0575,"4.5"" IVY HARLEQUIN",Ivy,straight,"4.5""",,,,600,,1,,5
-S27-0586,"4.5"" GRASS CAREX RED ROOSTER",Juncus,straight,"4.5""",,,,480,,1,,5
-S27-0580,"4.5"" IVY ALGERIAN TROPICAL BLIZZARD",Ivy,straight,"4.5""",,,,400,,1,,5
-S27-0581,"4.5"" IVY HEDERA WHITE RIPPLE",Ivy,straight,"4.5""",,,,400,,1,,5
-S27-0582,"4.5"" IVY HEDERA YELLOW RIPPLE",Ivy,straight,"4.5""",,,,400,,1,,5
-S27-0583,"4.5"" IVY MINI ESTER",Ivy,straight,"4.5""",,,,400,,1,,5
-S27-0579,"HB 10"" GERANIUM MOJO SALMON",Ivy,straight,hb,,,,339,,1,,5
-S27-0265,"6.5"" CALLAS QATAR",Calla,straight,"6.5""",,,,250,,1,,5
-S27-0550,"4.5"" GERBERA COLORBLOOM YELLOW WITH LIGHT EYE",Gerbera,straight,"4.5""",,,,112,,1,,5
-S27-0282,"6.5"" CANNA TROPICANNA",Canna,straight,"6.5""",,,,96,,1,,5
-S27-0270,"4.5"" CANNA CANNO BRONZE SCARLET",Canna,straight,"4.5""",,,,90,,1,,5
-S27-0171,"6.5"" CALADIUM FIRE CHIEF",Caladium,straight,"6.5""",,,,66,,1,,5
-S27-0447,"4.5"" EUPHORBIA STARDUST WHITE SPARKLE",Euphorbia,straight,"4.5""",,,,50,,1,,5
-S27-0983,1801S RETAIL VIOLA SORBET XP LEMON ICE BLOTCH,Viola,straight,,,,11.88,48,,1,,5
-S27-0986,1801S RETAIL VIOLA SORBET XP MARINA,Viola,straight,,,,11.74,48,,1,,5
-S27-0987,1801S RETAIL VIOLA SORBET XP ALL SEASONS MIX,Viola,straight,,,,11.75,48,,1,,5
-S27-0887,1801S RETAIL STOCK MIME RED,Stock,straight,,,,,46,Y,1,,5
-S27-0552,"4.5"" HELICHRYSUM LICORICE PETITE",Helichrysum,straight,"4.5""",,,,40,,1,,5
-S27-0587,72 CELL BIG TWISTER,Juncus,straight,flat,,,,35,,1,,5
-S27-0980,1801S RETAIL VIOLA SORBET BLACK DELIGHT,Viola,straight,,,,11.81,32,,1,,5
-S27-0992,1801S RETAIL VIOLA SORBET XP PINK HALO,Viola,straight,,,,,26,Y,1,,5
+S27-0988,1801S RETAIL VIOLA SORBET XP JUMP UP MIX,Viola,straight,,color_annuals,,,48,,1,,5
+S27-0982,1801S RETAIL VIOLA SORBET XP DENIM JUMP UP,Viola,straight,,color_annuals,,,38,,1,,5
+S27-0998,1801S RETAIL VIOLA SORBET XP YELLOW BEACON,Viola,straight,,color_annuals,,,33,,1,,5
+S27-0990,1801S RETAIL VIOLA SORBET XP ORANGE JUMP UP,Viola,straight,,color_annuals,,,23,,1,,5
 S27-0441,1801S RETAIL DUSTY MILLER,Dusty Miller,straight,,color_annuals,,,22,,1,,5
-S27-0702,"4.5"" OXALIS SUNSET VELVET",Oxalis,straight,"4.5""",,,,20,,1,,5
+S27-0985,1801S RETAIL VIOLA SORBET XP LEMON JUMP UP,Viola,straight,,color_annuals,,,18,,1,,5
+S27-0994,1801S RETAIL VIOLA SORBET XP PURPLE FACE,Viola,straight,,color_annuals,,,17,,1,,5
+S27-0996,1801S RETAIL VIOLA SORBET XP WHITE,Viola,straight,,color_annuals,,,17,,1,,5
+S27-0154,1801S RETAIL BELLIS BELLISIMA MIXTURE,Bellis,straight,,color_annuals,,,16,,1,,5
+S27-0155,1801S RETAIL BELLIS BELLISIMA ROSE,Bellis,straight,,color_annuals,,,16,,1,,5
+S27-1000,1801S RETAIL VIOLA SORBET XP YELLOW PINK JUMP UP,Viola,straight,,color_annuals,,,11,,1,,5
 S27-0504,FIBER LG. GERANIUM COMBO RED,Geranium,combo,,combos,,25.45,1858,Y,1,1,4
+S27-0578,"4.5"" IVY HEDERA MARY BETH",Ivy,straight,"4.5""",accents,,,1200,,1,,4
 S27-0055,FIBER LG. SUMMER COMBO ALLIGATOR ALLEY,Begonia,combo,,combos,,35.34,845,Y,1,1,4
-S27-0576,"4.5"" IVY HEDERA GLACIER",Ivy,straight,"4.5""",,,,800,Y,1,,4
 S27-0508,FIBER LG. GERANIUM DYNAMO VIOLET,Geranium,combo,,combos,,25.59,764,Y,1,1,4
+S27-0577,"4.5"" IVY HEDERA GOLDCHILD",Ivy,straight,"4.5""",accents,,,700,,1,,4
 S27-0506,FIBER LG. GERANIUM DYNAMO SALMON,Geranium,combo,,combos,,26.49,683,Y,1,1,4
+S27-0575,"4.5"" IVY HARLEQUIN",Ivy,straight,"4.5""",accents,,,600,,1,,4
 S27-0498,FIBER LG. GERANIUM DYNAMO HOT PINK,Geranium,combo,,combos,,26.25,553,Y,1,1,4
-S27-0585,"4.5"" GRASS CAREX AMAZON MIST",Juncus,straight,"4.5""",,,,480,Y,1,,4
-S27-0574,"4.5"" IVY GOLDEN INGE",Ivy,straight,"4.5""",,,,400,Y,1,,4
-S27-0638,"4.5"" MUEHLENBECKIA WIRE VINE (SOUTH SHELF)",Muehlenbeckia,straight,"4.5""",,,,382,Y,1,,4
+S27-0586,"4.5"" GRASS CAREX RED ROOSTER",Juncus,straight,"4.5""",accents,,,480,,1,,4
+S27-0580,"4.5"" IVY ALGERIAN TROPICAL BLIZZARD",Ivy,straight,"4.5""",accents,,,400,,1,,4
+S27-0581,"4.5"" IVY HEDERA WHITE RIPPLE",Ivy,straight,"4.5""",accents,,,400,,1,,4
+S27-0582,"4.5"" IVY HEDERA YELLOW RIPPLE",Ivy,straight,"4.5""",accents,,,400,,1,,4
+S27-0583,"4.5"" IVY MINI ESTER",Ivy,straight,"4.5""",accents,,,400,,1,,4
 S27-0064,FIBER LG. SUMMER COMBO BOURBON STREET,Begonia,combo,,combos,,33.34,364,Y,1,1,4
-S27-0011,"6.5"" ALOCASIA GAGEANA CALIFORNIA",Alocasia,straight,"6.5""",,value,9.22,360,,1,,4
 S27-0510,FIBER LG. GERANIUM DYNAMO WHITE,Geranium,combo,,combos,,23.78,353,Y,1,1,4
-S27-0269,"6.5"" CANNA CANNOVA BRONZE ORANGE",Canna,straight,"6.5""",,value,9.22,288,,1,,4
-S27-0271,"6.5"" CANNA CANNOVA BRONZE SCARLET",Canna,straight,"6.5""",,standard,14.28,288,,1,,4
-S27-0274,"6.5"" CANNA CANNOVA GOLD LEOPARD",Canna,straight,"6.5""",,value,8.83,288,,1,,4
-S27-0276,"6.5"" CANNA CANNOVA RED GOLD FLAME",Canna,straight,"6.5""",,standard,9.29,288,,1,,4
-S27-0278,"6.5"" CANNA CANNOVA ROSE",Canna,straight,"6.5""",,value,9.16,288,,1,,4
-S27-0280,"6.5"" CANNA CANNOVA YELLOW",Canna,straight,"6.5""",,value,9.13,288,,1,,4
-S27-0892,"6.5"" SUNFLOWER SUNBUZZ",Sunflower,straight,"6.5""",,value,8.2,256,,1,,4
-S27-0264,"6.5"" CALLA PACO",Calla,straight,"6.5""",,standard,33.28,250,,1,,4
-S27-0266,"6.5"" CALLAS ROYAL PRINCESS",Calla,straight,"6.5""",,standard,17.33,250,,1,,4
-S27-0267,"6.5"" CALLAS SUN CLUB",Calla,straight,"6.5""",,standard,19.73,250,,1,,4
-S27-0040,"4.5"" SPRENGERI ASPARAGUS FERN",Asparagus Fern,straight,"4.5""",,standard,32.09,242,,1,,4
-S27-0350,"6.5"" COLOCASIA BLACK RUFFLES",Colocasia,straight,"6.5""",,value,9.13,210,,1,,4
-S27-0351,"6.5"" COLOCASIA FONTANESII",Colocasia,straight,"6.5""",,value,8.73,210,,1,,4
-S27-0352,"6.5"" COLOCASIA HAWAIIAN PUNCH",Colocasia,straight,"6.5""",,value,9.2,210,,1,,4
-S27-0354,"6.5"" COLOCASIA KONA COFFEE",Colocasia,straight,"6.5""",,standard,9.38,210,,1,,4
-S27-0357,"6.5"" COLOCASIA MOJITO",Colocasia,straight,"6.5""",,value,9.02,210,,1,,4
-S27-0358,"6.5"" COLOCASIA TEA CUP",Colocasia,straight,"6.5""",,value,9.2,210,,1,,4
-S27-0359,"6.5"" COLOCASIA WAIKIKI",Colocasia,straight,"6.5""",,standard,9.3,210,,1,,4
-S27-0856,"4.5"" PRIMULA DANOVA BICOLOR MIX",Primula,straight,"4.5""",,,,210,Y,1,,4
-S27-0169,"6.5"" CALADIUM CAROLYN WHARTON",Caladium,straight,"6.5""",,value,7.86,200,,1,,4
-S27-0174,"6.5"" CALADIUM FREIDA HEMPLE",Caladium,straight,"6.5""",,standard,9.89,200,,1,,4
-S27-0177,"6.5"" CALADIUM PINK CLOUD",Caladium,straight,"6.5""",,value,8.72,200,,1,,4
-S27-0181,"6.5"" CALADIUM WHITE CHRISTMAS",Caladium,straight,"6.5""",,standard,9.61,200,,1,,4
-S27-0182,"6.5"" CALADIUM WHITE QUEEN",Caladium,straight,"6.5""",,standard,9.39,200,,1,,4
-S27-0172,"6.5"" CALADIUM FLORIDA BEAUTY",Caladium,straight,"6.5""",,value,8.6,199,,1,,4
-S27-0446,"4.5"" EUPHORBIA STARDUST SUPERFLASH",Euphorbia,straight,"4.5""",,standard,32.24,190,,1,,4
-S27-0381,"6.5"" CRASPEDIA SOLAR POP",Craspedia,straight,"6.5""",,premium,33.89,162,,1,,4
+S27-0579,"HB 10"" GERANIUM MOJO SALMON",Ivy,straight,hb,accents,,,339,,1,,4
+S27-0265,"6.5"" CALLAS QATAR",Calla,straight,"6.5""",specialty,,,250,,1,,4
 S27-0438,38 CELL DRACAENA INDIVISA SPIKES,Dracaena,straight,flat,color_annuals,,,150,,1,,4
-S27-0857,"4.5"" PRIMULA DANOVA LIGHT VIOLET",Primula,straight,"4.5""",,,,140,Y,1,,4
-S27-0858,"4.5"" PRIMULA DANOVA PINK",Primula,straight,"4.5""",,,,140,Y,1,,4
-S27-0859,"4.5"" PRIMULA DANOVA YELLOW WITH EYE",Primula,straight,"4.5""",,,,140,Y,1,,4
-S27-0862,"4.5"" RANUNCULUS MACHE BICOLOR MIX",Ranunculus,straight,"4.5""",,standard,32.29,140,,1,,4
-S27-0863,"4.5"" RANUNCULUS MACHE PINK",Ranunculus,straight,"4.5""",,premium,32.34,140,,1,,4
-S27-0864,"4.5"" RANUNCULUS MACHE PURPLE",Ranunculus,straight,"4.5""",,standard,32.29,140,,1,,4
-S27-0865,"4.5"" RANUNCULUS MACHE ROSE",Ranunculus,straight,"4.5""",,standard,32.25,140,,1,,4
-S27-0866,"4.5"" RANUNCULUS MACHE YELLOW",Ranunculus,straight,"4.5""",,standard,32.29,140,,1,,4
-S27-0937,"HB 10"" WANDERING JEWEL RED GEM",Tradescantia,straight,hb,,standard,16.72,131,,1,,4
-S27-0281,"6.5"" CANNA CLEOPATRA",Canna,straight,"6.5""",,value,9.21,128,,1,,4
-S27-0551,"6.5"" GOMPHRENA PING PONG PURPLE",Gomphrena,straight,"6.5""",,premium,34.82,114,,1,,4
 S27-0719,1801S RETAIL PANSY DELTA PRO CLEAR YELLOW,Pansy,straight,,color_annuals,,,113,Y,1,,4
-S27-0546,"4.5"" GERBERA COLORBLOOM BICOLOR ORANGE YELLOW",Gerbera,straight,"4.5""",,standard,32.16,112,,1,,4
-S27-0589,"4.5"" JUNCUS TWISTER",Juncus,straight,"4.5""",,value,31.83,112,,1,,4
-S27-0041,"HB 10"" SPRENGERI BASKET",Asparagus Fern,straight,hb,,standard,18.24,108,,1,,4
-S27-0268,"4.5"" CANNA CANNOVA BRONZE ORANGE",Canna,straight,"4.5""",,premium,32.59,90,,1,,4
-S27-0763,"4.5"" PENTAS LUCKY STAR DARK RED",Pentas,straight,"4.5""",,value,32.03,90,,1,,4
-S27-0764,"4.5"" PENTAS LUCKY STAR LIPSTICK",Pentas,straight,"4.5""",,standard,32.08,90,,1,,4
-S27-0765,"4.5"" PENTAS LUCKY STAR PINK",Pentas,straight,"4.5""",,value,30.92,90,,1,,4
-S27-0766,"4.5"" PENTAS LUCKY STAR VIOLET",Pentas,straight,"4.5""",,value,32.04,90,,1,,4
-S27-0767,"4.5"" PENTAS LUCKY STAR WHITE",Pentas,straight,"4.5""",,value,31.33,90,,1,,4
-S27-0547,"4.5"" GERBERA COLORBLOOM BICOLOR RED WHITE",Gerbera,straight,"4.5""",,standard,32.12,84,,1,,4
-S27-0349,"6.5"" COLOCASIA ALOHA",Colocasia,straight,"6.5""",,value,8.85,72,,1,,4
-S27-0353,"6.5"" COLOCASIA ILLUSTRIS",Colocasia,straight,"6.5""",,value,9.12,72,,1,,4
-S27-0355,"6.5"" COLOCASIA MAUI GOLD",Colocasia,straight,"6.5""",,value,9.16,72,,1,,4
-S27-0356,"6.5"" COLOCASIA MAUI SUNRISE",Colocasia,straight,"6.5""",,standard,9.49,72,,1,,4
-S27-0762,"4.5"" PURPLE FOUNTAIN GRASS",Pennisetum,straight,"4.5""",,premium,32.75,72,,1,,4
-S27-0275,"4.5"" CANNA CANNOVA RED GOLD FLAME",Canna,straight,"4.5""",,premium,32.52,70,,1,,4
-S27-0277,"4.5"" CANNA CANNOVA ROSE",Canna,straight,"4.5""",,standard,32.32,70,,1,,4
-S27-0279,"4.5"" CANNA CANNOVA YELLOW",Canna,straight,"4.5""",,standard,32.21,70,,1,,4
+S27-0550,"4.5"" GERBERA COLORBLOOM YELLOW WITH LIGHT EYE",Gerbera,straight,"4.5""",color_annuals,,,112,,1,,4
+S27-0282,"6.5"" CANNA TROPICANNA",Canna,straight,"6.5""",specialty,,,96,,1,,4
+S27-0270,"4.5"" CANNA CANNO BRONZE SCARLET",Canna,straight,"4.5""",specialty,,,90,,1,,4
+S27-0171,"6.5"" CALADIUM FIRE CHIEF",Caladium,straight,"6.5""",specialty,,,66,,1,,4
 S27-0715,1801S RETAIL PANSY DELTA PRO BLOTCH MIX,Pansy,straight,,color_annuals,,,64,Y,1,,4
 S27-0722,1801S RETAIL PANSY DELTA PRO LAVENDER BLUE SHADES,Pansy,straight,,color_annuals,,,64,Y,1,,4
 S27-0724,1801S RETAIL PANSY DELTA PRO MARINA,Pansy,straight,,color_annuals,,,64,Y,1,,4
 S27-0734,1801S RETAIL PANSY DELTA PRO VIOLET & WHITE,Pansy,straight,,color_annuals,,,64,Y,1,,4
-S27-0889,1801S RETAIL STOCK MIME BLUE,Stock,straight,,,,11.78,62,Y,1,,4
-S27-0890,1801S RETAIL STOCK MIME ROSE,Stock,straight,,,,11.78,62,Y,1,,4
-S27-0442,"4.5"" EUCALYPTUS BABY BLUE BOUQUET",Eucalyptus,straight,"4.5""",,premium,32.37,58,,1,,4
-S27-0548,"4.5"" GERBERA COLORBLOOM WATERMELON WITH DARK EYE",Gerbera,straight,"4.5""",,value,31.97,56,,1,,4
-S27-0549,"4.5"" GERBERA COLORBLOOM WHITE WITH DARK EYE",Gerbera,straight,"4.5""",,standard,32.32,56,,1,,4
-S27-0584,"4.5"" JUNCUS BLUE ARROW",Juncus,straight,"4.5""",,standard,32.28,56,,1,,4
-S27-0588,"4.5"" JUNCUS TWISTED ARROWS",Juncus,straight,"4.5""",,value,31.52,56,,1,,4
 S27-0730,1801S RETAIL PANSY DELTA PRO TRI COLOR MIX,Pansy,straight,,color_annuals,,,52,Y,1,,4
-S27-0273,"4.5"" CANNA CANNOVA GOLD LEOPARD",Canna,straight,"4.5""",,premium,32.72,50,,1,,4
-S27-0433,"4.5"" DOUBLE IMPATIENS MUSICA BICOLOR DARK RED",Double Impatiens,straight,"4.5""",,,,50,Y,1,,4
-S27-0437,"4.5"" DOUBLE IMPATIENS MUSICA PINK AROMA",Double Impatiens,straight,"4.5""",,,,50,Y,1,,4
+S27-0447,"4.5"" EUPHORBIA STARDUST WHITE SPARKLE",Euphorbia,straight,"4.5""",accents,,,50,,1,,4
 S27-0726,1801S RETAIL PANSY DELTA PRO CLEAR ORANGE,Pansy,straight,,color_annuals,,,49,Y,1,,4
-S27-0888,1801S RETAIL STOCK MIME PINK,Stock,straight,,,,11.7,46,Y,1,,4
-S27-0891,1801S RETAIL STOCK MIME WHITE,Stock,straight,,,,11.67,46,Y,1,,4
+S27-0983,1801S RETAIL VIOLA SORBET XP LEMON ICE BLOTCH,Viola,straight,,color_annuals,,11.88,48,,1,,4
+S27-0986,1801S RETAIL VIOLA SORBET XP MARINA,Viola,straight,,color_annuals,,11.74,48,,1,,4
+S27-0987,1801S RETAIL VIOLA SORBET XP ALL SEASONS MIX,Viola,straight,,color_annuals,,11.75,48,,1,,4
+S27-0887,1801S RETAIL STOCK MIME RED,Stock,straight,,color_annuals,,,46,Y,1,,4
 S27-0060,FIBER LG. BEGONIA BIG PINK,Begonia,straight,,color_annuals,,17.44,44,,1,,4
 S27-0713,1801S RETAIL PANSY DELTA CLASSIC TAPESTRY,Pansy,straight,,color_annuals,,,43,Y,1,,4
-S27-0272,"4.5"" CANNA CANNOVA CASA BRONZE PEACH",Canna,straight,"4.5""",,premium,32.84,40,,1,,4
-S27-0434,"4.5"" DOUBLE IMPATIENS MUSICA BICOLOR PINK",Double Impatiens,straight,"4.5""",,,,40,Y,1,,4
-S27-0435,"4.5"" DOUBLE IMPATIENS MUSICA ELECTRIC PURPLE",Double Impatiens,straight,"4.5""",,,,40,Y,1,,4
-S27-0436,"4.5"" DOUBLE IMPATIENS MUSICA ELEGANT RED",Double Impatiens,straight,"4.5""",,,,40,Y,1,,4
-S27-0999,1801L LANDSCAPE VIOLA SORBET XP YELLOW PINK JUMP UP,Viola,straight,flat,,premium,11.94,37,,1,,4
+S27-0552,"4.5"" HELICHRYSUM LICORICE PETITE",Helichrysum,straight,"4.5""",accents,,,40,,1,,4
+S27-0587,72 CELL BIG TWISTER,Juncus,straight,flat,accents,,,35,,1,,4
 S27-0014,1801S RETAIL ALYSSUM CLEAR CRYSTALS PURPLE SHADES,Alyssum,straight,,color_annuals,,12.22,32,,1,,4
 S27-0705,1801S RETAIL PANSY CATS PLUS WHITE,Pansy,straight,,color_annuals,,,32,Y,1,,4
-S27-0431,"4.5"" DIDELTA SILVER STRAND",Didelta,straight,"4.5""",,premium,33.17,30,,1,,4
-S27-0553,"4.5"" HELICHRYSUM SILVER RIBBON",Helichrysum,straight,"4.5""",,standard,32.26,30,,1,,4
-S27-0554,"4.5"" HELICHRYSUM SILVER STITCH",Helichrysum,straight,"4.5""",,standard,32.11,30,,1,,4
-S27-0984,1801L LANDSCAPE VIOLA SORBET XP LEMON JUMP UP,Viola,straight,flat,,premium,11.84,30,,1,,4
-S27-0861,"BOWL 8"" PRIMULA TOUCH ME MIDI MIX",Primula,straight,planter,,value,10,25,,1,,4
-S27-0989,1801L LANDSCAPE VIOLA SORBET XP ORANGE JUMP UP,Viola,straight,flat,,premium,11.83,25,,1,,4
-S27-0168,"4.5"" CALADIUM CANDYLAND",Caladium,straight,"4.5""",,premium,35.2,20,,1,,4
-S27-0170,"4.5"" CALADIUM CAROUSEL",Caladium,straight,"4.5""",,premium,35.2,20,,1,,4
-S27-0173,"4.5"" CALADIUM FRECKLES",Caladium,straight,"4.5""",,value,31.53,20,,1,,4
-S27-0175,"4.5"" CALADIUM GINGERLAND",Caladium,straight,"4.5""",,premium,35.2,20,,1,,4
-S27-0176,"4.5"" CALADIUM MISS MUFFET",Caladium,straight,"4.5""",,premium,35.2,20,,1,,4
-S27-0178,"4.5"" CALADIUM SANGRIA",Caladium,straight,"4.5""",,premium,35.2,20,,1,,4
-S27-0179,"4.5"" CALADIUM SUNSET PINK",Caladium,straight,"4.5""",,premium,35.2,20,,1,,4
-S27-0180,"4.5"" CALADIUM WATER'S EDGE",Caladium,straight,"4.5""",,premium,35.2,20,,1,,4
-S27-0443,"4.5"" EUCALYPTUS LEMON BUSH",Eucalyptus,straight,"4.5""",,standard,32.25,20,,1,,4
-S27-0444,"4.5"" EUCALYPTUS SILVER DOLLAR",Eucalyptus,straight,"4.5""",,standard,32.3,20,,1,,4
-S27-0445,"4.5"" EUCALYPTUS STYX",Eucalyptus,straight,"4.5""",,standard,32.2,20,,1,,4
-S27-0448,"4.5"" EVOLVULUS BLUE DAZE",Evolvulus,straight,"4.5""",,,,20,Y,1,,4
-S27-0555,"4.5"" HELICHRYSUM SILVER THREADS",Helichrysum,straight,"4.5""",,premium,32.97,20,,1,,4
-S27-0556,"4.5"" HELICHRYSUM SILVER YARNS",Helichrysum,straight,"4.5""",,standard,32.27,20,,1,,4
-S27-0936,"4.5"" TRADESCANTIA RAINBOW",Tradescantia,straight,"4.5""",,standard,32.26,20,,1,,4
-S27-0938,"4.5"" TRADESCANTIA WHITE",Tradescantia,straight,"4.5""",,value,31.99,20,,1,,4
-S27-0939,"4.5"" TRADESCANTIA YELLOW",Tradescantia,straight,"4.5""",,premium,32.96,20,,1,,4
+S27-0980,1801S RETAIL VIOLA SORBET BLACK DELIGHT,Viola,straight,,color_annuals,,11.81,32,,1,,4
+S27-0992,1801S RETAIL VIOLA SORBET XP PINK HALO,Viola,straight,,color_annuals,,,26,Y,1,,4
+S27-0702,"4.5"" OXALIS SUNSET VELVET",Oxalis,straight,"4.5""",accents,,,20,,1,,4
 S27-0013,1801S RETAIL ALYSSUM CLEAR CRYSTALS LAVENDER SHADES,Alyssum,straight,,color_annuals,,11.72,16,,1,,4
 S27-0015,1801S RETAIL ALYSSUM CLEAR CRYSTALS WHITE,Alyssum,straight,,color_annuals,,11.7,16,,1,,4
-S27-0993,1801S LANDSCAPE VIOLA SORBET XP PURPLE FACE,Viola,straight,flat,,standard,11.82,15,,1,,4
-S27-0995,1801S LANDSCAPE VIOLA SORBET XP WHITE,Viola,straight,flat,,standard,11.79,15,,1,,4
-S27-0997,1801L LANDSCAPE VIOLA SORBET XP YELLOW BEACON,Viola,straight,flat,,premium,11.98,15,,1,,4
-S27-0036,"4.5"" ARGYRANTHEMUM LOLLIES MARCHMALLOW",Argyranthemum,straight,"4.5""",,,,10,Y,1,,4
-S27-0981,1801L LANDSCAPE VIOLA SORBET XP DENIM JUMP UP,Viola,straight,flat,,premium,12.15,10,,1,,4
 S27-0136,FIBER LG. BEGONIA REIGER YELLOW,Begonia,combo,,combos,,29.72,1247,Y,1,,3
 S27-0963,"4.5"" VINCA VINE ILLUMINATION",Vinca,straight,"4.5""",color_annuals,,,1200,Y,1,,3
 S27-0530,"HB 10"" GERANIUM DARK RED",Geranium,combo,hb,combos,,,1133,Y,1,,3
 S27-0124,FIBER LG. BEGONIA REIGER ORANGE,Begonia,combo,,combos,,29.4,986,Y,1,,3
 S27-0140,FIBER LG. BEGONIA REIGER PINK,Begonia,combo,,combos,,28.57,954,Y,1,,3
-S27-0627,"4.5"" LYSIMACHIA CREEPING JENNY",Lysimachia,straight,"4.5""",,value,31.83,840,Y,1,,3
+S27-0576,"4.5"" IVY HEDERA GLACIER",Ivy,straight,"4.5""",accents,,,800,Y,1,,3
 S27-0137,"POT 8"" REIGER YELLOW",Begonia,combo,,combos,,17.96,670,Y,1,,3
 S27-0125,"POT 8"" REIGER ORANGE",Begonia,combo,,combos,,17.9,650,Y,1,,3
 S27-0141,"POT 8"" REIGER PINK",Begonia,combo,,combos,,18.02,615,Y,1,,3
@@ -175,34 +69,28 @@ S27-0135,"HB 10"" REIGER YELLOW",Begonia,combo,hb,combos,,,598,Y,1,,3
 S27-0505,"POT 8"" DYNAMO RED",Geranium,straight,,color_annuals,,10.86,588,Y,1,,3
 S27-0123,"HB 10"" REIGER ORANGE",Begonia,combo,hb,combos,,,575,Y,1,,3
 S27-0148,FIBER LG. BEGONIA REIGER RED,Begonia,combo,,combos,,30.88,557,Y,1,,3
-S27-0897,"4.5"" SUNPATIENS COMPACT ELECTRIC ORANGE",Sunpatiens,straight,"4.5""",,premium,33.39,550,Y,1,,3
-S27-0920,"4.5"" SUNPATIENS COMPACT TROPICAL ROSE",Sunpatiens,straight,"4.5""",,value,31.65,550,Y,1,,3
 S27-0979,"4.5"" VINCA VINE WOJO'S JEM",Vinca,straight,"4.5""",color_annuals,,,550,Y,1,,3
-S27-0894,"4.5"" SUNPATIENS COMPACT CLASSIC WHITE",Sunpatiens,straight,"4.5""",,premium,33.19,510,Y,1,,3
+S27-0585,"4.5"" GRASS CAREX AMAZON MIST",Juncus,straight,"4.5""",accents,,,480,Y,1,,3
 S27-0527,"HB 10"" GERANIUM DARK PINK",Geranium,combo,hb,combos,,,465,Y,1,,3
 S27-0139,"HB 10"" REIGER PINK",Begonia,combo,hb,combos,,,456,Y,1,,3
 S27-0964,"4.5"" VINCA VINE EXPOFLORA",Vinca,straight,"4.5""",color_annuals,,,450,Y,1,,3
 S27-0246,"POT 11"" FANCY BOY FUNDRAISER BERRY BASKET",Calibrachoa,combo,,combos,,29.49,444,Y,1,,3
 S27-0061,"4.5"" BEGONIA BIG GREEN LEAF RED",Begonia,straight,"4.5""",color_annuals,value,32.04,432,,1,,3
-S27-0896,"4.5"" SUNPATIENS COMPACT DEEP RED",Sunpatiens,straight,"4.5""",,premium,33.26,430,Y,1,,3
-S27-0900,"4.5"" SUNPATIENS COMPACT HOT PINK",Sunpatiens,straight,"4.5""",,premium,33.04,430,Y,1,,3
 S27-0152,"HB 10"" VIKING BEGONIA RED ON GREEN (4PPP)",Begonia,straight,hb,color_annuals,premium,18.76,426,,1,,3
 S27-0054,"4.5"" BEGONIA BIG BRONZE LEAF RED",Begonia,straight,"4.5""",color_annuals,value,29.07,416,,1,,3
 S27-0478,"POT 8"" CALLIOPE DARK RED",Geranium,straight,,color_annuals,,10.29,410,Y,1,,3
 S27-0516,"4.5"" GERANIUM FANTASIA VIOLET",Geranium,straight,"4.5""",color_annuals,value,31.5,400,,1,,3
-S27-0918,"4.5"" SUNPATIENS COMPACT ROYAL MAGENTA",Sunpatiens,straight,"4.5""",,premium,32.82,400,Y,1,,3
+S27-0574,"4.5"" IVY GOLDEN INGE",Ivy,straight,"4.5""",accents,,,400,Y,1,,3
 S27-0965,"4.5"" VINCA VINE VARIEGATED",Vinca,straight,"4.5""",color_annuals,,,400,Y,1,,3
+S27-0638,"4.5"" MUEHLENBECKIA WIRE VINE (SOUTH SHELF)",Muehlenbeckia,straight,"4.5""",accents,,,382,Y,1,,3
 S27-0147,"HB 10"" REIGER RED",Begonia,combo,hb,combos,,,381,Y,1,,3
-S27-0906,"4.5"" SUNPATIENS COMPACT LILAC",Sunpatiens,straight,"4.5""",,premium,32.82,380,Y,1,,3
+S27-0011,"6.5"" ALOCASIA GAGEANA CALIFORNIA",Alocasia,straight,"6.5""",specialty,value,9.22,360,,1,,3
 S27-0515,"4.5"" GERANIUM FANTASIA SHOCKING PINK",Geranium,straight,"4.5""",color_annuals,value,30.87,360,,1,,3
 S27-0149,"POT 8"" REIGER RED",Begonia,combo,,combos,,18.74,350,Y,1,,3
 S27-0439,"4.5"" DRACAENA INDIVISA SPIKES",Dracaena,straight,"4.5""",color_annuals,premium,32.4,350,,1,,3
 S27-0534,"HB 10"" GERANIUM SALMON",Geranium,straight,hb,color_annuals,,,339,Y,1,,3
 S27-0532,"HB 10"" GERANIUM MAGENTA",Geranium,combo,hb,combos,,,325,Y,1,,3
-S27-0432,"4.5"" DOROTHEANTHUS MEZOO",Dorotheanthus,straight,"4.5""",,standard,32.19,318,Y,1,,3
-S27-0430,"4.5"" DICHONDRA SILVER FALLS",Dichondra,straight,"4.5""",,value,31.12,314,Y,1,,3
 S27-0512,"4.5"" GERANIUM FANTASIA APPLE BLOSSOM",Geranium,straight,"4.5""",color_annuals,value,31.22,310,,1,,3
-S27-0915,"4.5"" SUNPATIENS COMPACT PURPLE CANDY",Sunpatiens,straight,"4.5""",,premium,32.67,310,Y,1,,3
 S27-0058,"8"" GARDENS OF OLIVE BRANCH",Begonia,straight,"8.5""",color_annuals,value,7.47,300,,1,,3
 S27-0062,"8"" GARDENS OF OLIVE BRANCH",Begonia,straight,"8.5""",color_annuals,value,7.47,300,,1,,3
 S27-0069,"8"" GARDENS OF OLIVE BRANCH",Begonia,straight,"8.5""",color_annuals,value,7.47,300,,1,,3
@@ -210,18 +98,40 @@ S27-0692,"4.5"" OSTEOSPERMUM PLOWER POWER COMPACT YELLOW",Osteospermum,straight,
 S27-0807,"HB 10"" EASY WAVE PETUNIA PINK COSMO",Petunia,combo,hb,combos,value,10.3,300,Y,1,1,3
 S27-0601,"HB 10"" BUZZ BASKETS MONARCH MEDLEY",Lantana,combo,hb,combos,standard,17.92,297,Y,1,1,3
 S27-0517,"4.5"" GERANIUM FANTASIA WHITE",Geranium,straight,"4.5""",color_annuals,value,31.81,290,,1,,3
+S27-0269,"6.5"" CANNA CANNOVA BRONZE ORANGE",Canna,straight,"6.5""",specialty,value,9.22,288,,1,,3
+S27-0271,"6.5"" CANNA CANNOVA BRONZE SCARLET",Canna,straight,"6.5""",specialty,standard,14.28,288,,1,,3
+S27-0274,"6.5"" CANNA CANNOVA GOLD LEOPARD",Canna,straight,"6.5""",specialty,value,8.83,288,,1,,3
+S27-0276,"6.5"" CANNA CANNOVA RED GOLD FLAME",Canna,straight,"6.5""",specialty,standard,9.29,288,,1,,3
+S27-0278,"6.5"" CANNA CANNOVA ROSE",Canna,straight,"6.5""",specialty,value,9.16,288,,1,,3
+S27-0280,"6.5"" CANNA CANNOVA YELLOW",Canna,straight,"6.5""",specialty,value,9.13,288,,1,,3
 S27-0131,"HB 10"" REIGER WHITE",Begonia,combo,hb,combos,,,276,Y,1,,3
 S27-0132,FIBER LG. BEGONIA REIGER WHITE,Begonia,combo,,combos,,28.84,275,Y,1,,3
+S27-0892,"6.5"" SUNFLOWER SUNBUZZ",Sunflower,straight,"6.5""",color_annuals,value,8.2,256,,1,,3
+S27-0264,"6.5"" CALLA PACO",Calla,straight,"6.5""",specialty,standard,33.28,250,,1,,3
+S27-0266,"6.5"" CALLAS ROYAL PRINCESS",Calla,straight,"6.5""",specialty,standard,17.33,250,,1,,3
+S27-0267,"6.5"" CALLAS SUN CLUB",Calla,straight,"6.5""",specialty,standard,19.73,250,,1,,3
 S27-0286,"8"" GARDENS OF OLIVE BRANCH",Celosia,straight,"8.5""",color_annuals,value,7.47,250,,1,,3
 S27-0513,"4.5"" GERANIUM FANTASIA ORANGE",Geranium,straight,"4.5""",color_annuals,value,31.7,250,,1,,3
 S27-0514,"4.5"" GERANIUM FANTASIA SALMON",Geranium,straight,"4.5""",color_annuals,premium,32.36,250,,1,,3
 S27-0133,"POT 8"" REIGER WHITE",Begonia,combo,,combos,,18.79,245,Y,1,,3
-S27-0940,"HB 10"" WANDERING JEWEL ZEBRINA",Tradescantia,straight,hb,,standard,16.96,245,Y,1,,3
+S27-0040,"4.5"" SPRENGERI ASPARAGUS FERN",Asparagus Fern,straight,"4.5""",accents,standard,32.09,242,,1,,3
 S27-0844,"HB 10"" PORTULACA CLASSIC MIX",Portulaca,combo,hb,combos,value,16.63,232,Y,1,1,3
 S27-0227,"POT 11"" FANCY BOY 'LIBERTY BELL'",Calibrachoa,combo,,combos,,24.17,220,Y,1,,3
 S27-0081,"HB 10"" BEGONIA GROOVY RED",Begonia,straight,hb,color_annuals,standard,16.7,217,,1,,3
+S27-0350,"6.5"" COLOCASIA BLACK RUFFLES",Colocasia,straight,"6.5""",specialty,value,9.13,210,,1,,3
+S27-0351,"6.5"" COLOCASIA FONTANESII",Colocasia,straight,"6.5""",specialty,value,8.73,210,,1,,3
+S27-0352,"6.5"" COLOCASIA HAWAIIAN PUNCH",Colocasia,straight,"6.5""",specialty,value,9.2,210,,1,,3
+S27-0354,"6.5"" COLOCASIA KONA COFFEE",Colocasia,straight,"6.5""",specialty,standard,9.38,210,,1,,3
+S27-0357,"6.5"" COLOCASIA MOJITO",Colocasia,straight,"6.5""",specialty,value,9.02,210,,1,,3
+S27-0358,"6.5"" COLOCASIA TEA CUP",Colocasia,straight,"6.5""",specialty,value,9.2,210,,1,,3
+S27-0359,"6.5"" COLOCASIA WAIKIKI",Colocasia,straight,"6.5""",specialty,standard,9.3,210,,1,,3
+S27-0856,"4.5"" PRIMULA DANOVA BICOLOR MIX",Primula,straight,"4.5""",color_annuals,,,210,Y,1,,3
+S27-0169,"6.5"" CALADIUM CAROLYN WHARTON",Caladium,straight,"6.5""",specialty,value,7.86,200,,1,,3
+S27-0174,"6.5"" CALADIUM FREIDA HEMPLE",Caladium,straight,"6.5""",specialty,standard,9.89,200,,1,,3
+S27-0177,"6.5"" CALADIUM PINK CLOUD",Caladium,straight,"6.5""",specialty,value,8.72,200,,1,,3
+S27-0181,"6.5"" CALADIUM WHITE CHRISTMAS",Caladium,straight,"6.5""",specialty,standard,9.61,200,,1,,3
+S27-0182,"6.5"" CALADIUM WHITE QUEEN",Caladium,straight,"6.5""",specialty,standard,9.39,200,,1,,3
 S27-0258,"POT 11"" FANCY BOY FUNDRAISER BERRY BASKET",Calibrachoa,combo,,combos,,29.49,200,Y,1,,3
-S27-0287,"6.5"" CLEOME LAVENDER DREAMS",Cleome,straight,"6.5""",,standard,32.09,200,Y,1,,3
 S27-0424,"8"" DAHLIA VENTI PASSION FRUIT",Dahlia,straight,hb,color_annuals,,,200,Y,1,,3
 S27-0426,"8"" DAHLIA VENTI PINKBURST",Dahlia,straight,hb,color_annuals,,,200,Y,1,,3
 S27-0499,"POT 8"" DYNAMO HOT PINK",Geranium,straight,,color_annuals,,9.79,200,Y,1,,3
@@ -230,18 +140,16 @@ S27-0503,"POT 8"" DYNAMO ORANGE",Geranium,straight,,color_annuals,,11.01,200,Y,1
 S27-0507,"POT 8"" DYNAMO SALMON",Geranium,straight,,color_annuals,,9.84,200,Y,1,,3
 S27-0509,"POT 8"" DYNAMO VIOLET",Geranium,straight,,color_annuals,,11.03,200,Y,1,,3
 S27-0511,"POT 8"" DYNAMO WHITE",Geranium,straight,,color_annuals,,10.93,200,Y,1,,3
-S27-0893,"4.5"" SUNPATIENS COMPACT BLUSH PINK",Sunpatiens,straight,"4.5""",,premium,32.98,190,Y,1,,3
-S27-0902,"4.5"" SUNPATIENS COMPACT LAVENDER SPLASH",Sunpatiens,straight,"4.5""",,premium,32.98,190,Y,1,,3
-S27-0914,"4.5"" SUNPATIENS COMPACT PURPLE",Sunpatiens,straight,"4.5""",,premium,33.07,190,Y,1,,3
-S27-0917,"4.5"" SUNPATIENS COMPACT ROSE GLOW",Sunpatiens,straight,"4.5""",,premium,33.02,190,Y,1,,3
+S27-0172,"6.5"" CALADIUM FLORIDA BEAUTY",Caladium,straight,"6.5""",specialty,value,8.6,199,,1,,3
+S27-0446,"4.5"" EUPHORBIA STARDUST SUPERFLASH",Euphorbia,straight,"4.5""",accents,standard,32.24,190,,1,,3
 S27-0502,FIBER LG. GERANIUM DYNAMO ORANGE,Geranium,straight,,color_annuals,,20.14,186,Y,1,,3
 S27-0744,MARKET BASKET MATRIX CLEAR MIX,Pansy,straight,,color_annuals,,7.89,180,Y,1,,3
 S27-0745,MARKET BASKET MATRIX BLOTCH MIX,Pansy,straight,,color_annuals,,7.87,180,Y,1,,3
 S27-0750,MARKET BASKET MATRIX DAFFODIL MIX,Pansy,straight,,color_annuals,,7.87,180,Y,1,,3
-S27-0898,"4.5"" SUNPATIENS COMPACT HOT CORAL",Sunpatiens,straight,"4.5""",,premium,32.97,180,Y,1,,3
 S27-0083,"HB 10"" BEGONIA GROOVY ROSE",Begonia,straight,hb,color_annuals,value,16.12,178,,1,,3
 S27-0612,"HB 10"" LANTANA COMBO KETCHUP & MUSTARD",Lantana,combo,hb,combos,standard,16.69,170,Y,1,1,3
 S27-0086,"HB 10"" BEGONIA GROOVY YELLOW",Begonia,straight,hb,color_annuals,value,13.39,169,,1,,3
+S27-0381,"6.5"" CRASPEDIA SOLAR POP",Craspedia,straight,"6.5""",color_annuals,premium,33.89,162,,1,,3
 S27-0052,"4.5"" BEGONIA BIG BRONZE LEAF DEEP ROSE",Begonia,straight,"4.5""",color_annuals,value,31.88,160,,1,,3
 S27-0053,"4.5"" BEGONIA BIG BRONZE LEAF PINK",Begonia,straight,"4.5""",color_annuals,standard,32.32,160,,1,,3
 S27-0283,"6.5"" CELOSIA FLAMMA bright red",Celosia,straight,"6.5""",color_annuals,premium,33.82,160,,1,,3
@@ -252,7 +160,6 @@ S27-0485,"POT 8"" CALLIOPE DEEP ROSE",Geranium,straight,,color_annuals,,11,160,Y
 S27-0488,"POT 8"" CALLIOPE HOT ROSE",Geranium,straight,,color_annuals,,10.98,160,Y,1,,3
 S27-0497,"POT 8"" CALLIOPE WHITE SPLASH",Geranium,straight,,color_annuals,,11.01,160,Y,1,,3
 S27-0529,"POT 10"" PATRIOTIC PELARGONIUMS",Geranium,combo,planter,combos,,,160,Y,1,,3
-S27-0628,"4.5"" LYSIMACHIA CREEPING JENNY",Lysimachia,straight,"4.5""",,value,31.83,157,Y,1,,3
 S27-0500,FIBER LG. GERANIUM DYNAMO LIGHT PINK,Geranium,straight,,color_annuals,,17.4,153,Y,1,,3
 S27-0808,"HB 10"" EASY WAVE PETUNIA ROSE MORN",Petunia,straight,hb,color_annuals,value,11.05,150,,1,,3
 S27-0809,"HB 10"" EASY WAVE PETUNIA SKY BLUE",Petunia,straight,hb,color_annuals,value,10.25,150,,1,,3
@@ -262,15 +169,26 @@ S27-0631,"6.5"" MARIGOLD INCA II ORANGE DEEP",Marigold,straight,"6.5""",color_an
 S27-0632,"6.5"" MARIGOLD INCA II YELLOW",Marigold,straight,"6.5""",color_annuals,standard,32.8,144,,1,,3
 S27-0739,MARKET BASKET FRIZZLE SIZZLE MIX,Pansy,straight,,color_annuals,,7.86,144,Y,1,,3
 S27-0746,MARKET BASKET MATRIX TRICOLOR MIX,Pansy,straight,,color_annuals,,7.87,144,Y,1,,3
-S27-0867,"4.5"" RANUNCULUS MAGIC FIREBALL",Ranunculus,straight,"4.5""",,premium,32.34,140,Y,1,,3
+S27-0857,"4.5"" PRIMULA DANOVA LIGHT VIOLET",Primula,straight,"4.5""",color_annuals,,,140,Y,1,,3
+S27-0858,"4.5"" PRIMULA DANOVA PINK",Primula,straight,"4.5""",color_annuals,,,140,Y,1,,3
+S27-0859,"4.5"" PRIMULA DANOVA YELLOW WITH EYE",Primula,straight,"4.5""",color_annuals,,,140,Y,1,,3
+S27-0862,"4.5"" RANUNCULUS MACHE BICOLOR MIX",Ranunculus,straight,"4.5""",color_annuals,standard,32.29,140,,1,,3
+S27-0863,"4.5"" RANUNCULUS MACHE PINK",Ranunculus,straight,"4.5""",color_annuals,premium,32.34,140,,1,,3
+S27-0864,"4.5"" RANUNCULUS MACHE PURPLE",Ranunculus,straight,"4.5""",color_annuals,standard,32.29,140,,1,,3
+S27-0865,"4.5"" RANUNCULUS MACHE ROSE",Ranunculus,straight,"4.5""",color_annuals,standard,32.25,140,,1,,3
+S27-0866,"4.5"" RANUNCULUS MACHE YELLOW",Ranunculus,straight,"4.5""",color_annuals,standard,32.29,140,,1,,3
 S27-0079,"HB 10"" BEGONIA GROOVY ORANGE",Begonia,straight,hb,color_annuals,standard,17,136,,1,,3
-S27-0935,"HB 10"" WANDERING JEWEL PINK PARADISE",Tradescantia,straight,hb,,standard,16.81,134,Y,1,,3
 S27-0709,"HB 10"" PANSY COOL WAVE PASTEL MIX",Pansy,straight,hb,color_annuals,value,11.34,133,,1,,3
+S27-0937,"HB 10"" WANDERING JEWEL RED GEM",Tradescantia,straight,hb,accents,standard,16.72,131,,1,,3
 S27-0120,"HB 10"" BEGONIA NONSTOP JOY YELLOW",Begonia,straight,hb,color_annuals,value,16.6,130,,1,,3
-S27-0002,"4.5"" AGERATUM MONARCH MAGIC",Ageratum,straight,"4.5""",,standard,32.29,120,Y,1,,3
+S27-0281,"6.5"" CANNA CLEOPATRA",Canna,straight,"6.5""",specialty,value,9.21,128,,1,,3
 S27-0068,FIBER LG. SUMMER COMBO WALL STREET,Begonia,combo,,combos,,33.54,120,Y,1,,3
 S27-0570,"4.5"" IPOMOEA SWEET GEORGIA GREEN LT. HRT",Ipomoea,straight,"4.5""",color_annuals,,,120,Y,1,,3
+S27-0551,"6.5"" GOMPHRENA PING PONG PURPLE",Gomphrena,straight,"6.5""",color_annuals,premium,34.82,114,,1,,3
 S27-0056,"4.5"" BEGONIA BIG BRONZE LEAF WHITE",Begonia,straight,"4.5""",color_annuals,value,30.05,112,,1,,3
+S27-0546,"4.5"" GERBERA COLORBLOOM BICOLOR ORANGE YELLOW",Gerbera,straight,"4.5""",color_annuals,standard,32.16,112,,1,,3
+S27-0589,"4.5"" JUNCUS TWISTER",Juncus,straight,"4.5""",accents,value,31.83,112,,1,,3
+S27-0041,"HB 10"" SPRENGERI BASKET",Asparagus Fern,straight,hb,accents,standard,18.24,108,,1,,3
 S27-0747,MARKET BASKET PANSY MATRIX YELLOW,Pansy,straight,,color_annuals,,7.87,108,Y,1,,3
 S27-1003,"POT 11"" PLAYLIST CHERRY LIME SPLASH",Zinnia,combo,,combos,,24.05,108,Y,1,,3
 S27-1005,"POT 11"" PLAYLIST LADY MARMALADE",Zinnia,combo,,combos,,24.09,108,Y,1,,3
@@ -284,22 +202,14 @@ S27-0243,"POT 11"" FANCY BOY 'CHERRY KISS'",Calibrachoa,combo,,combos,,24.24,100
 S27-0263,"POT 11"" FANCY BOY 'KNEW ORLEANS'",Calibrachoa,combo,,combos,,24.39,100,Y,1,,3
 S27-0398,"4.5"" DAHLIA YELLOW",Dahlia,straight,"4.5""",color_annuals,,,100,Y,1,,3
 S27-0770,"8"" BLOOM BUDDIES CHECKERED FLAG #2",Petunia,combo,hb,combos,,,100,Y,1,,3
-S27-0885,"4.5"" SETCREASEA PINK STRIPES",Setcreasea,straight,"4.5""",,standard,32.11,100,Y,1,,3
-S27-0886,"4.5"" SETCREASEA PURPLE QUEEN",Setcreasea,straight,"4.5""",,standard,32.18,100,Y,1,,3
 S27-0901,FIBER LG. SUNPATIENS COMBO HOT PINK,Sunpatiens,combo,,combos,,28.83,100,Y,1,,3
-S27-0904,"4.5"" SUNPATIENS COMPACT LILAC",Sunpatiens,straight,"4.5""",,premium,32.82,100,Y,1,,3
 S27-0905,FIBER LG. SUNPATIENS COMBO LILAC,Sunpatiens,combo,,combos,,28.8,100,Y,1,,3
 S27-0908,FIBER LG. SUNPATIENS COMBO ORANGE,Sunpatiens,combo,,combos,,28.91,100,Y,1,,3
-S27-0909,"4.5"" SUNPATIENS COMPACT  ORCHID BLUSH",Sunpatiens,straight,"4.5""",,premium,33.1,100,Y,1,,3
 S27-0910,FIBER LG. SUNPATIENS COMBO ORCHID BLUSH,Sunpatiens,combo,,combos,,28.86,100,Y,1,,3
 S27-0913,FIBER LG. SUNPATIENS COMBO PINK FLASH,Sunpatiens,combo,,combos,,28.85,100,Y,1,,3
-S27-0916,"4.5"" SUNPATIENS COMPACT RED CANDY",Sunpatiens,straight,"4.5""",,premium,32.82,100,Y,1,,3
 S27-0921,FIBER LG. SUNPATIENS COMBO TROPICAL ROSE,Sunpatiens,combo,,combos,,28.85,100,Y,1,,3
 S27-0032,"6.5"" ANGELONIA GUARDIAN ANGEL PINK",Angelonia,straight,"6.5""",color_annuals,,,96,Y,1,,3
 S27-0076,"HB 10"" BEGONIA FRAGRANT FALLS PEACH",Begonia,straight,hb,color_annuals,standard,17.98,96,,1,,3
-S27-0165,"6.5"" BRACTEANTHA SUNBRERO ORANGE",Bracteantha,straight,"6.5""",,standard,32.12,96,Y,1,,3
-S27-0166,"6.5"" BRACTEANTHA SUNBRERO PINK",Bracteantha,straight,"6.5""",,standard,33.03,96,Y,1,,3
-S27-0167,"6.5"" BRACTEANTHA SUNBRERO YELLOW",Bracteantha,straight,"6.5""",,standard,32.14,96,Y,1,,3
 S27-0411,"6.5"" DAHLIA PURPLE WHITE",Dahlia,straight,"6.5""",color_annuals,,,96,Y,1,,3
 S27-0414,"6.5"" DAHLIA DALAYA RED+YELLOW EYE",Dahlia,straight,"6.5""",color_annuals,,,96,Y,1,,3
 S27-0753,MARKET BASKET TOP WAVE BLUE BLOTCH,Pansy,straight,,color_annuals,,7.88,96,Y,1,,3
@@ -308,9 +218,12 @@ S27-0761,MARKET BASKET TOP WAVE PURPLE ROSE BLOTCH,Pansy,straight,,color_annuals
 S27-0046,"HB 10"" BEGONIA ADORA SATIN ROSE",Begonia,straight,hb,color_annuals,standard,16.67,94,,1,,3
 S27-0075,"HB 10"" BEGONIA FRAGRANT FALLS LEMON",Begonia,straight,hb,color_annuals,value,15.42,93,,1,,3
 S27-0707,"HB 10"" PANSY COOL WAVE BERRIES N CREAM MIX",Pansy,straight,hb,color_annuals,value,11.1,91,,1,,3
-S27-0033,"4.5"" APTENIA GOLDEN CASCADE",Aptenia,straight,"4.5""",,premium,32.76,90,Y,1,,3
-S27-0449,"4.5"" FELICITY FELICIA BLUE",Felicia,straight,"4.5""",,value,30.75,90,Y,1,,3
-S27-0895,"4.5"" SUNPATIENS COMPACT CORAL PINK",Sunpatiens,straight,"4.5""",,premium,33.81,90,Y,1,,3
+S27-0268,"4.5"" CANNA CANNOVA BRONZE ORANGE",Canna,straight,"4.5""",specialty,premium,32.59,90,,1,,3
+S27-0763,"4.5"" PENTAS LUCKY STAR DARK RED",Pentas,straight,"4.5""",color_annuals,value,32.03,90,,1,,3
+S27-0764,"4.5"" PENTAS LUCKY STAR LIPSTICK",Pentas,straight,"4.5""",color_annuals,standard,32.08,90,,1,,3
+S27-0765,"4.5"" PENTAS LUCKY STAR PINK",Pentas,straight,"4.5""",color_annuals,value,30.92,90,,1,,3
+S27-0766,"4.5"" PENTAS LUCKY STAR VIOLET",Pentas,straight,"4.5""",color_annuals,value,32.04,90,,1,,3
+S27-0767,"4.5"" PENTAS LUCKY STAR WHITE",Pentas,straight,"4.5""",color_annuals,value,31.33,90,,1,,3
 S27-0971,"4.5"" VINCA TITAN ICY PINK",Vinca,straight,"4.5""",color_annuals,value,31.15,90,,1,,3
 S27-0973,"4.5"" VINCA TITAN POLKA DOT",Vinca,straight,"4.5""",color_annuals,premium,32.37,90,,1,,3
 S27-0974,"4.5"" VINCA TITAN PUNCH",Vinca,straight,"4.5""",color_annuals,value,30.03,90,,1,,3
@@ -327,16 +240,21 @@ S27-0127,"POT 11"" FANCY BOY REIGER BEGONIA CAMILLA",Begonia,combo,,combos,,23.9
 S27-0129,"POT 11"" FANCY BOY REIGER BEGONIA CARNEVAL",Begonia,combo,,combos,,24.1,84,Y,1,,3
 S27-0142,"POT 11"" FANCY BOY REIGER BEGONIA NICOLE STONE",Begonia,combo,,combos,,24.15,84,Y,1,,3
 S27-0145,"POT 11"" FANCY BOY REIGER BEGONIA SANDRINE",Begonia,combo,,combos,,24.18,84,Y,1,,3
+S27-0547,"4.5"" GERBERA COLORBLOOM BICOLOR RED WHITE",Gerbera,straight,"4.5""",color_annuals,standard,32.12,84,,1,,3
 S27-0066,"4.5"" BEGONIA BIG GREEN LEAF WHITE",Begonia,straight,"4.5""",color_annuals,value,30.82,80,,1,,3
-S27-0912,"4.5"" SUNPATIENS COMPACT PINK FLASH",Sunpatiens,straight,"4.5""",,standard,32.29,80,Y,1,,3
 S27-0309,"4.5"" COLEUS KONG JR GREEN HALO",Coleus,straight,"4.5""",color_annuals,value,32.03,72,,1,,3
 S27-0310,"4.5"" COLEUS KONG JR LIME VEIN",Coleus,straight,"4.5""",color_annuals,value,32.01,72,,1,,3
 S27-0311,"4.5"" COLEUS KONG JR ROSE",Coleus,straight,"4.5""",color_annuals,value,31.98,72,,1,,3
 S27-0312,"4.5"" COLEUS KONG JR SCARLET",Coleus,straight,"4.5""",color_annuals,value,32.05,72,,1,,3
 S27-0313,"4.5"" COLEUS KONG MOSAIC",Coleus,straight,"4.5""",color_annuals,value,31.98,72,,1,,3
-S27-0386,"4.5"" CUPHEA FIRECRACKER",Cuphea,straight,"4.5""",,standard,32.09,70,Y,1,,3
-S27-0387,"4.5"" CUPHEA HONEYBELLS",Cuphea,straight,"4.5""",,value,31.73,70,Y,1,,3
-S27-0389,"4.5"" CYPERUS CLEOPATRA",Cyperus,straight,"4.5""",,premium,32.35,70,Y,1,,3
+S27-0349,"6.5"" COLOCASIA ALOHA",Colocasia,straight,"6.5""",specialty,value,8.85,72,,1,,3
+S27-0353,"6.5"" COLOCASIA ILLUSTRIS",Colocasia,straight,"6.5""",specialty,value,9.12,72,,1,,3
+S27-0355,"6.5"" COLOCASIA MAUI GOLD",Colocasia,straight,"6.5""",specialty,value,9.16,72,,1,,3
+S27-0356,"6.5"" COLOCASIA MAUI SUNRISE",Colocasia,straight,"6.5""",specialty,standard,9.49,72,,1,,3
+S27-0762,"4.5"" PURPLE FOUNTAIN GRASS",Pennisetum,straight,"4.5""",accents,premium,32.75,72,,1,,3
+S27-0275,"4.5"" CANNA CANNOVA RED GOLD FLAME",Canna,straight,"4.5""",specialty,premium,32.52,70,,1,,3
+S27-0277,"4.5"" CANNA CANNOVA ROSE",Canna,straight,"4.5""",specialty,standard,32.32,70,,1,,3
+S27-0279,"4.5"" CANNA CANNOVA YELLOW",Canna,straight,"4.5""",specialty,standard,32.21,70,,1,,3
 S27-0470,"4.5"" GERANIUM BROCADE FIRE NIGHT",Geranium,straight,"4.5""",color_annuals,standard,32.13,70,,1,,3
 S27-0101,"POT 13"" FANCY BOY SHADE COMBO TANGERINE DREAM",Begonia,straight,planter,color_annuals,value,30.07,68,,1,,3
 S27-0150,"POT 13"" FANCY BOY SHADE COMBO RED WHISPER",Begonia,straight,planter,color_annuals,value,29.57,68,,1,,3
@@ -348,22 +266,27 @@ S27-0717,1801S RETAIL PANSY DELTA PRO CLEAR COLORS MIX,Pansy,straight,,color_ann
 S27-0732,1801S RETAIL PANSY DELTA PRO CLEAR TRUE BLUE,Pansy,straight,,color_annuals,,11.77,64,Y,1,,3
 S27-0735,1801S RETAIL PANSY DELTA PRO CLEAR VIOLET,Pansy,straight,,color_annuals,,11.7,64,Y,1,,3
 S27-0752,1801S RETAIL PANSY MATRIX WHITE,Pansy,straight,,color_annuals,,11.95,64,Y,1,,3
+S27-0889,1801S RETAIL STOCK MIME BLUE,Stock,straight,,color_annuals,,11.78,62,Y,1,,3
+S27-0890,1801S RETAIL STOCK MIME ROSE,Stock,straight,,color_annuals,,11.78,62,Y,1,,3
 S27-0048,"4.5"" BEGONIA BACHELORETTE RED",Begonia,straight,"4.5""",color_annuals,premium,33.28,60,,1,,3
 S27-0049,"4.5"" BEGONIA BACIO ORANGE",Begonia,straight,"4.5""",color_annuals,value,32,60,,1,,3
 S27-0050,"4.5"" BEGONIA BACIO PEACH",Begonia,straight,"4.5""",color_annuals,premium,32.81,60,,1,,3
 S27-0070,"4.5"" BEGONIA FIRST KISS DEL SOL",Begonia,straight,"4.5""",color_annuals,premium,33.07,60,,1,,3
 S27-0071,"4.5"" BEGONIA FIRST KISS HOT PINK",Begonia,straight,"4.5""",color_annuals,premium,33.03,60,,1,,3
 S27-0073,"4.5"" BEGONIA FIRST KISS SAFFRON",Begonia,straight,"4.5""",color_annuals,premium,33.01,60,,1,,3
-S27-0382,"4.5"" CUPHEA CHERRYBELLS",Cuphea,straight,"4.5""",,value,31.96,60,Y,1,,3
 S27-0471,"4.5"" GERANIUM BROCADE WILHELM LANGGUTH",Geranium,straight,"4.5""",color_annuals,value,31.96,60,,1,,3
-S27-0839,"4.5"" PLECTRANTHUS GUACAMOLE",Plectranthus,straight,"4.5""",,standard,32.16,60,Y,1,,3
 S27-1007,"4.5"" ZINNIA PROFUSION RED",Zinnia,straight,"4.5""",color_annuals,,,60,Y,1,,3
+S27-0442,"4.5"" EUCALYPTUS BABY BLUE BOUQUET",Eucalyptus,straight,"4.5""",accents,premium,32.37,58,,1,,3
+S27-0548,"4.5"" GERBERA COLORBLOOM WATERMELON WITH DARK EYE",Gerbera,straight,"4.5""",color_annuals,value,31.97,56,,1,,3
+S27-0549,"4.5"" GERBERA COLORBLOOM WHITE WITH DARK EYE",Gerbera,straight,"4.5""",color_annuals,standard,32.32,56,,1,,3
+S27-0584,"4.5"" JUNCUS BLUE ARROW",Juncus,straight,"4.5""",accents,standard,32.28,56,,1,,3
+S27-0588,"4.5"" JUNCUS TWISTED ARROWS",Juncus,straight,"4.5""",accents,value,31.52,56,,1,,3
 S27-0298,"POT 11"" FANCY BOY COLEUS CHARGED UP IN CHICAGO",Coleus,combo,,combos,,23.94,52,Y,1,,3
 S27-0345,"POT 11"" FANCY BOY COLEUS AMPED UP",Coleus,combo,,combos,,21.93,52,Y,1,,3
 S27-0372,"HB 16"" SPRING COMBO BLUERIFFIC",Combo,combo,hb,combos,,,52,Y,1,,3
 S27-0390,"POT 11"" DAHLIA CITY LIGHTS APRICOT GLOW",Dahlia,straight,,color_annuals,,23.94,52,Y,1,,3
 S27-0392,"POT 11"" DAHLIA CITY LIGHTS LAVENDER PINK",Dahlia,straight,,color_annuals,,24.05,52,Y,1,,3
-S27-0001,"4.5"" CHENILLE FIRETAIL",Acalypha,straight,"4.5""",,standard,32.2,50,Y,1,,3
+S27-0273,"4.5"" CANNA CANNOVA GOLD LEOPARD",Canna,straight,"4.5""",specialty,premium,32.72,50,,1,,3
 S27-0315,FIBER LG. COLEUS MAIN STREET ALLIGATOR ALLEY,Coleus,straight,,color_annuals,,17.52,50,Y,1,,3
 S27-0317,FIBER LG. COLEUS MAIN STREET BEALE STREET,Coleus,straight,,color_annuals,,17.49,50,Y,1,,3
 S27-0319,FIBER LG. COLEUS MAIN STREET BOURBON STREET,Coleus,straight,,color_annuals,,17.52,50,Y,1,,3
@@ -371,8 +294,8 @@ S27-0321,FIBER LG. COLEUS MAIN STREET BROAD STREET,Coleus,straight,,color_annual
 S27-0324,FIBER LG. COLEUS MAIN STREET LA RAMBLA,Coleus,straight,,color_annuals,,17.54,50,Y,1,,3
 S27-0329,FIBER LG. COLEUS MAIN STREET RIVER WALK,Coleus,straight,,color_annuals,,17.47,50,Y,1,,3
 S27-0332,FIBER LG. COLEUS MAIN STREET WALL STREET,Coleus,straight,,color_annuals,,17.51,50,Y,1,,3
-S27-0383,"4.5"" CUPHEA ENCHANTIA LAVENDER",Cuphea,straight,"4.5""",,value,32.05,50,Y,1,,3
-S27-0626,"4.5"" LOBULARIA EASY BREEZY WHITE",Lobularia,straight,"4.5""",,value,31.89,50,Y,1,,3
+S27-0433,"4.5"" DOUBLE IMPATIENS MUSICA BICOLOR DARK RED",Double Impatiens,straight,"4.5""",color_annuals,,,50,Y,1,,3
+S27-0437,"4.5"" DOUBLE IMPATIENS MUSICA PINK AROMA",Double Impatiens,straight,"4.5""",color_annuals,,,50,Y,1,,3
 S27-0633,"4.5"" MARIGOLD MANGO TANGO",Marigold,straight,"4.5""",color_annuals,,,50,Y,1,,3
 S27-0810,"HB 10"" EASY WAVE PETUNIA IGLOO PARTY",Petunia,straight,hb,color_annuals,value,11.64,50,,1,,3
 S27-0077,"4.5"" BEGONIA GROOVY MELLOW YELLOW",Begonia,straight,"4.5""",color_annuals,standard,32.2,48,,1,,3
@@ -387,6 +310,8 @@ S27-0395,"POT 11"" DAHLIA CITY LIGHTS RED",Dahlia,straight,,color_annuals,,23.99
 S27-0727,1801S RETAIL PANSY DELTA PRO CLEAR RED,Pansy,straight,,color_annuals,,11.81,48,Y,1,,3
 S27-0738,1801S RETAIL PANSY FRIZZLE SIZZLE BLUE,Pansy,straight,,color_annuals,,11.97,48,Y,1,,3
 S27-0740,1801S RETAIL PANSY FRIZZLE SIZZLE ORANGE,Pansy,straight,,color_annuals,,11.94,48,Y,1,,3
+S27-0888,1801S RETAIL STOCK MIME PINK,Stock,straight,,color_annuals,,11.7,46,Y,1,,3
+S27-0891,1801S RETAIL STOCK MIME WHITE,Stock,straight,,color_annuals,,11.67,46,Y,1,,3
 S27-0967,"4.5"" VINCA TITAN BLUEBERRY",Vinca,straight,"4.5""",color_annuals,premium,32.47,45,,1,,3
 S27-0968,"4.5"" VINCA TATTOO RASPBERRY",Vinca,straight,"4.5""",color_annuals,standard,32.26,45,,1,,3
 S27-0966,"4.5"" VINCA TATTOO BLACK CHERRY",Vinca,straight,"4.5""",color_annuals,standard,32.28,44,,1,,3
@@ -395,22 +320,20 @@ S27-0975,"4.5"" VINCA TITAN-IUM APRICOT",Vinca,straight,"4.5""",color_annuals,pr
 S27-0976,"4.5"" VINCA TITAN-IUM BLUSH",Vinca,straight,"4.5""",color_annuals,premium,33.04,43,,1,,3
 S27-0977,"4.5"" VINCA TITAN-IUM REALLY RED",Vinca,straight,"4.5""",color_annuals,premium,32.69,43,,1,,3
 S27-0978,"4.5"" VINCA TITAN-IUM WHITE",Vinca,straight,"4.5""",color_annuals,premium,33.14,43,,1,,3
-S27-0384,"4.5"" CUPHEA ENCHANTIA PURPLE",Cuphea,straight,"4.5""",,standard,32.07,40,Y,1,,3
-S27-0388,"4.5"" CUPHEA SUGARBELLS",Cuphea,straight,"4.5""",,value,31.9,40,Y,1,,3
+S27-0272,"4.5"" CANNA CANNOVA CASA BRONZE PEACH",Canna,straight,"4.5""",specialty,premium,32.84,40,,1,,3
+S27-0434,"4.5"" DOUBLE IMPATIENS MUSICA BICOLOR PINK",Double Impatiens,straight,"4.5""",color_annuals,,,40,Y,1,,3
+S27-0435,"4.5"" DOUBLE IMPATIENS MUSICA ELECTRIC PURPLE",Double Impatiens,straight,"4.5""",color_annuals,,,40,Y,1,,3
+S27-0436,"4.5"" DOUBLE IMPATIENS MUSICA ELEGANT RED",Double Impatiens,straight,"4.5""",color_annuals,,,40,Y,1,,3
 S27-0468,"4.5"" GERANIUM BIG EEZE PINK BATIK",Geranium,straight,"4.5""",color_annuals,standard,32.17,40,,1,,3
 S27-0565,"4.5"" IPOMOEA SWEET GEORGIA CHESTNUT HRT",Ipomoea,straight,"4.5""",color_annuals,,,40,Y,1,,3
 S27-0619,"4.5"" LOBELIA HEATOPIA BLUE",Lobelia,straight,"4.5""",color_annuals,,,40,Y,1,,3
 S27-0822,"4.5"" PETUNIA PINKCEPTIONAL",Petunia,straight,"4.5""",color_annuals,,,40,Y,1,,3
-S27-0927,"4.5"" SUPERCAL PREMIUM RED MAPLE",Supercal,straight,"4.5""",,standard,32.2,40,Y,1,,3
-S27-0928,"4.5"" SUPERCAL PREMIUM SUNSET ORANGE",Supercal,straight,"4.5""",,standard,32.18,40,Y,1,,3
+S27-0999,1801L LANDSCAPE VIOLA SORBET XP YELLOW PINK JUMP UP,Viola,straight,flat,color_annuals,premium,11.94,37,,1,,3
 S27-0703,1801S RETAIL PANSY CATS PLUS MARINA,Pansy,straight,,color_annuals,,12.41,32,Y,1,,3
 S27-0704,1801S RETAIL PANSY CATS PLUS PURPLE & WHITE,Pansy,straight,,color_annuals,,11.98,32,Y,1,,3
 S27-0706,1801S RETAIL PANSY CATS PLUS YELLOW,Pansy,straight,,color_annuals,,11.92,32,Y,1,,3
 S27-0741,1801S RETAIL PANSY FRIZZLE SIZZLE RASPBERRY,Pansy,straight,,color_annuals,,12.05,32,Y,1,,3
 S27-0742,1801S RETAIL PANSY FRIZZLE SIZZLE YELLOW,Pansy,straight,,color_annuals,,12.05,32,Y,1,,3
-S27-0004,"4.5"" AJUGA BURGUNDY GLOW",Ajuga,straight,"4.5""",,premium,32.37,30,Y,1,,3
-S27-0012,"4.5"" ALTERNANTHERA LITTLE RUBY",Alternanthera,straight,"4.5""",,standard,32.21,30,Y,1,,3
-S27-0039,"4.5"" FANCIFILLERS ARTEMESIA SEA SALT",Artemesia,straight,"4.5""",,premium,32.58,30,Y,1,,3
 S27-0051,"4.5"" BEGONIA BACIO WHITE",Begonia,straight,"4.5""",color_annuals,premium,34.03,30,,1,,3
 S27-0072,"4.5"" BEGONIA FIRST KISS LA LUNA",Begonia,straight,"4.5""",color_annuals,premium,33.24,30,,1,,3
 S27-0216,"4.5"" CALIBRACHOA MINIFAMOUS EVO DOUBLE BLUE",Calibrachoa,straight,"4.5""",color_annuals,,,30,Y,1,,3
@@ -419,25 +342,13 @@ S27-0232,"4.5"" CALIBRACHOA MINIFAMOUS NEO LIGHT BLUE",Calibrachoa,straight,"4.5
 S27-0235,"4.5"" CALIBRACHOA MINIFAMOUS NEO PINK",Calibrachoa,straight,"4.5""",color_annuals,,,30,Y,1,,3
 S27-0260,"4.5"" CALIBRACHOA MINIFAMOUS UNO YELLOW",Calibrachoa,straight,"4.5""",color_annuals,,,30,Y,1,,3
 S27-0347,"4.5"" COLEUS VOLCANICA SOLARFLARE",Coleus,straight,"4.5""",color_annuals,,,30,Y,1,,3
-S27-0385,"4.5"" CUPHEA ENCHANTIA WHITE",Cuphea,straight,"4.5""",,value,31.75,30,Y,1,,3
-S27-0466,"4.5"" GAURA BELLEZA COMPACT LIGHT PINK",Gaura,straight,"4.5""",,value,31.77,30,Y,1,,3
-S27-0467,"4.5"" GAURA BELLEZA EARLY WHITE",Gaura,straight,"4.5""",,value,31.82,30,Y,1,,3
+S27-0431,"4.5"" DIDELTA SILVER STRAND",Didelta,straight,"4.5""",accents,premium,33.17,30,,1,,3
 S27-0469,"4.5"" GERANIUM BROCADE CHERRY NIGHT",Geranium,straight,"4.5""",color_annuals,standard,32.1,30,,1,,3
-S27-0557,"4.5"" HELIOTROPE MARINO BLUE",Heliotrope,straight,"4.5""",,premium,32.49,30,Y,1,,3
-S27-0624,"4.5"" LOBULARIA EASY BREEZY PINK",Lobularia,straight,"4.5""",,standard,32.19,30,Y,1,,3
-S27-0625,"4.5"" LOBULARIA EASY BREEZY PURPLE",Lobularia,straight,"4.5""",,value,31.94,30,Y,1,,3
-S27-0629,"4.5"" LYSIMACHIA MIDNIGHT SUN",Lysimachia,straight,"4.5""",,standard,32.3,30,Y,1,,3
+S27-0553,"4.5"" HELICHRYSUM SILVER RIBBON",Helichrysum,straight,"4.5""",accents,standard,32.26,30,,1,,3
+S27-0554,"4.5"" HELICHRYSUM SILVER STITCH",Helichrysum,straight,"4.5""",accents,standard,32.11,30,,1,,3
 S27-0829,"4.5"" PETUNIA STARLET PINOT RED",Petunia,straight,"4.5""",color_annuals,,,30,Y,1,,3
-S27-0840,"4.5"" PLECTRANTHUS LEMON TWIST",Plectranthus,straight,"4.5""",,standard,32.18,30,Y,1,,3
-S27-0841,"4.5"" PLECTRANTHUS NICO",Plectranthus,straight,"4.5""",,premium,32.33,30,Y,1,,3
-S27-0842,"4.5"" PLECTRANTHUS NICOLETTE",Plectranthus,straight,"4.5""",,value,31.77,30,Y,1,,3
-S27-0843,"4.5"" PLECTRANTHUS VARIEGATA",Plectranthus,straight,"4.5""",,standard,32.3,30,Y,1,,3
-S27-0873,"4.5"" SANVITALIA TSAVO COMPACT YELLOW",Sanvitalia,straight,"4.5""",,standard,32.22,30,Y,1,,3
-S27-0923,"4.5"" SUPERCAL PREMIUM BORDEAUX",Supercal,straight,"4.5""",,premium,32.33,30,Y,1,,3
-S27-0924,"4.5"" SUPERCAL PREMIUM CORAL START",Supercal,straight,"4.5""",,value,32,30,Y,1,,3
-S27-0925,"4.5"" SUPERCAL PREMIUM PEARL WHITE",Supercal,straight,"4.5""",,premium,32.39,30,Y,1,,3
-S27-0929,"4.5"" SUPERCAL PREMIUM YELLOW SUN",Supercal,straight,"4.5""",,standard,32.27,30,Y,1,,3
 S27-0949,"4.5"" VERBENA BEATS WHITE",Verbena,straight,"4.5""",color_annuals,,,30,Y,1,,3
+S27-0984,1801L LANDSCAPE VIOLA SORBET XP LEMON JUMP UP,Viola,straight,flat,color_annuals,premium,11.84,30,,1,,3
 S27-0338,"4.5"" COLEUS SEED CHOCOLATE COVERED CHERRY",Coleus,straight,"4.5""",color_annuals,standard,32.25,28,,1,,3
 S27-0339,"4.5"" COLEUS SEED SWEET PAPRIKA",Coleus,straight,"4.5""",color_annuals,value,31.98,28,,1,,3
 S27-0440,1801S LANDSCAPE DUSTY MILLER SILVERDUST,Dusty Miller,straight,flat,color_annuals,value,11.68,25,,1,,3
@@ -445,14 +356,16 @@ S27-0630,"4.5"" MARIGOLD FRENCH MANGO TANGO",Marigold,straight,"4.5""",color_ann
 S27-0635,"4.5"" MARIGOLD TAISHAN GOLD",Marigold,straight,"4.5""",color_annuals,standard,32.06,25,,1,,3
 S27-0636,"4.5"" MARIGOLD TAISHAN ORANGE",Marigold,straight,"4.5""",color_annuals,premium,32.33,25,,1,,3
 S27-0637,"4.5"" MARIGOLD TAISHAN YELLOW",Marigold,straight,"4.5""",color_annuals,premium,34.71,25,,1,,3
-S27-0860,"BOWL 8"" PRIMULA DANOVA MIX",Primula,straight,planter,,value,10.06,25,Y,1,,3
-S27-0991,1801L LANDSCAPE VIOLA SORBET XP PINK HALO,Viola,straight,flat,,premium,11.84,22,Y,1,,3
-S27-0003,"4.5"" AJUGA BLACK SCALLOP",Ajuga,straight,"4.5""",,value,31.56,20,Y,1,,3
-S27-0034,"4.5"" ARGYRANTHEMUM LOLLIES BERRY GUMMY",Argyranthemum,straight,"4.5""",,standard,32.08,20,Y,1,,3
-S27-0035,"4.5"" ARGYRANTHEMUM LOLLIES BUTTERMINT",Argyranthemum,straight,"4.5""",,standard,32.17,20,Y,1,,3
-S27-0037,"4.5"" ARGYRANTHEMUM LOLLIES PINK PEZ",Argyranthemum,straight,"4.5""",,standard,32.13,20,Y,1,,3
-S27-0183,"4.5"" CALENDULA POWERDAISY BUTTERMILK",Calendula,straight,"4.5""",,premium,32.36,20,Y,1,,3
-S27-0184,"4.5"" CALENDULA POWERDAISY MANGO",Calendula,straight,"4.5""",,standard,32.3,20,Y,1,,3
+S27-0861,"BOWL 8"" PRIMULA TOUCH ME MIDI MIX",Primula,straight,planter,color_annuals,value,10,25,,1,,3
+S27-0989,1801L LANDSCAPE VIOLA SORBET XP ORANGE JUMP UP,Viola,straight,flat,color_annuals,premium,11.83,25,,1,,3
+S27-0168,"4.5"" CALADIUM CANDYLAND",Caladium,straight,"4.5""",specialty,premium,35.2,20,,1,,3
+S27-0170,"4.5"" CALADIUM CAROUSEL",Caladium,straight,"4.5""",specialty,premium,35.2,20,,1,,3
+S27-0173,"4.5"" CALADIUM FRECKLES",Caladium,straight,"4.5""",specialty,value,31.53,20,,1,,3
+S27-0175,"4.5"" CALADIUM GINGERLAND",Caladium,straight,"4.5""",specialty,premium,35.2,20,,1,,3
+S27-0176,"4.5"" CALADIUM MISS MUFFET",Caladium,straight,"4.5""",specialty,premium,35.2,20,,1,,3
+S27-0178,"4.5"" CALADIUM SANGRIA",Caladium,straight,"4.5""",specialty,premium,35.2,20,,1,,3
+S27-0179,"4.5"" CALADIUM SUNSET PINK",Caladium,straight,"4.5""",specialty,premium,35.2,20,,1,,3
+S27-0180,"4.5"" CALADIUM WATER'S EDGE",Caladium,straight,"4.5""",specialty,premium,35.2,20,,1,,3
 S27-0186,"4.5"" CALIBRACHOA BUMBLE BEE ORANGE",Calibrachoa,straight,"4.5""",color_annuals,,,20,Y,1,,3
 S27-0187,"4.5"" CALIBRACHOA BUMBLE BEE PINK",Calibrachoa,straight,"4.5""",color_annuals,,,20,Y,1,,3
 S27-0196,"4.5"" CALIBRACHOA CABARET GOODNIGHT KISS",Calibrachoa,straight,"4.5""",color_annuals,,,20,Y,1,,3
@@ -460,21 +373,25 @@ S27-0252,"4.5"" CALIBRACHOA MINIFAMOUS UNO PINK",Calibrachoa,straight,"4.5""",co
 S27-0255,"4.5"" CALIBRACHOA MINIFAMOUS UNO RED",Calibrachoa,straight,"4.5""",color_annuals,,,20,Y,1,,3
 S27-0256,"4.5"" CALIBRACHOA MINIFAMOUS UNO WHITE",Calibrachoa,straight,"4.5""",color_annuals,,,20,Y,1,,3
 S27-0334,"4.5"" COLEUS MICROBLAZE SPITFIRE",Coleus,straight,"4.5""",color_annuals,,,20,Y,1,,3
-S27-0922,"4.5"" SUPERCAL BLUE EYED ROSE",Supercal,straight,"4.5""",,value,31.8,20,Y,1,,3
-S27-0926,"4.5"" SUPERCAL PREMIUM PINK MIST",Supercal,straight,"4.5""",,value,32.05,20,Y,1,,3
-S27-0941,"4.5"" TRADESCANTIA ZEBRINA GOLD",Tradescantia,straight,"4.5""",,value,31.95,20,Y,1,,3
-S27-0942,"4.5"" TRADESCANTIA ZEBRINA PURPLE",Tradescantia,straight,"4.5""",,premium,32.55,20,Y,1,,3
+S27-0443,"4.5"" EUCALYPTUS LEMON BUSH",Eucalyptus,straight,"4.5""",accents,standard,32.25,20,,1,,3
+S27-0444,"4.5"" EUCALYPTUS SILVER DOLLAR",Eucalyptus,straight,"4.5""",accents,standard,32.3,20,,1,,3
+S27-0445,"4.5"" EUCALYPTUS STYX",Eucalyptus,straight,"4.5""",accents,standard,32.2,20,,1,,3
+S27-0448,"4.5"" EVOLVULUS BLUE DAZE",Evolvulus,straight,"4.5""",color_annuals,,,20,Y,1,,3
+S27-0555,"4.5"" HELICHRYSUM SILVER THREADS",Helichrysum,straight,"4.5""",accents,premium,32.97,20,,1,,3
+S27-0556,"4.5"" HELICHRYSUM SILVER YARNS",Helichrysum,straight,"4.5""",accents,standard,32.27,20,,1,,3
+S27-0936,"4.5"" TRADESCANTIA RAINBOW",Tradescantia,straight,"4.5""",accents,standard,32.26,20,,1,,3
+S27-0938,"4.5"" TRADESCANTIA WHITE",Tradescantia,straight,"4.5""",accents,value,31.99,20,,1,,3
+S27-0939,"4.5"" TRADESCANTIA YELLOW",Tradescantia,straight,"4.5""",accents,premium,32.96,20,,1,,3
 S27-0337,"4.5"" COLEUS SEED BLACK DRAGON",Coleus,straight,"4.5""",color_annuals,premium,32.48,16,,1,,3
-S27-0005,"4.5"" AJUGA PARROT PARADISE",Ajuga,straight,"4.5""",,value,31.88,10,Y,1,,3
-S27-0006,"4.5"" AJUGA PETITE PARAKEET",Ajuga,straight,"4.5""",,value,31.88,10,Y,1,,3
-S27-0007,"4.5"" AJUGA TROPICAL TOUCAN",Ajuga,straight,"4.5""",,value,31.95,10,Y,1,,3
-S27-0008,"4.5"" AJUGA PRINCESS ELSA",Ajuga,straight,"4.5""",,value,31.61,10,Y,1,,3
-S27-0009,"4.5"" AJUGA PRINCESS LEIA",Ajuga,straight,"4.5""",,value,31.88,10,Y,1,,3
-S27-0010,"4.5"" AJUGA PRINCESS NADIA",Ajuga,straight,"4.5""",,premium,32.52,10,Y,1,,3
-S27-0038,"4.5"" ARGYRANTHEMUM LOLLIES WHITE CHOCOLATE",Argyranthemum,straight,"4.5""",,value,31.68,10,Y,1,,3
+S27-0993,1801S LANDSCAPE VIOLA SORBET XP PURPLE FACE,Viola,straight,flat,color_annuals,standard,11.82,15,,1,,3
+S27-0995,1801S LANDSCAPE VIOLA SORBET XP WHITE,Viola,straight,flat,color_annuals,standard,11.79,15,,1,,3
+S27-0997,1801L LANDSCAPE VIOLA SORBET XP YELLOW BEACON,Viola,straight,flat,color_annuals,premium,11.98,15,,1,,3
+S27-0036,"4.5"" ARGYRANTHEMUM LOLLIES MARCHMALLOW",Argyranthemum,straight,"4.5""",color_annuals,,,10,Y,1,,3
+S27-0981,1801L LANDSCAPE VIOLA SORBET XP DENIM JUMP UP,Viola,straight,flat,color_annuals,premium,12.15,10,,1,,3
 S27-0716,"POT 6"" LANDSCAPE PANSY CLEAR COLORS MIX",Pansy,straight,"6.5""",color_annuals,value,3.38,1150,Y,1,,2
 S27-0191,"HB 10"" CALIBRACHOA SPRINKLES ON TOP",Calibrachoa,combo,hb,combos,premium,19.21,981,Y,1,,2
 S27-0254,"HB 10"" SUN COMBO ENDURABLE CERISE",Calibrachoa,combo,hb,combos,premium,19.5,959,Y,1,,2
+S27-0627,"4.5"" LYSIMACHIA CREEPING JENNY",Lysimachia,straight,"4.5""",accents,value,31.83,840,Y,1,,2
 S27-0122,"4.5"" BEGONIA REIGER ORANGE BATIK",Begonia,straight,"4.5""",color_annuals,value,31.45,700,Y,1,,2
 S27-0134,"4.5"" BEGONIA REIGER YELLOW NADINE",Begonia,straight,"4.5""",color_annuals,value,31.74,700,Y,1,,2
 S27-0832,"8"" BLOOM BUDDIES CHECKERED FLAG #1",Petunia,combo,hb,combos,value,11.58,700,Y,1,,2
@@ -483,18 +400,28 @@ S27-0480,"4.5"" GERANIUM CALLIOPE MEDIUM DARK RED DL",Geranium,straight,"4.5""",
 S27-1001,"8"" ZINNIAS ELEGANT HOT MIXTURE",Zinnia,straight,hb,color_annuals,value,7.65,600,Y,1,,2
 S27-0207,"HB 10"" SUN COMBO PARADISE STATE OF MIND",Calibrachoa,combo,hb,combos,standard,18.39,566,Y,1,,2
 S27-0138,"4.5"" BEGONIA REIGER PINK NETJA DARK",Begonia,straight,"4.5""",color_annuals,standard,32.13,550,Y,1,,2
+S27-0897,"4.5"" SUNPATIENS COMPACT ELECTRIC ORANGE",Sunpatiens,straight,"4.5""",color_annuals,premium,33.39,550,Y,1,,2
+S27-0920,"4.5"" SUNPATIENS COMPACT TROPICAL ROSE",Sunpatiens,straight,"4.5""",color_annuals,value,31.65,550,Y,1,,2
+S27-0894,"4.5"" SUNPATIENS COMPACT CLASSIC WHITE",Sunpatiens,straight,"4.5""",color_annuals,premium,33.19,510,Y,1,,2
 S27-0590,"HB 14"" SUNPATIENS COMBO HOT PINK",Lantana,combo,hb,combos,premium,28.97,439,Y,1,,2
+S27-0896,"4.5"" SUNPATIENS COMPACT DEEP RED",Sunpatiens,straight,"4.5""",color_annuals,premium,33.26,430,Y,1,,2
+S27-0900,"4.5"" SUNPATIENS COMPACT HOT PINK",Sunpatiens,straight,"4.5""",color_annuals,premium,33.04,430,Y,1,,2
 S27-0591,"4.5"" LANTANA BANDANA CHERRY SUNRISE",Lantana,straight,"4.5""",color_annuals,premium,33.03,420,Y,1,,2
 S27-0600,"4.5"" LANTANA HOT BLOODED RED",Lantana,straight,"4.5""",color_annuals,premium,32.45,420,Y,1,,2
 S27-0607,"4.5"" LANTANA SHAMROCK ORANGE FLAME",Lantana,straight,"4.5""",color_annuals,value,31.76,400,Y,1,,2
 S27-0611,"4.5"" LANTANA SHAMROCK RED",Lantana,straight,"4.5""",color_annuals,value,31.65,400,Y,1,,2
 S27-0729,"POT 6"" LANDSCAPE PANSY TRI COLOR MIX",Pansy,straight,"6.5""",color_annuals,value,3.38,400,Y,1,,2
+S27-0918,"4.5"" SUNPATIENS COMPACT ROYAL MAGENTA",Sunpatiens,straight,"4.5""",color_annuals,premium,32.82,400,Y,1,,2
+S27-0906,"4.5"" SUNPATIENS COMPACT LILAC",Sunpatiens,straight,"4.5""",color_annuals,premium,32.82,380,Y,1,,2
 S27-0459,"HB 10"" FUCHSIA BLUE EYES",Fuchsia,straight,hb,color_annuals,standard,16.83,375,Y,1,,2
 S27-0461,"HB 10"" FUCHSIA MARINKA",Fuchsia,straight,hb,color_annuals,standard,16.74,373,Y,1,,2
 S27-0465,"HB 10"" FUCHSIA WHITE EYES",Fuchsia,straight,hb,color_annuals,standard,16.82,349,Y,1,,2
 S27-0615,"4.5"" LANTANA SHAMROCK ROSE GOLD",Lantana,straight,"4.5""",color_annuals,value,32.02,340,Y,1,,2
 S27-0146,"4.5"" BEGONIA REIGER RED VERONICA",Begonia,straight,"4.5""",color_annuals,standard,32.11,320,Y,1,,2
+S27-0432,"4.5"" DOROTHEANTHUS MEZOO",Dorotheanthus,straight,"4.5""",accents,standard,32.19,318,Y,1,,2
+S27-0430,"4.5"" DICHONDRA SILVER FALLS",Dichondra,straight,"4.5""",accents,value,31.12,314,Y,1,,2
 S27-0831,"4.5"" PETUNIA STARLET VELVET",Petunia,straight,"4.5""",color_annuals,value,31.71,310,Y,1,,2
+S27-0915,"4.5"" SUNPATIENS COMPACT PURPLE CANDY",Sunpatiens,straight,"4.5""",color_annuals,premium,32.67,310,Y,1,,2
 S27-0190,"8"" BLOOM BUDDIES SPIRITS UNITED",Calibrachoa,combo,hb,combos,value,10.98,300,Y,1,,2
 S27-0360,"8"" BLOOM BUDDY SPRING BLUE VIOLET",Combo,combo,hb,combos,value,11.07,300,Y,1,,2
 S27-0613,"4.5"" LANTANA SHAMROCK ROSE",Lantana,straight,"4.5""",color_annuals,value,31.76,300,Y,1,,2
@@ -511,6 +438,7 @@ S27-0230,"HB 10"" CALIBRACHOA SUPERNOVA",Calibrachoa,combo,hb,combos,standard,16
 S27-0618,"4.5"" LANTANA SHAMROCK YELLOW",Lantana,straight,"4.5""",color_annuals,value,31.91,260,Y,1,,2
 S27-0563,"4.5"" IPOMOEA SWEET GEORGIA BLACK MAPLE",Ipomoea,straight,"4.5""",color_annuals,value,31.16,250,Y,1,,2
 S27-0845,"HB 10"" PORTULACA CLASSIC MIX",Portulaca,combo,hb,combos,value,16.63,250,Y,1,,2
+S27-0940,"HB 10"" WANDERING JEWEL ZEBRINA",Tradescantia,straight,hb,accents,standard,16.96,245,Y,1,,2
 S27-0881,"HB 10"" SCAEVOLA MIX BASKET",Scaevola,combo,hb,combos,value,15.99,244,Y,1,,2
 S27-0422,"8"" DAHLIA VENTI MAGENTA+WHITE EYE",Dahlia,straight,hb,color_annuals,value,6.62,240,Y,1,,2
 S27-0568,"4.5"" IPOMOEA SWEET GEORGIA GREEN LT. HRT",Ipomoea,straight,"4.5""",color_annuals,standard,32.32,240,Y,1,,2
@@ -524,6 +452,7 @@ S27-0423,"8"" DAHLIA VENTI MANGO",Dahlia,straight,hb,color_annuals,value,7.59,21
 S27-0029,"4.5"" ANGELONIA ARCHANGEL WHITE",Angelonia,straight,"4.5""",color_annuals,value,31.73,200,Y,1,,2
 S27-0257,"8"" BLOOM BUDDIES  JAZZBERRY JAM",Calibrachoa,combo,hb,combos,value,11.06,200,Y,1,,2
 S27-0261,"8"" BLOOM BUDDIES BEJEWELED",Calibrachoa,combo,hb,combos,value,11.09,200,Y,1,,2
+S27-0287,"6.5"" CLEOME LAVENDER DREAMS",Cleome,straight,"6.5""",color_annuals,standard,32.09,200,Y,1,,2
 S27-0686,"4.5"" OSTEOSPERMUM 4D PINK",Osteospermum,straight,"4.5""",color_annuals,value,32.03,200,Y,1,,2
 S27-0687,"4.5"" OSTEOSPERMUM 4D PINK LEMONADE",Osteospermum,straight,"4.5""",color_annuals,standard,32.22,200,Y,1,,2
 S27-0689,"4.5"" OSTEOSPERMUM 4D SUNBURST",Osteospermum,straight,"4.5""",color_annuals,standard,32.2,200,Y,1,,2
@@ -536,10 +465,16 @@ S27-0242,"HB 10"" SUN COMBO SPRING MODERN",Calibrachoa,combo,hb,combos,standard,
 S27-0408,"6.5"" DAHLIA PINK LACE",Dahlia,straight,"6.5""",color_annuals,premium,33.81,192,Y,1,,2
 S27-0429,"8"" DAHLIA VENTI TEQUILA SUNRISE",Dahlia,straight,hb,color_annuals,value,7.62,190,Y,1,,2
 S27-0869,"4.5"" SALVIA MYSTICAL BLUE",Salvia,straight,"4.5""",color_annuals,value,32.02,190,Y,1,,2
+S27-0893,"4.5"" SUNPATIENS COMPACT BLUSH PINK",Sunpatiens,straight,"4.5""",color_annuals,premium,32.98,190,Y,1,,2
+S27-0902,"4.5"" SUNPATIENS COMPACT LAVENDER SPLASH",Sunpatiens,straight,"4.5""",color_annuals,premium,32.98,190,Y,1,,2
+S27-0914,"4.5"" SUNPATIENS COMPACT PURPLE",Sunpatiens,straight,"4.5""",color_annuals,premium,33.07,190,Y,1,,2
+S27-0917,"4.5"" SUNPATIENS COMPACT ROSE GLOW",Sunpatiens,straight,"4.5""",color_annuals,premium,33.02,190,Y,1,,2
 S27-0879,"HB 10"" BUZZ BASKETS PASSION PROJECT",Scaevola,combo,hb,combos,standard,17.3,181,Y,1,,2
 S27-0592,"4.5"" LANTANA BANDANA MANGO",Lantana,straight,"4.5""",color_annuals,value,31.87,180,Y,1,,2
+S27-0898,"4.5"" SUNPATIENS COMPACT HOT CORAL",Sunpatiens,straight,"4.5""",color_annuals,premium,32.97,180,Y,1,,2
 S27-0202,"HB 10"" SUN COMBO BLOOMIN GLORY",Calibrachoa,combo,hb,combos,standard,18.14,179,Y,1,,2
 S27-0477,"HB 16"" GERANIUM CALLIOPE DARK RED",Geranium,combo,hb,combos,premium,38.89,170,Y,1,,2
+S27-0628,"4.5"" LYSIMACHIA CREEPING JENNY",Lysimachia,straight,"4.5""",accents,value,31.83,157,Y,1,,2
 S27-0021,"4.5"" ANGELONIA ARCHANGEL BLUE BICOLOR",Angelonia,straight,"4.5""",color_annuals,value,31.91,150,Y,1,,2
 S27-0022,"4.5"" ANGELONIA ARCHANGEL CHERRY RED 26",Angelonia,straight,"4.5""",color_annuals,value,31.76,150,Y,1,,2
 S27-0026,"4.5"" ANGELONIA ARCHANGEL PURPLE",Angelonia,straight,"4.5""",color_annuals,value,31.95,150,Y,1,,2
@@ -549,11 +484,13 @@ S27-0116,"HB 10"" BEGONIA NONSTOP JOY ORANGE",Begonia,straight,hb,color_annuals,
 S27-0027,"4.5"" ANGELONIA ARCHANGEL RASPBERRY",Angelonia,straight,"4.5""",color_annuals,value,30.66,140,Y,1,,2
 S27-0368,"HB 14"" PETUNIA COMBO DRAGON FRUIT KISS",Combo,combo,hb,combos,premium,29.4,140,Y,1,,2
 S27-0594,"4.5"" LANTANA BANDANA YELLOW",Lantana,straight,"4.5""",color_annuals,value,32,140,Y,1,,2
+S27-0867,"4.5"" RANUNCULUS MAGIC FIREBALL",Ranunculus,straight,"4.5""",color_annuals,premium,32.34,140,Y,1,,2
 S27-0059,"HB 10"" SUN BEGONIA COMBO BASKET PINK",Begonia,combo,hb,combos,value,8.95,139,Y,1,,2
 S27-0603,"HB 10"" LANTANA PASSIONFRUIT",Lantana,straight,hb,color_annuals,value,16.62,139,Y,1,,2
 S27-0473,"HB 10"" GERANIUM CALDERA LAVENDER GLOW",Geranium,straight,hb,color_annuals,value,16.62,135,Y,1,,2
 S27-0521,"HB 10"" GERANIUM MARCADA COSMIC CANDY",Geranium,combo,hb,combos,value,16.6,134,Y,1,,2
 S27-0608,"HB 10"" LANTANA SHAMROCK ORANGE FLAME",Lantana,straight,hb,color_annuals,standard,16.75,134,Y,1,,2
+S27-0935,"HB 10"" WANDERING JEWEL PINK PARADISE",Tradescantia,straight,hb,accents,standard,16.81,134,Y,1,,2
 S27-0472,"HB 10"" GERANIUM CALDERA HOT PINK (NEW)",Geranium,straight,hb,color_annuals,standard,17.22,133,Y,1,,2
 S27-0479,"HB 14"" CALLIOPE LANTANA DARK RED",Geranium,combo,hb,combos,premium,29.11,132,Y,1,,2
 S27-0483,"HB 14"" CALLIOPE LANTANA DEEP ROSE",Geranium,combo,hb,combos,premium,29.3,132,Y,1,,2
@@ -570,6 +507,7 @@ S27-0667,"HB 10"" NEW GUINEA MAGNUM XL SALMON",New Guinea Impatiens,straight,hb,
 S27-0599,"HB 14"" SUNPATIENS COMBO ORANGE",Lantana,combo,hb,combos,premium,25.56,124,Y,1,,2
 S27-0595,"HB 10"" LANTANA BANDANA YELLOW",Lantana,straight,hb,color_annuals,standard,16.67,123,Y,1,,2
 S27-0093,"HB 14"" BEGONIA I'CONIA MIX FIRST KISS DEL SOL",Begonia,combo,hb,combos,premium,29.2,121,Y,1,,2
+S27-0002,"4.5"" AGERATUM MONARCH MAGIC",Ageratum,straight,"4.5""",color_annuals,standard,32.29,120,Y,1,,2
 S27-0024,"4.5"" ANGELONIA ARCHANGEL LIGHT PINK",Angelonia,straight,"4.5""",color_annuals,value,31.73,120,Y,1,,2
 S27-0544,"HB 10"" GERANIUM TORNADO FUCHSIA",Geranium,straight,hb,color_annuals,standard,18.62,120,Y,1,,2
 S27-0545,"HB 10"" GERANIUM TORNADO LILAC",Geranium,straight,hb,color_annuals,premium,19.06,120,Y,1,,2
@@ -605,6 +543,11 @@ S27-0609,"4.5"" LANTANA PASSIONFRUIT",Lantana,straight,"4.5""",color_annuals,val
 S27-0731,1801L LANDSCAPE PANSY DELTA CLEAR TRUE BLUE,Pansy,straight,flat,color_annuals,value,11.66,100,Y,1,,2
 S27-0868,"4.5"" SALVIA BLACK AND BLUE",Salvia,straight,"4.5""",color_annuals,standard,32.15,100,Y,1,,2
 S27-0877,"HB 16"" SUNPATIENS HAPPY DAYS",Scaevola,combo,hb,combos,premium,38.81,100,Y,1,,2
+S27-0885,"4.5"" SETCREASEA PINK STRIPES",Setcreasea,straight,"4.5""",accents,standard,32.11,100,Y,1,,2
+S27-0886,"4.5"" SETCREASEA PURPLE QUEEN",Setcreasea,straight,"4.5""",accents,standard,32.18,100,Y,1,,2
+S27-0904,"4.5"" SUNPATIENS COMPACT LILAC",Sunpatiens,straight,"4.5""",color_annuals,premium,32.82,100,Y,1,,2
+S27-0909,"4.5"" SUNPATIENS COMPACT  ORCHID BLUSH",Sunpatiens,straight,"4.5""",color_annuals,premium,33.1,100,Y,1,,2
+S27-0916,"4.5"" SUNPATIENS COMPACT RED CANDY",Sunpatiens,straight,"4.5""",color_annuals,premium,32.82,100,Y,1,,2
 S27-0536,"HB 10"" PRECISION GERANIUM PINK",Geranium,straight,hb,color_annuals,standard,16.73,99,Y,1,,2
 S27-0772,"HB 10"" SUN COMBO SPRING SYMPHONY",Petunia,combo,hb,combos,value,13.09,99,Y,1,,2
 S27-0537,"HB 10"" PRECISION GERANIUM RED ICE",Geranium,straight,hb,color_annuals,standard,16.75,98,Y,1,,2
@@ -613,6 +556,9 @@ S27-0030,"6.5"" ANGELONIA GUARDIAN ANGEL BERRY SPARKLER",Angelonia,straight,"6.5
 S27-0031,"6.5"" ANGELONIA GUARDIAN ANGEL BLUE",Angelonia,straight,"6.5""",color_annuals,premium,33.49,96,Y,1,,2
 S27-0074,"HB 10"" BEGONIA FLORENCIO ORANGE",Begonia,straight,hb,color_annuals,value,15.22,96,Y,1,,2
 S27-0095,"HB 14"" BEGONIA I'CONIA MIX FIRST KISS HOT PINK",Begonia,combo,hb,combos,premium,28.82,96,Y,1,,2
+S27-0165,"6.5"" BRACTEANTHA SUNBRERO ORANGE",Bracteantha,straight,"6.5""",color_annuals,standard,32.12,96,Y,1,,2
+S27-0166,"6.5"" BRACTEANTHA SUNBRERO PINK",Bracteantha,straight,"6.5""",color_annuals,standard,33.03,96,Y,1,,2
+S27-0167,"6.5"" BRACTEANTHA SUNBRERO YELLOW",Bracteantha,straight,"6.5""",color_annuals,standard,32.14,96,Y,1,,2
 S27-0403,"6.5"" DAHLIA DALAYA APRICOT",Dahlia,straight,"6.5""",color_annuals,premium,33.62,96,Y,1,,2
 S27-0405,"6.5"" DAHLIA  DALAYA CRANBERRY",Dahlia,straight,"6.5""",color_annuals,standard,33.27,96,Y,1,,2
 S27-0406,"6.5"" DAHLIA DALAYA FIREBALL",Dahlia,straight,"6.5""",color_annuals,premium,33.84,96,Y,1,,2
@@ -631,12 +577,15 @@ S27-0089,"HB 10"" BEGONIA ICANDY CORAL PINK",Begonia,straight,hb,color_annuals,s
 S27-0090,"HB 10"" BEGONIA ICANDY LEMON YELLOW",Begonia,straight,hb,color_annuals,standard,18.18,93,Y,1,,2
 S27-0102,"HB 10"" SUN BEGONIA COMBO BASKET ROSE",Begonia,combo,hb,combos,standard,18.38,93,Y,1,,2
 S27-0020,"HB 10"" BUZZ BASKETS HEAVY PETAL",Angelonia,combo,hb,combos,standard,16.91,91,Y,1,,2
+S27-0033,"4.5"" APTENIA GOLDEN CASCADE",Aptenia,straight,"4.5""",accents,premium,32.76,90,Y,1,,2
 S27-0103,"HB 14"" BEGONIA MEGAWATT MIX PINK LEMONADE",Begonia,combo,hb,combos,premium,29.19,90,Y,1,,2
 S27-0397,"4.5"" DAHLIA PINK",Dahlia,straight,"4.5""",color_annuals,value,31.63,90,Y,1,,2
 S27-0400,"4.5"" DAHLIA PURPLE",Dahlia,straight,"4.5""",color_annuals,value,31.34,90,Y,1,,2
 S27-0425,"8"" DAHLIA VENTI PINK+WHITE EYE",Dahlia,straight,hb,color_annuals,value,8.36,90,Y,1,,2
 S27-0427,"8"" DAHLIA VENTI RED+WHITE",Dahlia,straight,hb,color_annuals,value,7.56,90,Y,1,,2
+S27-0449,"4.5"" FELICITY FELICIA BLUE",Felicia,straight,"4.5""",color_annuals,value,30.75,90,Y,1,,2
 S27-0880,"4.5"" SCAEVOLA SURDIVA BLUE VIOLET",Scaevola,straight,"4.5""",color_annuals,premium,32.79,90,Y,1,,2
+S27-0895,"4.5"" SUNPATIENS COMPACT CORAL PINK",Sunpatiens,straight,"4.5""",color_annuals,premium,33.81,90,Y,1,,2
 S27-0105,"HB 14"" BEGONIA MEGAWATT MIX PINK MANGO",Begonia,combo,hb,combos,premium,29.33,89,Y,1,,2
 S27-0370,"HB 14"" PETUNIA COMBO YELLOW GARDEN PARTY",Combo,combo,hb,combos,premium,29.4,89,Y,1,,2
 S27-0491,"HB 16"" GERANIUM CALLIOPE PINK FLAME",Geranium,combo,hb,combos,premium,38.87,87,Y,1,,2
@@ -652,12 +601,16 @@ S27-0573,"4.5"" IPOMOEA SWEET GEORGIA RED HEART",Ipomoea,straight,"4.5""",color_
 S27-0596,"4.5"" LANTANA BANDITO GOLD",Lantana,straight,"4.5""",color_annuals,value,31.82,80,Y,1,,2
 S27-0652,"4.5"" NEW GUINEA IMPATIENS PETTICOAT FIRE",New Guinea Impatiens,straight,"4.5""",color_annuals,premium,32.56,80,Y,1,,2
 S27-0669,"4.5"" NEW GUINEA IMPATIENS PETTICOAT FIRE",New Guinea Impatiens,straight,"4.5""",color_annuals,premium,32.56,80,Y,1,,2
+S27-0912,"4.5"" SUNPATIENS COMPACT PINK FLASH",Sunpatiens,straight,"4.5""",color_annuals,standard,32.29,80,Y,1,,2
 S27-0721,"POT 6"" LANDSCAPE PANSY LAVENDER BLUE SHADES",Pansy,straight,"6.5""",color_annuals,value,3.38,75,Y,1,,2
 S27-0733,1801L LANDSCAPE PANSY DELTA PRO VIOLET & WHITE,Pansy,straight,flat,color_annuals,standard,11.73,75,Y,1,,2
 S27-0736,1801L LANDSCAPE PANSY DELTA PRO WHITE BLOTCH,Pansy,straight,flat,color_annuals,value,11.66,75,Y,1,,2
 S27-0737,1801L LANDSCAPE PANSY DELTA PRO YELLOW BLOTCH,Pansy,straight,flat,color_annuals,value,11.66,75,Y,1,,2
 S27-0143,"4.5"" BEGONIA REIGER PEGGY",Begonia,straight,"4.5""",color_annuals,premium,32.61,70,Y,1,,2
 S27-0144,"4.5"" BEGONIA REIGER SANDRINE",Begonia,straight,"4.5""",color_annuals,premium,32.63,70,Y,1,,2
+S27-0386,"4.5"" CUPHEA FIRECRACKER",Cuphea,straight,"4.5""",color_annuals,standard,32.09,70,Y,1,,2
+S27-0387,"4.5"" CUPHEA HONEYBELLS",Cuphea,straight,"4.5""",color_annuals,value,31.73,70,Y,1,,2
+S27-0389,"4.5"" CYPERUS CLEOPATRA",Cyperus,straight,"4.5""",accents,premium,32.35,70,Y,1,,2
 S27-0399,"4.5"" DAHLIA PINK BICOLOR",Dahlia,straight,"4.5""",color_annuals,value,31.99,70,Y,1,,2
 S27-0522,"HB 10"" GERANIUM MARCADA PINKBERRY",Geranium,straight,hb,color_annuals,value,16.59,70,Y,1,,2
 S27-0678,"POT 13"" FANCY BOY SHADE COMBO VIOLET",New Guinea Impatiens,combo,planter,combos,standard,30.16,70,Y,1,,2
@@ -684,6 +637,7 @@ S27-0016,"4.5"" ANGELONIA ANGELFLARE BLACK",Angelonia,straight,"4.5""",color_ann
 S27-0017,"4.5"" ANGELONIA ANGELFLARE ORCHID PINK",Angelonia,straight,"4.5""",color_annuals,value,31.25,60,Y,1,,2
 S27-0126,"4.5"" BEGONIA REIGER CAMILLA",Begonia,straight,"4.5""",color_annuals,premium,33.2,60,Y,1,,2
 S27-0314,"4.5"" COLEUS MAIN STREET ALLIGATOR ALLEY",Coleus,straight,"4.5""",color_annuals,premium,32.42,60,Y,1,,2
+S27-0382,"4.5"" CUPHEA CHERRYBELLS",Cuphea,straight,"4.5""",color_annuals,value,31.96,60,Y,1,,2
 S27-0494,"HB 16"" GERANIUM CALLIOPE ROSE MEGA SPLASH",Geranium,combo,hb,combos,premium,38.96,60,Y,1,,2
 S27-0525,"POT 13"" GERANIUM MOJO CRANBERRY SPLASH",Geranium,combo,planter,combos,standard,30.17,60,Y,1,,2
 S27-0526,"POT 13"" GERANIUM MOJO ROSE GOLD",Geranium,combo,planter,combos,standard,30.14,60,Y,1,,2
@@ -704,6 +658,7 @@ S27-0660,"4.5"" NEW GUINEA IMPATIENS PETTICOAT WONDER WHITE",New Guinea Impatien
 S27-0673,"4.5"" NEW GUINEA IMPATIENS PETTICOAT PINK",New Guinea Impatiens,straight,"4.5""",color_annuals,premium,33.14,60,Y,1,,2
 S27-0676,"4.5"" NEW GUINEA IMPATIENS PETTICOAT TRUE RED",New Guinea Impatiens,straight,"4.5""",color_annuals,premium,33.24,60,Y,1,,2
 S27-0677,"4.5"" NEW GUINEA IMPATIENS PETTICOAT WONDER WHITE",New Guinea Impatiens,straight,"4.5""",color_annuals,premium,33.16,60,Y,1,,2
+S27-0839,"4.5"" PLECTRANTHUS GUACAMOLE",Plectranthus,straight,"4.5""",accents,standard,32.16,60,Y,1,,2
 S27-0899,"POT 14"" FANCY BOY TALL SUNPATIENS HOT PINK",Sunpatiens,combo,planter,combos,premium,46,60,Y,1,,2
 S27-0903,"POT 14"" FANCY BOY TALL SUNPATIENS LILAC",Sunpatiens,combo,planter,combos,premium,45.88,60,Y,1,,2
 S27-0907,"POT 14"" FANCY BOY TALL SUNPATIENS ORANGE",Sunpatiens,combo,planter,combos,premium,46.11,60,Y,1,,2
@@ -725,6 +680,7 @@ S27-0374,"HB 16"" SPRING COMBO HIGH OCTANE",Combo,combo,hb,combos,premium,38.97,
 S27-0379,"HB 16"" SPRING COMBO PURPLE ON PURPOSE",Combo,combo,hb,combos,premium,39.25,52,Y,1,,2
 S27-0367,"HB 14"" DBL. CALIBRACHOA SWEET SIXTEEN",Combo,combo,hb,combos,premium,29.49,51,Y,1,,2
 S27-0855,"HB 10"" PORTULACA RIOGRANDE MAGENTA 26",Portulaca,straight,hb,color_annuals,standard,16.75,51,Y,1,,2
+S27-0001,"4.5"" CHENILLE FIRETAIL",Acalypha,straight,"4.5""",accents,standard,32.2,50,Y,1,,2
 S27-0019,"4.5"" ANGELONIA ANGELISSA ROSE",Angelonia,straight,"4.5""",color_annuals,value,31.94,50,Y,1,,2
 S27-0028,"4.5"" ANGELONIA ARCHANGEL RUBY SANGRIA",Angelonia,straight,"4.5""",color_annuals,value,31.85,50,Y,1,,2
 S27-0042,"4.5"" BACOPA MECACOPA BLUE",Bacopa,straight,"4.5""",color_annuals,value,31.17,50,Y,1,,2
@@ -738,6 +694,7 @@ S27-0325,"4.5"" COLEUS MAIN STREET OCEAN DRIVE",Coleus,straight,"4.5""",color_an
 S27-0326,"4.5"" COLEUS MAIN STREET OXFORD STREET",Coleus,straight,"4.5""",color_annuals,value,30.69,50,Y,1,,2
 S27-0328,"4.5"" COLEUS MAIN STREET RIVER WALK",Coleus,straight,"4.5""",color_annuals,value,31.96,50,Y,1,,2
 S27-0361,"HB 10"" EARLY SPRING OSTEO MIX",Combo,combo,hb,combos,standard,16.82,50,Y,1,,2
+S27-0383,"4.5"" CUPHEA ENCHANTIA LAVENDER",Cuphea,straight,"4.5""",color_annuals,value,32.05,50,Y,1,,2
 S27-0451,"4.5"" FUCHSIA BALLERINA ARABESQUE",Fuchsia,straight,"4.5""",color_annuals,standard,32.07,50,Y,1,,2
 S27-0453,"4.5"" FUCHSIA BALLERINA BALANCE",Fuchsia,straight,"4.5""",color_annuals,value,32.02,50,Y,1,,2
 S27-0481,"POT 14"" FANCY BOY TALL MONARCH MAGIC DEEP RED",Geranium,combo,planter,combos,premium,46.18,50,Y,1,,2
@@ -745,6 +702,7 @@ S27-0482,"POT 14"" FANCY BOY TALL MONARCH MAGIC DEEP ROSE",Geranium,combo,plante
 S27-0486,"POT 14"" FANCY BOY TALL MONARCH MAGIC HOT ROSE",Geranium,combo,planter,combos,premium,46.03,50,Y,1,,2
 S27-0489,"POT 14"" FANCY BOY TALL MONARCH MAGIC PINK FLAME",Geranium,combo,planter,combos,premium,46.16,50,Y,1,,2
 S27-0605,"4.5"" LANTANA SHAMROCK LAVENDER",Lantana,straight,"4.5""",color_annuals,value,31.58,50,Y,1,,2
+S27-0626,"4.5"" LOBULARIA EASY BREEZY WHITE",Lobularia,straight,"4.5""",color_annuals,value,31.89,50,Y,1,,2
 S27-0634,"4.5"" MARIGOLD MILLI VANILLI",Marigold,straight,"4.5""",color_annuals,value,32.02,50,Y,1,,2
 S27-0653,"4.5"" NEW GUINEA IMPATIENS PETTICOAT LAVENDER",New Guinea Impatiens,straight,"4.5""",color_annuals,premium,33.44,50,Y,1,,2
 S27-0657,"4.5"" NEW GUINEA IMPATIENS PETTICOAT PINK PUNCH",New Guinea Impatiens,straight,"4.5""",color_annuals,premium,34.29,50,Y,1,,2
@@ -791,6 +749,8 @@ S27-0327,"4.5"" COLEUS MAIN STREET PORTAGE AVENUE",Coleus,straight,"4.5""",color
 S27-0330,"4.5"" COLEUS MAIN STREET RUBY ROAD",Coleus,straight,"4.5""",color_annuals,value,31.91,40,Y,1,,2
 S27-0331,"4.5"" COLEUS MAIN STREET VENICE BOULEVARD",Coleus,straight,"4.5""",color_annuals,standard,32.17,40,Y,1,,2
 S27-0342,"4.5"" COLEUS STAINED GLASSWORKS PRESIDIO",Coleus,straight,"4.5""",color_annuals,value,31.99,40,Y,1,,2
+S27-0384,"4.5"" CUPHEA ENCHANTIA PURPLE",Cuphea,straight,"4.5""",color_annuals,standard,32.07,40,Y,1,,2
+S27-0388,"4.5"" CUPHEA SUGARBELLS",Cuphea,straight,"4.5""",color_annuals,value,31.9,40,Y,1,,2
 S27-0452,"4.5"" FUCHSIA BALLERINA ASSEMBLE",Fuchsia,straight,"4.5""",color_annuals,standard,32.06,40,Y,1,,2
 S27-0454,"4.5"" FUCHSIA BALLERINA BRISE",Fuchsia,straight,"4.5""",color_annuals,standard,32.17,40,Y,1,,2
 S27-0455,"4.5"" FUCHSIA BALLERINA JETE",Fuchsia,straight,"4.5""",color_annuals,standard,32.08,40,Y,1,,2
@@ -817,6 +777,8 @@ S27-0848,"4.5"" PORTULACA PAZZAZZ NANO FUCHSIA",Portulaca,straight,"4.5""",color
 S27-0849,"4.5"" PORTULACA PAZZAZZ NANO ORANGE TWIST",Portulaca,straight,"4.5""",color_annuals,standard,32.15,40,Y,1,,2
 S27-0853,"4.5"" PORTULACA PAZZAZZ PURPLE",Portulaca,straight,"4.5""",color_annuals,standard,32.14,40,Y,1,,2
 S27-0883,"4.5"" SCAEVOLA SURDIVA PURPLE",Scaevola,straight,"4.5""",color_annuals,standard,32.27,40,Y,1,,2
+S27-0927,"4.5"" SUPERCAL PREMIUM RED MAPLE",Supercal,straight,"4.5""",color_annuals,standard,32.2,40,Y,1,,2
+S27-0928,"4.5"" SUPERCAL PREMIUM SUNSET ORANGE",Supercal,straight,"4.5""",color_annuals,standard,32.18,40,Y,1,,2
 S27-0943,"4.5"" VERBENA BEATS BLUE",Verbena,straight,"4.5""",color_annuals,premium,32.43,40,Y,1,,2
 S27-0944,"4.5"" VERBENA BEATS LAVENDER STAR",Verbena,straight,"4.5""",color_annuals,premium,32.47,40,Y,1,,2
 S27-0945,"4.5"" VERBENA BEATS PINK SHADES",Verbena,straight,"4.5""",color_annuals,premium,32.57,40,Y,1,,2
@@ -833,6 +795,9 @@ S27-0720,1801L LANDSCAPE PANSY DELTA PRO LAVENDER BLUE SHADES,Pansy,straight,fla
 S27-0366,"HB 14"" DBL. CALIBRACHOA SUNSHINE AND SUGAR",Combo,combo,hb,combos,premium,29.26,32,Y,1,,2
 S27-0362,"HB 14"" DBL. CALIBRACHOA BLUSH CRUSH",Combo,combo,hb,combos,premium,29.44,31,Y,1,,2
 S27-0723,1801L LANDSCAPE PANSY DELTA PRO MARINA,Pansy,straight,flat,color_annuals,standard,11.73,31,Y,1,,2
+S27-0004,"4.5"" AJUGA BURGUNDY GLOW",Ajuga,straight,"4.5""",perennials,premium,32.37,30,Y,1,,2
+S27-0012,"4.5"" ALTERNANTHERA LITTLE RUBY",Alternanthera,straight,"4.5""",accents,standard,32.21,30,Y,1,,2
+S27-0039,"4.5"" FANCIFILLERS ARTEMESIA SEA SALT",Artemesia,straight,"4.5""",accents,premium,32.58,30,Y,1,,2
 S27-0100,"HB 14"" BEGONIA I'CONIA MIX MISS MONTREAL",Begonia,combo,hb,combos,premium,28.85,30,Y,1,,2
 S27-0156,"4.5"" BIDENS BEE PINK BUZZ",Bidens,straight,"4.5""",color_annuals,premium,32.42,30,Y,1,,2
 S27-0157,"4.5"" BIDENS BEE POPSTAR RED",Bidens,straight,"4.5""",color_annuals,standard,32.17,30,Y,1,,2
@@ -872,10 +837,17 @@ S27-0336,"4.5"" COLEUS RUBY PUNCH",Coleus,straight,"4.5""",color_annuals,standar
 S27-0341,"4.5"" COLEUS STAINED GLASSWORKS LE FREAK",Coleus,straight,"4.5""",color_annuals,standard,32.09,30,Y,1,,2
 S27-0343,"4.5"" COLEUS TRAILBLAZER GLORY ROAD",Coleus,straight,"4.5""",color_annuals,standard,32.06,30,Y,1,,2
 S27-0348,"4.5"" COLEUS VOLCANICA WASABI",Coleus,straight,"4.5""",color_annuals,value,31.88,30,Y,1,,2
+S27-0385,"4.5"" CUPHEA ENCHANTIA WHITE",Cuphea,straight,"4.5""",color_annuals,value,31.75,30,Y,1,,2
 S27-0396,"4.5"" DAHLIA YELLOW BICOLOR",Dahlia,straight,"4.5""",color_annuals,value,31.19,30,Y,1,,2
+S27-0466,"4.5"" GAURA BELLEZA COMPACT LIGHT PINK",Gaura,straight,"4.5""",perennials,value,31.77,30,Y,1,,2
+S27-0467,"4.5"" GAURA BELLEZA EARLY WHITE",Gaura,straight,"4.5""",perennials,value,31.82,30,Y,1,,2
+S27-0557,"4.5"" HELIOTROPE MARINO BLUE",Heliotrope,straight,"4.5""",color_annuals,premium,32.49,30,Y,1,,2
 S27-0560,"4.5"" HEUCHERA KIRA GREEN TEA",Heuchera,straight,"4.5""",perennials,standard,32.24,30,Y,1,,2
 S27-0564,"4.5"" IPOMOEA SWEET GEORGIA BRONZE",Ipomoea,straight,"4.5""",color_annuals,premium,33.86,30,Y,1,,2
 S27-0620,"4.5"" LOBELIA HEATOPIA BLUE SKY",Lobelia,straight,"4.5""",color_annuals,standard,32.26,30,Y,1,,2
+S27-0624,"4.5"" LOBULARIA EASY BREEZY PINK",Lobularia,straight,"4.5""",color_annuals,standard,32.19,30,Y,1,,2
+S27-0625,"4.5"" LOBULARIA EASY BREEZY PURPLE",Lobularia,straight,"4.5""",color_annuals,value,31.94,30,Y,1,,2
+S27-0629,"4.5"" LYSIMACHIA MIDNIGHT SUN",Lysimachia,straight,"4.5""",accents,standard,32.3,30,Y,1,,2
 S27-0655,"4.5"" NEW GUINEA IMPATIENS PETTICOAT NEON NIGHT",New Guinea Impatiens,straight,"4.5""",color_annuals,premium,33.89,30,Y,1,,2
 S27-0671,"4.5"" NEW GUINEA IMPATIENS PETTICOAT NEON NIGHT",New Guinea Impatiens,straight,"4.5""",color_annuals,premium,33.89,30,Y,1,,2
 S27-0769,"4.5"" PETUNIA AMAZONAS PLUM COCKATOO",Petunia,straight,"4.5""",color_annuals,value,31.64,30,Y,1,,2
@@ -911,10 +883,19 @@ S27-0830,"4.5"" PETUNIA STARLET SALMON RED VEIN",Petunia,straight,"4.5""",color_
 S27-0833,"4.5"" PETUNIA STARLET WHITE",Petunia,straight,"4.5""",color_annuals,standard,32.3,30,Y,1,,2
 S27-0834,"4.5"" PHLOX GISELE HOT PINK",Phlox,straight,"4.5""",perennials,standard,32.26,30,Y,1,,2
 S27-0836,"4.5"" PHLOX GISELE PURPLE",Phlox,straight,"4.5""",perennials,standard,32.19,30,Y,1,,2
+S27-0840,"4.5"" PLECTRANTHUS LEMON TWIST",Plectranthus,straight,"4.5""",accents,standard,32.18,30,Y,1,,2
+S27-0841,"4.5"" PLECTRANTHUS NICO",Plectranthus,straight,"4.5""",accents,premium,32.33,30,Y,1,,2
+S27-0842,"4.5"" PLECTRANTHUS NICOLETTE",Plectranthus,straight,"4.5""",accents,value,31.77,30,Y,1,,2
+S27-0843,"4.5"" PLECTRANTHUS VARIEGATA",Plectranthus,straight,"4.5""",accents,standard,32.3,30,Y,1,,2
+S27-0873,"4.5"" SANVITALIA TSAVO COMPACT YELLOW",Sanvitalia,straight,"4.5""",color_annuals,standard,32.22,30,Y,1,,2
 S27-0875,"4.5"" SCAEVOLA FANATIX DARK BLUE",Scaevola,straight,"4.5""",color_annuals,value,31.07,30,Y,1,,2
 S27-0878,"4.5"" SCAEVOLA FANATIX WHITE",Scaevola,straight,"4.5""",color_annuals,standard,32.23,30,Y,1,,2
 S27-0882,"4.5"" SCAEVOLA SURDIVA FASHION PINK",Scaevola,straight,"4.5""",color_annuals,premium,32.56,30,Y,1,,2
 S27-0884,"4.5"" SCAEVOLA SURDIVA WHITE",Scaevola,straight,"4.5""",color_annuals,premium,32.76,30,Y,1,,2
+S27-0923,"4.5"" SUPERCAL PREMIUM BORDEAUX",Supercal,straight,"4.5""",color_annuals,premium,32.33,30,Y,1,,2
+S27-0924,"4.5"" SUPERCAL PREMIUM CORAL START",Supercal,straight,"4.5""",color_annuals,value,32,30,Y,1,,2
+S27-0925,"4.5"" SUPERCAL PREMIUM PEARL WHITE",Supercal,straight,"4.5""",color_annuals,premium,32.39,30,Y,1,,2
+S27-0929,"4.5"" SUPERCAL PREMIUM YELLOW SUN",Supercal,straight,"4.5""",color_annuals,standard,32.27,30,Y,1,,2
 S27-0930,"4.5"" TORENIA SUMMERWAVE BOUQUET DEEP BLUE",Torenia,straight,"4.5""",color_annuals,standard,32.2,30,Y,1,,2
 S27-0931,"4.5"" TORENIA SUMMERWAVE BOUQUET DEEP ROSE",Torenia,straight,"4.5""",color_annuals,value,31.93,30,Y,1,,2
 S27-0932,"4.5"" TORENIA SUMMERWAVE BOUQUET GOLD",Torenia,straight,"4.5""",color_annuals,value,31.91,30,Y,1,,2
@@ -933,8 +914,16 @@ S27-0959,"4.5"" VERBENA VANESSA COMPACT LIME",Verbena,straight,"4.5""",color_ann
 S27-0960,"4.5"" VERBENA VANESSA COMPACT NEON PINK",Verbena,straight,"4.5""",color_annuals,premium,32.36,30,Y,1,,2
 S27-0961,"4.5"" VERBENA VANESSA COMPACT PURPLE",Verbena,straight,"4.5""",color_annuals,standard,32.22,30,Y,1,,2
 S27-0962,"4.5"" VERBENA VANESSA COMPACT VIOLET",Verbena,straight,"4.5""",color_annuals,standard,32.16,30,Y,1,,2
+S27-0860,"BOWL 8"" PRIMULA DANOVA MIX",Primula,straight,planter,color_annuals,value,10.06,25,Y,1,,2
 S27-0751,"BOWL 12"" PANSY SPRING MATRIX WHITE",Pansy,straight,planter,color_annuals,value,16.13,24,Y,1,,2
+S27-0991,1801L LANDSCAPE VIOLA SORBET XP PINK HALO,Viola,straight,flat,color_annuals,premium,11.84,22,Y,1,,2
 S27-0104,"HB 16"" BEGONIA MEGA PASSIONFRUIT PUNCH",Begonia,combo,hb,combos,premium,39.17,21,Y,1,,2
+S27-0003,"4.5"" AJUGA BLACK SCALLOP",Ajuga,straight,"4.5""",perennials,value,31.56,20,Y,1,,2
+S27-0034,"4.5"" ARGYRANTHEMUM LOLLIES BERRY GUMMY",Argyranthemum,straight,"4.5""",color_annuals,standard,32.08,20,Y,1,,2
+S27-0035,"4.5"" ARGYRANTHEMUM LOLLIES BUTTERMINT",Argyranthemum,straight,"4.5""",color_annuals,standard,32.17,20,Y,1,,2
+S27-0037,"4.5"" ARGYRANTHEMUM LOLLIES PINK PEZ",Argyranthemum,straight,"4.5""",color_annuals,standard,32.13,20,Y,1,,2
+S27-0183,"4.5"" CALENDULA POWERDAISY BUTTERMILK",Calendula,straight,"4.5""",color_annuals,premium,32.36,20,Y,1,,2
+S27-0184,"4.5"" CALENDULA POWERDAISY MANGO",Calendula,straight,"4.5""",color_annuals,standard,32.3,20,Y,1,,2
 S27-0185,"4.5"" CALIBRACHOA BUMBLE BEE HOT PINK",Calibrachoa,straight,"4.5""",color_annuals,premium,32.53,20,Y,1,,2
 S27-0199,"4.5"" CALIBRACHOA CABARET LAVENDER KISS",Calibrachoa,straight,"4.5""",color_annuals,value,31.89,20,Y,1,,2
 S27-0200,"4.5"" CALIBRACHOA CABARET LEMON YELLOW",Calibrachoa,straight,"4.5""",color_annuals,premium,32.39,20,Y,1,,2
@@ -993,8 +982,19 @@ S27-0847,"4.5"" PORTULACA PAZZAZZ NANO CANDY PINK",Portulaca,straight,"4.5""",co
 S27-0871,"4.5"" SALVIA PLUM CRAZY",Salvia,straight,"4.5""",color_annuals,standard,32.31,20,Y,1,,2
 S27-0872,"4.5"" SALVIA ROMAN RED",Salvia,straight,"4.5""",color_annuals,standard,32.22,20,Y,1,,2
 S27-0876,"4.5"" SCAEVOLA FANATIX PINK",Scaevola,straight,"4.5""",color_annuals,premium,32.47,20,Y,1,,2
+S27-0922,"4.5"" SUPERCAL BLUE EYED ROSE",Supercal,straight,"4.5""",color_annuals,value,31.8,20,Y,1,,2
+S27-0926,"4.5"" SUPERCAL PREMIUM PINK MIST",Supercal,straight,"4.5""",color_annuals,value,32.05,20,Y,1,,2
+S27-0941,"4.5"" TRADESCANTIA ZEBRINA GOLD",Tradescantia,straight,"4.5""",accents,value,31.95,20,Y,1,,2
+S27-0942,"4.5"" TRADESCANTIA ZEBRINA PURPLE",Tradescantia,straight,"4.5""",accents,premium,32.55,20,Y,1,,2
 S27-0710,1801L LANDSCAPE PANSY DELTA PRO MONET MIX,Pansy,straight,flat,color_annuals,value,11.65,16,Y,1,,2
 S27-0725,1801L LANDSCAPE PANSY DELTA PRO CLEAR ORANGE,Pansy,straight,flat,color_annuals,standard,11.73,15,Y,1,,2
+S27-0005,"4.5"" AJUGA PARROT PARADISE",Ajuga,straight,"4.5""",perennials,value,31.88,10,Y,1,,2
+S27-0006,"4.5"" AJUGA PETITE PARAKEET",Ajuga,straight,"4.5""",perennials,value,31.88,10,Y,1,,2
+S27-0007,"4.5"" AJUGA TROPICAL TOUCAN",Ajuga,straight,"4.5""",perennials,value,31.95,10,Y,1,,2
+S27-0008,"4.5"" AJUGA PRINCESS ELSA",Ajuga,straight,"4.5""",perennials,value,31.61,10,Y,1,,2
+S27-0009,"4.5"" AJUGA PRINCESS LEIA",Ajuga,straight,"4.5""",perennials,value,31.88,10,Y,1,,2
+S27-0010,"4.5"" AJUGA PRINCESS NADIA",Ajuga,straight,"4.5""",perennials,premium,32.52,10,Y,1,,2
+S27-0038,"4.5"" ARGYRANTHEMUM LOLLIES WHITE CHOCOLATE",Argyranthemum,straight,"4.5""",color_annuals,value,31.68,10,Y,1,,2
 S27-0162,"4.5"" BIDENS MINI BEE CROWN",Bidens,straight,"4.5""",color_annuals,standard,32.16,10,Y,1,,2
 S27-0163,"4.5"" BIDENS MINI BEE ROYAL BROCADE",Bidens,straight,"4.5""",color_annuals,standard,32.2,10,Y,1,,2
 S27-0164,"4.5"" BIDENS MINI BEE SUN",Bidens,straight,"4.5""",color_annuals,standard,32.25,10,Y,1,,2

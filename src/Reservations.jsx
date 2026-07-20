@@ -126,7 +126,7 @@ export default function Reservations() {
 
       {atRisk.length > 0 && (
         <div style={{ background: "#fdf3e4", border: `1.5px solid ${C.amber}`, borderRadius: 12, padding: "10px 14px", marginBottom: 16 }}>
-          <div style={{ fontSize: 12.5, fontWeight: 800, color: "#b06c14", marginBottom: 2 }}>⚠️ {atRisk.length} line{atRisk.length !== 1 ? "s" : ""} at risk of lapsing — notify or the stock goes to open availability</div>
+          <div style={{ fontSize: 12.5, fontWeight: 800, color: "#b06c14", marginBottom: 2 }}>⚠️ {atRisk.length} line{atRisk.length !== 1 ? "s" : ""} at risk of lapsing — customers are auto-emailed once (business hours); 📨 Notify re-sends by hand</div>
           {atRisk.map(l => <LineRow key={l.line_id} l={l} showCustomer />)}
         </div>
       )}
