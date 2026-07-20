@@ -74,7 +74,7 @@ export default function WorkRecords({ embedded, initialTab }) {
 }
 
 // ── 📒 Records ────────────────────────────────────────────────────────────────
-function RecordsTab() {
+export function RecordsTab() {
   const { rows } = useSprayRecords();
   const [from, setFrom] = useState(() => isoDay(new Date(Date.now() - 30 * 86400000)));
   const [to, setTo] = useState(() => isoDay(new Date()));
@@ -191,7 +191,7 @@ function RecordsTab() {
 }
 
 // ── 🧪 Product Library ────────────────────────────────────────────────────────
-function ProductsTab() {
+export function ProductsTab() {
   const { rows, insert, update } = useChemProducts();
   const [editing, setEditing] = useState(null); // row or "new"
   const sorted = useMemo(() => [...(rows || [])].sort((a, b) =>
@@ -320,7 +320,7 @@ function ProductEditModal({ product, onClose, onSave }) {
 }
 
 // ── 🔬 Purdue PPDL sample submissions ─────────────────────────────────────────
-function PurdueTab() {
+export function PurdueTab() {
   const { rows: submissions, insert, update, remove } = useSampleSubmissions();
   const { rows: sprayRows } = useSprayRecords();
   const { displayName } = useAuth();

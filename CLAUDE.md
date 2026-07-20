@@ -201,11 +201,15 @@ Hybrid system in `src/Auth.jsx`:
 - Migration: `20260720150000_grower_work_hub.sql`. JSONB keys: `work_payload`, `form_data`.
 - **`chem_products` seeded** (65 products from 2024-25 spray_records: EPA #, AI, rates; + 4 fertigation staples). ALL `rei_hours` NULL — must be filled from labels (REI alerts inert until then). `moa` column holds IRAC/FRAC group (61 tagged).
 
-### Head Grower (`HeadGrowerView.jsx`)
-- Role `head_grower` (floor code `5555555`, placeholder name) → dedicated view; also PlannerShell → Operations → 🌿 Head Grower (embedded).
-- **📋 Board**: active-REI count, products-missing-REI worklist (deep-links to library), response checks due, overdue growing tasks, this week's application/fertigation tasks w/ status + MOA chips + rotation warnings, New Work FAB.
-- **🔄 Rotation**: per-target-pest MOA sequence (90-day spray_records history + planned tasks); ⚠ flags back-to-back same IRAC/FRAC group (biologicals/PGRs exempt).
-- **📒 Records**: full WorkRecords embedded (`initialTab` prop deep-links to products).
+### Grower Program (`GrowerProgram.jsx`) — planner page, Operations → 🌿 Grower Program
+Head grower role (`head_grower`, floor code `5555555`) creates tasks from the **normal task app** (routes into FloorAppRouter → ManagerTasksView, creator side, growing category) — there is deliberately NO separate mobile module. Planning/costing/reference lives on the planner side:
+- **📅 Program** — the 52-week plan (`spray_program`, imported from Reese's 2024 Spray schedule sheet), grouped by location, editable rate/notes, add/remove lines, per-week + full-season cost at a chosen tank size, **→ Generate tasks** (creates application/beneficial tasks with dose + MOA + REI + practices baked into the description), same-MOA-as-last-week warnings, and **beneficial-conflict warnings** when a harmful chemical shares a week with a release.
+- **🔄 Rotation** — per-pest MOA sequence from 120 days of `spray_records`, or the planned 52-week MOA sequence; ⚠ on back-to-back same IRAC/FRAC group (biologicals/botanicals/PGRs exempt).
+- **🐞 Beneficials** — `beneficial_products` species library (17 species w/ pack costs from the 2025 cost sheet) + `beneficial_releases` ledger + year-to-date spend + the never-spray-during-release list. Biocontrol ≈ $32.7k/yr, so it is tracked alongside chemicals.
+- **🧪 Products / 📒 Records / 🔬 Purdue** — shared components exported from `WorkRecords.jsx`.
+- **🔧 Equipment** — `application_equipment` CRUD + `drench_doses` (per-pot-size + injector ratio) + `fertigation_recipes` (tank recipes from Reese's Fertilizer recipies doc).
+- Dose math: `parseRate()` / `computeDose()` exported from GrowerProgram — handles `8 oz/100 gal`, bare `15oz` (per-100-gal convention), `3.2 oz/10,000 ft`, and ppm.
+- `chem_products.beneficial_safety` (safe|caution|harmful) + `beneficial_notes` drive the conflict logic.
 
 ### Fall Program, Crop Planning, Combo Designer, Houseplant Availability, Fundraiser tools
 All under PlannerShell's nav groups. See individual files for details.

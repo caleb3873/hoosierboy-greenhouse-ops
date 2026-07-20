@@ -20,7 +20,7 @@ import Export              from "./Export";
 import GrowerManagement   from "./GrowerManagement";
 import WateringPlan        from "./WateringPlan";
 import WorkRecords         from "./WorkRecords";
-import HeadGrowerView      from "./HeadGrowerView";
+import GrowerProgram       from "./GrowerProgram";
 import SoilCalculator      from "./SoilCalculator";
 import HouseplantAvailability from "./HouseplantAvailability";
 import OwnerDashboard       from "./OwnerDashboard";
@@ -78,7 +78,7 @@ const NAV_GROUPS = [
     icon: "⚙",
     items: [
       { id: "spraylog",  label: "💧 Work Records" },
-      { id: "head-grower", label: "🌿 Head Grower" },
+      { id: "head-grower", label: "🌿 Grower Program" },
       { id: "watering",  label: "Watering" },
       { id: "scouting",  label: "Scouting" },
       { id: "growers",   label: "Growers" },
@@ -257,7 +257,7 @@ function PlannerShell() {
       <div style={{ maxWidth: 1100, margin: "0 auto", padding: "28px 24px" }}>
         {page === "home"       && <PlannerHome    onNavigate={setPage} />}
         {page === "spraylog"  && <WorkRecords />}
-        {page === "head-grower" && <HeadGrowerView embedded />}
+        {page === "head-grower" && <GrowerProgram />}
         {page === "watering"  && <WateringPlan />}
         {page === "scouting"  && <div style={{ padding: 40, textAlign: "center", color: "#7a8c74" }}>Scouting — coming soon</div>}
         {page === "growers"   && <GrowerManagement />}

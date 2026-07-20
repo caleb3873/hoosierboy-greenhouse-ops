@@ -271,6 +271,12 @@ export const useWateringPlans = () => useTable("watering_plans", { orderBy: "pla
 export const useWateringTasks = () => useTable("watering_tasks", { orderBy: "sort_order", localKey: "gh_watering_tasks_v1" });
 export const useSprayRecords = () => useTable("spray_records", { orderBy: "applied_at", localKey: "gh_spray_records_v1" });
 export const useChemProducts = () => useTable("chem_products", { orderBy: "name", localKey: "gh_chem_products_v1" });
+export const useSprayProgram = () => useTable("spray_program", { orderBy: "week_number", localKey: "gh_spray_program_v1" });
+export const useDrenchDoses = () => useTable("drench_doses", { orderBy: "product_name", localKey: "gh_drench_doses_v1" });
+export const useFertigationRecipes = () => useTable("fertigation_recipes", { orderBy: "name", localKey: "gh_fert_recipes_v1" });
+export const useApplicationEquipment = () => useTable("application_equipment", { orderBy: "name", localKey: "gh_app_equipment_v1" });
+export const useBeneficialProducts = () => useTable("beneficial_products", { orderBy: "name", localKey: "gh_beneficial_products_v1" });
+export const useBeneficialReleases = () => useTable("beneficial_releases", { orderBy: "released_at", ascending: false, localKey: "gh_beneficial_releases_v1" });
 export const useSampleSubmissions = () => useTable("sample_submissions", { orderBy: "created_at", ascending: false, localKey: "gh_sample_submissions_v1" });
 export const useSeasonTargets = () => useTable("season_targets", { orderBy: "target_date", localKey: "gh_season_targets_v1" });
 export const usePlanningEods  = () => useTable("planning_eods",  { orderBy: "due_date",    localKey: "gh_planning_eods_v1" });
