@@ -142,7 +142,7 @@ async function syncProductionTasks(db) {
     const { data: opted } = await db.from("production_items").select("id").eq("plan_id", plan.id).limit(1);
     if (!opted || !opted.length) continue;   // only opted-in plans, same rule as reconcile
     const { data: sc } = await db.from("scheduled_crops")
-      .select("id,item_name,variety_id,qty_pots,ppp,qty_plants_ordered,plant_week,plant_year,bench_id,container_id,soil_mix_id,is_combo_component,combo_parent_id")
+      .select("id,item_name,variety_id,color,qty_pots,ppp,qty_plants_ordered,plant_week,plant_year,bench_id,container_id,soil_mix_id,is_combo_component,combo_parent_id")
       .eq("plan_id", plan.id).not("plant_week", "is", null);
     if (!sc || !sc.length) continue;
     out.plans++;
@@ -192,7 +192,7 @@ async function syncProductionTasks(db) {
       it.liners += (+r.qty_pots) * (+r.ppp || 1);
       if (bmap[r.bench_id]?.code) { it.benches.add(bmap[r.bench_id].code); g.benches.add(bmap[r.bench_id].code); }
       g.plantRows.push({ rowId: r.id, bench: bmap[r.bench_id]?.code || "—", name: r.item_name || "(unnamed)",
-        pots: +r.qty_pots, ppp: +r.ppp || 1, variety: vmap[r.variety_id] || null });
+        pots: +r.qty_pots, ppp: +r.ppp || 1, variety: vmap[r.variety_id] || null, color: r.color || null });
     }
 
     const { data: existing } = await db.from("manager_tasks")
@@ -223,7 +223,7 @@ async function syncProductionTasks(db) {
       const fmtPer = n => (Math.round(n * 10) / 10).toLocaleString();
       const plantLines = [];
       let totalLiners = 0;
-      const rowsSorted = [...g.plantRows].sort((a, b) => a.bench.localeCompare(b.bench) || a.name.localeCompare(b.name));
+      const rowsSorted = [...g.plantRows].sort((a, b) => a.bench.localeCompare(b.bench) || String(a.color || "™").localeCompare(String(b.color || "™")) || a.name.localeCompare(b.name));
       let lastBench = null;
       for (const pr of rowsSorted) {
         const kids = g.kids[pr.rowId] || [];
@@ -238,7 +238,7 @@ async function syncProductionTasks(db) {
       }
       const plantTitle = `PLANT — ${g.zone} (wk${g.wk})`;
       const plantDesc = [
-        `**PLANT ${totalPots.toLocaleString()} POTS / ${totalLiners.toLocaleString()} LINERS** — ${g.zone}, week of ${iso(g.mon)}.`,
+        `${g.zone} — planting week of ${iso(g.mon)} (wk${g.wk}). Work bench by bench:`,
         ...plantLines,
         "",
         "Water-in immediately after planting.",
