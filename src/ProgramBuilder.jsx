@@ -125,7 +125,7 @@ function ProgramDetail({ sb, program, items, onChange }) {
               const gm = it.target_price && it.est_unit_cost ? (it.target_price - it.est_unit_cost) / it.target_price : null;
               return (
                 <tr key={it.id} style={{ borderBottom: `1px solid ${C.border}` }}>
-                  <td style={{ padding: "5px 8px", fontWeight: 700 }}>{it.item_name}</td>
+                  <td style={{ padding: "5px 8px", fontWeight: 700 }}>{it.item_name}{it.sku && <div style={{ fontFamily: "monospace", fontSize: 10.5, fontWeight: 400, color: C.muted }}>{it.sku}</div>}</td>
                   <td style={{ padding: "5px 8px", color: C.muted }}>{it.size || "—"}</td>
                   <td style={{ padding: "5px 8px", textAlign: "right" }}>
                     <input defaultValue={it.target_units ?? ""} inputMode="numeric" style={{ ...inp, width: 62, textAlign: "right" }}
@@ -151,7 +151,7 @@ function ProgramDetail({ sb, program, items, onChange }) {
       )}
 
       {adding
-        ? <AddProgramItem sb={sb} program={program} onDone={() => { setAdding(false); onChange(); }} onCancel={() => setAdding(false)} />
+        ? <AddProgramItem sb={sb} program={program} itemCount={items.length} onDone={() => { setAdding(false); onChange(); }} onCancel={() => setAdding(false)} />
         : (
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button onClick={() => setAdding(true)} style={{ padding: "7px 13px", borderRadius: 8, border: "none", background: C.light, color: "#fff", fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>＋ Add item</button>
@@ -164,76 +164,143 @@ function ProgramDetail({ sb, program, items, onChange }) {
   );
 }
 
-// New item: name it, size it, target it — and cost it from the real sourcing db.
-function AddProgramItem({ sb, program, onDone, onCancel }) {
-  const [name, setName] = useState("");
-  const [size, setSize] = useState("");
+// New item, built from real data: species → variety → finished size.
+// Name and SKU generate themselves; cost = liner×ppp + container + soil.
+function AddProgramItem({ sb, program, itemCount, onDone, onCancel }) {
+  const [crops, setCrops] = useState([]);
+  const [crop, setCrop] = useState("");
+  const [vars, setVars] = useState([]);
+  const [mat, setMat] = useState(null);          // chosen variety row (cheapest source)
+  const [containers, setContainers] = useState([]);
+  const [contId, setContId] = useState("");
+  const [soil, setSoil] = useState(null);        // {name, perCuFt}
+  const [ppp, setPpp] = useState("1");
   const [units, setUnits] = useState("");
   const [price, setPrice] = useState("");
-  const [ppp, setPpp] = useState("1");
-  const [mat, setMat] = useState(null);
-  const [q, setQ] = useState("");
-  const [hits, setHits] = useState([]);
+  const [nameOverride, setNameOverride] = useState(null);
 
-  useEffect(() => {
-    const t = setTimeout(async () => {
-      const term = q.trim();
-      if (term.length < 3) { setHits([]); return; }
-      const { data } = await sb.from("v_sourcing_prices")
-        .select("crop,variety,broker,supplier,form_class,landed,variety_key")
-        .or(`variety.ilike.%${term}%,crop.ilike.%${term}%`).limit(30);
-      setHits((data || []).sort((a, b) => (+a.landed || 9) - (+b.landed || 9)));
-    }, 350);
-    return () => clearTimeout(t);
-  }, [q]); // eslint-disable-line
+  useEffect(() => { (async () => {
+    const { data: c } = await sb.from("v_sourcing_crops").select("*").order("varieties", { ascending: false }).limit(500);
+    setCrops(c || []);
+    const { data: k } = await sb.from("containers").select("id,name,cost_per_unit,fill_volume_cu_ft").order("name");
+    setContainers(k || []);
+    const { data: sm } = await sb.from("soil_mixes").select("name,cost_per_bag,fluffed_volume");
+    const priced = (sm || []).filter(x => +x.cost_per_bag > 0 && +x.fluffed_volume > 0)
+      .map(x => ({ name: x.name, perCuFt: +x.cost_per_bag / +x.fluffed_volume }))
+      .sort((a, b) => a.perCuFt - b.perCuFt);
+    setSoil(priced.find(x => /BM5/i.test(x.name)) || priced[0] || null);
+  })(); }, []); // eslint-disable-line
+
+  useEffect(() => { (async () => {
+    setMat(null); setVars([]);
+    if (!crop) return;
+    const { data } = await sb.from("v_sourcing_prices")
+      .select("crop,variety,broker,supplier,form_class,landed,variety_key")
+      .ilike("crop", crop).order("landed").limit(1000);
+    // one row per variety, cheapest source wins
+    const seen = new Map();
+    (data || []).forEach(r => { if (!seen.has(r.variety_key)) seen.set(r.variety_key, r); });
+    setVars([...seen.values()].sort((a, b) => (a.variety || "").localeCompare(b.variety || "")));
+  })(); }, [crop]); // eslint-disable-line
+
+  const cont = containers.find(c => c.id === contId) || null;
+  const sizeLabel = useMemo(() => {
+    if (!cont) return null;
+    const g = String(cont.name).match(/(\d+(?:\.\d+)?)\s*gal/i);
+    if (g) return `${g[1]} GAL`;
+    const n = String(cont.name).match(/\d+(\.\d+)?/);
+    return n ? `${parseFloat(n[0])}"` : cont.name;
+  }, [cont]);
+
+  const itemName = nameOverride ?? (mat && sizeLabel ? `${sizeLabel} ${String(mat.variety).toUpperCase()}` : "");
+  const sku = useMemo(() => {
+    if (!mat || !sizeLabel) return null;
+    const pgm = (program.name.match(/[A-Za-z]+/) || ["PGM"])[0].slice(0, 3).toUpperCase();
+    const g = sizeLabel.includes("GAL") ? sizeLabel.replace(/[^0-9]/g, "") + "G"
+      : String(Math.floor(parseFloat(sizeLabel))).padStart(2, "0");
+    const crop3 = (crop.match(/[A-Za-z]+/) || ["XXX"])[0].slice(0, 3).toUpperCase();
+    return `${pgm}${g}${crop3}${String(itemCount + 1).padStart(3, "0")}`;
+  }, [mat, sizeLabel, crop, program.name, itemCount]);
+
+  const parts = useMemo(() => {
+    const liner = mat && mat.landed ? (+mat.landed) * (parseInt(ppp) || 1) : null;
+    const container = cont && +cont.cost_per_unit > 0 ? +cont.cost_per_unit : null;
+    const soilCost = cont && soil && +cont.fill_volume_cu_ft > 0 ? +cont.fill_volume_cu_ft * soil.perCuFt : null;
+    const total = (liner || 0) + (container || 0) + (soilCost || 0);
+    return { liner, container, soil: soilCost, total: total > 0 ? total : null };
+  }, [mat, cont, soil, ppp]);
+  const gm = parts.total && price && parseFloat(price) > 0 ? (parseFloat(price) - parts.total) / parseFloat(price) : null;
 
   async function save() {
-    if (!name.trim()) return;
-    const estCost = mat && mat.landed ? (+mat.landed) * (parseInt(ppp) || 1) : null;
+    if (!itemName.trim()) return;
     await sb.from("program_items").insert({
       id: crypto.randomUUID(), program_id: program.id,
-      item_name: name.trim(), size: size.trim() || null,
+      item_name: itemName.trim(), size: sizeLabel, sku,
+      container_id: contId || null,
       target_units: units ? parseInt(units) : null,
       target_price: price ? parseFloat(price) : null,
       ppp: parseInt(ppp) || 1,
-      material: mat ? { variety: mat.variety, crop: mat.crop, broker: mat.broker, supplier: mat.supplier, form: mat.form_class, landed: +mat.landed || null, variety_key: mat.variety_key } : null,
-      est_unit_cost: estCost,
+      material: mat ? { variety: mat.variety, crop, broker: mat.broker, supplier: mat.supplier, form: mat.form_class, landed: +mat.landed || null, variety_key: mat.variety_key } : null,
+      est_unit_cost: parts.total, cost_parts: { liner: parts.liner, container: parts.container, soil: parts.soil, soil_mix: soil?.name || null },
       sort: Date.now() % 100000,
     });
     onDone();
   }
 
   const inp = { padding: "8px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit", background: "#fff", boxSizing: "border-box" };
+  const lab = { fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", display: "block", marginBottom: 3 };
   return (
     <div style={{ background: "#fff", border: `1.5px solid ${C.light}`, borderRadius: 10, padding: 12 }}>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <input autoFocus value={name} onChange={e => setName(e.target.value)} placeholder='Item — e.g. 1 GAL SALVIA MAY NIGHT' style={{ ...inp, flex: 2, minWidth: 220 }} />
-        <input value={size} onChange={e => setSize(e.target.value)} placeholder="Size — 1 GAL" style={{ ...inp, width: 110 }} />
-        <input value={units} onChange={e => setUnits(e.target.value)} inputMode="numeric" placeholder="Units" style={{ ...inp, width: 84 }} />
-        <input value={price} onChange={e => setPrice(e.target.value)} inputMode="decimal" placeholder="Price $" style={{ ...inp, width: 84 }} />
-        <input value={ppp} onChange={e => setPpp(e.target.value)} inputMode="numeric" title="plants per pot" placeholder="ppp" style={{ ...inp, width: 60 }} />
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ minWidth: 170 }}>
+          <span style={lab}>Species</span>
+          <select value={crop} onChange={e => { setCrop(e.target.value); setNameOverride(null); }} style={{ ...inp, width: "100%", cursor: "pointer" }}>
+            <option value="">Choose…</option>
+            {crops.map(c => <option key={c.crop} value={c.crop}>{c.crop} ({c.varieties})</option>)}
+          </select>
+        </div>
+        <div style={{ minWidth: 220, flex: 1 }}>
+          <span style={lab}>Variety {crop && vars.length ? `(${vars.length})` : ""}</span>
+          <select value={mat ? mat.variety_key : ""} disabled={!crop}
+            onChange={e => { setMat(vars.find(v => v.variety_key === e.target.value) || null); setNameOverride(null); }}
+            style={{ ...inp, width: "100%", cursor: "pointer" }}>
+            <option value="">{crop ? "Choose…" : "pick a species first"}</option>
+            {vars.map(v => <option key={v.variety_key} value={v.variety_key}>{v.variety} — {money(+v.landed)} ({v.broker})</option>)}
+          </select>
+        </div>
+        <div style={{ minWidth: 190 }}>
+          <span style={lab}>Finished size (container library)</span>
+          <select value={contId} onChange={e => { setContId(e.target.value); setNameOverride(null); }} style={{ ...inp, width: "100%", cursor: "pointer" }}>
+            <option value="">Choose…</option>
+            {containers.map(c => <option key={c.id} value={c.id}>{c.name}{+c.cost_per_unit > 0 ? ` — ${money(+c.cost_per_unit)}` : ""}</option>)}
+          </select>
+        </div>
+        <div style={{ width: 62 }}><span style={lab}>PPP</span><input value={ppp} onChange={e => setPpp(e.target.value)} inputMode="numeric" style={{ ...inp, width: "100%" }} /></div>
+        <div style={{ width: 84 }}><span style={lab}>Units</span><input value={units} onChange={e => setUnits(e.target.value)} inputMode="numeric" style={{ ...inp, width: "100%" }} /></div>
+        <div style={{ width: 84 }}><span style={lab}>Price $</span><input value={price} onChange={e => setPrice(e.target.value)} inputMode="decimal" style={{ ...inp, width: "100%" }} /></div>
       </div>
-      <div style={{ marginTop: 8 }}>
-        <input value={q} onChange={e => setQ(e.target.value)}
-          placeholder={mat ? `Material: ${mat.variety} — ${money(+mat.landed)} (${mat.broker}) — search to change` : "🔍 cost it from the sourcing catalog — crop or variety…"}
-          style={{ ...inp, width: "100%", borderColor: mat ? C.light : C.border }} />
-        {hits.length > 0 && (
-          <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, marginTop: 4, maxHeight: 170, overflow: "auto" }}>
-            {hits.map((h, i) => (
-              <div key={i} onClick={() => { setMat(h); setQ(""); setHits([]); if (!name.trim() && h.variety) setName(`${size ? size + " " : ""}${h.variety.toUpperCase()}`); }}
-                style={{ display: "flex", gap: 8, padding: "6px 10px", fontSize: 12.5, cursor: "pointer", borderBottom: `1px solid ${C.border}` }}>
-                <b style={{ flex: 1 }}>{h.variety}</b>
-                <span style={{ color: C.muted }}>{h.crop} · {h.form_class} · {[h.broker, h.supplier].filter(Boolean).join("/")}</span>
-                <b style={{ color: C.green }}>{money(+h.landed)}</b>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+
+      {(itemName || sku) && (
+        <div style={{ background: "#f4f7f1", border: `1px solid ${C.border}`, borderRadius: 9, padding: "9px 12px", marginTop: 10, display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center" }}>
+          <input value={itemName} onChange={e => setNameOverride(e.target.value)}
+            style={{ ...inp, fontWeight: 800, minWidth: 240, flex: 1 }} title="Generated — edit if needed" />
+          {sku && <span style={{ fontFamily: "monospace", fontWeight: 700, color: C.dark, background: "#fff", border: `1px solid ${C.border}`, borderRadius: 7, padding: "4px 9px" }}>{sku}</span>}
+          {parts.total != null && (
+            <span style={{ fontSize: 12.5, color: C.text }}>
+              💰 {parts.liner != null && <>liner {money(parts.liner)}</>}
+              {parts.container != null && <> + pot {money(parts.container)}</>}
+              {parts.soil != null && <> + soil {money(parts.soil)}</>}
+              {" = "}<b style={{ fontSize: 14 }}>{money(parts.total)}</b>
+              {gm != null && <> · <b style={{ color: gm < 0.6 ? C.red : C.green }}>{Math.round(gm * 100)}%</b> @ {money(parseFloat(price))}</>}
+            </span>
+          )}
+        </div>
+      )}
+
       <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
         <button onClick={onCancel} style={{ padding: "8px 13px", borderRadius: 8, border: `1px solid ${C.border}`, background: "#fff", color: C.muted, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
-        <button onClick={save} disabled={!name.trim()}
-          style={{ flex: 1, padding: "8px 13px", borderRadius: 8, border: "none", background: name.trim() ? C.dark : "#c8d8c0", color: "#c8e6b8", fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+        <button onClick={save} disabled={!itemName.trim()}
+          style={{ flex: 1, padding: "8px 13px", borderRadius: 8, border: "none", background: itemName.trim() ? C.dark : "#c8d8c0", color: "#c8e6b8", fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
           Add to {program.name}
         </button>
       </div>

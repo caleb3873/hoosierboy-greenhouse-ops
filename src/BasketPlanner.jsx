@@ -55,6 +55,8 @@ export default function BasketPlanner({ plan, onOpenCombos }) {
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(null);     // basket being inspected
   const [draft, setDraft] = useState(null);   // proposal being written
+  const [dupe, setDupe] = useState(null);      // basket being duplicated
+  const [tick, setTick] = useState(0);
   const [err, setErr] = useState(null);
 
   async function loadProposals() {
@@ -138,7 +140,7 @@ export default function BasketPlanner({ plan, onOpenCombos }) {
         await loadTargets();
       } catch (e) { setErr(e.message || String(e)); }
     })();
-  }, [sb, plan?.id]); // eslint-disable-line
+  }, [sb, plan?.id, tick]); // eslint-disable-line
 
   const sizes = useMemo(() => {
     if (!baskets) return [];
@@ -153,6 +155,30 @@ export default function BasketPlanner({ plan, onOpenCombos }) {
     const ql = q.trim().toLowerCase();
     return baskets.filter(b => (!size || b.size === size) && (!ql || b.name.toLowerCase().includes(ql)));
   }, [baskets, size, q]);
+
+  // Duplicate an existing basket as a NEW line item — recipe, pot, soil, weeks
+  // and pricing copied; benches deliberately NOT copied (space is Tyler's call).
+  async function duplicateBasket(b, newName, qty, price) {
+    const { data: tmpl } = await sb.from("scheduled_crops").select("*").eq("id", b.ids[0]).single();
+    if (!tmpl) { window.alert("Couldn't load the original."); return; }
+    const { data: kids } = await sb.from("scheduled_crops").select("*").eq("combo_parent_id", tmpl.id);
+    const newId = crypto.randomUUID();
+    const parent = { ...tmpl, id: newId, item_name: newName, qty_pots: qty, bench_id: null,
+      sale_price_per_pot: price ?? tmpl.sale_price_per_pot, production_item_id: null,
+      notes: `duplicated from ${b.name}`, created_at: undefined, updated_at: undefined };
+    delete parent.created_at; delete parent.updated_at;
+    const { error } = await sb.from("scheduled_crops").insert(parent);
+    if (error) { window.alert("Couldn't duplicate: " + error.message); return; }
+    for (const k of kids || []) {
+      const per = (+tmpl.qty_pots > 0) ? (+k.qty_plants_ordered || 0) / +tmpl.qty_pots : 0;
+      const child = { ...k, id: crypto.randomUUID(), combo_parent_id: newId, bench_id: null,
+        qty_plants_ordered: Math.round(per * qty), production_item_id: null,
+        created_at: undefined, updated_at: undefined };
+      delete child.created_at; delete child.updated_at;
+      await sb.from("scheduled_crops").insert(child);
+    }
+    setDupe(null); setOpen(null); setTick(t => t + 1);
+  }
 
   function startProposal(kind, direction, basket) {
     setDraft({
@@ -228,8 +254,12 @@ export default function BasketPlanner({ plan, onOpenCombos }) {
 
       {open && !draft && (
         <BasketDetail b={open} tgt={targets[open.name]} onSaveTarget={patch => saveTarget(open, patch)}
-          onClose={() => setOpen(null)} onOpenCombos={onOpenCombos}
+          onClose={() => setOpen(null)} onOpenCombos={onOpenCombos} onDuplicate={() => setDupe(open)}
           onPropose={(kind, dir) => startProposal(kind, dir, open)} />
+      )}
+      {dupe && (
+        <DuplicateModal b={dupe} onCancel={() => setDupe(null)}
+          onCreate={(name, qty, price) => duplicateBasket(dupe, name, qty, price)} />
       )}
       {draft && (
         <ProposalEditor sb={sb} draft={draft} setDraft={setDraft}
@@ -261,7 +291,7 @@ function BasketCard({ b, tgt, onOpen }) {
   );
 }
 
-function BasketDetail({ b, tgt, onSaveTarget, onClose, onPropose, onOpenCombos }) {
+function BasketDetail({ b, tgt, onSaveTarget, onClose, onPropose, onOpenCombos, onDuplicate }) {
   const btn = (bg, col) => ({ padding: "8px 13px", borderRadius: 8, border: "none", background: bg, color: col,
     fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" });
   return (
@@ -314,6 +344,7 @@ function BasketDetail({ b, tgt, onSaveTarget, onClose, onPropose, onOpenCombos }
             </button>
           ))}
           <button onClick={() => onPropose("change", null)} style={btn(C.light, "#fff")}>Modify recipe…</button>
+          <button onClick={onDuplicate} style={btn(C.dark, "#c8e6b8")}>⧉ Duplicate as new…</button>
           <button onClick={() => onPropose("drop", null)} style={btn("#fff", C.red)}>Drop it</button>
           {onOpenCombos && <button onClick={() => { onOpenCombos(b.name); onClose(); }} style={btn(C.dark, "#c8e6b8")}>Arrange layout →</button>}
         </div>
@@ -367,6 +398,40 @@ function ProjectionRow({ b, tgt, onSave }) {
             {shift !== 0 && <button style={{ ...chip, border: "none", color: C.red }} onClick={() => onSave({ ready_shift: null })}>×</button>}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// One screen: new name, quantity, price — everything else rides along from the
+// original (recipe with per-basket counts, pot, soil, weeks, prop, sourcing).
+function DuplicateModal({ b, onCancel, onCreate }) {
+  const [name, setName] = useState(`${b.name} — NEW`);
+  const [qty, setQty] = useState(String(b.baskets));
+  const [price, setPrice] = useState(b.price != null ? String(b.price) : "");
+  const inp = { width: "100%", padding: "9px 11px", borderRadius: 9, border: `1.5px solid ${C.border}`, fontSize: 13.5, fontFamily: "inherit", boxSizing: "border-box", background: "#fff" };
+  const lab = { fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", display: "block", margin: "10px 0 4px" };
+  return (
+    <div onClick={onCancel} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 9300, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "#f6f9f3", borderRadius: 14, width: "100%", maxWidth: 480, padding: 20 }}>
+        <div style={{ fontSize: 17, fontWeight: 800, color: C.dark, fontFamily: "'DM Serif Display',Georgia,serif" }}>⧉ Duplicate {b.name}</div>
+        <div style={{ fontSize: 12, color: C.muted, marginTop: 3 }}>
+          Recipe, pot, soil, weeks and sourcing come along{b.recipe.length ? ` — ${b.recipe.map(r => `${r.label}${r.per ? ` ×${r.per}` : ""}`).join(" + ")}` : ""}. Benches stay unassigned for the production session.
+        </div>
+        <span style={lab}>New name</span>
+        <input autoFocus value={name} onChange={e => setName(e.target.value)} style={inp} />
+        <div style={{ display: "flex", gap: 10 }}>
+          <div style={{ flex: 1 }}><span style={lab}>Baskets</span><input value={qty} onChange={e => setQty(e.target.value)} inputMode="numeric" style={inp} /></div>
+          <div style={{ flex: 1 }}><span style={lab}>Price $</span><input value={price} onChange={e => setPrice(e.target.value)} inputMode="decimal" style={inp} /></div>
+        </div>
+        <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+          <button onClick={onCancel} style={{ padding: "10px 14px", borderRadius: 9, border: `1px solid ${C.border}`, background: "#fff", color: C.muted, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+          <button onClick={() => { const n = parseInt(qty); if (name.trim() && n > 0) onCreate(name.trim(), n, price ? parseFloat(price) : null); }}
+            disabled={!name.trim() || !(parseInt(qty) > 0)}
+            style={{ flex: 1, padding: "10px 14px", borderRadius: 9, border: "none", background: name.trim() ? C.dark : "#c8d8c0", color: "#c8e6b8", fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+            Create it
+          </button>
+        </div>
       </div>
     </div>
   );
