@@ -9,6 +9,7 @@ import { sizeLabelForItem } from "./shared";
 import CategoryProfiles from "./CategoryProfiles";
 import BasketPlanner from "./BasketPlanner";
 import ItemDrill from "./ItemDrill";
+import ProgramsPanel from "./ProgramBuilder";
 
 const COLORS = {
   bg:        "#f7f8f5",
@@ -2055,6 +2056,8 @@ function SalesVsPlanTab({ plan }) {
           </div>
         )}
       </div>
+      <ProgramsPanel plan={plan} />
+
       {missing.length > 0 && (
         <details style={{ background: COLORS.card, border: `1px solid ${COLORS.amber}`, borderRadius: 10 }}>
           <summary style={{ cursor: "pointer", padding: "11px 14px", fontWeight: 800, color: COLORS.dark }}>
