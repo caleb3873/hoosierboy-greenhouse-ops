@@ -172,7 +172,10 @@ async function syncProductionTasks(db) {
       }
       if (!(+r.qty_pots > 0)) continue;
       const c = cmap[r.container_id];
-      const cKey = c ? `${c.sku ? c.sku + " (" + c.name + ")" : c.name}` : "(no container)";
+      // short pot names — "6.5 Azalea Pot - NEW Schlegel Logo Print" is noise to
+      // the fill crew; they need the size (sku kept for grabbing the right pallet)
+      const short = c ? (String(c.name || "").match(/\d+(\.\d+)?/) ? `${parseFloat(String(c.name).match(/\d+(\.\d+)?/)[0])}" Pot` : c.name) : "(no container)";
+      const cKey = c && c.sku ? `${short} — ${c.sku}` : short;
       g.pots[cKey] = (g.pots[cKey] || 0) + +r.qty_pots;
       g.fillCuFt += (+r.qty_pots) * (c && +c.fill_volume_cu_ft ? +c.fill_volume_cu_ft : 0.35);
       if (r.is_combo_component) g.flaggedPots += +r.qty_pots;

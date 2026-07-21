@@ -928,6 +928,11 @@ function VarietyTab({ planId }) {
 }
 
 // ── By Plant Week tab — calendar-style timeline ─────────────────────────────
+// "6.5 Azalea Pot - NEW Schlegel Logo Print" is too many words for a task —
+// the crew needs the size: 6.5" Pot. (Caleb)
+const potShort = n => { const m = String(n || "").match(/\d+(\.\d+)?/); return m ? `${parseFloat(m[0])}" Pot` : (n || "—"); };
+const sizeNumOf = label => { const m = String(label || "").match(/\d+(\.\d+)?/); return m ? parseFloat(m[0]) : 999; };
+
 function WeekTab({ planId }) {
   const sb = getSupabase();
   const [weeks, setWeeks] = useState(null);
@@ -955,7 +960,7 @@ function WeekTab({ planId }) {
       const byW = {};
       const weekOf = r => `${r.plant_year || "?"}-${String(r.plant_week ?? "?").padStart(2, "0")}`;
       const wk = key => byW[key] || (byW[key] = { key, year: key.split("-")[0], week: +key.split("-")[1] || null,
-        items: {}, pots: 0, plants: 0, cost: 0, revenue: 0, zones: new Set(), varieties: new Set() });
+        items: {}, pots: 0, plants: 0, cost: 0, revenue: 0, zones: new Set(), varieties: new Set(), fillBySize: {} });
 
       for (const r of sc) {
         // components fold into their parent item — they're the liners you stick INTO it
@@ -985,11 +990,12 @@ function WeekTab({ planId }) {
         const key = r.item_name || r.id;
         const label = r.item_name || [v?.variety, cmap[r.container_id] && `(${cmap[r.container_id]})`].filter(Boolean).join(" ") || "?";
         const it = w.items[key] || (w.items[key] = { label, pots: 0, plants: 0, ppp: +r.ppp || 1,
-          prop: r.prop_method, tray: r.prop_tray_size, container: cmap[r.container_id] || null,
+          prop: r.prop_method, tray: r.prop_tray_size, container: cmap[r.container_id] || null, pot: potShort(cmap[r.container_id]),
           soil: smap[r.soil_mix_id] || null, benches: new Set(), srcs: new Set(), linerCost: 0,
           comps: [], ready: r.ready_week ?? null, rev: 0 });
         const pots = +r.qty_pots, plants = pots * (+r.ppp || 1);
         it.pots += pots; it.plants += plants;
+        w.fillBySize[potShort(cmap[r.container_id])] = (w.fillBySize[potShort(cmap[r.container_id])] || 0) + pots;
         it.ppp = Math.max(it.ppp, +r.ppp || 1);
         it.linerCost += plants * (+r.liner_unit_cost || 0);
         if (b?.code) it.benches.add(b.code);
@@ -1021,7 +1027,14 @@ function WeekTab({ planId }) {
         Each week opens into everything planting that week — item, pots, plants per pot, what arrives (URC / plugs / direct stick), tray, soil, source and benches — so the week can be prepped from one screen. Combo components are folded into their basket with the full liner list.
       </div>
       {weeks.map((w, i) => {
-        const items = Object.values(w.items).sort((a, b) => b.pots - a.pots);
+        const items = Object.values(w.items).sort((a, b) => {
+          const ba = [...a.benches].sort()[0] || "™", bb = [...b.benches].sort()[0] || "™";
+          if (ba !== bb) return ba.localeCompare(bb);              // bench codes encode location
+          const sa = sizeNumOf(a.label), sb = sizeNumOf(b.label);
+          if (sa !== sb) return sa - sb;                           // then size
+          return a.label.localeCompare(b.label);                   // then name (colors group)
+        });
+        const fillSizes = Object.entries(w.fillBySize).sort((x, y) => sizeNumOf(x[0]) - sizeNumOf(y[0]));
         return (
           <details key={w.key} open={i === (nextIdx === -1 ? weeks.length - 1 : nextIdx)}
             style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderLeft: `4px solid ${COLORS.light}`, borderRadius: 8 }}>
@@ -1035,10 +1048,21 @@ function WeekTab({ planId }) {
               <span style={{ fontSize: 12.5, color: COLORS.muted }}>{fmtMoney(w.cost)} cost</span>
               <span style={{ fontSize: 12.5, color: COLORS.muted, marginLeft: "auto" }}>{[...w.zones].slice(0, 5).join(" · ")}{w.zones.size > 5 ? ` +${w.zones.size - 5}` : ""}</span>
             </summary>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", padding: "10px 14px 4px" }}>
+              <span style={{ fontSize: 10.5, fontWeight: 800, color: COLORS.muted, textTransform: "uppercase" }}>Pot fill:</span>
+              {fillSizes.map(([sz, n]) => (
+                <span key={sz} style={{ background: "#eef3e9", border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "4px 10px", fontSize: 12.5, fontWeight: 800, color: "#2e5c1e" }}>
+                  {n.toLocaleString()} × {sz}
+                </span>
+              ))}
+              <span style={{ marginLeft: "auto", background: "#1e2d1a", color: "#c8e6b8", borderRadius: 8, padding: "4px 10px", fontSize: 12.5, fontWeight: 800 }}>
+                Plant: {items.length} items · {w.pots.toLocaleString()} pots · {w.plants.toLocaleString()} plants
+              </span>
+            </div>
             <div style={{ overflow: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead><tr>
-                  <th style={th2}>Item</th><th style={{ ...th2, textAlign: "right" }}>Pots</th>
+                  <th style={th2}>Item</th><th style={th2}>Pot</th><th style={{ ...th2, textAlign: "right" }}>Pots</th>
                   <th style={{ ...th2, textAlign: "right" }}>PPP</th><th style={{ ...th2, textAlign: "right" }}>Plants</th>
                   <th style={th2}>Arrives as</th><th style={th2}>Tray</th><th style={th2}>Soil</th>
                   <th style={th2}>Source</th><th style={{ ...th2, textAlign: "right" }}>Liner $</th>
@@ -1055,6 +1079,7 @@ function WeekTab({ planId }) {
                           </div>
                         )}
                       </td>
+                      <td style={td2}>{it.pot || "—"}</td>
                       <td style={{ ...td2, textAlign: "right" }}>{it.pots.toLocaleString()}</td>
                       <td style={{ ...td2, textAlign: "right", fontWeight: 700, color: it.ppp > 1 ? "#2e5c1e" : COLORS.muted }}>{it.ppp}</td>
                       <td style={{ ...td2, textAlign: "right", fontWeight: 700 }}>{it.plants.toLocaleString()}</td>
