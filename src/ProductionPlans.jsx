@@ -930,70 +930,149 @@ function VarietyTab({ planId }) {
 // ── By Plant Week tab — calendar-style timeline ─────────────────────────────
 function WeekTab({ planId }) {
   const sb = getSupabase();
-  const [byWeek, setByWeek] = useState([]);
+  const [weeks, setWeeks] = useState(null);
 
   useEffect(() => {
     if (!sb) return;
     (async () => {
-      // paginate — plans exceed PostgREST's 1000-row cap (was silently truncating totals)
-      const pl = await srcPageAll(sb, "v_scheduled_crops_pl", "plant_week,variety_id,qty_pots,qty_plants_ordered,direct_cost_total,revenue,gross_profit,bench_id,is_combo_component,combo_parent_id", q => q.eq("plan_id", planId));
-      const vars = await srcPageAll(sb, "variety_library", "id,variety");
-      const { data: bench } = await sb.from("benches").select("id,zone_label").limit(2000);
+      // scheduled_crops directly (not the P&L view) — grouping needs plant_year,
+      // and prep needs ppp / prop / tray / soil / source per row
+      const sc = await srcPageAll(sb, "scheduled_crops",
+        "id,item_name,variety_id,container_id,soil_mix_id,bench_id,qty_pots,ppp,qty_plants_ordered,plant_week,plant_year,ready_week,prop_method,prop_tray_size,broker,supplier,liner_unit_cost,is_combo_component,combo_parent_id",
+        q => q.eq("plan_id", planId));
+      const pl = await srcPageAll(sb, "v_scheduled_crops_pl", "id,direct_cost_total,revenue", q => q.eq("plan_id", planId));
+      const cost = Object.fromEntries(pl.map(r => [r.id, { c: +r.direct_cost_total || 0, rev: +r.revenue || 0 }]));
+      const vars = await srcPageAll(sb, "variety_library", "id,variety,crop_name");
+      const vmap = Object.fromEntries(vars.map(v => [v.id, v]));
+      const { data: bench } = await sb.from("benches").select("id,code,zone_label").limit(2000);
+      const bmap = Object.fromEntries((bench || []).map(b => [b.id, b]));
+      const { data: conts } = await sb.from("containers").select("id,name");
+      const cmap = Object.fromEntries((conts || []).map(c => [c.id, c.name]));
+      const { data: soils } = await sb.from("soil_mixes").select("id,name");
+      const smap = Object.fromEntries((soils || []).map(x => [x.id, x.name]));
+      const parentById = Object.fromEntries(sc.filter(r => !r.is_combo_component).map(r => [r.id, r]));
 
       const byW = {};
-      for (const r of (pl || [])) {
-        const wk = r.plant_week;
-        if (!byW[wk]) byW[wk] = {
-          week: wk, varieties: new Set(), zones: new Set(),
-          liners: 0, pots: 0, cost: 0, revenue: 0, profit: 0, rows: 0,
-        };
-        const v = (vars || []).find(x => x.id === r.variety_id);
-        const b = (bench || []).find(x => x.id === r.bench_id);
-        if (v) byW[wk].varieties.add(v.variety);
-        if (b) byW[wk].zones.add(b.zone_label);
-        byW[wk].rows += 1;
-        byW[wk].liners  += +r.qty_plants_ordered || 0;
-        byW[wk].pots    += (r.is_combo_component && r.combo_parent_id ? 0 : (+r.qty_pots || 0));
-        byW[wk].cost    += +r.direct_cost_total || 0;
-        byW[wk].revenue += +r.revenue || 0;
-        byW[wk].profit  += +r.gross_profit || 0;
+      const weekOf = r => `${r.plant_year || "?"}-${String(r.plant_week ?? "?").padStart(2, "0")}`;
+      const wk = key => byW[key] || (byW[key] = { key, year: key.split("-")[0], week: +key.split("-")[1] || null,
+        items: {}, pots: 0, plants: 0, cost: 0, revenue: 0, zones: new Set(), varieties: new Set() });
+
+      for (const r of sc) {
+        // components fold into their parent item — they're the liners you stick INTO it
+        if (r.is_combo_component) {
+          const par = parentById[r.combo_parent_id];
+          if (!par) continue;
+          const w = wk(weekOf(par));
+          const key = par.item_name || par.id;
+          const it = w.items[key];
+          const v = vmap[r.variety_id];
+          const plants = +r.qty_plants_ordered || 0;
+          w.plants += plants;
+          w.cost += plants * (+r.liner_unit_cost || 0);
+          if (it) {
+            it.plants += plants;
+            it.linerCost += plants * (+r.liner_unit_cost || 0);
+            it.comps.push(`${(v?.variety || v?.crop_name || "?")} ×${plants.toLocaleString()}${r.prop_method ? ` (${r.prop_method})` : ""}`);
+            if (r.broker || r.supplier) it.srcs.add(r.broker || r.supplier);
+          }
+          if (v?.variety) w.varieties.add(v.variety);
+          continue;
+        }
+        if (!(+r.qty_pots > 0)) continue;
+        const w = wk(weekOf(r));
+        const v = vmap[r.variety_id];
+        const b = bmap[r.bench_id];
+        const key = r.item_name || r.id;
+        const label = r.item_name || [v?.variety, cmap[r.container_id] && `(${cmap[r.container_id]})`].filter(Boolean).join(" ") || "?";
+        const it = w.items[key] || (w.items[key] = { label, pots: 0, plants: 0, ppp: +r.ppp || 1,
+          prop: r.prop_method, tray: r.prop_tray_size, container: cmap[r.container_id] || null,
+          soil: smap[r.soil_mix_id] || null, benches: new Set(), srcs: new Set(), linerCost: 0,
+          comps: [], ready: r.ready_week ?? null, rev: 0 });
+        const pots = +r.qty_pots, plants = pots * (+r.ppp || 1);
+        it.pots += pots; it.plants += plants;
+        it.ppp = Math.max(it.ppp, +r.ppp || 1);
+        it.linerCost += plants * (+r.liner_unit_cost || 0);
+        if (b?.code) it.benches.add(b.code);
+        if (r.broker || r.supplier) it.srcs.add(r.broker || r.supplier);
+        if (r.ready_week != null) it.ready = it.ready == null ? r.ready_week : Math.min(it.ready, r.ready_week);
+        it.rev += (cost[r.id]?.rev || 0);
+        w.pots += pots; w.plants += plants;
+        w.cost += cost[r.id]?.c || 0; w.revenue += cost[r.id]?.rev || 0;
+        if (b?.zone_label) w.zones.add(b.zone_label);
+        if (v?.variety) w.varieties.add(v.variety);
       }
-      setByWeek(Object.values(byW).sort((a, b) => a.week - b.week));
+      setWeeks(Object.values(byW).sort((a, b) => a.key.localeCompare(b.key)));
     })();
   }, [sb, planId]);
 
+  if (!weeks) return <div style={{ padding: 20, color: COLORS.muted }}>Loading plant weeks…</div>;
+
+  // open the first week that hasn't passed yet — that's the one being prepped
+  const now = new Date();
+  const curKey = `${now.getFullYear()}-${String(Math.ceil(((now - new Date(now.getFullYear(), 0, 4)) / 86400000 + new Date(now.getFullYear(), 0, 4).getDay() + 1) / 7)).padStart(2, "0")}`;
+  const nextIdx = weeks.findIndex(w => w.key >= curKey);
+
+  const th2 = { textAlign: "left", padding: "6px 9px", fontSize: 10.5, fontWeight: 800, color: COLORS.muted, textTransform: "uppercase", borderBottom: `1px solid ${COLORS.border}`, whiteSpace: "nowrap" };
+  const td2 = { padding: "6px 9px", fontSize: 12.5, borderBottom: `1px solid ${COLORS.border}`, verticalAlign: "top" };
+
   return (
-    <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 16 }}>
-      <div style={{ fontSize: 13, color: COLORS.muted, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700, marginBottom: 12 }}>
-        By Plant Week · {byWeek.length} weeks
+    <div style={{ display: "grid", gap: 10 }}>
+      <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "11px 14px", fontSize: 12.5, color: COLORS.muted }}>
+        Each week opens into everything planting that week — item, pots, plants per pot, what arrives (URC / plugs / direct stick), tray, soil, source and benches — so the week can be prepped from one screen. Combo components are folded into their basket with the full liner list.
       </div>
-      <div style={{ display: "grid", gap: 10 }}>
-        {byWeek.map(w => (
-          <div key={w.week} style={{ background: "#f3f5ef", borderLeft: `4px solid ${COLORS.light}`, padding: 14, borderRadius: 6 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-              <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 20, color: COLORS.dark }}>Week {w.week}</div>
-              <div style={{ display: "flex", gap: 16, fontSize: 12, color: COLORS.muted }}>
-                <span>{w.rows} crop block(s)</span>
-                <span>{w.varieties.size} varieties</span>
-                <span>{w.zones.size} zone(s)</span>
-              </div>
+      {weeks.map((w, i) => {
+        const items = Object.values(w.items).sort((a, b) => b.pots - a.pots);
+        return (
+          <details key={w.key} open={i === (nextIdx === -1 ? weeks.length - 1 : nextIdx)}
+            style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderLeft: `4px solid ${COLORS.light}`, borderRadius: 8 }}>
+            <summary style={{ cursor: "pointer", padding: "11px 14px", display: "flex", gap: 14, alignItems: "baseline", flexWrap: "wrap", listStyle: "none" }}>
+              <span style={{ fontFamily: "'DM Serif Display',serif", fontSize: 19, color: COLORS.dark }}>
+                Week {w.week}<span style={{ fontSize: 12, color: COLORS.muted }}> ’{String(w.year).slice(2)}</span>
+              </span>
+              <span style={{ fontSize: 12.5, color: COLORS.text }}><b>{items.length}</b> items</span>
+              <span style={{ fontSize: 12.5, color: COLORS.text }}><b>{w.pots.toLocaleString()}</b> pots</span>
+              <span style={{ fontSize: 12.5, color: COLORS.text }}><b>{w.plants.toLocaleString()}</b> plants</span>
+              <span style={{ fontSize: 12.5, color: COLORS.muted }}>{fmtMoney(w.cost)} cost</span>
+              <span style={{ fontSize: 12.5, color: COLORS.muted, marginLeft: "auto" }}>{[...w.zones].slice(0, 5).join(" · ")}{w.zones.size > 5 ? ` +${w.zones.size - 5}` : ""}</span>
+            </summary>
+            <div style={{ overflow: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead><tr>
+                  <th style={th2}>Item</th><th style={{ ...th2, textAlign: "right" }}>Pots</th>
+                  <th style={{ ...th2, textAlign: "right" }}>PPP</th><th style={{ ...th2, textAlign: "right" }}>Plants</th>
+                  <th style={th2}>Arrives as</th><th style={th2}>Tray</th><th style={th2}>Soil</th>
+                  <th style={th2}>Source</th><th style={{ ...th2, textAlign: "right" }}>Liner $</th>
+                  <th style={{ ...th2, textAlign: "right" }}>Ready</th><th style={th2}>Benches</th>
+                </tr></thead>
+                <tbody>
+                  {items.map((it, j) => (
+                    <tr key={j}>
+                      <td style={{ ...td2, fontWeight: 700 }}>
+                        {it.label}
+                        {it.comps.length > 0 && (
+                          <div style={{ fontSize: 11, fontWeight: 400, color: COLORS.muted, marginTop: 2 }}>
+                            🪴 {it.comps.join(" · ")}
+                          </div>
+                        )}
+                      </td>
+                      <td style={{ ...td2, textAlign: "right" }}>{it.pots.toLocaleString()}</td>
+                      <td style={{ ...td2, textAlign: "right", fontWeight: 700, color: it.ppp > 1 ? "#2e5c1e" : COLORS.muted }}>{it.ppp}</td>
+                      <td style={{ ...td2, textAlign: "right", fontWeight: 700 }}>{it.plants.toLocaleString()}</td>
+                      <td style={td2}>{it.prop || "—"}</td>
+                      <td style={td2}>{it.tray || "—"}</td>
+                      <td style={td2}>{it.soil || "—"}</td>
+                      <td style={td2}>{[...it.srcs].join(", ") || "—"}</td>
+                      <td style={{ ...td2, textAlign: "right", color: COLORS.muted }}>{it.linerCost ? fmtMoney(it.linerCost) : "—"}</td>
+                      <td style={{ ...td2, textAlign: "right", color: COLORS.muted }}>{it.ready != null ? `wk${it.ready}` : "—"}</td>
+                      <td style={{ ...td2, fontFamily: "monospace", fontSize: 11 }}>{[...it.benches].sort().slice(0, 6).join(" ")}{it.benches.size > 6 ? ` +${it.benches.size - 6}` : ""}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10 }}>
-              <MiniKPI label="Liners"  value={w.liners.toLocaleString()} color={COLORS.text} />
-              <MiniKPI label="Pots"    value={w.pots.toLocaleString()}   color={COLORS.text} />
-              <MiniKPI label="Cost"    value={fmtMoney(w.cost)}          color={COLORS.text} />
-              <MiniKPI label="Revenue" value={fmtMoney(w.revenue)}       color={COLORS.light} />
-              <MiniKPI label="Profit"  value={fmtMoney(w.profit)}        color={COLORS.dark} />
-            </div>
-            <div style={{ marginTop: 10, fontSize: 11, color: COLORS.muted }}>
-              <strong>Varieties:</strong> {Array.from(w.varieties).slice(0, 8).join(", ")}{w.varieties.size > 8 ? `, +${w.varieties.size - 8} more` : ""}
-            </div>
-            <div style={{ marginTop: 4, fontSize: 11, color: COLORS.muted }}>
-              <strong>Zones:</strong> {Array.from(w.zones).join(" · ")}
-            </div>
-          </div>
-        ))}
-      </div>
+          </details>
+        );
+      })}
     </div>
   );
 }
