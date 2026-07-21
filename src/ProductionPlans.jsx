@@ -749,15 +749,21 @@ function BenchTab({ plan, houses, housesProfit, drilldown, setDrilldown }) {
   useEffect(() => {
     if (!sb || !plan?.id) return;
     (async () => {
-      const scd = await srcPageAll(sb, "scheduled_crops", "id,item_name,plant_week,bench_id,variety_id,qty_pots,is_combo_component,improvement_note", q => q.eq("plan_id", plan.id)); // paginate — >1000 rows
+      const scd = await srcPageAll(sb, "scheduled_crops", "id,item_name,plant_week,bench_id,variety_id,container_id,qty_pots,is_combo_component,improvement_note", q => q.eq("plan_id", plan.id)); // paginate — >1000 rows
       const benchIds = [...new Set((scd || []).map(r => r.bench_id).filter(Boolean))];
       const varIds = [...new Set((scd || []).map(r => r.variety_id).filter(Boolean))];
       const { data: bdata } = benchIds.length ? await sb.from("benches").select("id,code,zone_label").in("id", benchIds) : { data: [] };
       const { data: vdata } = varIds.length ? await sb.from("variety_library").select("id,variety,crop_name").in("id", varIds) : { data: [] };
+      const contIds = [...new Set((scd || []).map(r => r.container_id).filter(Boolean))];
+      const { data: cdata } = contIds.length ? await sb.from("containers").select("id,name").in("id", contIds) : { data: [] };
       setAll((scd || []).map(r => {
         const b = (bdata || []).find(x => x.id === r.bench_id);
         const v = (vdata || []).find(x => x.id === r.variety_id);
-        return { id: r.id, item: r.item_name, plant_week: r.plant_week, bench: b?.code, house: b?.zone_label, variety: v?.variety, crop: v?.crop_name, is_combo_component: r.is_combo_component, improvement_note: r.improvement_note };
+        const cont = (cdata || []).find(x => x.id === r.container_id);
+        // item_name is the display name; when a plan lacks it, variety + container
+        // still tells you WHAT and WHAT SIZE (the Winter-2026 lesson)
+        const label = r.item_name || [v?.variety, cont?.name && `(${cont.name})`].filter(Boolean).join(" ") || "?";
+        return { id: r.id, item: r.item_name, label, plant_week: r.plant_week, bench: b?.code, house: b?.zone_label, variety: v?.variety, crop: v?.crop_name, container: cont?.name, is_combo_component: r.is_combo_component, improvement_note: r.improvement_note };
       }));
     })();
   }, [sb, plan?.id]);
@@ -767,7 +773,7 @@ function BenchTab({ plan, houses, housesProfit, drilldown, setDrilldown }) {
   const weeks = wk.split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
   const active = !!(q.trim() || weeks.length);
   const matches = !active ? [] : all.filter(r => {
-    const txt = `${r.item || ""} ${r.variety || ""} ${r.crop || ""}`.toLowerCase();
+    const txt = `${r.item || ""} ${r.variety || ""} ${r.crop || ""} ${r.container || ""}`.toLowerCase();
     const okText = !q.trim() || txt.includes(q.trim().toLowerCase());
     const ww = r.plant_week != null ? (r.plant_week % 100) : null;
     const okWeek = !weeks.length || weeks.some(w => w.length >= 3 ? String(r.plant_week) === w : ww === +w);
@@ -797,7 +803,7 @@ function BenchTab({ plan, houses, housesProfit, drilldown, setDrilldown }) {
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
             <div style={{ fontWeight: 800, color: COLORS.dark }}>Results · {matches.length}</div>
             <button onClick={() => setSel(new Set(matches.map(m => m.id)))} style={{ background: "transparent", border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "4px 10px", cursor: "pointer", fontSize: 12, fontFamily: "inherit" }}>Select all</button>
-            {sel.size > 0 && <button onClick={() => setTaskItems(matches.filter(m => sel.has(m.id)).map(m => ({ item: m.item || m.variety || "item", bench: m.bench })))} style={{ background: COLORS.dark, color: "#fff", border: "none", borderRadius: 8, padding: "5px 14px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 13 }}>＋ Create one task ({sel.size})</button>}
+            {sel.size > 0 && <button onClick={() => setTaskItems(matches.filter(m => sel.has(m.id)).map(m => ({ item: m.label || "item", bench: m.bench })))} style={{ background: COLORS.dark, color: "#fff", border: "none", borderRadius: 8, padding: "5px 14px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 13 }}>＋ Create one task ({sel.size})</button>}
             {sel.size > 0 && <button onClick={() => setSel(new Set())} style={{ background: "transparent", border: "none", color: COLORS.muted, cursor: "pointer", fontSize: 13 }}>clear</button>}
           </div>
           {taskItems && <Modal onClose={() => { setTaskItems(null); setSel(new Set()); }}><TaskComposer items={taskItems} planId={plan.id} houseId={null} onClose={() => { setTaskItems(null); setSel(new Set()); }} /></Modal>}
@@ -808,7 +814,7 @@ function BenchTab({ plan, houses, housesProfit, drilldown, setDrilldown }) {
                 <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0", fontSize: 13 }}>
                   <input type="checkbox" checked={sel.has(m.id)} onChange={() => toggleSel(m.id)} style={{ cursor: "pointer", accentColor: COLORS.light }} />
                   <span style={{ color: COLORS.muted, width: 72, flexShrink: 0 }}>{m.bench}</span>
-                  <span>{m.item || m.variety} <span style={{ color: COLORS.muted, fontSize: 11 }}>· wk {m.plant_week}</span></span>
+                  <span>{m.label} <span style={{ color: COLORS.muted, fontSize: 11 }}>· wk {m.plant_week}</span></span>
                 </div>
               ))}
             </div>
@@ -7769,8 +7775,9 @@ function HouseDrilldown({ houseName, houses, planId, onClose }) {
         .select("id,bench_id,variety_id,qty_pots,qty_plants_ordered,direct_cost_total,revenue,gross_profit,plant_week")
         .eq("plan_id", planId).in("bench_id", benchIds);
       const ids = (pl || []).map(r => r.id);
-      const { data: sc } = ids.length ? await sb.from("scheduled_crops").select("id,item_name,is_combo_component,combo_parent_id,planting_layout,notes,improvement_note,kept_note").in("id", ids) : { data: [] };
+      const { data: sc } = ids.length ? await sb.from("scheduled_crops").select("id,item_name,is_combo_component,combo_parent_id,planting_layout,notes,improvement_note,kept_note,container_id").in("id", ids) : { data: [] };
       const { data: vars } = await sb.from("variety_library").select("id,variety,breeder,culture_source_id");
+      const { data: conts } = await sb.from("containers").select("id,name");
 
       setRows((pl || []).map(r => {
         const scr = (sc || []).find(x => x.id === r.id);
@@ -7779,6 +7786,7 @@ function HouseDrilldown({ houseName, houses, planId, onClose }) {
           bench: (bench || []).find(b => b.id === r.bench_id),
           variety: (vars || []).find(v => v.id === r.variety_id),
           item_name: scr?.item_name,
+          container: (conts || []).find(c => c.id === scr?.container_id)?.name || null,
           is_combo_component: scr?.is_combo_component,
           planting_layout: scr?.planting_layout,
           notes: scr?.notes,
@@ -7905,7 +7913,7 @@ function HouseDrilldown({ houseName, houses, planId, onClose }) {
                     {/flagged to drop/i.test(r.notes || "") && <span style={{ background: "#d94f3d", color: "#fff", fontSize: 9, fontWeight: 800, padding: "1px 6px", borderRadius: 8, letterSpacing: 0.5, flexShrink: 0 }}>⚠ DROP</span>}
                     {r.improvement_note && <span title={r.improvement_note} style={{ flexShrink: 0 }}>🚩</span>}
                     {r.kept_note && <span title={r.kept_note} style={{ flexShrink: 0 }}>✅</span>}
-                    <span>{r.item_name || r.variety?.variety || "—"}</span>
+                    <span>{r.item_name || [r.variety?.variety, r.container && `(${r.container})`].filter(Boolean).join(" ") || "—"}</span>
                   </div>
                   {r.variety?.variety && <div style={{ color: COLORS.muted, fontSize: 11 }}>{r.variety.variety}{r.variety.breeder ? ` · ${r.variety.breeder}` : ""}</div>}
                   {r.improvement_note && <div style={{ color: "#c0392b", fontSize: 11, marginTop: 2, fontWeight: 600 }}>🚩 {r.improvement_note}</div>}
