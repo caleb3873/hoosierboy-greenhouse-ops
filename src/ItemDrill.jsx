@@ -5,7 +5,7 @@
 // Component edits ARE plan edits (they change liner orders), written to
 // scheduled_crops per-parent so every bench row stays proportional. Timing and
 // quantity stay DECISIONS in plan_targets, applied by production later.
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { getSupabase } from "./supabase";
 
 const C = { dark: "#1e2d1a", light: "#7fb069", border: "#dfe7d8", muted: "#7a8c74",
@@ -23,7 +23,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
 
   async function load() {
     const { data: parents } = await sb.from("scheduled_crops")
-      .select("id,bench_id,container_id,item_name,variety_id,qty_pots,ppp,pack_size,plant_week,plant_year,ship_week,ship_year,ready_week,ready_year,crop_weeks,prop_method,broker,supplier,liner_unit_cost")
+      .select("id,bench_id,container_id,item_name,variety_id,qty_pots,ppp,pack_size,plant_week,plant_year,ship_week,ship_year,ready_week,ready_year,crop_weeks,prop_method,broker,supplier,liner_unit_cost,sale_price_per_pot")
       .eq("plan_id", plan.id).eq("item_name", row.item).eq("is_combo_component", false).gt("qty_pots", 0);
     const ids = (parents || []).map(p => p.id);
     let children = [];
@@ -81,8 +81,17 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
       matKeys[k] = { variety: v ? `${v.crop_name || ""} ${v.variety || ""}`.trim() : "?", prop: p.prop_method,
         src: [p.broker, p.supplier].filter(Boolean).join(" / "), cost: +p.liner_unit_cost || null };
     }
+    // per-basket cost anatomy: container+soil vs plants — so a mix change shows
+    // exactly what it does to the basket's cost
+    const parentLinerCost = detail.parents.reduce((t, p) => t + (+p.qty_pots || 0) * (+p.ppp || 1) * (+p.liner_unit_cost || 0), 0);
+    const containerCost = detail.parents.reduce((t, p) => t + (detail.costById[p.id] || 0), 0) - parentLinerCost;
+    const childLinerCost = detail.children.reduce((t, c) => t + (+c.qty_plants_ordered || 0) * (+c.liner_unit_cost || 0), 0);
+    const planPrice = Math.max(0, ...detail.parents.map(p => +p.sale_price_per_pot || 0)) || null;
     const ready = detail.parents.map(p => p.ready_week).filter(x => x != null);
     return { baskets, cost, costPer: baskets ? cost / baskets : null, materials: Object.values(matKeys),
+      containerPer: baskets ? containerCost / baskets : null,
+      plantsPer: baskets ? (parentLinerCost + childLinerCost) / baskets : null,
+      planPrice,
       comps: Object.values(comps).sort((a, b) => b.plants - a.plants),
       readyMin: ready.length ? Math.min(...ready) : null };
   }, [detail]);
@@ -127,6 +136,12 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
     } catch (e) { window.alert("Couldn't remove: " + (e.message || e)); }
     setBusy(false);
   }
+
+  // remember the basket's cost as it was when the popup opened — mix edits then
+  // read side by side: "was $6.16 → now $6.98"
+  const baseline = useRef(null);
+  useEffect(() => { baseline.current = null; }, [row.item]);
+  useEffect(() => { if (agg && agg.costPer != null && baseline.current == null) baseline.current = agg.costPer; }, [agg]);
 
   const shift = tgt?.ready_shift || 0;
   const baseReady = agg?.readyMin ?? row.ship;
@@ -270,6 +285,34 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
             <div style={{ fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", marginBottom: 6 }}>
               Components {busy && <span style={{ color: C.amber }}>· saving…</span>}
             </div>
+            {agg.costPer != null && (() => {
+              const was = baseline.current, now = agg.costPer;
+              const changed = was != null && Math.abs(now - was) > 0.005;
+              const price = agg.planPrice || row.price || null;
+              const gmOf = c => price ? (price - c) / price : null;
+              return (
+                <div style={{ background: changed ? "#fdf7ec" : "#f4f7f1", border: `1.5px solid ${changed ? C.amber : C.border}`, borderRadius: 9, padding: "9px 12px", marginBottom: 9 }}>
+                  <div style={{ fontSize: 12.5, color: C.text }}>
+                    💰 <b>Cost per basket:</b> container + soil {money(agg.containerPer)} · plants {money(agg.plantsPer)} ={" "}
+                    {changed ? (
+                      <span>
+                        <span style={{ textDecoration: "line-through", color: C.muted }}>{money(was)}</span>
+                        {" → "}<b style={{ color: now > was ? C.red : C.green, fontSize: 14 }}>{money(now)}</b>
+                        <b style={{ color: now > was ? C.red : C.green }}> ({now > was ? "+" : "−"}{money(Math.abs(now - was))})</b>
+                      </span>
+                    ) : <b style={{ fontSize: 14 }}>{money(now)}</b>}
+                  </div>
+                  {price && (
+                    <div style={{ fontSize: 12, color: C.muted, marginTop: 3 }}>
+                      Margin @ {money(price)}:{" "}
+                      {changed && <span><span style={{ textDecoration: "line-through" }}>{pct(gmOf(was))}</span>{" → "}</span>}
+                      <b style={{ color: gmOf(now) != null && gmOf(now) < 0.7 ? C.red : C.green }}>{pct(gmOf(now))}</b>
+                      <span> direct (no labour)</span>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
             {agg.comps.map(c => (
               <div key={c.variety_id} style={{ display: "flex", gap: 8, alignItems: "center", padding: "4px 0", fontSize: 12.5, flexWrap: "wrap" }}>
                 <b style={{ flex: 1, minWidth: 140 }}>{c.label}</b>
