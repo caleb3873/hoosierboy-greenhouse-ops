@@ -1694,8 +1694,15 @@ function SalesVsPlanTab({ plan }) {
       const parentIds = new Set(sc.map(r => r.combo_parent_id).filter(Boolean));
       const itemsWithParents = new Set(sc.filter(r => parentIds.has(r.id)).map(r => r.item_name));
       const planByItem = {}, shipByItem = {}, pppByItem = {}, ppuByItem = {};
+      // Ivy / vinca vine / muehlenbeckia / carex are grown mostly as combo inputs
+      // but ALSO sold retail as 4.5" packs. Counting their full planned volume as
+      // finished items would show ~12% sell-through and read as a disaster, so
+      // they stay out of the totals — but they're carried through as dualUse so
+      // they're visible for target-setting instead of silently disappearing.
+      const dualUse = {};
       for (const r of sc) {
-        if (!(+r.qty_pots > 0) || r.is_combo_component || COMPONENT.test(r.item_name)) continue;
+        if (!(+r.qty_pots > 0) || r.is_combo_component) continue;
+        if (COMPONENT.test(r.item_name)) { dualUse[r.item_name] = (dualUse[r.item_name] || 0) + +r.qty_pots; continue; }
         if (itemsWithParents.has(r.item_name) && !parentIds.has(r.id)) continue; // drop phantom duplicate basket rows
         planByItem[r.item_name] = (planByItem[r.item_name] || 0) + +r.qty_pots;
         pppByItem[r.item_name] = Math.max(pppByItem[r.item_name] || 0, +r.ppp || 1);
@@ -1722,6 +1729,18 @@ function SalesVsPlanTab({ plan }) {
         const soldOut = s >= pItems && pItems > 0 && lastWk != null && lastWk < cutoff;
         const lostEst = soldOut ? Math.round((s / Math.max(1, lastWk - firstWk + 1)) * (cutoff - lastWk) * price) : 0;
         out.push({ item: it, size: sizeTokenForItem(it), converted: pItems !== planned, planRaw: planned, planned: pItems, sold: s, st: pItems ? s / pItems : 0, over, lostEst, soldOut, cutoff, lastWk, rev: Math.round(rev[it] || 0), wk: wkA, peak, ship: shipByItem[it] ?? null, status: soldOut ? "SOLDOUT" : s >= pItems ? "HIT" : (s === 0 ? "NOSALE" : "SHORT") });
+      }
+      // Dual-use rows: real retail sales, but planned volume mostly feeds combos,
+      // so sell-through / over / lost are meaningless and deliberately left null.
+      for (const it of Object.keys(dualUse)) {
+        const s = sold[it] || 0;
+        if (!s) continue; // only surface the ones that actually sold retail
+        const wkA = wkly[it] || Array(weeks.length).fill(0);
+        const peak = wkA.some(x => x > 0) ? weeks[wkA.indexOf(Math.max(...wkA))] : null;
+        out.push({ item: it, size: sizeTokenForItem(it), dualUse: true, converted: false,
+          planRaw: dualUse[it], planned: dualUse[it], sold: s, st: null, over: 0, lostEst: 0,
+          soldOut: false, cutoff: null, lastWk: null, rev: Math.round(rev[it] || 0),
+          wk: wkA, peak, ship: shipByItem[it] ?? null, status: "DUAL" });
       }
       // Sold last season but absent from this plan — invisible in a plan-driven
       // table, and exactly what gets dropped by accident when a plan is built by
@@ -1771,13 +1790,14 @@ function SalesVsPlanTab({ plan }) {
   // sell-through compares item quantity to sold units; "raw" shows the as-entered qty_pots
   const dPlanned = r => basis === "raw" ? r.planRaw : r.planned;
   const dSold = r => r.sold;
-  const tPlanned = rows.reduce((a, r) => a + dPlanned(r), 0), tSold = rows.reduce((a, r) => a + dSold(r), 0);
-  const tOver = rows.reduce((a, r) => a + r.over, 0), tLostEst = rows.reduce((a, r) => a + r.lostEst, 0), tRev = rows.reduce((a, r) => a + r.rev, 0);
+  const core = rows.filter(r => !r.dualUse); // dual-use rows would distort every ratio
+  const tPlanned = core.reduce((a, r) => a + dPlanned(r), 0), tSold = core.reduce((a, r) => a + dSold(r), 0);
+  const tOver = core.reduce((a, r) => a + r.over, 0), tLostEst = core.reduce((a, r) => a + r.lostEst, 0), tRev = core.reduce((a, r) => a + r.rev, 0);
   const soldOutCount = rows.filter(r => r.soldOut).length;
   const maxR = Math.max(...season.seasonRev, 1); const pkWk = season.weeks[season.seasonRev.indexOf(maxR)];
   const sizes = ["all", ...Array.from(new Set(rows.map(r => r.size))).sort()];
   const q = query.trim().toLowerCase();
-  const sortVal = { item: r => r.item, planned: r => dPlanned(r), sold: r => r.sold, st: r => r.st, status: r => r.status, over: r => r.over, lostEst: r => r.lostEst, rev: r => r.rev, peak: r => r.peak ?? 99 };
+  const sortVal = { item: r => r.item, st: r => r.st ?? -1, planned: r => dPlanned(r), sold: r => r.sold, status: r => r.status, over: r => r.over, lostEst: r => r.lostEst, rev: r => r.rev, peak: r => r.peak ?? 99 };
   const clickSort = c => { if (c === sortCol) setSortDir(d => d === "asc" ? "desc" : "asc"); else { setSortCol(c); setSortDir(c === "item" ? "asc" : "desc"); } };
   // sticky + clickable column header (table lives in its own scroll viewport so it pins at top:0)
   const stickyTh = { ...th, position: "sticky", top: 0, zIndex: 11, background: "#eef3e8" };
@@ -1933,13 +1953,13 @@ function SalesVsPlanTab({ plan }) {
           <tbody>
             {shown.slice(0, 500).map((r, i) => {
               const late = r.ship != null && r.peak != null && r.ship > r.peak;
-              const badge = r.status === "SOLDOUT" ? { bg: COLORS.red, t: "SOLD OUT" } : r.status === "HIT" ? { bg: "#5e9c4a", t: "HIT" } : r.status === "NOSALE" ? { bg: "#c8d0c0", t: "NOSALE" } : { bg: COLORS.amber, t: "OVER" };
+              const badge = r.status === "SOLDOUT" ? { bg: COLORS.red, t: "SOLD OUT" } : r.status === "HIT" ? { bg: "#5e9c4a", t: "HIT" } : r.status === "NOSALE" ? { bg: "#c8d0c0", t: "NOSALE" } : r.status === "DUAL" ? { bg: "#4a7ba8", t: "DUAL USE" } : { bg: COLORS.amber, t: "OVER" };
               return (
                 <tr key={i} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
                   <td style={{ ...td, fontWeight: 600 }}>{r.item}{r.converted && <span title="entered in individual pots — shown in the sold pack (flat/case) to match sales" style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: COLORS.muted }}>⤵</span>}</td>
                   <td style={{ ...td, textAlign: "right" }}>{dPlanned(r).toLocaleString()}</td>
                   <td style={{ ...td, textAlign: "right" }}>{dSold(r).toLocaleString()}</td>
-                  <td style={{ ...td, textAlign: "right", fontWeight: 700, color: r.st >= 1 ? "#2e7d32" : r.st < 0.6 ? COLORS.red : COLORS.text }}>{Math.round(r.st * 100)}%</td>
+                  <td style={{ ...td, textAlign: "right", fontWeight: 700, color: r.st == null ? COLORS.muted : r.st >= 1 ? "#2e7d32" : r.st < 0.6 ? COLORS.red : COLORS.text }} title={r.st == null ? "Most of the planned volume goes into combos — a retail sell-through % would be misleading" : ""}>{r.st == null ? "—" : Math.round(r.st * 100) + "%"}</td>
                   <td style={td}><span title={r.status === "SOLDOUT" ? `sold out wk${r.lastWk} (before wk${r.cutoff} cutoff) — grow more` : ""} style={{ fontSize: 10, fontWeight: 800, padding: "1px 6px", borderRadius: 8, color: "#fff", background: badge.bg }}>{badge.t}</span></td>
                   <td style={{ ...td, textAlign: "right", fontWeight: 700, color: r.over > 0 ? COLORS.amber : COLORS.muted }}>{r.over ? fmtMoney(r.over) : "—"}</td>
                   <td style={{ ...td, textAlign: "right", fontWeight: 700, color: r.lostEst > 0 ? COLORS.red : COLORS.muted }}>{r.lostEst ? fmtMoney(r.lostEst) : "—"}</td>
