@@ -166,6 +166,10 @@ async function syncProductionTasks(db) {
       const key = `${zone}__${anchor.plant_week}__${yr}`;
       const g = groups[key] || (groups[key] = { zone, wk: anchor.plant_week, yr, mon, pots: {}, items: {}, benches: new Set(), fillCuFt: 0, flaggedPots: 0 });
       if (r.is_combo_component) {
+        // a component carrying its own qty_pots is contradictory — count NOTHING
+        // silently: surface it on the task so a human settles it (the Aida/Moni
+        // lesson cuts both ways: excluding hid 150 pots, including doubled them)
+        if (+r.qty_pots > 0) g.flaggedPots += +r.qty_pots;
         const it = g.items[anchor.item_name || anchor.id];
         if (it) it.liners += +r.qty_plants_ordered || 0;
         continue;
@@ -178,7 +182,6 @@ async function syncProductionTasks(db) {
       const cKey = c && c.sku ? `${short} — ${c.sku}` : short;
       g.pots[cKey] = (g.pots[cKey] || 0) + +r.qty_pots;
       g.fillCuFt += (+r.qty_pots) * (c && +c.fill_volume_cu_ft ? +c.fill_volume_cu_ft : 0.35);
-      if (r.is_combo_component) g.flaggedPots += +r.qty_pots;
       const iKey = r.item_name || r.id;
       const it = g.items[iKey] || (g.items[iKey] = { name: r.item_name || "(unnamed)", pots: 0, liners: 0, ppp: +r.ppp || 1, benches: new Set() });
       it.pots += +r.qty_pots;
@@ -205,6 +208,7 @@ async function syncProductionTasks(db) {
         "",
         `**Soil:** ~${Math.max(1, Math.ceil(g.fillCuFt / 8))} bag(s). **Stage on:** ${benchList}.`,
         `Fill by ${iso(friday)} — not more than a week ahead.`,
+        ...(g.flaggedPots > 0 ? ["", `⚠ ${g.flaggedPots.toLocaleString()} pots sit on rows flagged as combo components and are NOT in the count above — check with Caleb whether they are real pots or combo structure before filling.`] : []),
       ].join("\n");
 
       // ── planting ──
