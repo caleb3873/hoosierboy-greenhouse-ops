@@ -1669,6 +1669,13 @@ function SalesVsPlanTab({ plan }) {
   const [query, setQuery] = useState("");
   const [sizeFilt, setSizeFilt] = useState("all");
   const [basis, setBasis] = useState("pots"); // "pots" = normalized finished pots · "raw" = as-entered units
+  // Projection session: agreed 2027 targets live in plan_targets, keyed by item
+  // name, so the sales conversation never has to answer bench questions.
+  const [targets, setTargets] = useState({});   // item_name → row
+  const [missing, setMissing] = useState([]);   // sold in 2026, absent from this plan
+  const [draft, setDraft] = useState({});       // item_name → in-flight input text
+  const [savingT, setSavingT] = useState({});
+  const { displayName } = useAuth();
   useEffect(() => {
     if (!sb) return;
     const COMPONENT = /\bVINE\b|\bIVY\b|HEDERA|MU[EH]+LENBECKIA|CAREX/i;
@@ -1716,9 +1723,48 @@ function SalesVsPlanTab({ plan }) {
         const lostEst = soldOut ? Math.round((s / Math.max(1, lastWk - firstWk + 1)) * (cutoff - lastWk) * price) : 0;
         out.push({ item: it, size: sizeTokenForItem(it), converted: pItems !== planned, planRaw: planned, planned: pItems, sold: s, st: pItems ? s / pItems : 0, over, lostEst, soldOut, cutoff, lastWk, rev: Math.round(rev[it] || 0), wk: wkA, peak, ship: shipByItem[it] ?? null, status: soldOut ? "SOLDOUT" : s >= pItems ? "HIT" : (s === 0 ? "NOSALE" : "SHORT") });
       }
+      // Sold last season but absent from this plan — invisible in a plan-driven
+      // table, and exactly what gets dropped by accident when a plan is built by
+      // replaying last year's master list.
+      const inPlan = new Set(Object.keys(planByItem));
+      const gaps = {};
+      for (const t of tot) {
+        const it = skuToItem[t.sku];
+        if (it && inPlan.has(it)) continue;
+        const key = it || `${t.sku}`;
+        const g = gaps[key] = gaps[key] || { key, desc: null, units: 0, rev: 0, mapped: !!it };
+        g.units += +t.units; g.rev += +t.revenue;
+      }
+      const totBySku = Object.fromEntries(tot.map(t => [t.sku, t]));
+      for (const g of Object.values(gaps)) if (!g.desc) g.desc = totBySku[g.key]?.description || g.key;
+      setMissing(Object.values(gaps).filter(g => g.rev > 250).sort((a, b) => b.rev - a.rev));
+
       setRows(out); setSeason({ weeks, seasonRev });
+      const { data: tg } = await sb.from("plan_targets").select("*").eq("plan_id", plan.id);
+      setTargets(Object.fromEntries((tg || []).map(t => [t.item_name, t])));
     })();
   }, [sb, plan.id]);
+
+  // Save a decision. Snapshots what it sold and what the plan held, so the
+  // production session can see the reasoning later without recomputing it.
+  async function saveTarget(r, patch) {
+    const prev = targets[r.item] || {};
+    const next = {
+      plan_id: plan.id, item_name: r.item,
+      target_units: patch.target_units !== undefined ? patch.target_units : (prev.target_units ?? null),
+      decision: patch.decision !== undefined ? patch.decision : (prev.decision ?? null),
+      note: patch.note !== undefined ? patch.note : (prev.note ?? null),
+      prior_units: r.sold, current_units: r.planned,
+      decided_by: displayName || "planner", decided_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    setTargets(t => ({ ...t, [r.item]: { ...prev, ...next } }));
+    setSavingT(s => ({ ...s, [r.item]: true }));
+    try {
+      await sb.from("plan_targets").upsert(next, { onConflict: "plan_id,item_name" });
+    } catch (e) { console.warn("target save failed", e); }
+    setSavingT(s => { const n = { ...s }; delete n[r.item]; return n; });
+  }
   if (!rows) return <div style={{ padding: 20, color: COLORS.muted }}>Loading sales vs plan…</div>;
   if (!rows.length) return <div style={{ padding: 20, color: COLORS.muted }}>No matched sales yet — the SKU crosswalk (sales_sku_map) is empty for this plan's items.</div>;
   const spark = a => { const m = Math.max(...a) || 1; return a.map(v => " ▁▂▃▄▅▆▇█"[Math.round(v / m * 8)]).join(""); };
@@ -1740,7 +1786,34 @@ function SalesVsPlanTab({ plan }) {
       {label}{sortCol === col ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
     </th>
   );
-  const shown = rows.filter(r => (filt === "all" ? true : filt === "over" ? r.status === "SHORT" : filt === "soldout" ? r.soldOut : r.status === "HIT")
+  // ── Projection impact ──────────────────────────────────────────────────────
+  // Space is zero-sum: the plan is already 100% bench-assigned, so every unit
+  // added has to displace something. Show the net footprint change live, and
+  // per size, because a 4.5" flat and a 10" basket are not interchangeable.
+  const decided = rows.filter(r => targets[r.item]?.target_units != null || targets[r.item]?.decision === "drop");
+  const targetOf = r => {
+    const t = targets[r.item];
+    if (!t) return null;
+    if (t.decision === "drop") return 0;
+    return t.target_units == null ? null : +t.target_units;
+  };
+  const impact = rows.reduce((acc, r) => {
+    const t = targetOf(r);
+    if (t == null) return acc;
+    const d = t - r.planned;
+    acc.units += d;
+    acc.rev += d * (r.sold && r.rev ? r.rev / r.sold : 0);
+    acc.bySize[r.size] = (acc.bySize[r.size] || 0) + d;
+    return acc;
+  }, { units: 0, rev: 0, bySize: {} });
+  const sizeDeltas = Object.entries(impact.bySize).filter(([, v]) => v !== 0).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
+
+  const shown = rows.filter(r => (filt === "all" ? true
+      : filt === "over" ? r.status === "SHORT"
+      : filt === "soldout" ? r.soldOut
+      : filt === "todo" ? targetOf(r) == null
+      : filt === "done" ? targetOf(r) != null
+      : r.status === "HIT")
       && (sizeFilt === "all" || r.size === sizeFilt)
       && (!q || r.item.toLowerCase().includes(q)))
     .sort((a, b) => { const va = (sortVal[sortCol] || sortVal.lostEst)(a), vb = (sortVal[sortCol] || sortVal.lostEst)(b); const c = typeof va === "string" ? va.localeCompare(vb) : (va - vb); return sortDir === "asc" ? c : -c; });
@@ -1756,6 +1829,67 @@ function SalesVsPlanTab({ plan }) {
         <RevStat label="2026 sales · these items" value={fmtMoney(tRev)} accent={COLORS.light} />
         <RevStat label="Demand peak" value={"wk" + pkWk} accent={COLORS.dark} />
       </div>
+
+      {/* ── Projection session: running impact of the decisions made so far ── */}
+      <div style={{ background: COLORS.card, border: `1px solid ${decided.length ? COLORS.dark : COLORS.border}`, borderRadius: 10, padding: "12px 16px" }}>
+        <div style={{ display: "flex", gap: 18, flexWrap: "wrap", alignItems: "center" }}>
+          <div>
+            <div style={{ fontSize: 11, color: COLORS.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Decisions made</div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: COLORS.dark }}>{decided.length} <span style={{ fontSize: 13, color: COLORS.muted, fontWeight: 600 }}>of {rows.length}</span></div>
+          </div>
+          <div>
+            <div style={{ fontSize: 11, color: COLORS.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Net footprint change</div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: impact.units > 0 ? COLORS.red : impact.units < 0 ? "#2e7d32" : COLORS.muted }}>
+              {impact.units > 0 ? "+" : ""}{impact.units.toLocaleString()} <span style={{ fontSize: 13, fontWeight: 600, color: COLORS.muted }}>units</span>
+            </div>
+          </div>
+          <div>
+            <div style={{ fontSize: 11, color: COLORS.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Projected revenue change</div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: impact.rev >= 0 ? "#2e7d32" : COLORS.red }}>
+              {impact.rev >= 0 ? "+" : "−"}{fmtMoney(Math.abs(Math.round(impact.rev)))}
+            </div>
+          </div>
+          {sizeDeltas.length > 0 && (
+            <div style={{ flex: 1, minWidth: 220 }}>
+              <div style={{ fontSize: 11, color: COLORS.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>By size — what has to give</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                {sizeDeltas.slice(0, 10).map(([s, v]) => (
+                  <span key={s} style={{ fontSize: 11.5, fontWeight: 700, padding: "2px 8px", borderRadius: 8, background: v > 0 ? "#fdecea" : "#eaf5e9", color: v > 0 ? COLORS.red : "#2e7d32", border: `1px solid ${v > 0 ? "#f3c6c0" : "#c2e0be"}` }}>
+                    {s} {v > 0 ? "+" : ""}{v.toLocaleString()}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+        {impact.units > 0 && (
+          <div style={{ fontSize: 11.5, color: COLORS.muted, marginTop: 8 }}>
+            The plan is already fully bench-assigned — a positive number means something else has to come out before production can absorb this.
+          </div>
+        )}
+      </div>
+      {missing.length > 0 && (
+        <details style={{ background: COLORS.card, border: `1px solid ${COLORS.amber}`, borderRadius: 10 }}>
+          <summary style={{ cursor: "pointer", padding: "11px 14px", fontWeight: 800, color: COLORS.dark }}>
+            ⚠ Sold in 2026 but not in this plan — {missing.length} items · {fmtMoney(missing.reduce((a, m) => a + m.rev, 0))}
+            <span style={{ fontWeight: 500, color: COLORS.muted, fontSize: 12 }}> · decide whether each was dropped on purpose</span>
+          </summary>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead><tr><th style={th}>Item</th><th style={{ ...th, textAlign: "right" }}>2026 units</th><th style={{ ...th, textAlign: "right" }}>2026 $</th><th style={th}>Match</th></tr></thead>
+            <tbody>
+              {missing.map((m, i) => (
+                <tr key={i} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
+                  <td style={{ ...td, fontWeight: 600 }}>{m.desc}</td>
+                  <td style={{ ...td, textAlign: "right" }}>{Math.round(m.units).toLocaleString()}</td>
+                  <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{fmtMoney(m.rev)}</td>
+                  <td style={{ ...td, fontSize: 11, color: COLORS.muted }}>{m.mapped ? "maps to an item not in this plan" : "no SKU match"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </details>
+      )}
+
       <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "14px 16px" }}>
         <div style={{ fontWeight: 800, color: COLORS.dark, marginBottom: 10 }}>📈 Season revenue by week (2026)</div>
         <div style={{ display: "flex", alignItems: "flex-end", gap: 4, height: 150, borderBottom: `2px solid ${COLORS.border}` }}>
@@ -1774,7 +1908,7 @@ function SalesVsPlanTab({ plan }) {
           style={{ padding: "7px 10px", borderRadius: 16, border: `1px solid ${sizeFilt !== "all" ? COLORS.light : COLORS.border}`, fontSize: 12, fontFamily: "inherit", background: "#fff", color: COLORS.text, cursor: "pointer" }}>
           {sizes.map(s => <option key={s} value={s}>{s === "all" ? "All sizes" : s}</option>)}
         </select>
-        {[["all", "All"], ["over", "🟠 Overplanned"], ["soldout", "🔴 Sold out early"], ["hit", "🟢 Hit"]].map(([f, l]) => <button key={f} onClick={() => setFilt(f)} style={{ padding: "6px 12px", borderRadius: 16, fontWeight: 700, cursor: "pointer", border: `1px solid ${filt === f ? COLORS.light : COLORS.border}`, background: filt === f ? COLORS.light : "#fff", color: filt === f ? "#fff" : COLORS.text }}>{l}</button>)}
+        {[["all", "All"], ["over", "🟠 Overplanned"], ["soldout", "🔴 Sold out early"], ["hit", "🟢 Hit"], ["todo", "◻ Undecided"], ["done", "✓ Decided"]].map(([f, l]) => <button key={f} onClick={() => setFilt(f)} style={{ padding: "6px 12px", borderRadius: 16, fontWeight: 700, cursor: "pointer", border: `1px solid ${filt === f ? COLORS.light : COLORS.border}`, background: filt === f ? COLORS.light : "#fff", color: filt === f ? "#fff" : COLORS.text }}>{l}</button>)}
         <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ color: COLORS.muted }} title="Item quantity = qty_pots (what sells). As-entered shows the raw plan number before pot→pack conversion.">units:</span>
           {[["pots", "Item qty"], ["raw", "As entered"]].map(([k, l]) => <button key={k} onClick={() => setBasis(k)} style={{ padding: "6px 10px", borderRadius: 16, fontSize: 11, fontWeight: 700, cursor: "pointer", border: `1px solid ${basis === k ? COLORS.dark : COLORS.border}`, background: basis === k ? COLORS.dark : "#fff", color: basis === k ? "#fff" : COLORS.text }}>{l}</button>)}
@@ -1794,6 +1928,7 @@ function SalesVsPlanTab({ plan }) {
             <SortHdr col="rev" label="2026 $" align="right" />
             <SortHdr col="peak" label={`Demand (wk${season.weeks[0]}–${season.weeks[season.weeks.length - 1]})`} />
             <th style={stickyTh}>Timing</th>
+            <th style={{ ...stickyTh, textAlign: "right", background: "#e4eedd", borderLeft: `2px solid ${COLORS.light}` }} title="Agreed 2027 target in sellable units. Saved to plan_targets — production distributes it across benches later.">2027 target</th>
           </tr></thead>
           <tbody>
             {shown.slice(0, 500).map((r, i) => {
@@ -1811,6 +1946,9 @@ function SalesVsPlanTab({ plan }) {
                   <td style={{ ...td, textAlign: "right", color: COLORS.muted }}>{fmtMoney(r.rev)}</td>
                   <td style={{ ...td, fontFamily: "monospace", color: "#4a6b3a", letterSpacing: 1 }} title={r.peak ? `peak wk${r.peak}` : "no weekly sales"}>{spark(r.wk)}{r.peak ? <span style={{ color: COLORS.muted, fontSize: 10, letterSpacing: 0 }}> wk{r.peak}</span> : null}</td>
                   <td style={td}>{r.ship != null && r.peak != null ? <span style={{ fontSize: 11, fontWeight: 700, color: late ? COLORS.red : "#2e7d32" }} title={`finishes ~wk${r.ship}, demand peaks wk${r.peak}`}>{late ? `⚠ wk${r.ship}→${r.peak}` : `✓ wk${r.ship}`}</span> : <span style={{ color: "#c8d0c0" }}>—</span>}</td>
+                  <TargetCell r={r} tgt={targets[r.item]} draft={draft[r.item]} saving={savingT[r.item]}
+                    onDraft={v => setDraft(d => ({ ...d, [r.item]: v }))}
+                    onSave={patch => saveTarget(r, patch)} />
                 </tr>
               );
             })}
@@ -1818,6 +1956,53 @@ function SalesVsPlanTab({ plan }) {
         </table>
       </div>
     </div>
+  );
+}
+
+// One row's 2027 decision: a number plus the quick calls that cover most items.
+// "Same" and "Drop" are one click because in a real session most items are one
+// of those two — typing only happens where the number is actually changing.
+function TargetCell({ r, tgt, draft, saving, onDraft, onSave }) {
+  const val = draft !== undefined ? draft : (tgt?.decision === "drop" ? "0" : (tgt?.target_units ?? ""));
+  const committed = tgt?.target_units != null || tgt?.decision === "drop";
+  const t = tgt?.decision === "drop" ? 0 : (tgt?.target_units != null ? +tgt.target_units : null);
+  const delta = t == null ? null : t - r.planned;
+  const commit = raw => {
+    const s = String(raw).trim();
+    if (s === "") { onSave({ target_units: null, decision: null }); return; }
+    const n = Math.max(0, Math.round(+s.replace(/[^0-9.]/g, "")));
+    if (isNaN(n)) return;
+    onSave({ target_units: n, decision: n === 0 ? "drop" : n > r.planned ? "grow" : n < r.planned ? "cut" : "hold" });
+  };
+  const quick = (label, value, title) => (
+    <button title={title} onClick={() => { onDraft(undefined); commit(value); }}
+      style={{ padding: "1px 6px", borderRadius: 6, fontSize: 10, fontWeight: 700, cursor: "pointer",
+        border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.muted }}>{label}</button>
+  );
+  return (
+    <td style={{ ...td, textAlign: "right", background: committed ? "#f2f8ee" : "#fbfdfa", borderLeft: `2px solid ${COLORS.light}`, whiteSpace: "nowrap" }}>
+      <div style={{ display: "flex", gap: 4, alignItems: "center", justifyContent: "flex-end" }}>
+        {delta != null && delta !== 0 && (
+          <span style={{ fontSize: 10, fontWeight: 800, color: delta > 0 ? COLORS.red : "#2e7d32" }}>
+            {delta > 0 ? "+" : ""}{delta.toLocaleString()}
+          </span>
+        )}
+        <input
+          value={val}
+          onChange={e => onDraft(e.target.value)}
+          onBlur={e => { onDraft(undefined); commit(e.target.value); }}
+          onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
+          placeholder={String(r.planned)}
+          style={{ width: 62, padding: "3px 6px", textAlign: "right", borderRadius: 6, fontSize: 12.5,
+            fontFamily: "inherit", border: `1px solid ${committed ? COLORS.light : COLORS.border}`,
+            background: saving ? "#f0f0e8" : "#fff", fontWeight: committed ? 700 : 400 }} />
+      </div>
+      <div style={{ display: "flex", gap: 3, justifyContent: "flex-end", marginTop: 3 }}>
+        {quick("same", r.planned, "Keep the current plan quantity")}
+        {r.sold > 0 && quick("=sold", r.sold, `Match 2026 sales (${r.sold.toLocaleString()})`)}
+        {quick("drop", 0, "Do not grow this in 2027")}
+      </div>
+    </td>
   );
 }
 
