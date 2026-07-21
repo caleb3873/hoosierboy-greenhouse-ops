@@ -7,6 +7,7 @@ import { getSupabase, getCultureClient } from "./supabase";
 import { useAuth } from "./Auth";
 import CategoryProfiles from "./CategoryProfiles";
 import BasketPlanner from "./BasketPlanner";
+import ItemDrill from "./ItemDrill";
 
 const COLORS = {
   bg:        "#f7f8f5",
@@ -1680,6 +1681,8 @@ function SalesVsPlanTab({ plan }) {
   const [targets, setTargets] = useState({});   // item_name → row
   const [missing, setMissing] = useState([]);   // sold in 2026, absent from this plan
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [drill, setDrill] = useState(null);          // item row opened in the drawer
+  const [selSet, setSelSet] = useState(() => new Set());  // checkbox multi-select
   const [draft, setDraft] = useState({});       // item_name → in-flight input text
   const [savingT, setSavingT] = useState({});
   const { displayName } = useAuth();
@@ -1780,6 +1783,7 @@ function SalesVsPlanTab({ plan }) {
       plan_id: plan.id, item_name: r.item,
       target_units: patch.target_units !== undefined ? patch.target_units : (prev.target_units ?? null),
       ready_shift: patch.ready_shift !== undefined ? patch.ready_shift : (prev.ready_shift ?? null),
+      note: patch.note !== undefined ? patch.note : (prev.note ?? null),
       decision: patch.decision !== undefined ? patch.decision : (prev.decision ?? null),
       note: patch.note !== undefined ? patch.note : (prev.note ?? null),
       prior_units: r.sold, current_units: r.planned,
@@ -1842,10 +1846,10 @@ function SalesVsPlanTab({ plan }) {
   // Applying a % to the filtered set records a per-item target (so nothing is
   // lost) while the decision itself is one action.
   async function applyPct(pct) {
-    const targetRows = shown;
+    const targetRows = selSet.size ? shown.filter(r => selSet.has(r.item)) : shown;
     if (!targetRows.length || bulkBusy) return;
     const verb = pct === 0 ? "hold at current plan" : `${pct > 0 ? "increase" : "reduce"} by ${Math.abs(pct)}%`;
-    if (!window.confirm(`${verb.charAt(0).toUpperCase() + verb.slice(1)} — ${targetRows.length} item${targetRows.length !== 1 ? "s" : ""} currently shown.\n\nThis records a 2027 target on each one. You can still change any of them individually.`)) return;
+    if (!window.confirm(`${verb.charAt(0).toUpperCase() + verb.slice(1)} — ${targetRows.length} ${selSet.size ? "selected" : "shown"} item${targetRows.length !== 1 ? "s" : ""}.\n\nThis records a 2027 target on each one. You can still change any of them individually.`)) return;
     setBulkBusy(true);
     const stamp = new Date().toISOString();
     const payload = targetRows.map(r => {
@@ -1980,23 +1984,24 @@ function SalesVsPlanTab({ plan }) {
         </span>
       </div>
       {/* Group action bar — what the filter currently selects, and one move on all of it */}
-      {shown.length > 0 && (query.trim() || sizeFilt !== "all" || filt !== "all") && (() => {
-        const gPlanned = shown.reduce((a, r) => a + (r.planned || 0), 0);
-        const gSold = shown.reduce((a, r) => a + (r.sold || 0), 0);
-        const gRev = shown.reduce((a, r) => a + (r.rev || 0), 0);
+      {shown.length > 0 && (selSet.size > 0 || query.trim() || sizeFilt !== "all" || filt !== "all") && (() => {
+        const barRows = selSet.size ? shown.filter(r => selSet.has(r.item)) : shown;
+        const gPlanned = barRows.reduce((a, r) => a + (r.planned || 0), 0);
+        const gSold = barRows.reduce((a, r) => a + (r.sold || 0), 0);
+        const gRev = barRows.reduce((a, r) => a + (r.rev || 0), 0);
         const gSt = gPlanned ? Math.round(gSold / gPlanned * 100) : null;
         return (
           <div style={{ background: "#eef4e9", border: `1.5px solid ${COLORS.light}`, borderRadius: 10, padding: "11px 14px", display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
             <div style={{ fontSize: 12.5, color: COLORS.text }}>
-              <b style={{ color: COLORS.dark }}>{shown.length} items</b>
-              {query.trim() ? <> matching “{query.trim()}”</> : null}
-              {sizeFilt !== "all" ? <> in {sizeFilt}</> : null}
+              <b style={{ color: COLORS.dark }}>{barRows.length} items{selSet.size ? " ✓ selected" : ""}</b>
+              {!selSet.size && query.trim() ? <> matching “{query.trim()}”</> : null}
+              {!selSet.size && sizeFilt !== "all" ? <> in {sizeFilt}</> : null}
               {" — "}{gPlanned.toLocaleString()} planned · {gSold.toLocaleString()} sold
               {gSt != null ? <> · <b style={{ color: gSt >= 95 ? "#2e7d32" : gSt < 60 ? COLORS.red : COLORS.text }}>{gSt}% sell-through</b></> : null}
               {" · "}{fmtMoney(gRev)}
             </div>
             <div style={{ display: "flex", gap: 5, alignItems: "center", marginLeft: "auto", flexWrap: "wrap" }}>
-              <span style={{ fontSize: 11, fontWeight: 800, color: COLORS.muted, textTransform: "uppercase" }}>Apply to all {shown.length}:</span>
+              <span style={{ fontSize: 11, fontWeight: 800, color: COLORS.muted, textTransform: "uppercase" }}>Apply to {selSet.size ? `${selSet.size} selected` : `all ${shown.length}`}:</span>
               {[-30, -20, -10, 0, 10, 20].map(p => (
                 <button key={p} disabled={bulkBusy} onClick={() => applyPct(p)}
                   style={{ padding: "5px 11px", borderRadius: 8, fontSize: 12, fontWeight: 800, cursor: bulkBusy ? "default" : "pointer",
@@ -2010,14 +2015,29 @@ function SalesVsPlanTab({ plan }) {
                 style={{ padding: "5px 11px", borderRadius: 8, fontSize: 12, fontWeight: 800, cursor: "pointer", border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.text }}>
                 custom…
               </button>
+              {selSet.size > 0 && (
+                <button onClick={() => setSelSet(new Set())}
+                  style={{ padding: "5px 11px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.muted }}>
+                  clear ✓
+                </button>
+              )}
             </div>
           </div>
         );
       })()}
 
+      {drill && (
+        <ItemDrill plan={plan} row={drill} tgt={targets[drill.item]} weeks={season.weeks}
+          onSaveTarget={patch => saveTarget(drill, patch)} onClose={() => setDrill(null)} />
+      )}
+
       <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, overflow: "auto", maxHeight: "72vh" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead><tr>
+            <th style={{ ...stickyTh, width: 28 }} title="Select shown items">
+              <input type="checkbox" checked={shown.length > 0 && shown.every(r => selSet.has(r.item))}
+                onChange={e => setSelSet(e.target.checked ? new Set([...selSet, ...shown.map(r => r.item)]) : new Set([...selSet].filter(x => !shown.some(r => r.item === x))))} />
+            </th>
             <SortHdr col="item" label="Item" />
             <SortHdr col="planned" label="Planned" align="right" />
             <SortHdr col="sold" label="Sold" align="right" />
@@ -2034,8 +2054,18 @@ function SalesVsPlanTab({ plan }) {
             {shown.slice(0, 500).map((r, i) => {
               const badge = r.status === "SOLDOUT" ? { bg: COLORS.red, t: "SOLD OUT" } : r.status === "HIT" ? { bg: "#5e9c4a", t: "HIT" } : r.status === "NOSALE" ? { bg: "#c8d0c0", t: "NOSALE" } : r.status === "DUAL" ? { bg: "#4a7ba8", t: "DUAL USE" } : { bg: COLORS.amber, t: "OVER" };
               return (
-                <tr key={i} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
-                  <td style={{ ...td, fontWeight: 600 }}>{r.item}{r.converted && <span title="entered in individual pots — shown in the sold pack (flat/case) to match sales" style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: COLORS.muted }}>⤵</span>}</td>
+                <tr key={i} style={{ borderBottom: `1px solid ${COLORS.border}`, background: selSet.has(r.item) ? "#f2f8ec" : undefined }}>
+                  <td style={td}>
+                    <input type="checkbox" checked={selSet.has(r.item)}
+                      onChange={() => setSelSet(prev => { const n = new Set(prev); n.has(r.item) ? n.delete(r.item) : n.add(r.item); return n; })} />
+                  </td>
+                  <td style={{ ...td, fontWeight: 600 }}>
+                    <span onClick={() => setDrill(r)} title="Open full detail — sales story, timing, components"
+                      style={{ cursor: "pointer", textDecoration: "underline", textDecorationColor: "#c9d8c0", textUnderlineOffset: 3 }}>
+                      {r.item}
+                    </span>
+                    {r.converted && <span title="entered in individual pots — shown in the sold pack (flat/case) to match sales" style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: COLORS.muted }}>⤵</span>}
+                  </td>
                   <td style={{ ...td, textAlign: "right" }}>{dPlanned(r).toLocaleString()}</td>
                   <td style={{ ...td, textAlign: "right" }}>{dSold(r).toLocaleString()}</td>
                   <td style={{ ...td, textAlign: "right", fontWeight: 700, color: r.st == null ? COLORS.muted : r.st >= 1 ? "#2e7d32" : r.st < 0.6 ? COLORS.red : COLORS.text }} title={r.st == null ? "Most of the planned volume goes into combos — a retail sell-through % would be misleading" : ""}>{r.st == null ? "—" : Math.round(r.st * 100) + "%"}</td>
