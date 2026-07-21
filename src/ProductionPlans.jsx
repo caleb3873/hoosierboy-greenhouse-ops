@@ -1691,7 +1691,7 @@ function SalesVsPlanTab({ plan }) {
       const skuToItem = {}; xw.forEach(x => { if (x.plan_item_name) skuToItem[x.sku] = x.plan_item_name; });
       const tot = await srcPageAll(sb, "sales_totals", "sku,units,revenue,avg_price");
       const wk = await srcPageAll(sb, "sales_weekly", "sku,wk,units,revenue");
-      const sc = await srcPageAll(sb, "scheduled_crops", "id,item_name,qty_pots,ppp,plants_per_unit,ship_week,combo_parent_id,is_combo_component", q => q.eq("plan_id", plan.id));
+      const sc = await srcPageAll(sb, "scheduled_crops", "id,item_name,qty_pots,ppp,plants_per_unit,ship_week,ready_week,combo_parent_id,is_combo_component", q => q.eq("plan_id", plan.id));
       const weeks = [...new Set(wk.map(w => +w.wk))].sort((a, b) => a - b);
       const wIdx = Object.fromEntries(weeks.map((w, i) => [w, i]));
       // A combo basket = one finished unit (multiple plants on a row are for ONE basket, not many).
@@ -1700,7 +1700,7 @@ function SalesVsPlanTab({ plan }) {
       // (e.g. mix baskets entered once per color bench) and would over-count the finished total.
       const parentIds = new Set(sc.map(r => r.combo_parent_id).filter(Boolean));
       const itemsWithParents = new Set(sc.filter(r => parentIds.has(r.id)).map(r => r.item_name));
-      const planByItem = {}, shipByItem = {}, pppByItem = {}, ppuByItem = {};
+      const planByItem = {}, shipByItem = {}, readyByItem = {}, pppByItem = {}, ppuByItem = {};
       // Ivy / vinca vine / muehlenbeckia / carex are grown mostly as combo inputs
       // but ALSO sold retail as 4.5" packs. Counting their full planned volume as
       // finished items would show ~12% sell-through and read as a disaster, so
@@ -1715,6 +1715,7 @@ function SalesVsPlanTab({ plan }) {
         pppByItem[r.item_name] = Math.max(pppByItem[r.item_name] || 0, +r.ppp || 1);
         ppuByItem[r.item_name] = Math.max(ppuByItem[r.item_name] || 0, +r.plants_per_unit || 1);
         if (r.ship_week != null) shipByItem[r.item_name] = Math.min(shipByItem[r.item_name] ?? 999, +r.ship_week);
+        if (r.ready_week != null) readyByItem[r.item_name] = Math.min(readyByItem[r.item_name] ?? 999, +r.ready_week);
       }
       const sold = {}, rev = {}, prc = {}, prn = {}, wkly = {};
       for (const t of tot) { const it = skuToItem[t.sku]; if (!it) continue; sold[it] = (sold[it] || 0) + +t.units; rev[it] = (rev[it] || 0) + +t.revenue; prc[it] = (prc[it] || 0) + +t.avg_price; prn[it] = (prn[it] || 0) + 1; }
@@ -1735,7 +1736,7 @@ function SalesVsPlanTab({ plan }) {
         const cutoff = (peak != null && peak <= EARLY_PEAK_WK) ? EARLY_CUTOFF_WK : MD_CUTOFF_WK;
         const soldOut = s >= pItems && pItems > 0 && lastWk != null && lastWk < cutoff;
         const lostEst = soldOut ? Math.round((s / Math.max(1, lastWk - firstWk + 1)) * (cutoff - lastWk) * price) : 0;
-        out.push({ item: it, size: sizeTokenForItem(it), converted: pItems !== planned, planRaw: planned, planned: pItems, sold: s, st: pItems ? s / pItems : 0, over, lostEst, soldOut, cutoff, lastWk, rev: Math.round(rev[it] || 0), wk: wkA, peak, ship: shipByItem[it] ?? null, status: soldOut ? "SOLDOUT" : s >= pItems ? "HIT" : (s === 0 ? "NOSALE" : "SHORT") });
+        out.push({ item: it, size: sizeTokenForItem(it), converted: pItems !== planned, planRaw: planned, planned: pItems, sold: s, st: pItems ? s / pItems : 0, over, lostEst, soldOut, cutoff, lastWk, rev: Math.round(rev[it] || 0), wk: wkA, peak, ship: readyByItem[it] ?? shipByItem[it] ?? null, status: soldOut ? "SOLDOUT" : s >= pItems ? "HIT" : (s === 0 ? "NOSALE" : "SHORT") });
       }
       // Dual-use rows: real retail sales, but planned volume mostly feeds combos,
       // so sell-through / over / lost are meaningless and deliberately left null.
@@ -1747,7 +1748,7 @@ function SalesVsPlanTab({ plan }) {
         out.push({ item: it, size: sizeTokenForItem(it), dualUse: true, converted: false,
           planRaw: dualUse[it], planned: dualUse[it], sold: s, st: null, over: 0, lostEst: 0,
           soldOut: false, cutoff: null, lastWk: null, rev: Math.round(rev[it] || 0),
-          wk: wkA, peak, ship: shipByItem[it] ?? null, status: "DUAL" });
+          wk: wkA, peak, ship: readyByItem[it] ?? shipByItem[it] ?? null, status: "DUAL" });
       }
       // Sold last season but absent from this plan — invisible in a plan-driven
       // table, and exactly what gets dropped by accident when a plan is built by
@@ -1778,6 +1779,7 @@ function SalesVsPlanTab({ plan }) {
     const next = {
       plan_id: plan.id, item_name: r.item,
       target_units: patch.target_units !== undefined ? patch.target_units : (prev.target_units ?? null),
+      ready_shift: patch.ready_shift !== undefined ? patch.ready_shift : (prev.ready_shift ?? null),
       decision: patch.decision !== undefined ? patch.decision : (prev.decision ?? null),
       note: patch.note !== undefined ? patch.note : (prev.note ?? null),
       prior_units: r.sold, current_units: r.planned,
@@ -1818,6 +1820,7 @@ function SalesVsPlanTab({ plan }) {
   // added has to displace something. Show the net footprint change live, and
   // per size, because a 4.5" flat and a 10" basket are not interchangeable.
   const decided = rows.filter(r => targets[r.item]?.target_units != null || targets[r.item]?.decision === "drop");
+  const timingMoves = rows.filter(r => (targets[r.item]?.ready_shift || 0) !== 0);
   const targetOf = r => {
     const t = targets[r.item];
     if (!t) return null;
@@ -1895,6 +1898,13 @@ function SalesVsPlanTab({ plan }) {
             <div style={{ fontSize: 11, color: COLORS.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Net footprint change</div>
             <div style={{ fontSize: 20, fontWeight: 800, color: impact.units > 0 ? COLORS.red : impact.units < 0 ? "#2e7d32" : COLORS.muted }}>
               {impact.units > 0 ? "+" : ""}{impact.units.toLocaleString()} <span style={{ fontSize: 13, fontWeight: 600, color: COLORS.muted }}>units</span>
+            </div>
+          </div>
+          <div>
+            <div style={{ fontSize: 11, color: COLORS.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Timing moves</div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: timingMoves.length ? COLORS.dark : COLORS.muted }}>
+              {timingMoves.length}
+              {timingMoves.length > 0 && <span style={{ fontSize: 12, fontWeight: 600, color: COLORS.muted }}> · {timingMoves.filter(r => (targets[r.item].ready_shift || 0) < 0).length} earlier / {timingMoves.filter(r => (targets[r.item].ready_shift || 0) > 0).length} later</span>}
             </div>
           </div>
           <div>
@@ -2017,12 +2027,11 @@ function SalesVsPlanTab({ plan }) {
             <SortHdr col="lostEst" label="Lost $" align="right" />
             <SortHdr col="rev" label="2026 $" align="right" />
             <SortHdr col="peak" label={`Demand (wk${season.weeks[0]}–${season.weeks[season.weeks.length - 1]})`} />
-            <th style={stickyTh}>Timing</th>
+            <th style={stickyTh} title="Finish (ready) week vs demand peak. ◀ ▶ record a decision to bring it in earlier or later — production applies it by moving the plant week; the finish follows automatically.">Timing</th>
             <th style={{ ...stickyTh, textAlign: "right", background: "#e4eedd", borderLeft: `2px solid ${COLORS.light}` }} title="Agreed 2027 target in sellable units. Saved to plan_targets — production distributes it across benches later.">2027 target</th>
           </tr></thead>
           <tbody>
             {shown.slice(0, 500).map((r, i) => {
-              const late = r.ship != null && r.peak != null && r.ship > r.peak;
               const badge = r.status === "SOLDOUT" ? { bg: COLORS.red, t: "SOLD OUT" } : r.status === "HIT" ? { bg: "#5e9c4a", t: "HIT" } : r.status === "NOSALE" ? { bg: "#c8d0c0", t: "NOSALE" } : r.status === "DUAL" ? { bg: "#4a7ba8", t: "DUAL USE" } : { bg: COLORS.amber, t: "OVER" };
               return (
                 <tr key={i} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
@@ -2035,7 +2044,7 @@ function SalesVsPlanTab({ plan }) {
                   <td style={{ ...td, textAlign: "right", fontWeight: 700, color: r.lostEst > 0 ? COLORS.red : COLORS.muted }}>{r.lostEst ? fmtMoney(r.lostEst) : "—"}</td>
                   <td style={{ ...td, textAlign: "right", color: COLORS.muted }}>{fmtMoney(r.rev)}</td>
                   <td style={{ ...td, fontFamily: "monospace", color: "#4a6b3a", letterSpacing: 1 }} title={r.peak ? `peak wk${r.peak}` : "no weekly sales"}>{spark(r.wk)}{r.peak ? <span style={{ color: COLORS.muted, fontSize: 10, letterSpacing: 0 }}> wk{r.peak}</span> : null}</td>
-                  <td style={td}>{r.ship != null && r.peak != null ? <span style={{ fontSize: 11, fontWeight: 700, color: late ? COLORS.red : "#2e7d32" }} title={`finishes ~wk${r.ship}, demand peaks wk${r.peak}`}>{late ? `⚠ wk${r.ship}→${r.peak}` : `✓ wk${r.ship}`}</span> : <span style={{ color: "#c8d0c0" }}>—</span>}</td>
+                  <TimingCell r={r} tgt={targets[r.item]} onShift={n => saveTarget(r, { ready_shift: n === 0 ? null : n })} />
                   <TargetCell r={r} tgt={targets[r.item]} draft={draft[r.item]} saving={savingT[r.item]}
                     onDraft={v => setDraft(d => ({ ...d, [r.item]: v }))}
                     onSave={patch => saveTarget(r, patch)} />
@@ -2092,6 +2101,34 @@ function TargetCell({ r, tgt, draft, saving, onDraft, onSave }) {
         {r.sold > 0 && quick("=sold", r.sold, `Match 2026 sales (${r.sold.toLocaleString()})`)}
         {quick("drop", 0, "Do not grow this in 2027")}
       </div>
+    </td>
+  );
+}
+
+// Finish week vs demand peak, adjustable. The shift is a DECISION (plan_targets.
+// ready_shift), not a plan edit — production applies it by moving the plant week;
+// the ready date follows via crop_weeks, so it can never go stale.
+function TimingCell({ r, tgt, onShift }) {
+  const shift = tgt?.ready_shift || 0;
+  const base = r.ship;                    // min ready week for the item
+  if (base == null) return <td style={td}><span style={{ color: "#c8d0c0" }}>—</span></td>;
+  const eff = base + shift;
+  const late = r.peak != null && eff > r.peak;
+  const arrow = { border: `1px solid ${COLORS.border}`, background: "#fff", borderRadius: 6, cursor: "pointer",
+    fontSize: 11, fontWeight: 800, color: COLORS.muted, padding: "1px 6px", lineHeight: 1.4 };
+  return (
+    <td style={{ ...td, whiteSpace: "nowrap" }}>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+        <button title="one week earlier" style={arrow} onClick={() => onShift(shift - 1)}>◀</button>
+        <span style={{ fontSize: 11.5, fontWeight: 700, color: late ? COLORS.red : "#2e7d32" }}
+          title={`finishes wk${base}${shift ? ` → wk${eff} after the agreed move` : ""}${r.peak != null ? `, demand peaks wk${r.peak}` : ""}`}>
+          {late ? "⚠ " : "✓ "}wk{eff}
+          {shift !== 0 && <b style={{ color: shift < 0 ? "#2e7d32" : COLORS.amber }}> ({shift > 0 ? "+" : ""}{shift})</b>}
+        </span>
+        <button title="one week later" style={arrow} onClick={() => onShift(shift + 1)}>▶</button>
+        {shift !== 0 && <button title="clear the move" onClick={() => onShift(0)}
+          style={{ ...arrow, color: COLORS.red, border: "none", background: "none" }}>×</button>}
+      </span>
     </td>
   );
 }

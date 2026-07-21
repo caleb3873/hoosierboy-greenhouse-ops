@@ -49,6 +49,7 @@ export default function BasketPlanner({ plan, onOpenCombos }) {
   const { displayName } = useAuth();
   const [baskets, setBaskets] = useState(null);
   const [props, setProps] = useState([]);
+  const [targets, setTargets] = useState({});   // item_name → plan_targets row
   const [size, setSize] = useState("");
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(null);     // basket being inspected
@@ -60,12 +61,35 @@ export default function BasketPlanner({ plan, onOpenCombos }) {
     setProps(data || []);
   }
 
+  async function loadTargets() {
+    const { data } = await sb.from("plan_targets").select("*").eq("plan_id", plan.id);
+    setTargets(Object.fromEntries((data || []).map(t => [t.item_name, t])));
+  }
+
+  // Same decision store as the item projection — a basket target is not a
+  // proposal, it's a projection decision like any other item's.
+  async function saveTarget(b, patch) {
+    const prev = targets[b.name] || {};
+    const next = {
+      plan_id: plan.id, item_name: b.name,
+      target_units: patch.target_units !== undefined ? patch.target_units : (prev.target_units ?? null),
+      ready_shift: patch.ready_shift !== undefined ? patch.ready_shift : (prev.ready_shift ?? null),
+      decision: patch.decision !== undefined ? patch.decision : (prev.decision ?? null),
+      prior_units: b.sold, current_units: b.baskets,
+      decided_by: displayName || "planner", decided_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    setTargets(t => ({ ...t, [b.name]: { ...prev, ...next } }));
+    try { await sb.from("plan_targets").upsert(next, { onConflict: "plan_id,item_name" }); }
+    catch (e) { console.warn("target save failed", e); }
+  }
+
   useEffect(() => {
     if (!sb || !plan?.id) return;
     (async () => {
       try {
         const [sc, vars, xw, tot] = await Promise.all([
-          pageAll(sb, "scheduled_crops", "id,item_name,variety_id,qty_pots,qty_plants_ordered,ppp,pack_size,sale_price_per_pot,is_combo_component,combo_parent_id,planting_layout,broker,supplier,liner_unit_cost", q => q.eq("plan_id", plan.id)),
+          pageAll(sb, "scheduled_crops", "id,item_name,variety_id,qty_pots,qty_plants_ordered,ppp,pack_size,sale_price_per_pot,is_combo_component,combo_parent_id,planting_layout,broker,supplier,liner_unit_cost,ready_week", q => q.eq("plan_id", plan.id)),
           pageAll(sb, "variety_library", "id,crop_name"),
           pageAll(sb, "sales_sku_map", "sku,plan_item_name"),
           pageAll(sb, "sales_totals", "sku,units,revenue,avg_price"),
@@ -85,9 +109,10 @@ export default function BasketPlanner({ plan, onOpenCombos }) {
         for (const r of sc) {
           if (r.is_combo_component || !kids[r.id]) continue;      // parents only
           const k = r.item_name;
-          const o = m[k] || (m[k] = { name: k, size: sizeOf(k), baskets: 0, linerCost: 0,
+          const o = m[k] || (m[k] = { name: k, size: sizeOf(k), baskets: 0, linerCost: 0, ready: null,
             price: +r.sale_price_per_pot || null, recipe: [], layout: r.planting_layout || null, ids: [] });
           o.baskets += +r.qty_pots || 0;
+          if (r.ready_week != null) o.ready = o.ready == null ? +r.ready_week : Math.min(o.ready, +r.ready_week);
           o.ids.push(r.id);
           if (!o.layout && r.planting_layout) o.layout = r.planting_layout;
           for (const ch of kids[r.id]) {
@@ -109,6 +134,7 @@ export default function BasketPlanner({ plan, onOpenCombos }) {
         });
         setBaskets(Object.values(m).sort((a, b) => b.baskets - a.baskets));
         await loadProposals();
+        await loadTargets();
       } catch (e) { setErr(e.message || String(e)); }
     })();
   }, [sb, plan?.id]); // eslint-disable-line
@@ -194,13 +220,14 @@ export default function BasketPlanner({ plan, onOpenCombos }) {
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(330px, 1fr))", gap: 10 }}>
         {shown.map(b => (
-          <BasketCard key={b.name} b={b} onOpen={() => setOpen(b)} />
+          <BasketCard key={b.name} b={b} tgt={targets[b.name]} onOpen={() => setOpen(b)} />
         ))}
       </div>
       {shown.length === 0 && <div style={{ padding: 26, textAlign: "center", color: C.muted }}>No baskets match.</div>}
 
       {open && !draft && (
-        <BasketDetail b={open} onClose={() => setOpen(null)} onOpenCombos={onOpenCombos}
+        <BasketDetail b={open} tgt={targets[open.name]} onSaveTarget={patch => saveTarget(open, patch)}
+          onClose={() => setOpen(null)} onOpenCombos={onOpenCombos}
           onPropose={(kind, dir) => startProposal(kind, dir, open)} />
       )}
       {draft && (
@@ -211,7 +238,7 @@ export default function BasketPlanner({ plan, onOpenCombos }) {
   );
 }
 
-function BasketCard({ b, onOpen }) {
+function BasketCard({ b, tgt, onOpen }) {
   return (
     <div onClick={onOpen} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: "11px 13px", cursor: "pointer" }}>
       <div style={{ fontWeight: 700, color: C.dark, fontSize: 13.5 }}>{b.name}</div>
@@ -220,6 +247,11 @@ function BasketCard({ b, onOpen }) {
       </div>
       <div style={{ display: "flex", gap: 10, marginTop: 7, fontSize: 12, flexWrap: "wrap" }}>
         <span><b>{b.baskets.toLocaleString()}</b> planned</span>
+        {tgt && (tgt.target_units != null || tgt.ready_shift) && (
+          <span style={{ background: "#eef6e8", border: `1px solid ${C.light}`, borderRadius: 7, padding: "0 7px", fontWeight: 800, color: "#3f6d33" }}>
+            🎯 {tgt.target_units != null ? tgt.target_units.toLocaleString() : ""}{tgt.ready_shift ? ` ${tgt.ready_shift > 0 ? "+" : ""}${tgt.ready_shift}wk` : ""}
+          </span>
+        )}
         <span style={{ color: b.st == null ? C.muted : b.st >= 0.95 ? C.green : b.st < 0.6 ? C.red : C.text, fontWeight: 700 }}>{pct(b.st)} sold</span>
         {b.costPer != null && <span style={{ color: C.muted }}>{money(b.costPer)}/ea</span>}
         {b.gm != null && <span style={{ fontWeight: 700 }}>{pct(b.gm)} GM</span>}
@@ -228,7 +260,7 @@ function BasketCard({ b, onOpen }) {
   );
 }
 
-function BasketDetail({ b, onClose, onPropose, onOpenCombos }) {
+function BasketDetail({ b, tgt, onSaveTarget, onClose, onPropose, onOpenCombos }) {
   const btn = (bg, col) => ({ padding: "8px 13px", borderRadius: 8, border: "none", background: bg, color: col,
     fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" });
   return (
@@ -268,8 +300,10 @@ function BasketDetail({ b, onClose, onPropose, onOpenCombos }) {
           </div>
         </div>
 
+        <ProjectionRow b={b} tgt={tgt} onSave={onSaveTarget} />
+
         <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", margin: "14px 0 6px" }}>
-          Change it for next year
+          Change the recipe for next year
         </div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           {DIRECTIONS.map(([k, l]) => (
@@ -285,6 +319,53 @@ function BasketDetail({ b, onClose, onPropose, onOpenCombos }) {
         <div style={{ fontSize: 11.5, color: C.muted, marginTop: 8 }}>
           Each of these logs the idea with this recipe attached — fill in material now or later.
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Quantity + timing for the projection session — the same plan_targets store the
+// item view writes, so basket decisions are first-class, not proposals.
+function ProjectionRow({ b, tgt, onSave }) {
+  const [val, setVal] = useState(tgt?.target_units ?? "");
+  const shift = tgt?.ready_shift || 0;
+  const eff = b.ready != null ? b.ready + shift : null;
+  const commit = raw => {
+    const t = String(raw).trim();
+    if (t === "") { onSave({ target_units: null, decision: null }); return; }
+    const n = Math.max(0, Math.round(+t.replace(/[^0-9.]/g, "")));
+    if (isNaN(n)) return;
+    onSave({ target_units: n, decision: n === 0 ? "drop" : n > b.baskets ? "grow" : n < b.baskets ? "cut" : "hold" });
+  };
+  const chip = { padding: "5px 10px", borderRadius: 8, border: `1px solid ${C.border}`, background: "#fff",
+    color: C.muted, fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" };
+  return (
+    <div style={{ background: "#eef6e8", border: `1.5px solid ${C.light}`, borderRadius: 10, padding: "11px 13px", marginTop: 14 }}>
+      <div style={{ fontSize: 11, fontWeight: 800, color: "#3f6d33", textTransform: "uppercase", marginBottom: 7 }}>2027 projection</div>
+      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
+          <span style={{ fontSize: 12.5, color: C.text }}>Baskets:</span>
+          <input value={val} onChange={e => setVal(e.target.value)}
+            onBlur={e => commit(e.target.value)} onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
+            placeholder={String(b.baskets)}
+            style={{ width: 74, padding: "6px 8px", textAlign: "right", borderRadius: 8, fontSize: 13,
+              fontFamily: "inherit", border: `1.5px solid ${tgt?.target_units != null ? C.light : C.border}`,
+              fontWeight: tgt?.target_units != null ? 700 : 400 }} />
+          <button style={chip} onClick={() => { setVal(String(b.baskets)); commit(b.baskets); }}>same</button>
+          {b.sold > 0 && <button style={chip} onClick={() => { setVal(String(b.sold)); commit(b.sold); }}>=sold ({b.sold.toLocaleString()})</button>}
+          <button style={{ ...chip, color: C.red }} onClick={() => { setVal("0"); commit(0); }}>drop</button>
+        </div>
+        {eff != null && (
+          <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
+            <span style={{ fontSize: 12.5, color: C.text }}>Finish:</span>
+            <button style={chip} title="one week earlier" onClick={() => onSave({ ready_shift: shift - 1 === 0 ? null : shift - 1 })}>◀</button>
+            <b style={{ fontSize: 13, color: shift < 0 ? C.green : shift > 0 ? C.amber : C.text }}>
+              wk{eff}{shift !== 0 && ` (${shift > 0 ? "+" : ""}${shift})`}
+            </b>
+            <button style={chip} title="one week later" onClick={() => onSave({ ready_shift: shift + 1 === 0 ? null : shift + 1 })}>▶</button>
+            {shift !== 0 && <button style={{ ...chip, border: "none", color: C.red }} onClick={() => onSave({ ready_shift: null })}>×</button>}
+          </div>
+        )}
       </div>
     </div>
   );
