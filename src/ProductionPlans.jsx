@@ -6,6 +6,7 @@ import { useState, useEffect, useMemo, useRef, Fragment } from "react";
 import { getSupabase, getCultureClient } from "./supabase";
 import { useAuth } from "./Auth";
 import CategoryProfiles from "./CategoryProfiles";
+import BasketPlanner from "./BasketPlanner";
 
 const COLORS = {
   bg:        "#f7f8f5",
@@ -332,6 +333,7 @@ const PLAN_TABS = [
   { id: "inputs",    label: "⚙ Inputs" },
   { id: "pricing",   label: "💰 Pricing" },
   { id: "combos",    label: "🪴 Combos" },
+  { id: "baskets",   label: "🧺 Baskets" },
   { id: "benchprep", label: "📐 Bench Prep" },
   { id: "items",     label: "📑 Items" },
 ];
@@ -469,6 +471,7 @@ function PlanDashboard({ plan, initialTab }) {
           {hasData && tab === "plugs"     && <PlugOrdersTab plan={plan} />}
           {hasData && tab === "sales"     && <SalesVsPlanTab plan={plan} />}
           {hasData && tab === "categories" && <CategoryProfiles plan={plan} />}
+          {hasData && tab === "baskets"    && <BasketPlanner plan={plan} onOpenCombos={() => setTab("combos")} />}
           {hasData && tab === "orders"    && <OrdersTab plan={plan} />}
           {tab === "sourcing"  && <SourcingTab plan={plan} />}
           {hasData && tab === "inputs"    && <InputsTab plan={plan} />}
