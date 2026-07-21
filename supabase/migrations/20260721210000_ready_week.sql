@@ -54,39 +54,38 @@ with fs as (   -- what each item's real finish time was in 2026
   where w.units::numeric > 0 group by 1
 ), obs as (
   select sc.item_name,
-         min(fs.first_wk - case when sc.plant_year = 2026 then sc.plant_week - 52 else sc.plant_week end) as crop_weeks
+         greatest(min(fs.first_wk - case when sc.plant_year = 2026 then sc.plant_week - 52 else sc.plant_week end), 1) as crop_weeks
   from scheduled_crops sc
   join production_plans p on p.id = sc.plan_id
   join fs on fs.item = sc.item_name
   where p.name = 'Spring 2027' and coalesce(sc.is_combo_component, false) = false
+    and sc.plant_week is not null
   group by 1
-), sizemed as (
+), sizemed(sz, med) as (
   values ('4.5"',7), ('6.5"',7), ('FIBER',9), ('HB',10), ('POT',10), ('8"',10),
          ('1801S',10), ('1801L',10), ('MARKET',11), ('BOWL',11)
+), calc as (
+  select sc.id,
+         coalesce(o.crop_weeks, sm.med, 9) as crop,
+         case when o.crop_weeks is not null then 'observed'
+              when sm.med is not null then 'size_median'
+              else 'default' end as src
+  from scheduled_crops sc
+  join production_plans p on p.id = sc.plan_id and p.name = 'Spring 2027'
+  left join obs o on o.item_name = sc.item_name
+  left join sizemed sm on sm.sz = split_part(sc.item_name, ' ', 1)
+  where sc.plant_week is not null and sc.plant_year is not null
 )
 update scheduled_crops sc set
-  ready_week = (((sc.plant_week + w.crop) - 1) % 52) + 1,
-  ready_year = sc.plant_year + ((sc.plant_week + w.crop - 1) / 52),
-  ready_source = w.src,
-  crop_weeks = w.crop
-from production_plans p,
-     lateral (
-       select
-         coalesce(
-           (select greatest(o.crop_weeks, 1) from obs o where o.item_name = sc.item_name),
-           (select m.column2 from sizemed m where m.column1 = split_part(sc.item_name, ' ', 1)),
-           9
-         ) as crop,
-         case
-           when exists (select 1 from obs o where o.item_name = sc.item_name) then 'observed'
-           when exists (select 1 from sizemed m where m.column1 = split_part(sc.item_name, ' ', 1)) then 'size_median'
-           else 'default'
-         end as src
-     ) w
-where p.id = sc.plan_id and p.name = 'Spring 2027'
-  and sc.plant_week is not null and sc.plant_year is not null;
+  ready_week  = (((sc.plant_week + c.crop) - 1) % 52) + 1,
+  ready_year  = sc.plant_year + ((sc.plant_week + c.crop - 1) / 52),
+  ready_source = c.src,
+  crop_weeks   = c.crop
+from calc c
+where c.id = sc.id;
 
 commit;
+
 
 -- Sanity check after running:
 --   select ready_source, count(*), min(ready_week), max(ready_week)
