@@ -13,7 +13,10 @@
 // Latin species epithets + the abbreviations Ball uses for them — dropped between genus & cultivar.
 const SPECIES = /^(millefolium|reptans|spurium|didyma|dubium|hybrida|hybrid|aurantiaca|cordata|interspecific|x|sp|spp|species|officinalis|off|vulgaris|vul|angustifolia|angust|ang|dracunculus|drac|citriodorus|citriodora|citrata|citri|cit|intermedia|inter|piperita|pip|spicata|suaveolens|serpyllum|serp|praecox|amygdaloides|amy|lindheimeri|lind|nobilis|stoechas|st|douglasii|doug|montana|mastichina|pulegioides|herba|barona|elegans|arvensis|fruticosa|abrotanum|arborescens|canariensis|canary|pseudolanuginosus|pseudolanugin|hederacea|bonariensis|diffusa|odoratum|rebaudiana|chamaecyparissus|viridis|incisa|clinopodioides|europaea|ovata)$/;
 // Genus synonyms — canonicalize botanical & common to one token (Ball uses common, EHR often botanical)
-const GENUS_SYN = { mentha: 'mint', thymus: 'thyme', salvia: 'sage', laurus: 'bay', ocimum: 'basil', rosmarinus: 'rosemary', satureja: 'savory', origanum: 'oregano', lippia: 'lemonverbena', aloysia: 'lemonverbena', helichrysum: 'curry', helichr: 'curry', chamaemelum: 'chamomile', coriandrum: 'coriander', majorana: 'marjoram', pelargonium: 'geranium', lavendula: 'lavandula', ipom: 'ipomoea' };
+const GENUS_SYN = { mentha: 'mint', thymus: 'thyme', salvia: 'sage', laurus: 'bay', ocimum: 'basil', rosmarinus: 'rosemary', satureja: 'savory', origanum: 'oregano', lippia: 'lemonverbena', aloysia: 'lemonverbena', helichrysum: 'curry', helichr: 'curry', chamaemelum: 'chamomile', coriandrum: 'coriander', majorana: 'marjoram', pelargonium: 'geranium', lavendula: 'lavandula', ipom: 'ipomoea',
+  // Ball abbreviates the crop and then repeats it inside the variety name
+  // ("Calibrachoa Calib Cabaret Blue Deep") — canonicalize so the repeat is dropped.
+  calib: 'calibrachoa', pet: 'petunia', dian: 'dianthus', beg: 'begonia' };
 // Series/word abbreviations & typos brokers use → expand so the abbreviated listing matches the
 // full one. cas=Cascadias, com=Compact, bic=Bicolor, bestie=Besties (plural).
 const WORD_SYN = { cas: 'cascadias', com: 'compact', bic: 'bicolor', bestie: 'besties', swt: 'sweet', hrt: 'heart' };
@@ -28,6 +31,7 @@ function tidy(s) {
   s = s.replace(/\b(usppp?|us\spp)\d+\b/g, ' ');
   s = s.replace(/\([^)]*\)/g, ' ');                       // parenthetical codes
   s = s.replace(/\b20\d\d\b/g, ' ');                       // stray years
+  s = s.replace(/\b\d{2,4}\s*c\b/g, ' ');                    // tray-cell suffixes: "Juncus Blue Arrows-128c"
   s = s.replace(/-?(urc|cc|rc|tc|liner|plug|pellet|callused|unrooted|rooted)\b/g, ' ');
   s = s.replace(/\bn\/?g\b/g, ' ').replace(/\bnew guinea\b/g, ' ');
   s = s.replace(/\bmain street\b/g, 'mainstreet');          // Dümmen Coleus series: EHR "Main Street" == Express "Mainstreet"
