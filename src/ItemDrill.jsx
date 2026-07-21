@@ -23,7 +23,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
 
   async function load() {
     const { data: parents } = await sb.from("scheduled_crops")
-      .select("id,bench_id,container_id,item_name,qty_pots,ppp,pack_size,plant_week,plant_year,ship_week,ship_year,ready_week,ready_year,crop_weeks,prop_method,broker,supplier,liner_unit_cost")
+      .select("id,bench_id,container_id,item_name,variety_id,qty_pots,ppp,pack_size,plant_week,plant_year,ship_week,ship_year,ready_week,ready_year,crop_weeks,prop_method,broker,supplier,liner_unit_cost")
       .eq("plan_id", plan.id).eq("item_name", row.item).eq("is_combo_component", false).gt("qty_pots", 0);
     const ids = (parents || []).map(p => p.id);
     let children = [];
@@ -33,7 +33,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
         .in("combo_parent_id", ids);
       children = ch || [];
     }
-    const vids = [...new Set(children.map(c => c.variety_id).filter(Boolean))];
+    const vids = [...new Set([...children.map(c => c.variety_id), ...(parents || []).map(p => p.variety_id)].filter(Boolean))];
     let vmap = {};
     if (vids.length) {
       const { data: vs } = await sb.from("variety_library").select("id,crop_name,variety").in("id", vids);
@@ -73,8 +73,16 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
       if (o.liner == null && ch.liner_unit_cost) o.liner = +ch.liner_unit_cost;
     }
     Object.values(comps).forEach(c => { c.per = baskets ? Math.round(c.plants / baskets * 10) / 10 : 0; });
+    // what was actually bought for this item — variety, form, source, cost
+    const matKeys = {};
+    for (const p of detail.parents) {
+      const v = detail.vmap[p.variety_id];
+      const k = [v ? `${v.crop_name || ""} ${v.variety || ""}`.trim() : "?", p.prop_method, p.broker || p.supplier, p.liner_unit_cost].join("|");
+      matKeys[k] = { variety: v ? `${v.crop_name || ""} ${v.variety || ""}`.trim() : "?", prop: p.prop_method,
+        src: [p.broker, p.supplier].filter(Boolean).join(" / "), cost: +p.liner_unit_cost || null };
+    }
     const ready = detail.parents.map(p => p.ready_week).filter(x => x != null);
-    return { baskets, cost, costPer: baskets ? cost / baskets : null,
+    return { baskets, cost, costPer: baskets ? cost / baskets : null, materials: Object.values(matKeys),
       comps: Object.values(comps).sort((a, b) => b.plants - a.plants),
       readyMin: ready.length ? Math.min(...ready) : null };
   }, [detail]);
@@ -144,8 +152,8 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
     color: C.muted, fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" };
 
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.5)", zIndex: 9200, display: "flex", justifyContent: "flex-end" }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: "#f6f9f3", width: "min(680px, 96vw)", height: "100%", overflow: "auto", padding: 20, boxShadow: "-6px 0 24px rgba(0,0,0,.2)", fontFamily: "'DM Sans','Segoe UI',sans-serif" }}>
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 9200, display: "flex", alignItems: "center", justifyContent: "center", padding: 18 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "#f6f9f3", width: "min(760px, 94vw)", maxHeight: "92vh", overflow: "auto", padding: 20, borderRadius: 14, boxShadow: "0 14px 48px rgba(0,0,0,.35)", fontFamily: "'DM Sans','Segoe UI',sans-serif" }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
           <div>
             <div style={{ fontSize: 19, fontWeight: 800, color: C.dark, fontFamily: "'DM Serif Display',Georgia,serif" }}>{row.item}</div>
@@ -189,10 +197,37 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
         {/* decisions: quantity + timing */}
         <div style={{ background: "#eef6e8", border: `1.5px solid ${C.light}`, borderRadius: 10, padding: "11px 13px", marginTop: 12 }}>
           <div style={{ fontSize: 10.5, fontWeight: 800, color: "#3f6d33", textTransform: "uppercase", marginBottom: 7 }}>2027 decisions</div>
+          {agg && agg.materials.length > 0 && (
+            <div style={{ fontSize: 12.5, color: C.text, marginBottom: 8 }}>
+              🌱 <b>Bought:</b> {agg.materials.map((m, i) => (
+                <span key={i}>{i > 0 ? " · " : ""}{m.variety}{m.prop ? ` — ${m.prop}` : ""}{m.cost != null ? ` @ ${money(m.cost)}/plant` : ""}{m.src ? ` (${m.src})` : ""}</span>
+              ))}
+            </div>
+          )}
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
-            <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
+            <div style={{ display: "flex", gap: 5, alignItems: "center", flexWrap: "wrap" }}>
               <span style={{ fontSize: 12.5 }}>Target:</span>
-              <b style={{ fontSize: 14 }}>{tgt?.target_units != null ? tgt.target_units.toLocaleString() : "—"}</b>
+              <input
+                key={tgt?.target_units ?? "empty"}
+                defaultValue={tgt?.target_units ?? ""}
+                placeholder={String(row.planned)}
+                inputMode="numeric"
+                onBlur={e => {
+                  const t = e.target.value.trim();
+                  if (t === "") { onSaveTarget({ target_units: null, decision: null }); return; }
+                  const n = Math.max(0, Math.round(+t.replace(/[^0-9.]/g, "")));
+                  if (!isNaN(n)) onSaveTarget({ target_units: n, decision: n === 0 ? "drop" : n > row.planned ? "grow" : n < row.planned ? "cut" : "hold" });
+                }}
+                onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                style={{ width: 84, padding: "6px 8px", textAlign: "right", borderRadius: 8, fontSize: 14, fontWeight: 700,
+                  fontFamily: "inherit", border: `1.5px solid ${tgt?.target_units != null ? C.light : C.border}` }} />
+              {[-20, -10, 10, 20].map(pd => (
+                <button key={pd} style={{ ...chip, color: pd < 0 ? C.red : C.green }}
+                  title={`${pd > 0 ? "+" : ""}${pd}% of planned (${row.planned.toLocaleString()})`}
+                  onClick={() => { const n = Math.max(0, Math.round(row.planned * (1 + pd / 100))); onSaveTarget({ target_units: n, decision: n > row.planned ? "grow" : n < row.planned ? "cut" : "hold" }); }}>
+                  {pd > 0 ? "+" : ""}{pd}%
+                </button>
+              ))}
               <button style={chip} onClick={() => onSaveTarget({ target_units: row.planned, decision: "hold" })}>same</button>
               {row.sold > 0 && <button style={chip} onClick={() => onSaveTarget({ target_units: row.sold, decision: row.sold > row.planned ? "grow" : row.sold < row.planned ? "cut" : "hold" })}>=sold</button>}
               <button style={{ ...chip, color: C.red }} onClick={() => onSaveTarget({ target_units: 0, decision: "drop" })}>drop</button>
