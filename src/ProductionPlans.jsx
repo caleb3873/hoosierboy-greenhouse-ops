@@ -1673,6 +1673,7 @@ function SalesVsPlanTab({ plan }) {
   // name, so the sales conversation never has to answer bench questions.
   const [targets, setTargets] = useState({});   // item_name → row
   const [missing, setMissing] = useState([]);   // sold in 2026, absent from this plan
+  const [bulkBusy, setBulkBusy] = useState(false);
   const [draft, setDraft] = useState({});       // item_name → in-flight input text
   const [savingT, setSavingT] = useState({});
   const { displayName } = useAuth();
@@ -1828,6 +1829,33 @@ function SalesVsPlanTab({ plan }) {
   }, { units: 0, rev: 0, bySize: {} });
   const sizeDeltas = Object.entries(impact.bySize).filter(([, v]) => v !== 0).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
 
+  // Projection sessions run on groups, not varieties — "drop bacopa 20% in 4.5\"".
+  // Applying a % to the filtered set records a per-item target (so nothing is
+  // lost) while the decision itself is one action.
+  async function applyPct(pct) {
+    const targetRows = shown;
+    if (!targetRows.length || bulkBusy) return;
+    const verb = pct === 0 ? "hold at current plan" : `${pct > 0 ? "increase" : "reduce"} by ${Math.abs(pct)}%`;
+    if (!window.confirm(`${verb.charAt(0).toUpperCase() + verb.slice(1)} — ${targetRows.length} item${targetRows.length !== 1 ? "s" : ""} currently shown.\n\nThis records a 2027 target on each one. You can still change any of them individually.`)) return;
+    setBulkBusy(true);
+    const stamp = new Date().toISOString();
+    const payload = targetRows.map(r => {
+      const t = Math.max(0, Math.round(r.planned * (1 + pct / 100)));
+      return { plan_id: plan.id, item_name: r.item, target_units: t,
+        decision: t === 0 ? "drop" : t > r.planned ? "grow" : t < r.planned ? "cut" : "hold",
+        note: pct === 0 ? "bulk: hold" : `bulk ${pct > 0 ? "+" : ""}${pct}%`,
+        prior_units: r.sold, current_units: r.planned,
+        decided_by: displayName || "planner", decided_at: stamp, updated_at: stamp };
+    });
+    try {
+      for (let i = 0; i < payload.length; i += 200) {
+        await sb.from("plan_targets").upsert(payload.slice(i, i + 200), { onConflict: "plan_id,item_name" });
+      }
+      setTargets(t => { const n = { ...t }; payload.forEach(p => { n[p.item_name] = { ...(n[p.item_name] || {}), ...p }; }); return n; });
+    } catch (e) { window.alert("Couldn't apply: " + (e.message || e)); }
+    setBulkBusy(false);
+  }
+
   const shown = rows.filter(r => (filt === "all" ? true
       : filt === "over" ? r.status === "SHORT"
       : filt === "soldout" ? r.soldOut
@@ -1935,6 +1963,42 @@ function SalesVsPlanTab({ plan }) {
           <span style={{ color: COLORS.muted, marginLeft: 4 }}>{shown.length} items</span>
         </span>
       </div>
+      {/* Group action bar — what the filter currently selects, and one move on all of it */}
+      {shown.length > 0 && (query.trim() || sizeFilt !== "all" || filt !== "all") && (() => {
+        const gPlanned = shown.reduce((a, r) => a + (r.planned || 0), 0);
+        const gSold = shown.reduce((a, r) => a + (r.sold || 0), 0);
+        const gRev = shown.reduce((a, r) => a + (r.rev || 0), 0);
+        const gSt = gPlanned ? Math.round(gSold / gPlanned * 100) : null;
+        return (
+          <div style={{ background: "#eef4e9", border: `1.5px solid ${COLORS.light}`, borderRadius: 10, padding: "11px 14px", display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ fontSize: 12.5, color: COLORS.text }}>
+              <b style={{ color: COLORS.dark }}>{shown.length} items</b>
+              {query.trim() ? <> matching “{query.trim()}”</> : null}
+              {sizeFilt !== "all" ? <> in {sizeFilt}</> : null}
+              {" — "}{gPlanned.toLocaleString()} planned · {gSold.toLocaleString()} sold
+              {gSt != null ? <> · <b style={{ color: gSt >= 95 ? "#2e7d32" : gSt < 60 ? COLORS.red : COLORS.text }}>{gSt}% sell-through</b></> : null}
+              {" · "}{fmtMoney(gRev)}
+            </div>
+            <div style={{ display: "flex", gap: 5, alignItems: "center", marginLeft: "auto", flexWrap: "wrap" }}>
+              <span style={{ fontSize: 11, fontWeight: 800, color: COLORS.muted, textTransform: "uppercase" }}>Apply to all {shown.length}:</span>
+              {[-30, -20, -10, 0, 10, 20].map(p => (
+                <button key={p} disabled={bulkBusy} onClick={() => applyPct(p)}
+                  style={{ padding: "5px 11px", borderRadius: 8, fontSize: 12, fontWeight: 800, cursor: bulkBusy ? "default" : "pointer",
+                    border: `1px solid ${p === 0 ? COLORS.border : p < 0 ? "#e0b4ab" : "#b4d3ab"}`,
+                    background: p === 0 ? "#fff" : p < 0 ? "#fdecea" : "#eaf5e9",
+                    color: p === 0 ? COLORS.muted : p < 0 ? COLORS.red : "#2e7d32", opacity: bulkBusy ? 0.5 : 1 }}>
+                  {p === 0 ? "same" : `${p > 0 ? "+" : ""}${p}%`}
+                </button>
+              ))}
+              <button disabled={bulkBusy} onClick={() => { const v = window.prompt("Percent change (e.g. -20 or 15):"); if (v != null && v.trim() !== "" && !isNaN(+v)) applyPct(+v); }}
+                style={{ padding: "5px 11px", borderRadius: 8, fontSize: 12, fontWeight: 800, cursor: "pointer", border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.text }}>
+                custom…
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+
       <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, overflow: "auto", maxHeight: "72vh" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead><tr>
