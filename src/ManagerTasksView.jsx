@@ -850,10 +850,23 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
     refresh();
   }
 
+  // People were deleting tasks instead of completing them — which erases the
+  // record next year's planning is built on. For unfinished tasks, deleting asks
+  // whether they actually meant "done" and offers the completion flow instead.
+  const [confirmingDelete, setConfirmingDelete] = useState(null);
   async function deleteTask(task) {
-    if (!window.confirm(`Delete task "${task.title}"?`)) return;
+    if (task.status === "completed") {
+      if (!window.confirm(`Delete completed task "${task.title}"?`)) return;
+      await remove(task.id);
+      if (selectedTask?.id === task.id) setSelectedTask(null);
+      return;
+    }
+    setConfirmingDelete(task);
+  }
+  async function reallyDelete(task) {
     await remove(task.id);
     if (selectedTask?.id === task.id) setSelectedTask(null);
+    setConfirmingDelete(null);
   }
 
   function changeWeek(delta) {
@@ -1891,6 +1904,33 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
         />
       )}
       {showCodes && <CodesModal onClose={() => setShowCodes(false)} />}
+      {confirmingDelete && (
+        <div onClick={() => setConfirmingDelete(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 10001, display: "flex", alignItems: "center", justifyContent: "center", padding: 18, ...FONT }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 16, maxWidth: 440, width: "100%", padding: 22, color: "#1e2d1a" }}>
+            <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif", marginBottom: 6 }}>
+              Were you trying to mark this complete?
+            </div>
+            <div style={{ fontSize: 13.5, color: "#5a6a54", marginBottom: 6 }}>“{confirmingDelete.title}”</div>
+            <div style={{ fontSize: 13, color: "#7a8c74", marginBottom: 16 }}>
+              Completed tasks become the record we plan next year from — deleting one erases that history.
+            </div>
+            <div style={{ display: "grid", gap: 8 }}>
+              <button onClick={() => { const t = confirmingDelete; setConfirmingDelete(null); setCompletingTask(t); }}
+                style={{ padding: "13px 0", borderRadius: 10, border: "none", background: "#7fb069", color: "#1e2d1a", fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                ✓ Yes — mark it complete
+              </button>
+              <button onClick={() => reallyDelete(confirmingDelete)}
+                style={{ padding: "11px 0", borderRadius: 10, border: "1.5px solid #d94f3d", background: "#fff", color: "#d94f3d", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                No — delete it (it never needed doing)
+              </button>
+              <button onClick={() => setConfirmingDelete(null)}
+                style={{ padding: "10px 0", borderRadius: 10, border: "none", background: "transparent", color: "#7a8c74", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {showRequests && (
         <RequestsModal
           requests={pendingRequests}

@@ -7763,7 +7763,7 @@ function HouseDrilldown({ houseName, houses, planId, onClose }) {
   const [fq, setFq] = useState("");
   const [fwk, setFwk] = useState("");
   function toggleSel(id) { setSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; }); }
-  const toItems = list => list.map(r => ({ item: r.item_name || r.variety?.variety || "item", bench: r.bench?.code, planting_layout: r.planting_layout || null, item_name: r.item_name || null }));
+  const toItems = list => list.map(r => ({ item: r.item_name || [r.variety?.variety, r.container && `(${r.container})`].filter(Boolean).join(" ") || "item", bench: r.bench?.code, planting_layout: r.planting_layout || null, item_name: r.item_name || null }));
 
   useEffect(() => {
     if (!sb) return;
