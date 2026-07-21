@@ -5,6 +5,7 @@
 import { useState, useEffect, useMemo, useRef, Fragment } from "react";
 import { getSupabase, getCultureClient } from "./supabase";
 import { useAuth } from "./Auth";
+import CategoryProfiles from "./CategoryProfiles";
 
 const COLORS = {
   bg:        "#f7f8f5",
@@ -325,6 +326,7 @@ const PLAN_TABS = [
   { id: "prop",      label: "🌱 Propagation" },
   { id: "plugs",     label: "🧮 Plug Orders" },
   { id: "sales",     label: "📈 Sales vs Plan" },
+  { id: "categories",label: "🏷 Categories" },
   { id: "orders",    label: "📋 Orders" },
   { id: "sourcing",  label: "🧭 Sourcing" },
   { id: "inputs",    label: "⚙ Inputs" },
@@ -466,6 +468,7 @@ function PlanDashboard({ plan, initialTab }) {
           {hasData && tab === "prop"      && <PropagationTab plan={plan} />}
           {hasData && tab === "plugs"     && <PlugOrdersTab plan={plan} />}
           {hasData && tab === "sales"     && <SalesVsPlanTab plan={plan} />}
+          {hasData && tab === "categories" && <CategoryProfiles plan={plan} />}
           {hasData && tab === "orders"    && <OrdersTab plan={plan} />}
           {tab === "sourcing"  && <SourcingTab plan={plan} />}
           {hasData && tab === "inputs"    && <InputsTab plan={plan} />}
