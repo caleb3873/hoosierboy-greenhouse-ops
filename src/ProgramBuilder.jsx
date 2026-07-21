@@ -44,6 +44,55 @@ export default function ProgramsPanel({ plan }) {
     if (created) setOpenId(created.id);
   }
 
+  // Approved program → real plan rows → the B2B reconcile absorbs them like any
+  // other plan edit. Varieties that don't exist in the library yet are created
+  // (new perennials won't be there — that's expected, not an error).
+  async function convertProgram(pr) {
+    const its = items.filter(i => i.program_id === pr.id && !i.scheduled_crop_id);
+    const ready = its.filter(i => i.container_id && (+i.target_units > 0));
+    const skipped = its.length - ready.length;
+    if (!ready.length) { window.alert("Nothing convertible — items need a finished size and target units."); return; }
+    if (!window.confirm(`Create ${ready.length} plan item(s) from "${pr.name}"?${skipped ? ` (${skipped} skipped — missing size or units)` : ""}\n\nBenches and plant weeks stay empty for the production session. The B2B catalog absorbs them as draft profiles automatically.`)) return;
+    const FORM_MAP = { urc: "URC", callused: "CALL", plug: "PLUG", liner: "PLUG", bareroot: "BULB", seed: "SEED" };
+    for (const it of ready) {
+      const cropName = (it.material?.crop || "").trim() || "Perennial";
+      let varName = (it.material?.variety || it.item_name).trim();
+      const cw = cropName.toLowerCase();
+      if (varName.toLowerCase().startsWith(cw)) varName = varName.slice(cropName.length).trim() || varName;
+      let { data: v } = await sb.from("variety_library").select("id")
+        .ilike("crop_name", cropName).ilike("variety", varName).limit(1);
+      let varietyId = v && v[0] ? v[0].id : null;
+      if (!varietyId) {
+        varietyId = crypto.randomUUID();
+        const { error: ve } = await sb.from("variety_library").insert({
+          id: varietyId, crop_name: cropName, variety: varName,
+          breeder: it.material?.supplier || null,
+          notes: `created from program "${pr.name}"`,
+        });
+        if (ve) { window.alert(`Variety for ${it.item_name}: ${ve.message}`); continue; }
+      }
+      const rowId = crypto.randomUUID();
+      const { error } = await sb.from("scheduled_crops").insert({
+        id: rowId, plan_id: plan.id, item_name: it.item_name,
+        variety_id: varietyId, container_id: it.container_id,
+        qty_pots: +it.target_units, ppp: +it.ppp || 1, pack_size: 1,
+        sale_price_per_pot: it.target_price ?? null,
+        liner_unit_cost: it.material?.landed ?? null,
+        broker: it.material?.broker ?? null, supplier: it.material?.supplier ?? null,
+        prop_method: FORM_MAP[String(it.material?.form || "").toLowerCase()] || null,
+        is_combo_component: false, sellable: true, status: "planned",
+        notes: `from program: ${pr.name}`,
+      });
+      if (error) { window.alert(`${it.item_name}: ${error.message}`); continue; }
+      await sb.from("program_items").update({ scheduled_crop_id: rowId }).eq("id", it.id);
+    }
+    await sb.from("plan_programs").update({ status: "building", updated_at: new Date().toISOString() }).eq("id", pr.id);
+    // absorb into B2B now rather than waiting for the next cron tick
+    try { await sb.rpc("reconcile_production_items", { p_plan: plan.id }); } catch { /* cron will catch it */ }
+    await load();
+    window.alert(`${ready.length} item(s) are now in the plan and the B2B catalog (as drafts). Benches + plant weeks are the production session's job.`);
+  }
+
   if (!programs.length && !naming) {
     return (
       <div style={{ background: C.card, border: `1px dashed ${C.border}`, borderRadius: 10, padding: "11px 14px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
@@ -88,7 +137,7 @@ export default function ProgramsPanel({ plan }) {
               {rev > 0 && <span style={{ fontSize: 12, color: C.text }}>proj. {money(rev)}{cost > 0 && <> · material {money(cost)} · <b style={{ color: (rev - cost) / rev < 0.6 ? C.red : C.green }}>{Math.round((rev - cost) / rev * 100)}% direct</b></>}</span>}
               <span style={{ marginLeft: "auto", fontSize: 10.5, fontWeight: 800, textTransform: "uppercase", color: pr.status === "approved" ? C.green : C.muted }}>{pr.status}</span>
             </div>
-            {open && <ProgramDetail sb={sb} program={pr} items={its} onChange={load} />}
+            {open && <ProgramDetail sb={sb} program={pr} items={its} onChange={load} onConvert={() => convertProgram(pr)} />}
           </div>
         );
       })}
@@ -96,7 +145,7 @@ export default function ProgramsPanel({ plan }) {
   );
 }
 
-function ProgramDetail({ sb, program, items, onChange }) {
+function ProgramDetail({ sb, program, items, onChange, onConvert }) {
   const [adding, setAdding] = useState(false);
 
   async function patchItem(id, patch) {
@@ -125,7 +174,7 @@ function ProgramDetail({ sb, program, items, onChange }) {
               const gm = it.target_price && it.est_unit_cost ? (it.target_price - it.est_unit_cost) / it.target_price : null;
               return (
                 <tr key={it.id} style={{ borderBottom: `1px solid ${C.border}` }}>
-                  <td style={{ padding: "5px 8px", fontWeight: 700 }}>{it.item_name}{it.sku && <div style={{ fontFamily: "monospace", fontSize: 10.5, fontWeight: 400, color: C.muted }}>{it.sku}</div>}</td>
+                  <td style={{ padding: "5px 8px", fontWeight: 700 }}>{it.item_name}{it.scheduled_crop_id && <span title="already in the plan + B2B catalog" style={{ marginLeft: 6, fontSize: 10, fontWeight: 800, color: C.green }}>✓ IN PLAN</span>}{it.sku && <div style={{ fontFamily: "monospace", fontSize: 10.5, fontWeight: 400, color: C.muted }}>{it.sku}</div>}</td>
                   <td style={{ padding: "5px 8px", color: C.muted }}>{it.size || "—"}</td>
                   <td style={{ padding: "5px 8px", textAlign: "right" }}>
                     <input defaultValue={it.target_units ?? ""} inputMode="numeric" style={{ ...inp, width: 62, textAlign: "right" }}
@@ -156,6 +205,7 @@ function ProgramDetail({ sb, program, items, onChange }) {
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button onClick={() => setAdding(true)} style={{ padding: "7px 13px", borderRadius: 8, border: "none", background: C.light, color: "#fff", fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>＋ Add item</button>
             {program.status === "planning" && <button onClick={() => setStatus("approved")} style={{ padding: "7px 13px", borderRadius: 8, border: `1px solid ${C.green}`, background: "#fff", color: C.green, fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>✓ Approve — hand to production</button>}
+            {program.status === "approved" && <button onClick={onConvert} style={{ padding: "7px 13px", borderRadius: 8, border: "none", background: C.dark, color: "#c8e6b8", fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>→ Create plan items ({items.filter(i => !i.scheduled_crop_id && i.container_id && +i.target_units > 0).length})</button>}
             {program.status === "approved" && <button onClick={() => setStatus("planning")} style={{ padding: "7px 13px", borderRadius: 8, border: `1px solid ${C.border}`, background: "#fff", color: C.muted, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>↩ Back to planning</button>}
             <button onClick={delProgram} style={{ marginLeft: "auto", padding: "7px 13px", borderRadius: 8, border: "none", background: "none", color: C.red, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Delete program</button>
           </div>
