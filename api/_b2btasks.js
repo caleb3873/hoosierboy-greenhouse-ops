@@ -197,7 +197,7 @@ async function syncProductionTasks(db) {
 
     const { data: existing } = await db.from("manager_tasks")
       .select("id,title,status,description").eq("plan_id", plan.id)
-      .or("title.like.Pot fill*,title.like.PLANT*");
+      .or("title.like.Pot fill*,title.like.PLANT*,title.like.Pre-plant bench prep*,title.like.Day *");
 
     for (const g of Object.values(groups)) {
       const totalPots = Object.values(g.pots).reduce((a, b) => a + b, 0);
@@ -256,6 +256,44 @@ async function syncProductionTasks(db) {
         { title: fillTitle, match: t => t.title === fillTitle, desc: fillDesc, due: iso(friday) },
         { title: plantTitle, match: t => new RegExp(`^PLANT.*— ${g.zone.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\(wk${g.wk}\\)`).test(t.title), desc: plantDesc, due: iso(g.mon) },
       ];
+      // Bench prep + water-in/leech get the same summary-first clarity.
+      // REWRITE ONLY — never created here: the leech protocol is a poinsettia
+      // planting decision, not something every plan should sprout.
+      const escZone = g.zone.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const extras = (existing || []).filter(t => t.status === "pending" && (
+        t.title === `Pre-plant bench prep — ${g.zone} (wk${g.wk})` ||
+        new RegExp(`^Day \\d+ (water-in|leech-water) — ${escZone} \\(wk${g.wk}`).test(t.title)));
+      for (const t of extras) {
+        let desc;
+        if (t.title.startsWith("Pre-plant")) {
+          desc = [
+            `Prep ${g.benches.size} bench(es) — ${benchList}`,
+            "",
+            `${g.zone}, for wk${g.wk} planting. Liners arrive ${iso(g.mon)}.`,
+            "Clean + sanitize · check tube emitters · place variety labels · walk the space.",
+          ].join("\n");
+        } else {
+          const dm = t.title.match(/^Day (\d+) (water-in|leech-water)/);
+          desc = dm && dm[2] === "water-in"
+            ? [
+                `Water-in ${totalPots.toLocaleString()} pots — immediately after planting`,
+                "",
+                `${g.zone} · ${benchList}`,
+                "Critical first watering — sets establishment for the entire crop.",
+              ].join("\n")
+            : [
+                `Leech-water ${totalPots.toLocaleString()} pots — day ${dm ? dm[1] : "?"}`,
+                "",
+                `${g.zone} · ${benchList}`,
+                "Hand + tube leech watering, generous water-through — salt-sensitive establishment.",
+              ].join("\n");
+        }
+        if (t.description !== desc) {
+          await db.from("manager_tasks").update({ description: desc, bench_numbers: [...g.benches].sort() }).eq("id", t.id);
+          out.updated++;
+        }
+      }
+
       for (const u of upserts) {
         const hit = (existing || []).find(u.match);
         if (hit) {
