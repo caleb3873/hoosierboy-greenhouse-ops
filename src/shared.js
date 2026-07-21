@@ -288,3 +288,33 @@ export const URGENCY_LEVELS = [
   { id: "high",     label: "High",     color: "#c8791a", bg: "#fff4e8" },
   { id: "critical", label: "Critical", color: "#c03030", bg: "#fce8e8" },
 ];
+
+
+// One size vocabulary for every analysis tab (Caleb's rules):
+//   POT 8" stays POT 8" (with its diameter) · FIBER keeps LG./SM. · 8" BLOOM
+//   BUDDIES groups as 8" BLOOM BUDDY · a bare 8"+ with no program is CUSTOM
+//   potting · 4.5"/6.5" stay themselves (pack items) · Winter styles
+//   (5.5" POT X, 10 BLOOM X) map to POT 5.5" / 10 BLOOM.
+export function sizeLabelForItem(name) {
+  const s = String(name || "").trim().toUpperCase();
+  let m;
+  if ((m = s.match(/^HB\s*(\d+(?:\.\d+)?)/))) return `HB ${m[1]}"`;
+  if ((m = s.match(/^POT\s*(\d+(?:\.\d+)?)/))) return `POT ${m[1]}"`;
+  if ((m = s.match(/^(\d+(?:\.\d+)?)"\s*POT\b/))) return `POT ${m[1]}"`;
+  if ((m = s.match(/^(\d+(?:\.\d+)?)\s*BLOOM\b/))) return `${m[1]} BLOOM`;
+  if ((m = s.match(/^BOWL\s*(\d+(?:\.\d+)?)?/)) && /^BOWL/.test(s)) return m[1] ? `BOWL ${m[1]}"` : "BOWL";
+  if ((m = s.match(/^FIBER\s*(LG|LARGE|SM|SMALL|MED|MD)?/)) && /^FIBER/.test(s)) {
+    const q = m[1] || "";
+    return q ? `FIBER ${q[0] === "S" ? "SM." : q[0] === "M" ? "MED." : "LG."}` : "FIBER";
+  }
+  if (/^1801L/.test(s)) return "1801L";
+  if (/^1801S/.test(s)) return "1801S";
+  if (/^1801/.test(s)) return "1801";
+  if (/^MARKET/.test(s)) return "MARKET BASKET";
+  if ((m = s.match(/^(\d+)\s*CELL/))) return `${m[1]} CELL`;
+  if ((m = s.match(/^(\d+(?:\.\d+)?)"\s*BLOOM BUDD/))) return `${m[1]}" BLOOM BUDDY`;
+  if ((m = s.match(/^(\d+(?:\.\d+)?)"/))) {
+    return parseFloat(m[1]) >= 8 ? `${m[1]}" CUSTOM` : `${m[1]}"`;
+  }
+  return (s.match(/^[A-Z]+/) || ["—"])[0];
+}

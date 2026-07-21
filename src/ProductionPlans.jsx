@@ -5,6 +5,7 @@
 import { useState, useEffect, useMemo, useRef, Fragment } from "react";
 import { getSupabase, getCultureClient } from "./supabase";
 import { useAuth } from "./Auth";
+import { sizeLabelForItem } from "./shared";
 import CategoryProfiles from "./CategoryProfiles";
 import BasketPlanner from "./BasketPlanner";
 import ItemDrill from "./ItemDrill";
@@ -1771,7 +1772,7 @@ function plannedItems(qtyPots, ppp, ppu) {
   ppp = +ppp || 1; ppu = +ppu || 1;
   return ppp >= ppu ? qtyPots : Math.max(1, Math.round(qtyPots / ppu));
 }
-const sizeTokenForItem = n => (String(n || "").trim().match(/^(HB\s*\d+"?|\d+(?:\.\d+)?"|1801[LS]?|FIBER|POT|MARKET|BOWL|[A-Za-z]+)/) || ["—"])[0].toUpperCase();
+const sizeTokenForItem = n => sizeLabelForItem(n);
 // Selling out before peak demand = a real lost sale; selling out as the season ends isn't.
 // Main-season items: cutoff at Mother's Day (wk 19). Early-spring items (pansy etc., which peak
 // by end of March) cut off ~2nd-to-last week of March (wk 13). (2026 sales data runs wk 9–24.)

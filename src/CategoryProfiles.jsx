@@ -18,7 +18,8 @@ const C = {
 };
 const money = n => n == null ? "—" : (Math.abs(n) >= 1000 ? `$${Math.round(n).toLocaleString()}` : `$${(+n).toFixed(2)}`);
 const pct = n => n == null ? "—" : `${Math.round(n * 100)}%`;
-const sizeOf = n => (String(n || "").trim().match(/^(HB\s*\d+"?|\d+(?:\.\d+)?"|1801[LS]?|FIBER|POT|MARKET|BOWL|[A-Z]+)/i) || ["—"])[0].toUpperCase();
+import { sizeLabelForItem } from "./shared";
+const sizeOf = n => sizeLabelForItem(n);
 
 async function pageAll(sb, table, cols, mod) {
   let out = [], from = 0;

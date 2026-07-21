@@ -19,7 +19,8 @@ const C = { dark: "#1e2d1a", light: "#7fb069", card: "#fff", border: "#dfe7d8",
 const money = n => n == null ? "—" : (Math.abs(n) >= 1000 ? `$${Math.round(n).toLocaleString()}` : `$${(+n).toFixed(2)}`);
 const pct = n => n == null ? "—" : `${Math.round(n * 100)}%`;
 // Baskets and made-up containers — anything built from components rather than grown as one plant
-const sizeOf = n => (String(n || "").trim().match(/^(HB\s*\d+"?|FIBER(?:\s+LG\.?)?|POT\s*\d*"?|BOWL\s*\d*"?|MARKET(?:\s+BASKET)?|\d+(?:\.\d+)?")/i) || ["Other"])[0].toUpperCase().replace(/\s+/g, " ");
+import { sizeLabelForItem } from "./shared";
+const sizeOf = n => sizeLabelForItem(n);
 
 const DIRECTIONS = [
   ["different_colors", "Different colours"],
