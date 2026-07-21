@@ -21,6 +21,7 @@ import GrowerManagement   from "./GrowerManagement";
 import WateringPlan        from "./WateringPlan";
 import WorkRecords         from "./WorkRecords";
 import GrowerProgram       from "./GrowerProgram";
+import PhotoLibrary        from "./PhotoLibrary";
 import SoilCalculator      from "./SoilCalculator";
 import HouseplantAvailability from "./HouseplantAvailability";
 import OwnerDashboard       from "./OwnerDashboard";
@@ -98,6 +99,7 @@ const NAV_GROUPS = [
     items: [
       { id: "meetings",  label: "Meetings" },
       { id: "tradeshow", label: "Trade Show" },
+      { id: "photos",    label: "🖼 Photo Library" },
       { id: "export",    label: "Export" },
     ],
   },
@@ -270,6 +272,7 @@ function PlannerShell() {
         {page === "library"    && <Libraries      />}
         {page === "meetings"   && <Meetings        />}
         {page === "tradeshow"  && <TradeShow       />}
+        {page === "photos"     && <PhotoLibrary embedded />}
         {page === "export"     && <Export          />}
         {page === "soil"       && <SoilCalculator />}
         {page === "fall"       && <FallProgram />}

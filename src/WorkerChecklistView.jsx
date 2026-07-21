@@ -10,6 +10,7 @@ import { BrehobWorkerView } from "./BrehobList";
 import { VacationRequestModal, OutThisWeekBanner } from "./Vacation";
 import { AnnouncementBanner, AnnouncementPopup, useAnnouncementPopup } from "./Announcements";
 import { NewWorkModal, ReiBanner, logWorkCompliance } from "./WorkHub";
+import PhotoLibrary from "./PhotoLibrary";
 import InventoryView from "./InventoryView";
 import ReferenceDocs from "./ReferenceDocs";
 import Evaluations from "./Evaluations";
@@ -69,6 +70,7 @@ function WorkerChecklistViewInner({ onSwitchMode, onBackToApp, onOpenTaskCreator
   const [showResponses, setShowResponses] = useState(false);
   const [showTradeShow, setShowTradeShow] = useState(false);
   const [showHotList, setShowHotList] = useState(false);
+  const [showPhotos, setShowPhotos] = useState(false);
   const [releasingTask, setReleasingTask] = useState(null);
   const [suggesting, setSuggesting] = useState(false);
   const [newWork, setNewWork] = useState(false);
@@ -400,6 +402,9 @@ function WorkerChecklistViewInner({ onSwitchMode, onBackToApp, onOpenTaskCreator
   if (showHotList) {
     return <HotList onBack={() => setShowHotList(false)} />;
   }
+  if (showPhotos) {
+    return <PhotoLibrary onBack={() => setShowPhotos(false)} />;
+  }
 
   return (
     <div style={{ ...FONT, minHeight: "100vh", background: GREEN_DARK, color: "#fff", paddingBottom: 100 }}>
@@ -434,6 +439,9 @@ function WorkerChecklistViewInner({ onSwitchMode, onBackToApp, onOpenTaskCreator
           </button>
           <button onClick={() => setShowHotList(true)} style={{ background: "#fde4e1", border: "none", color: "#c0392b", padding: "6px 12px", borderRadius: 6, cursor: "pointer", fontWeight: 800, ...FONT }}>
             🔥 Hot List
+          </button>
+          <button onClick={() => setShowPhotos(true)} style={{ background: "#dbeafe", border: "none", color: "#1e40af", padding: "6px 12px", borderRadius: 6, cursor: "pointer", fontWeight: 800, ...FONT }}>
+            🖼 Photos
           </button>
           <button onClick={() => setShowResponses(true)} style={{ background: "#e6d3f0", border: "none", color: "#5a2a72", padding: "6px 12px", borderRadius: 6, cursor: "pointer", fontWeight: 800, ...FONT }}>
             🌼 Treatments
