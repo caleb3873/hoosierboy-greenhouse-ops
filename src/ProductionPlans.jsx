@@ -1777,6 +1777,13 @@ const sizeTokenForItem = n => sizeLabelForItem(n);
 // Main-season items: cutoff at Mother's Day (wk 19). Early-spring items (pansy etc., which peak
 // by end of March) cut off ~2nd-to-last week of March (wk 13). (2026 sales data runs wk 9–24.)
 const MD_CUTOFF_WK = 19, EARLY_CUTOFF_WK = 13, EARLY_PEAK_WK = 13;
+// first-sale week -> the Monday's date, since "first date sold" reads better than "wk15"
+function wkStartLabel(wk) {
+  const jan4 = new Date(Date.UTC(2026, 0, 4));
+  const mon = new Date(jan4);
+  mon.setUTCDate(jan4.getUTCDate() - ((jan4.getUTCDay() + 6) % 7) + (wk - 1) * 7);
+  return mon.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+}
 function SalesVsPlanTab({ plan }) {
   const sb = getSupabase();
   const [rows, setRows] = useState(null);
@@ -1850,7 +1857,7 @@ function SalesVsPlanTab({ plan }) {
         const cutoff = (peak != null && peak <= EARLY_PEAK_WK) ? EARLY_CUTOFF_WK : MD_CUTOFF_WK;
         const soldOut = s >= pItems && pItems > 0 && lastWk != null && lastWk < cutoff;
         const lostEst = soldOut ? Math.round((s / Math.max(1, lastWk - firstWk + 1)) * (cutoff - lastWk) * price) : 0;
-        out.push({ item: it, size: sizeTokenForItem(it), converted: pItems !== planned, planRaw: planned, planned: pItems, sold: s, st: pItems ? s / pItems : 0, over, lostEst, soldOut, cutoff, lastWk, rev: Math.round(rev[it] || 0), wk: wkA, peak, ship: readyByItem[it] ?? shipByItem[it] ?? null, status: soldOut ? "SOLDOUT" : s >= pItems ? "HIT" : (s === 0 ? "NOSALE" : "SHORT") });
+        out.push({ item: it, size: sizeTokenForItem(it), converted: pItems !== planned, planRaw: planned, planned: pItems, sold: s, st: pItems ? s / pItems : 0, over, lostEst, soldOut, cutoff, lastWk, firstWk, price: s > 0 ? (rev[it] || 0) / s : (price || null), rev: Math.round(rev[it] || 0), wk: wkA, peak, ship: readyByItem[it] ?? shipByItem[it] ?? null, status: soldOut ? "SOLDOUT" : s >= pItems ? "HIT" : (s === 0 ? "NOSALE" : "SHORT") });
       }
       // Dual-use rows: real retail sales, but planned volume mostly feeds combos,
       // so sell-through / over / lost are meaningless and deliberately left null.
@@ -1859,7 +1866,8 @@ function SalesVsPlanTab({ plan }) {
         if (!s) continue; // only surface the ones that actually sold retail
         const wkA = wkly[it] || Array(weeks.length).fill(0);
         const peak = wkA.some(x => x > 0) ? weeks[wkA.indexOf(Math.max(...wkA))] : null;
-        out.push({ item: it, size: sizeTokenForItem(it), dualUse: true, converted: false,
+        const dIdx = wkA.map((u, i) => u > 0 ? i : -1).filter(i => i >= 0);
+        out.push({ item: it, size: sizeTokenForItem(it), dualUse: true, converted: false, firstWk: dIdx.length ? weeks[dIdx[0]] : null, price: s > 0 ? (rev[it] || 0) / s : null,
           planRaw: dualUse[it], planned: dualUse[it], sold: s, st: null, over: 0, lostEst: 0,
           soldOut: false, cutoff: null, lastWk: null, rev: Math.round(rev[it] || 0),
           wk: wkA, peak, ship: readyByItem[it] ?? shipByItem[it] ?? null, status: "DUAL" });
@@ -1921,7 +1929,7 @@ function SalesVsPlanTab({ plan }) {
   const maxR = Math.max(...season.seasonRev, 1); const pkWk = season.weeks[season.seasonRev.indexOf(maxR)];
   const sizes = ["all", ...Array.from(new Set(rows.map(r => r.size))).sort()];
   const q = query.trim().toLowerCase();
-  const sortVal = { item: r => r.item, st: r => r.st ?? -1, planned: r => dPlanned(r), sold: r => r.sold, status: r => r.status, over: r => r.over, lostEst: r => r.lostEst, rev: r => r.rev, peak: r => r.peak ?? 99 };
+  const sortVal = { item: r => r.item, st: r => r.st ?? -1, price: r => r.price ?? -1, firstWk: r => r.firstWk ?? 99, planned: r => dPlanned(r), sold: r => r.sold, status: r => r.status, over: r => r.over, lostEst: r => r.lostEst, rev: r => r.rev, peak: r => r.peak ?? 99 };
   const clickSort = c => { if (c === sortCol) setSortDir(d => d === "asc" ? "desc" : "asc"); else { setSortCol(c); setSortDir(c === "item" ? "asc" : "desc"); } };
   // sticky + clickable column header (table lives in its own scroll viewport so it pins at top:0)
   const stickyTh = { ...th, position: "sticky", top: 0, zIndex: 11, background: "#eef3e8" };
@@ -2157,7 +2165,8 @@ function SalesVsPlanTab({ plan }) {
             <SortHdr col="over" label="Over $" align="right" />
             <SortHdr col="lostEst" label="Lost $" align="right" />
             <SortHdr col="rev" label="2026 $" align="right" />
-            <SortHdr col="peak" label={`Demand (wk${season.weeks[0]}–${season.weeks[season.weeks.length - 1]})`} />
+            <SortHdr col="price" label="Avg $" align="right" />
+            <SortHdr col="firstWk" label="1st sold" align="right" />
             <th style={stickyTh} title="Finish (ready) week vs demand peak. ◀ ▶ record a decision to bring it in earlier or later — production applies it by moving the plant week; the finish follows automatically.">Timing</th>
             <th style={{ ...stickyTh, textAlign: "right", background: "#e4eedd", borderLeft: `2px solid ${COLORS.light}` }} title="Agreed 2027 target in sellable units. Saved to plan_targets — production distributes it across benches later.">2027 target</th>
           </tr></thead>
@@ -2184,7 +2193,8 @@ function SalesVsPlanTab({ plan }) {
                   <td style={{ ...td, textAlign: "right", fontWeight: 700, color: r.over > 0 ? COLORS.amber : COLORS.muted }}>{r.over ? fmtMoney(r.over) : "—"}</td>
                   <td style={{ ...td, textAlign: "right", fontWeight: 700, color: r.lostEst > 0 ? COLORS.red : COLORS.muted }}>{r.lostEst ? fmtMoney(r.lostEst) : "—"}</td>
                   <td style={{ ...td, textAlign: "right", color: COLORS.muted }}>{fmtMoney(r.rev)}</td>
-                  <td style={{ ...td, fontFamily: "monospace", color: "#4a6b3a", letterSpacing: 1 }} title={r.peak ? `peak wk${r.peak}` : "no weekly sales"}>{spark(r.wk)}{r.peak ? <span style={{ color: COLORS.muted, fontSize: 10, letterSpacing: 0 }}> wk{r.peak}</span> : null}</td>
+                  <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{r.price != null && r.price > 0 ? "$" + (+r.price).toFixed(2) : "—"}</td>
+                  <td style={{ ...td, textAlign: "right" }} title={r.peak ? `first sale — demand peaked wk${r.peak}` : ""}>{r.firstWk != null ? wkStartLabel(r.firstWk) : <span style={{ color: "#c8d0c0" }}>—</span>}</td>
                   <TimingCell r={r} tgt={targets[r.item]} onShift={n => saveTarget(r, { ready_shift: n === 0 ? null : n })} />
                   <TargetCell r={r} tgt={targets[r.item]} draft={draft[r.item]} saving={savingT[r.item]}
                     onDraft={v => setDraft(d => ({ ...d, [r.item]: v }))}
