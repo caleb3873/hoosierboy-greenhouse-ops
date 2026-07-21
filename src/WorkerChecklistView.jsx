@@ -619,13 +619,13 @@ function WorkerChecklistViewInner({ onSwitchMode, onBackToApp, onOpenTaskCreator
                         </div>
                       )}
                       {task.description && (
-                        <div style={{ fontSize: 13, color: "#9cb894", marginTop: 4 }}>{tr(task, "description")}</div>
+                        <div style={{ fontSize: 13, color: "#9cb894", marginTop: 4, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", whiteSpace: "pre-line" }}>{tr(task, "description")}</div>
                       )}
                       {task.diagramUrl && (
                         <a href={task.diagramUrl} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} style={{ display: "inline-block", fontSize: 13, fontWeight: 700, color: "#0c1f0c", background: "#7fb069", padding: "5px 12px", borderRadius: 8, textDecoration: "none", marginTop: 6 }}>🔗 Planting diagram</a>
                       )}
                       {task.notes && (
-                        <div style={{ fontSize: 12, color: "#9cb894", marginTop: 4, fontStyle: "italic", whiteSpace: "pre-wrap" }}>📝 {task.notes}</div>
+                        <div style={{ fontSize: 12, color: "#9cb894", marginTop: 4, fontStyle: "italic", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", whiteSpace: "pre-line" }}>📝 {task.notes}</div>
                       )}
                       {completed && (
                         <div style={{ fontSize: 12, color: GREEN, marginTop: 6 }}>

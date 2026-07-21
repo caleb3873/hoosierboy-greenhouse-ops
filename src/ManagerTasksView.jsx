@@ -998,8 +998,8 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
               </div>
             )}
             {t.description && (
-              <div style={{ fontSize: 12, color: "#7a8c74", marginTop: 4, whiteSpace: "pre-wrap" }}>
-                {/* If the location bar already shows the quonset list, suppress the LOCATION line in the body so it doesn't double up */}
+              <div style={{ fontSize: 12, color: "#7a8c74", marginTop: 4, whiteSpace: "pre-line", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+                {/* collapsed card shows the summary line(s) only — open the task for benches/recipes */}
                 {descLocMatch ? (t.description || "").replace(/^LOCATION:[^\n]*\n?/m, "").trim() : t.description}
               </div>
             )}
@@ -2359,7 +2359,7 @@ function AssignedToMeModal({ tasks, displayName, onClose, onMarkDone, onOpenTask
                     <div style={{ flex: 1, cursor: "pointer" }} onClick={() => onOpenTask?.(t)}>
                       <div style={{ fontSize: 14, fontWeight: 700, color: "#1e2d1a" }}>{t.title}</div>
                       {t.description && (
-                        <div style={{ fontSize: 12, color: "#7a8c74", marginTop: 4, whiteSpace: "pre-wrap" }}>{t.description}</div>
+                        <div style={{ fontSize: 12, color: "#7a8c74", marginTop: 4, whiteSpace: "pre-line", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{t.description}</div>
                       )}
                       {t.targetDate && (
                         <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 4, fontWeight: 600 }}>📅 {formatTargetDate(t.targetDate)}</div>

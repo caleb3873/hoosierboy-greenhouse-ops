@@ -201,6 +201,10 @@ async function syncProductionTasks(db) {
 
     for (const g of Object.values(groups)) {
       const totalPots = Object.values(g.pots).reduce((a, b) => a + b, 0);
+      const sizeSummary = Object.entries(g.pots)
+        .map(([k, v]) => ({ sz: (k.match(/^[\d.]+"/) || [k])[0], v }))
+        .sort((x, y) => parseFloat(x.sz) - parseFloat(y.sz))
+        .map(x => `${x.v.toLocaleString()}×${x.sz}`).join(" · ");
       if (!totalPots) continue;
       const benchList = [...g.benches].sort().join(", ");
       const friday = new Date(g.mon); friday.setUTCDate(friday.getUTCDate() - 3);
@@ -208,7 +212,9 @@ async function syncProductionTasks(db) {
       // ── pot fill ──
       const fillTitle = `Pot fill — ${g.zone} (wk${g.wk})`;
       const fillDesc = [
-        `**FILL ${totalPots.toLocaleString()} POTS** — ${g.zone}, for wk${g.wk} planting (${iso(g.mon)}).`,
+        `Fill ${totalPots.toLocaleString()} pots — ${sizeSummary}`,
+        "",
+        `${g.zone}, for wk${g.wk} planting (${iso(g.mon)}).`,
         "",
         ...Object.entries(g.pots).sort((a, b) => b[1] - a[1]).map(([k, v]) => `  • ${v.toLocaleString()} × ${k}`),
         "",
@@ -238,7 +244,9 @@ async function syncProductionTasks(db) {
       }
       const plantTitle = `PLANT — ${g.zone} (wk${g.wk})`;
       const plantDesc = [
-        `${g.zone} — planting week of ${iso(g.mon)} (wk${g.wk}). Work bench by bench:`,
+        `Plant ${totalPots.toLocaleString()} pots — ${sizeSummary}`,
+        "",
+        `${g.zone}, week of ${iso(g.mon)} (wk${g.wk}). Work bench by bench:`,
         ...plantLines,
         "",
         "Water-in immediately after planting.",
