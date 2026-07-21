@@ -197,7 +197,7 @@ async function syncProductionTasks(db) {
 
     const { data: existing } = await db.from("manager_tasks")
       .select("id,title,status,description").eq("plan_id", plan.id)
-      .or("title.like.Pot fill —%,title.like.PLANT%");
+      .or("title.like.Pot fill*,title.like.PLANT*");
 
     for (const g of Object.values(groups)) {
       const totalPots = Object.values(g.pots).reduce((a, b) => a + b, 0);
