@@ -38,8 +38,10 @@ export default function CategoryProfiles({ plan }) {
   const sb = getSupabase();
   const [items, setItems] = useState(null);
   const [weeks, setWeeks] = useState([]);
-  const [cats, setCats] = useState([]);
-  const [sel, setSel] = useState(null);        // {name, crop_name, name_match, size_match}
+  const [crop, setCrop] = useState("");        // category
+  const [series, setSeries] = useState("");
+  const [size, setSize] = useState("");
+  const [variety, setVariety] = useState("");
   const [q, setQ] = useState("");
   const [sortBy, setSortBy] = useState("rev");
   const [err, setErr] = useState(null);
@@ -48,16 +50,37 @@ export default function CategoryProfiles({ plan }) {
     if (!sb || !plan?.id) return;
     (async () => {
       try {
-        const [pl, sc, vars, xw, tot, wk, cat] = await Promise.all([
+        const [pl, sc, vars, xw, tot, wk, comps] = await Promise.all([
           pageAll(sb, "v_scheduled_crops_pl", "id,variety_id,qty_pots,ppp,is_combo_component,liner_cost,pot_cost,soil_cost,ring_cost,direct_cost_total,sale_price_per_pot,revenue,gross_profit", q => q.eq("plan_id", plan.id)),
           pageAll(sb, "scheduled_crops", "id,item_name,variety_id,qty_pots,ppp,pack_size,ready_week,ready_year,sellable,is_combo_component", q => q.eq("plan_id", plan.id)),
           pageAll(sb, "variety_library", "id,crop_name"),
           pageAll(sb, "sales_sku_map", "sku,plan_item_name"),
           pageAll(sb, "sales_totals", "sku,units,revenue,avg_price"),
           pageAll(sb, "sales_weekly", "sku,wk,units,revenue"),
-          pageAll(sb, "item_categories", "*"),
+          pageAll(sb, "scheduled_crops", "variety_id,qty_plants_ordered,combo_parent_id,is_combo_component", q => q.eq("plan_id", plan.id).eq("is_combo_component", true)),
         ]);
         const crop = Object.fromEntries(vars.map(v => [v.id, v.crop_name]));
+        // Series only exists inside item names (variety_library.series is empty),
+        // so derive it: strip the size prefix, strip the crop word, take what's left.
+        const SIZE_RE = /^(HB\s*\d+"?|\d+(?:\.\d+)?"|1801[LS]?|FIBER(\s+LG\.?)?|POT\s*\d*"?|MARKET(\s+BASKET)?|BOWL\s*\d*"?|\d+\s*CELL)\s*/i;
+        const seriesOf = (name, cropName) => {
+          let n = String(name || "").replace(SIZE_RE, "").trim();
+          for (const w of String(cropName || "").toUpperCase().split(/\s+/)) {
+            if (w && n.toUpperCase().startsWith(w)) n = n.slice(w.length).trim();
+          }
+          const tok = (n.split(/\s+/)[0] || "").replace(/[^A-Za-z0-9'-]/g, "");
+          return tok.length > 2 ? tok.toUpperCase() : null;
+        };
+        // what each variety owes to combos — cut it and those baskets break
+        const parentName = {};
+        sc.forEach(r => { if (!r.is_combo_component) parentName[r.id] = r.item_name; });
+        const comboDraw = {};
+        (comps || []).forEach(c => {
+          if (!c.variety_id) return;
+          const d = comboDraw[c.variety_id] || (comboDraw[c.variety_id] = { plants: 0, combos: new Set() });
+          d.plants += +c.qty_plants_ordered || 0;
+          if (c.combo_parent_id && parentName[c.combo_parent_id]) d.combos.add(parentName[c.combo_parent_id]);
+        });
         const plById = Object.fromEntries(pl.map(r => [r.id, r]));
         const skuToItem = {}; xw.forEach(x => { if (x.plan_item_name) skuToItem[x.sku] = x.plan_item_name; });
 
@@ -81,6 +104,9 @@ export default function CategoryProfiles({ plan }) {
             pots: 0, plants: 0, cost: 0, planRev: 0, units: 0,
             pack: +r.pack_size || 1, ppp: +r.ppp || 1, price: +r.sale_price_per_pot || null,
             ready: r.ready_week ?? null,
+            series: seriesOf(k, crop[r.variety_id]),
+            comboPlants: comboDraw[r.variety_id]?.plants || 0,
+            comboCount: comboDraw[r.variety_id]?.combos.size || 0,
           });
           o.pots += +r.qty_pots;
           o.plants += (+r.qty_pots) * (+r.ppp || 1);
@@ -105,31 +131,42 @@ export default function CategoryProfiles({ plan }) {
         }
         setItems(Object.values(byItem));
         setWeeks(wkList);
-        setCats(cat || []);
+
       } catch (e) { setErr(e.message || String(e)); }
     })();
   }, [sb, plan?.id]);
 
-  // auto crop-level categories, merged with the saved ones
-  const cropCats = useMemo(() => {
-    if (!items) return [];
-    const m = new Map();
-    items.forEach(i => m.set(i.crop, (m.get(i.crop) || 0) + (i.rev || 0)));
-    return [...m.entries()].sort((a, b) => b[1] - a[1])
-      .map(([c]) => ({ id: `crop:${c}`, name: c, crop_name: c, name_match: null, size_match: null, auto: true }));
-  }, [items]);
-
-  const matches = (i, c) =>
-    (!c.crop_name || i.crop === c.crop_name) &&
-    (!c.name_match || i.item.toLowerCase().includes(c.name_match.toLowerCase())) &&
-    (!c.size_match || i.size === c.size_match.toUpperCase());
+  // Cascading options — each dropdown only offers what the ones above allow.
+  const opts = useMemo(() => {
+    if (!items) return { crops: [], series: [], sizes: [], varieties: [] };
+    const byCrop = items.filter(i => !crop || i.crop === crop);
+    const bySeries = byCrop.filter(i => !series || i.series === series);
+    const bySize = bySeries.filter(i => !size || i.size === size);
+    const tally = (rows, key) => {
+      const m = new Map();
+      rows.forEach(r => { const k = r[key]; if (!k) return;
+        const o = m.get(k) || { k, n: 0, rev: 0 }; o.n++; o.rev += r.rev || 0; m.set(k, o); });
+      return [...m.values()].sort((a, b) => b.rev - a.rev || a.k.localeCompare(b.k));
+    };
+    return {
+      crops: tally(items, "crop"),
+      series: tally(byCrop, "series"),
+      sizes: tally(bySeries, "size"),
+      varieties: tally(bySize, "item"),
+    };
+  }, [items, crop, series, size]);
 
   const shown = useMemo(() => {
     if (!items) return [];
-    const base = sel ? items.filter(i => matches(i, sel)) : items;
     const ql = q.trim().toLowerCase();
-    return ql ? base.filter(i => i.item.toLowerCase().includes(ql) || i.crop.toLowerCase().includes(ql)) : base;
-  }, [items, sel, q]);
+    return items.filter(i =>
+      (!crop || i.crop === crop) && (!series || i.series === series) &&
+      (!size || i.size === size) && (!variety || i.item === variety) &&
+      (!ql || i.item.toLowerCase().includes(ql)));
+  }, [items, crop, series, size, variety, q]);
+
+  const label = [crop || "All crops", series, size, variety && variety.replace(/^\S+\s/, "")]
+    .filter(Boolean).join(" · ");
 
   if (err) return <div style={{ padding: 20, color: C.red }}>Couldn't load: {err}</div>;
   if (!items) return <div style={{ padding: 20, color: C.muted }}>Loading categories…</div>;
@@ -142,14 +179,20 @@ export default function CategoryProfiles({ plan }) {
         Actuals are the 2026 season.
       </div>
 
-      <CategoryPicker cats={cats} cropCats={cropCats} sel={sel} onSel={setSel} items={items} matches={matches} />
+      <Picker opts={opts}
+        crop={crop} series={series} size={size} variety={variety}
+        setCrop={v => { setCrop(v); setSeries(""); setSize(""); setVariety(""); }}
+        setSeries={v => { setSeries(v); setSize(""); setVariety(""); }}
+        setSize={v => { setSize(v); setVariety(""); }}
+        setVariety={setVariety} />
 
-      {sel && (
+      {shown.length > 0 && (
         <>
-          <CategoryHeadline label={sel.name} rows={shown} weeks={weeks} />
+          <CategoryHeadline label={label} rows={shown} weeks={weeks} />
+          <ComboDependency rows={shown} />
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-            <input value={q} onChange={e => setQ(e.target.value)} placeholder="🔍 narrow further — e.g. reiger, calliope…"
-              style={{ padding: "7px 11px", borderRadius: 16, border: `1px solid ${C.border}`, fontSize: 12.5, fontFamily: "inherit", width: 250 }} />
+            <input value={q} onChange={e => setQ(e.target.value)} placeholder="🔍 free-text narrow…"
+              style={{ padding: "7px 11px", borderRadius: 16, border: `1px solid ${C.border}`, fontSize: 12.5, fontFamily: "inherit", width: 210 }} />
             <span style={{ fontSize: 12, color: C.muted }}>{shown.length} items</span>
             <span style={{ marginLeft: "auto", fontSize: 12, color: C.muted }}>sort:</span>
             {[["rev", "revenue"], ["st", "sell-through"], ["gmPct", "margin"], ["firstWk", "sells first"], ["costPerPlant", "cost/plant"]].map(([k, l]) => (
@@ -163,43 +206,61 @@ export default function CategoryProfiles({ plan }) {
           <ItemTable rows={shown} sortBy={sortBy} weeks={weeks} />
         </>
       )}
-      {!sel && <div style={{ padding: 30, textAlign: "center", color: C.muted }}>Choose a category above.</div>}
+      {shown.length === 0 && <div style={{ padding: 30, textAlign: "center", color: C.muted }}>Nothing matches that combination.</div>}
     </div>
   );
 }
 
-function CategoryPicker({ cats, cropCats, sel, onSel, items, matches }) {
-  const [showAll, setShowAll] = useState(false);
-  const stat = c => {
-    const rows = items.filter(i => matches(i, c));
-    return { n: rows.length, rev: rows.reduce((a, r) => a + (r.rev || 0), 0) };
-  };
-  const saved = (cats || []).map(c => ({ ...c, id: `cat:${c.id}` }));
-  const list = showAll ? [...saved, ...cropCats] : [...saved, ...cropCats.slice(0, 14)];
+function Picker({ opts, crop, series, size, variety, setCrop, setSeries, setSize, setVariety }) {
+  const sel = { padding: "8px 11px", borderRadius: 9, border: `1.5px solid ${C.border}`, fontSize: 13,
+    fontFamily: "inherit", background: "#fff", color: C.text, minWidth: 150, cursor: "pointer" };
+  const wrap = { display: "flex", flexDirection: "column", gap: 4 };
+  const lab = { fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: 0.6 };
+  const Drop = ({ label, value, onChange, options, allLabel, fmt }) => (
+    <div style={wrap}>
+      <span style={lab}>{label}</span>
+      <select value={value} onChange={e => onChange(e.target.value)}
+        style={{ ...sel, borderColor: value ? C.light : C.border, fontWeight: value ? 700 : 400 }}>
+        <option value="">{allLabel}</option>
+        {options.map(o => <option key={o.k} value={o.k}>{fmt ? fmt(o) : `${o.k} (${o.n})`}</option>)}
+      </select>
+    </div>
+  );
   return (
-    <div>
-      <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 7 }}>
-        Saved categories & crops
+    <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+      <Drop label="Category" value={crop} onChange={setCrop} options={opts.crops} allLabel="All crops" />
+      <Drop label="Series" value={series} onChange={setSeries} options={opts.series} allLabel="All series" />
+      <Drop label="Size" value={size} onChange={setSize} options={opts.sizes} allLabel="All sizes" />
+      <Drop label="Variety" value={variety} onChange={setVariety} options={opts.varieties} allLabel="All varieties"
+        fmt={o => o.k.length > 44 ? o.k.slice(0, 42) + "…" : o.k} />
+      {(crop || series || size || variety) && (
+        <button onClick={() => { setCrop(""); }} style={{ padding: "8px 13px", borderRadius: 9, border: `1px solid ${C.border}`, background: "#fff", color: C.muted, fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>reset</button>
+      )}
+    </div>
+  );
+}
+
+// The wire-vine guard: what breaks downstream if this selection gets cut.
+function ComboDependency({ rows }) {
+  const dep = useMemo(() => rows.filter(r => r.comboPlants > 0)
+    .sort((a, b) => b.comboPlants - a.comboPlants), [rows]);
+  if (!dep.length) return null;
+  const totalPlants = dep.reduce((a, r) => a + r.comboPlants, 0);
+  const maxCombos = Math.max(...dep.map(r => r.comboCount));
+  return (
+    <div style={{ background: "#fdf7ec", border: `1.5px solid ${C.amber}`, borderRadius: 10, padding: "11px 14px" }}>
+      <div style={{ fontSize: 13, fontWeight: 800, color: "#8a5d12" }}>
+        🪴 Combos depend on this — {totalPlants.toLocaleString()} plants across up to {maxCombos} baskets
       </div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-        {list.map(c => {
-          const s = stat(c);
-          const on = sel && sel.name === c.name;
-          return (
-            <button key={c.id} onClick={() => onSel(on ? null : c)} title={`${s.n} items · ${money(s.rev)} in 2026`}
-              style={{ padding: "7px 12px", borderRadius: 10, cursor: "pointer", textAlign: "left",
-                border: `1.5px solid ${on ? C.dark : C.border}`, background: on ? C.dark : "#fff",
-                color: on ? "#fff" : C.text, fontSize: 12.5, fontWeight: 700 }}>
-              {c.auto ? "" : "★ "}{c.name}
-              <span style={{ opacity: 0.7, fontWeight: 500 }}> · {s.n} · {money(s.rev)}</span>
-            </button>
-          );
-        })}
-        {!showAll && cropCats.length > 14 && (
-          <button onClick={() => setShowAll(true)} style={{ padding: "7px 12px", borderRadius: 10, border: `1px dashed ${C.border}`, background: "#fff", color: C.muted, fontSize: 12.5, cursor: "pointer" }}>
-            +{cropCats.length - 14} more crops
-          </button>
-        )}
+      <div style={{ fontSize: 12, color: "#8a5d12", marginTop: 3, marginBottom: 7 }}>
+        These quantities are ordered separately for combos. Cutting the retail line does not free them, and cutting them breaks the baskets.
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+        {dep.slice(0, 12).map(r => (
+          <span key={r.item} style={{ fontSize: 11.5, background: "#fff", border: `1px solid ${C.amber}55`, borderRadius: 7, padding: "3px 8px", color: "#6b4a10" }}>
+            {r.item.length > 34 ? r.item.slice(0, 32) + "…" : r.item} — <b>{r.comboPlants.toLocaleString()}</b> plants → {r.comboCount} combo{r.comboCount !== 1 ? "s" : ""}
+          </span>
+        ))}
       </div>
     </div>
   );
