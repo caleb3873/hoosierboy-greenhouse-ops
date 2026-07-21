@@ -142,7 +142,7 @@ async function syncProductionTasks(db) {
     const { data: opted } = await db.from("production_items").select("id").eq("plan_id", plan.id).limit(1);
     if (!opted || !opted.length) continue;   // only opted-in plans, same rule as reconcile
     const { data: sc } = await db.from("scheduled_crops")
-      .select("id,item_name,qty_pots,ppp,qty_plants_ordered,plant_week,plant_year,bench_id,container_id,soil_mix_id,is_combo_component,combo_parent_id")
+      .select("id,item_name,variety_id,qty_pots,ppp,qty_plants_ordered,plant_week,plant_year,bench_id,container_id,soil_mix_id,is_combo_component,combo_parent_id")
       .eq("plan_id", plan.id).not("plant_week", "is", null);
     if (!sc || !sc.length) continue;
     out.plans++;
@@ -151,6 +151,9 @@ async function syncProductionTasks(db) {
     const { data: benches } = benchIds.length ? await db.from("benches").select("id,code,zone_label").in("id", benchIds) : { data: [] };
     const bmap = Object.fromEntries((benches || []).map(b => [b.id, b]));
     const { data: conts } = await db.from("containers").select("id,name,sku,fill_volume_cu_ft");
+    const varIds = [...new Set(sc.map(r => r.variety_id).filter(Boolean))];
+    const { data: vlist } = varIds.length ? await db.from("variety_library").select("id,variety").in("id", varIds) : { data: [] };
+    const vmap = Object.fromEntries((vlist || []).map(v => [v.id, v.variety]));
     const cmap = Object.fromEntries((conts || []).map(c => [c.id, c]));
     const parentById = Object.fromEntries(sc.filter(r => !r.is_combo_component).map(r => [r.id, r]));
 
@@ -164,7 +167,7 @@ async function syncProductionTasks(db) {
       if (mon < new Date(now.getTime() - 3 * 86400000) || mon > new Date(now.getTime() + 42 * 86400000)) continue;
       const zone = bmap[anchor.bench_id]?.zone_label || "(no zone)";
       const key = `${zone}__${anchor.plant_week}__${yr}`;
-      const g = groups[key] || (groups[key] = { zone, wk: anchor.plant_week, yr, mon, pots: {}, items: {}, benches: new Set(), fillCuFt: 0, flaggedPots: 0 });
+      const g = groups[key] || (groups[key] = { zone, wk: anchor.plant_week, yr, mon, pots: {}, items: {}, benches: new Set(), fillCuFt: 0, flaggedPots: 0, plantRows: [], kids: {} });
       if (r.is_combo_component) {
         // a component carrying its own qty_pots is contradictory — count NOTHING
         // silently: surface it on the task so a human settles it (the Aida/Moni
@@ -172,6 +175,7 @@ async function syncProductionTasks(db) {
         if (+r.qty_pots > 0) g.flaggedPots += +r.qty_pots;
         const it = g.items[anchor.item_name || anchor.id];
         if (it) it.liners += +r.qty_plants_ordered || 0;
+        (g.kids[r.combo_parent_id] = g.kids[r.combo_parent_id] || []).push({ variety: vmap[r.variety_id] || "?", plants: +r.qty_plants_ordered || 0 });
         continue;
       }
       if (!(+r.qty_pots > 0)) continue;
@@ -187,6 +191,8 @@ async function syncProductionTasks(db) {
       it.pots += +r.qty_pots;
       it.liners += (+r.qty_pots) * (+r.ppp || 1);
       if (bmap[r.bench_id]?.code) { it.benches.add(bmap[r.bench_id].code); g.benches.add(bmap[r.bench_id].code); }
+      g.plantRows.push({ rowId: r.id, bench: bmap[r.bench_id]?.code || "—", name: r.item_name || "(unnamed)",
+        pots: +r.qty_pots, ppp: +r.ppp || 1, variety: vmap[r.variety_id] || null });
     }
 
     const { data: existing } = await db.from("manager_tasks")
@@ -212,13 +218,28 @@ async function syncProductionTasks(db) {
       ].join("\n");
 
       // ── planting ──
-      const items = Object.values(g.items).filter(i => i.pots > 0).sort((a, b) => b.pots - a.pots);
-      const totalLiners = items.reduce((a, i) => a + i.liners, 0);
+      // Bench by bench, item by item, recipe per pot — "exactly what items are
+      // being planted, on what benches, and how many of what variety per pot" (Caleb)
+      const fmtPer = n => (Math.round(n * 10) / 10).toLocaleString();
+      const plantLines = [];
+      let totalLiners = 0;
+      const rowsSorted = [...g.plantRows].sort((a, b) => a.bench.localeCompare(b.bench) || a.name.localeCompare(b.name));
+      let lastBench = null;
+      for (const pr of rowsSorted) {
+        const kids = g.kids[pr.rowId] || [];
+        const recipe = [];
+        if (pr.variety) recipe.push(`${pr.ppp} × ${pr.variety}`);
+        for (const k of kids) if (k.plants > 0 && pr.pots > 0) recipe.push(`${fmtPer(k.plants / pr.pots)} × ${k.variety}`);
+        const liners = pr.pots * pr.ppp + kids.reduce((a, k) => a + k.plants, 0);
+        totalLiners += liners;
+        if (pr.bench !== lastBench) { plantLines.push(""); plantLines.push(`📍 ${pr.bench}`); lastBench = pr.bench; }
+        plantLines.push(`  ${pr.pots.toLocaleString()} × ${pr.name}`);
+        plantLines.push(`      each pot: ${recipe.join(" + ") || "1 plant"}   (${liners.toLocaleString()} liners)`);
+      }
       const plantTitle = `PLANT — ${g.zone} (wk${g.wk})`;
       const plantDesc = [
         `**PLANT ${totalPots.toLocaleString()} POTS / ${totalLiners.toLocaleString()} LINERS** — ${g.zone}, week of ${iso(g.mon)}.`,
-        "",
-        ...items.map(i => `  • ${i.pots.toLocaleString()} × ${i.name} — ${i.liners.toLocaleString()} liners${i.ppp > 1 ? ` (ppp ${i.ppp})` : ""} — ${[...i.benches].sort().join(" ")}`),
+        ...plantLines,
         "",
         "Water-in immediately after planting.",
       ].join("\n");
