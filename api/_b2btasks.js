@@ -116,4 +116,134 @@ async function syncDeliveriesBack(db) {
   return { shipped, cancelled };
 }
 
-module.exports = { generateCountTasks, harvestCountTasks, bridgeOrdersToDeliveries, syncDeliveriesBack };
+
+// 4. Self-healing production tasks: pot-fill + planting per (zone, plant week).
+//    Born from the wk31 shortfall: a one-off generation excluded two mis-flagged
+//    rows, the pot-fill task said 150 where the plan needed 300, and nothing
+//    could correct it. This pass recomputes from the plan every tick:
+//      – totals are FLAG-PROOF: every row with qty_pots > 0 fills pots, no
+//        matter how it is flagged (components carry qty_pots = 0 by convention)
+//      – PENDING system tasks are rewritten in place when the plan moves
+//      – deleted tasks come back on the next tick while their week is upcoming
+//      – completed tasks are never touched
+async function syncProductionTasks(db) {
+  const { data: plans } = await db.from("production_plans").select("id,name");
+  const out = { updated: 0, created: 0, plans: 0 };
+  const mondayOf = (wk, yr) => {
+    const jan4 = new Date(Date.UTC(yr, 0, 4));
+    const mon = new Date(jan4);
+    mon.setUTCDate(jan4.getUTCDate() - ((jan4.getUTCDay() + 6) % 7) + (wk - 1) * 7);
+    return mon;
+  };
+  const iso = d => d.toISOString().slice(0, 10);
+  const now = new Date();
+
+  for (const plan of plans || []) {
+    const { data: opted } = await db.from("production_items").select("id").eq("plan_id", plan.id).limit(1);
+    if (!opted || !opted.length) continue;   // only opted-in plans, same rule as reconcile
+    const { data: sc } = await db.from("scheduled_crops")
+      .select("id,item_name,qty_pots,ppp,qty_plants_ordered,plant_week,plant_year,bench_id,container_id,soil_mix_id,is_combo_component,combo_parent_id")
+      .eq("plan_id", plan.id).not("plant_week", "is", null);
+    if (!sc || !sc.length) continue;
+    out.plans++;
+
+    const benchIds = [...new Set(sc.map(r => r.bench_id).filter(Boolean))];
+    const { data: benches } = benchIds.length ? await db.from("benches").select("id,code,zone_label").in("id", benchIds) : { data: [] };
+    const bmap = Object.fromEntries((benches || []).map(b => [b.id, b]));
+    const { data: conts } = await db.from("containers").select("id,name,sku,fill_volume_cu_ft");
+    const cmap = Object.fromEntries((conts || []).map(c => [c.id, c]));
+    const parentById = Object.fromEntries(sc.filter(r => !r.is_combo_component).map(r => [r.id, r]));
+
+    // group by (zone, plant week) — only weeks planting within the next 6 weeks
+    const groups = {};
+    for (const r of sc) {
+      const anchor = r.is_combo_component ? parentById[r.combo_parent_id] : r;
+      if (!anchor || anchor.plant_week == null) continue;
+      const yr = anchor.plant_year || now.getFullYear();
+      const mon = mondayOf(anchor.plant_week, yr);
+      if (mon < new Date(now.getTime() - 3 * 86400000) || mon > new Date(now.getTime() + 42 * 86400000)) continue;
+      const zone = bmap[anchor.bench_id]?.zone_label || "(no zone)";
+      const key = `${zone}__${anchor.plant_week}__${yr}`;
+      const g = groups[key] || (groups[key] = { zone, wk: anchor.plant_week, yr, mon, pots: {}, items: {}, benches: new Set(), fillCuFt: 0, flaggedPots: 0 });
+      if (r.is_combo_component) {
+        const it = g.items[anchor.item_name || anchor.id];
+        if (it) it.liners += +r.qty_plants_ordered || 0;
+        continue;
+      }
+      if (!(+r.qty_pots > 0)) continue;
+      const c = cmap[r.container_id];
+      const cKey = c ? `${c.sku ? c.sku + " (" + c.name + ")" : c.name}` : "(no container)";
+      g.pots[cKey] = (g.pots[cKey] || 0) + +r.qty_pots;
+      g.fillCuFt += (+r.qty_pots) * (c && +c.fill_volume_cu_ft ? +c.fill_volume_cu_ft : 0.35);
+      if (r.is_combo_component) g.flaggedPots += +r.qty_pots;
+      const iKey = r.item_name || r.id;
+      const it = g.items[iKey] || (g.items[iKey] = { name: r.item_name || "(unnamed)", pots: 0, liners: 0, ppp: +r.ppp || 1, benches: new Set() });
+      it.pots += +r.qty_pots;
+      it.liners += (+r.qty_pots) * (+r.ppp || 1);
+      if (bmap[r.bench_id]?.code) { it.benches.add(bmap[r.bench_id].code); g.benches.add(bmap[r.bench_id].code); }
+    }
+
+    const { data: existing } = await db.from("manager_tasks")
+      .select("id,title,status,description").eq("plan_id", plan.id)
+      .or("title.like.Pot fill —%,title.like.PLANT%");
+
+    for (const g of Object.values(groups)) {
+      const totalPots = Object.values(g.pots).reduce((a, b) => a + b, 0);
+      if (!totalPots) continue;
+      const benchList = [...g.benches].sort().join(", ");
+      const friday = new Date(g.mon); friday.setUTCDate(friday.getUTCDate() - 3);
+
+      // ── pot fill ──
+      const fillTitle = `Pot fill — ${g.zone} (wk${g.wk})`;
+      const fillDesc = [
+        `**FILL ${totalPots.toLocaleString()} POTS** — ${g.zone}, for wk${g.wk} planting (${iso(g.mon)}).`,
+        "",
+        ...Object.entries(g.pots).sort((a, b) => b[1] - a[1]).map(([k, v]) => `  • ${v.toLocaleString()} × ${k}`),
+        "",
+        `**Soil:** ~${Math.max(1, Math.ceil(g.fillCuFt / 8))} bag(s). **Stage on:** ${benchList}.`,
+        `Fill by ${iso(friday)} — not more than a week ahead.`,
+      ].join("\n");
+
+      // ── planting ──
+      const items = Object.values(g.items).filter(i => i.pots > 0).sort((a, b) => b.pots - a.pots);
+      const totalLiners = items.reduce((a, i) => a + i.liners, 0);
+      const plantTitle = `PLANT — ${g.zone} (wk${g.wk})`;
+      const plantDesc = [
+        `**PLANT ${totalPots.toLocaleString()} POTS / ${totalLiners.toLocaleString()} LINERS** — ${g.zone}, week of ${iso(g.mon)}.`,
+        "",
+        ...items.map(i => `  • ${i.pots.toLocaleString()} × ${i.name} — ${i.liners.toLocaleString()} liners${i.ppp > 1 ? ` (ppp ${i.ppp})` : ""} — ${[...i.benches].sort().join(" ")}`),
+        "",
+        "Water-in immediately after planting.",
+      ].join("\n");
+
+      const upserts = [
+        { title: fillTitle, match: t => t.title === fillTitle, desc: fillDesc, due: iso(friday) },
+        { title: plantTitle, match: t => new RegExp(`^PLANT.*— ${g.zone.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\(wk${g.wk}\\)`).test(t.title), desc: plantDesc, due: iso(g.mon) },
+      ];
+      for (const u of upserts) {
+        const hit = (existing || []).find(u.match);
+        if (hit) {
+          if (hit.status === "pending" && hit.description !== u.desc) {
+            await db.from("manager_tasks").update({ description: u.desc, bench_numbers: [...g.benches].sort(), target_date: u.due }).eq("id", hit.id);
+            out.updated++;
+          }
+        } else {
+          const due = new Date(u.due + "T12:00:00Z");
+          const jan4 = new Date(Date.UTC(due.getUTCFullYear(), 0, 4));
+          const wkNum = Math.ceil((((due - jan4) / 86400000) + ((jan4.getUTCDay() + 6) % 7) + 1) / 7);
+          await db.from("manager_tasks").insert({
+            id: require("crypto").randomUUID(), title: u.title, description: u.desc,
+            plan_id: plan.id, category: "production", location: g.zone,
+            bench_numbers: [...g.benches].sort(), status: "pending",
+            target_date: u.due, week_number: wkNum, year: due.getUTCFullYear(),
+            created_by: "system", priority: 50,
+          });
+          out.created++;
+        }
+      }
+    }
+  }
+  return out;
+}
+
+module.exports = { generateCountTasks, harvestCountTasks, bridgeOrdersToDeliveries, syncDeliveriesBack, syncProductionTasks };
