@@ -1847,6 +1847,10 @@ function SalesVsPlanTab({ plan }) {
       for (const t of tot) { const it = skuToItem[t.sku]; if (!it) continue; sold[it] = (sold[it] || 0) + +t.units; rev[it] = (rev[it] || 0) + +t.revenue; prc[it] = (prc[it] || 0) + +t.avg_price; prn[it] = (prn[it] || 0) + 1; }
       for (const w of wk) { const it = skuToItem[w.sku]; if (!it) continue; (wkly[it] = wkly[it] || Array(weeks.length).fill(0))[wIdx[+w.wk]] += +w.units; }
       const seasonRev = Array(weeks.length).fill(0); for (const w of wk) seasonRev[wIdx[+w.wk]] += +w.revenue;
+      // items born this cycle (duplicates, program conversions) — marked NEW in the table
+      const newItems = new Set(sc.filter(r => /^(duplicated from|from program:)/i.test(r.notes || "")).map(r => r.item_name));
+      // flagged at creation as placeholder material and still without a real source
+      const needsSrc = new Set(sc.filter(r => /needs sourcing/i.test(r.notes || "") && !r.broker && !r.supplier).map(r => r.item_name));
       const out = [];
       for (const it of Object.keys(planByItem)) {
         const planned = planByItem[it], s = sold[it] || 0, price = prn[it] ? prc[it] / prn[it] : 0;
@@ -1882,10 +1886,6 @@ function SalesVsPlanTab({ plan }) {
       // replaying last year's master list.
       // dual-use components (ivy, vinca vine, …) ARE plan items — they live in
       // their own bucket above, but they must not read as "missing"
-      // items born this cycle (duplicates, program conversions) — marked NEW in the table
-      const newItems = new Set(sc.filter(r => /^(duplicated from|from program:)/i.test(r.notes || "")).map(r => r.item_name));
-      // flagged at creation as placeholder material and still without a real source
-      const needsSrc = new Set(sc.filter(r => /needs sourcing/i.test(r.notes || "") && !r.broker && !r.supplier).map(r => r.item_name));
       const inPlan = new Set([...Object.keys(planByItem), ...Object.keys(dualUse)]);
       const gaps = {};
       for (const t of tot) {
