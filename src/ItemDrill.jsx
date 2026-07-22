@@ -8,6 +8,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getSupabase } from "./supabase";
 import { QuotePicker } from "./ProgramBuilder";
+import { useAuth } from "./Auth";
 
 const C = { dark: "#1e2d1a", light: "#7fb069", border: "#dfe7d8", muted: "#7a8c74",
   text: "#2f3b2a", red: "#c0392b", amber: "#c98a2e", green: "#2e7d32" };
@@ -16,11 +17,33 @@ const pct = n => n == null ? "—" : `${Math.round(n * 100)}%`;
 
 export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose }) {
   const sb = getSupabase();
+  const { displayName } = useAuth();
   const [detail, setDetail] = useState(null);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState(tgt?.note || "");
   const [addSearch, setAddSearch] = useState("");
   const [addHits, setAddHits] = useState([]);
+  const [view, setView] = useState("detail");   // detail | history
+  const [history, setHistory] = useState(null);
+
+  // every change is a record — the History tab and the order-confirmation sync both read this
+  async function logChange(change_type, detail_obj, variety_key = null) {
+    try {
+      await sb.from("item_change_log").insert({
+        plan_id: plan.id, item_name: row.item, variety_key,
+        change_type, detail: detail_obj, changed_by: displayName || null, source: "drill",
+      });
+    } catch { /* history must never block the edit itself */ }
+  }
+  useEffect(() => {
+    if (view !== "history") return;
+    (async () => {
+      const { data } = await sb.from("item_change_log").select("*")
+        .eq("plan_id", plan.id).eq("item_name", row.item)
+        .order("changed_at", { ascending: false }).limit(200);
+      setHistory(data || []);
+    })();
+  }, [view, row.item]); // eslint-disable-line
 
   async function load() {
     const { data: parents } = await sb.from("scheduled_crops")
@@ -43,7 +66,14 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
     const { data: pl } = await sb.from("v_scheduled_crops_pl")
       .select("id,direct_cost_total").in("id", ids.length ? ids : ["00000000-0000-0000-0000-000000000000"]);
     const costById = Object.fromEntries((pl || []).map(r => [r.id, +r.direct_cost_total || 0]));
-    setDetail({ parents: parents || [], children, vmap, costById });
+    // bench ids → human labels (zone + bench code), not raw uuids
+    const bids = [...new Set((parents || []).map(p => p.bench_id).filter(Boolean))];
+    let bmap = {};
+    if (bids.length) {
+      const { data: bs } = await sb.from("benches").select("id,code,zone_label,position").in("id", bids);
+      (bs || []).forEach(b => { bmap[b.id] = b; });
+    }
+    setDetail({ parents: parents || [], children, vmap, costById, bmap });
   }
   useEffect(() => { load(); }, [row.item]); // eslint-disable-line
 
@@ -121,6 +151,11 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
           });
         }
       }
+      const v = detail.vmap[variety_id];
+      await logChange("component_qty", {
+        plant: v ? `${v.crop_name || ""} ${v.variety || ""}`.trim() : variety_id,
+        per_basket: per,
+      }, v?.variety_key || null);
       await load();
     } catch (e) { window.alert("Couldn't update component: " + (e.message || e)); }
     setBusy(false);
@@ -145,6 +180,12 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
           ...(t.kind === "parent" && prop ? { prop_method: prop } : {}),
         }).eq("id", x.id);
       }
+      const w0 = rows[0] || {};
+      await logChange("sourcing_change", {
+        plant: t.label, kind: t.kind, rows: rows.length,
+        before: { broker: w0.broker, supplier: w0.supplier, landed: +w0.liner_unit_cost || null },
+        after: { broker: r.broker, supplier: r.supplier, landed: +r.landed, form: r.form_class, form_raw: r.form_raw },
+      }, r.variety_key);
       await load();
     } catch (e) { window.alert("Couldn't update sourcing: " + (e.message || e)); }
     setBusy(false);
@@ -185,6 +226,10 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
         });
         if (error) throw error;
       }
+      await logChange("component_added", {
+        plant: r.variety, per_basket: 1,
+        sourcing: { broker: r.broker, supplier: r.supplier, form: r.form_class, form_raw: r.form_raw, landed: +r.landed },
+      }, r.variety_key);
       await load();
     } catch (e) { window.alert("Couldn't add component: " + (e.message || e)); }
     setBusy(false);
@@ -199,6 +244,10 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
       for (let i = 0; i < ids.length; i += 100) {
         await sb.from("scheduled_crops").delete().in("id", ids.slice(i, i + 100));
       }
+      const v = detail.vmap[variety_id];
+      await logChange("component_removed", {
+        plant: v ? `${v.crop_name || ""} ${v.variety || ""}`.trim() : variety_id, rows: ids.length,
+      }, v?.variety_key || null);
       await load();
     } catch (e) { window.alert("Couldn't remove: " + (e.message || e)); }
     setBusy(false);
@@ -244,9 +293,43 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
               {agg?.comps.length ? ` · combo, ${agg.comps.length} components` : ""}
             </div>
           </div>
-          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 26, color: C.muted, cursor: "pointer" }}>×</button>
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            {[["detail", "Details"], ["history", "🕘 History"]].map(([k, l]) => (
+              <button key={k} onClick={() => setView(k)}
+                style={{ padding: "5px 12px", borderRadius: 8, fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit",
+                  border: `1.5px solid ${view === k ? C.light : C.border}`, background: view === k ? C.light : "#fff", color: view === k ? "#fff" : C.muted }}>{l}</button>
+            ))}
+            <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 26, color: C.muted, cursor: "pointer" }}>×</button>
+          </div>
         </div>
 
+        {view === "history" && (
+          <div style={{ background: "#fff", border: `1px solid ${C.border}`, borderRadius: 10, padding: "11px 13px", marginTop: 12 }}>
+            <div style={{ fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", marginBottom: 6 }}>Change history</div>
+            {history === null ? <div style={{ color: C.muted, fontSize: 13 }}>Loading…</div>
+            : !history.length ? <div style={{ color: C.muted, fontSize: 13 }}>No recorded changes yet — edits from here on land in this log, and order confirmations will file here when they're imported.</div>
+            : history.map(h => {
+                const d = h.detail || {};
+                const when = new Date(h.changed_at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+                const line =
+                  h.change_type === "sourcing_change" ? `${d.plant}: ${[d.before?.broker, d.before?.supplier].filter(Boolean).join("/") || "?"} @ ${d.before?.landed != null ? money(+d.before.landed) : "?"} → ${[d.after?.broker, d.after?.supplier].filter(Boolean).join("/")} ${d.after?.form || ""}${d.after?.form_raw ? ` (${d.after.form_raw})` : ""} @ ${money(+d.after?.landed)}`
+                  : h.change_type === "component_qty" ? `${d.plant} set to ${d.per_basket}/basket`
+                  : h.change_type === "component_added" ? `added ${d.plant} at ${d.per_basket}/basket — ${[d.sourcing?.broker, d.sourcing?.supplier].filter(Boolean).join("/")} @ ${money(+d.sourcing?.landed)}`
+                  : h.change_type === "component_removed" ? `removed ${d.plant}`
+                  : h.change_type === "order_confirmation" ? `order confirmation: ${d.summary || JSON.stringify(d)}`
+                  : JSON.stringify(d);
+                return (
+                  <div key={h.id} style={{ display: "flex", gap: 10, fontSize: 12.5, padding: "5px 0", borderBottom: `1px solid ${C.border}` }}>
+                    <span style={{ color: C.muted, minWidth: 108, whiteSpace: "nowrap" }}>{when}</span>
+                    <span style={{ flex: 1 }}>{line}</span>
+                    <span style={{ color: C.muted, whiteSpace: "nowrap" }}>{[h.changed_by, h.source !== "drill" ? h.source : null].filter(Boolean).join(" · ")}</span>
+                  </div>
+                );
+              })}
+          </div>
+        )}
+
+        {view !== "history" && <>
         {/* sales story */}
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "12px 0" }}>
           <Stat l="Planned" v={row.planned.toLocaleString()} />
@@ -350,14 +433,19 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
         {detail && detail.parents.length > 0 && (
           <div style={{ background: "#fff", border: `1px solid ${C.border}`, borderRadius: 10, padding: "11px 13px", marginTop: 12 }}>
             <div style={{ fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", marginBottom: 6 }}>Rounds & benches</div>
-            {detail.parents.sort((a, b) => (a.plant_week || 0) - (b.plant_week || 0)).map(p => (
+            {detail.parents.sort((a, b) => (a.plant_week || 0) - (b.plant_week || 0)).map(p => {
+              const b = detail.bmap?.[p.bench_id];
+              return (
               <div key={p.id} style={{ display: "flex", gap: 10, fontSize: 12.5, padding: "3px 0", flexWrap: "wrap" }}>
-                <span style={{ fontFamily: "monospace", fontWeight: 700 }}>{p.bench_id || "—"}</span>
+                <span style={{ fontWeight: 700 }} title={p.bench_id || ""}>
+                  {b ? <>{b.zone_label} · <span style={{ fontFamily: "monospace" }}>{b.code}</span>{b.position != null ? <span style={{ color: C.muted, fontWeight: 400 }}> (row {b.position})</span> : null}</>
+                     : p.bench_id ? "unassigned bench" : "no bench yet"}
+                </span>
                 <span>{(+p.qty_pots).toLocaleString()} × ppp {p.ppp}</span>
                 <span style={{ color: C.muted }}>plant wk{p.plant_week}/{String(p.plant_year).slice(2)} → ready wk{p.ready_week ?? "?"}</span>
                 <span style={{ color: C.muted, marginLeft: "auto" }}>{[p.prop_method, p.broker || p.supplier].filter(Boolean).join(" · ")}</span>
               </div>
-            ))}
+            ); })}
           </div>
         )}
 
@@ -397,7 +485,11 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
             })()}
             {agg.comps.map(c => (
               <div key={c.variety_id} style={{ display: "flex", gap: 8, alignItems: "center", padding: "4px 0", fontSize: 12.5, flexWrap: "wrap" }}>
-                <b style={{ flex: 1, minWidth: 140 }}>{c.label}</b>
+                <b onClick={() => setQuoteFor({ kind: "component", variety_id: c.variety_id, label: c.label,
+                    vkey: detail?.vmap[c.variety_id]?.variety_key || null,
+                    current: { variety: c.label, broker: c.broker, supplier: c.supplier, landed: c.liner } })}
+                  title="view quotes / change sourcing"
+                  style={{ flex: 1, minWidth: 140, cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted", textUnderlineOffset: 3 }}>{c.label}</b>
                 <label style={{ color: C.muted, fontSize: 11.5 }}>per basket
                   <input defaultValue={c.per} inputMode="decimal" disabled={busy}
                     onBlur={e => { const v = parseFloat(e.target.value); if (!isNaN(v) && v !== c.per) setPer(c.variety_id, Math.max(0, v)); }}
@@ -438,6 +530,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
             </div>
           </div>
         )}
+        </>}
       </div>
       {quoteFor && <QuotePicker sb={sb} varietyKey={quoteFor.vkey} initialQuery={quoteFor.label}
         current={quoteFor.current} onPick={applyQuote} onClose={() => setQuoteFor(null)} />}
