@@ -1918,18 +1918,8 @@ function SalesVsPlanTab({ plan }) {
     if (error) window.alert("Decision did NOT save: " + error.message);
     setSavingT(s => { const n = { ...s }; delete n[r.item]; return n; });
   }
-  if (!rows) return <div style={{ padding: 20, color: COLORS.muted }}>Loading sales vs plan…</div>;
-  if (!rows.length) return <div style={{ padding: 20, color: COLORS.muted }}>No matched sales yet — the SKU crosswalk (sales_sku_map) is empty for this plan's items.</div>;
-  const spark = a => { const m = Math.max(...a) || 1; return a.map(v => " ▁▂▃▄▅▆▇█"[Math.round(v / m * 8)]).join(""); };
-  // sell-through compares item quantity to sold units; "raw" shows the as-entered qty_pots
-  const dPlanned = r => basis === "raw" ? r.planRaw : r.planned;
-  const dSold = r => r.sold;
-  const core = rows.filter(r => !r.dualUse); // dual-use rows would distort every ratio
-  const tPlanned = core.reduce((a, r) => a + dPlanned(r), 0), tSold = core.reduce((a, r) => a + dSold(r), 0);
-  const tOver = core.reduce((a, r) => a + r.over, 0), tLostEst = core.reduce((a, r) => a + r.lostEst, 0), tRev = core.reduce((a, r) => a + r.rev, 0);
-  const soldOutCount = rows.filter(r => r.soldOut).length;
-  const maxR = Math.max(...season.seasonRev, 1); const pkWk = season.weeks[season.seasonRev.indexOf(maxR)];
-  // wk ↔ date axis + Mother's Day star, same as the item drill
+  // wk ↔ date axis + Mother's Day star — HOOKS, so they live ABOVE the early
+  // returns (below them the hook count changes between renders and React dies)
   const salesYear2 = (parseInt(String(plan?.name || "").match(/20\d\d/)?.[0]) || new Date().getFullYear() + 1) - 1;
   const [wkAsDate, setWkAsDate] = usePersistedState("gh_svp_wkdate", false);
   const wkDateLabel = (w, offset = 0) => {
@@ -1946,6 +1936,18 @@ function SalesVsPlanTab({ plan }) {
     const ys = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));
     return Math.ceil((((t - ys) / 86400000) + 1) / 7);
   }, [salesYear2]);
+
+  if (!rows) return <div style={{ padding: 20, color: COLORS.muted }}>Loading sales vs plan…</div>;
+  if (!rows.length) return <div style={{ padding: 20, color: COLORS.muted }}>No matched sales yet — the SKU crosswalk (sales_sku_map) is empty for this plan's items.</div>;
+  const spark = a => { const m = Math.max(...a) || 1; return a.map(v => " ▁▂▃▄▅▆▇█"[Math.round(v / m * 8)]).join(""); };
+  // sell-through compares item quantity to sold units; "raw" shows the as-entered qty_pots
+  const dPlanned = r => basis === "raw" ? r.planRaw : r.planned;
+  const dSold = r => r.sold;
+  const core = rows.filter(r => !r.dualUse); // dual-use rows would distort every ratio
+  const tPlanned = core.reduce((a, r) => a + dPlanned(r), 0), tSold = core.reduce((a, r) => a + dSold(r), 0);
+  const tOver = core.reduce((a, r) => a + r.over, 0), tLostEst = core.reduce((a, r) => a + r.lostEst, 0), tRev = core.reduce((a, r) => a + r.rev, 0);
+  const soldOutCount = rows.filter(r => r.soldOut).length;
+  const maxR = Math.max(...season.seasonRev, 1); const pkWk = season.weeks[season.seasonRev.indexOf(maxR)];
   const sizes = ["all", ...Array.from(new Set(rows.map(r => r.size))).sort()];
   const q = query.trim().toLowerCase();
   const sortVal = { item: r => r.item, st: r => r.st ?? -1, price: r => r.price ?? -1, firstWk: r => r.firstWk ?? 99, planned: r => dPlanned(r), sold: r => r.sold, status: r => r.status, over: r => r.over, lostEst: r => r.lostEst, rev: r => r.rev, peak: r => r.peak ?? 99 };
