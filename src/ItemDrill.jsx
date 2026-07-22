@@ -466,6 +466,10 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
             </div>
           </div>
           <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <button onClick={() => { setView("detail"); setDup(d => d ? null : { name: `${row.item} 2`, qty: String(row.planned || ""), price: "" }); }}
+              title="copy this item as a new line — recipe, sourcing, weeks; no benches"
+              style={{ padding: "5px 12px", borderRadius: 8, fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit",
+                border: `1.5px solid ${C.border}`, background: "#fff", color: C.text }}>⧉ Duplicate</button>
             {[["detail", "Details"], ["history", "🕘 History"]].map(([k, l]) => (
               <button key={k} onClick={() => setView(k)}
                 style={{ padding: "5px 12px", borderRadius: 8, fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit",
@@ -562,13 +566,6 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
             {agg && (
               <button onClick={setForSeason} style={{ marginLeft: agg.comps.length > 0 || detail?.parents.some(p => +p.ppp > 1) ? 0 : "auto", padding: "5px 12px", borderRadius: 8, border: "none", background: C.green, color: "#fff", fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
                 ✓ Set for {plan.name}
-              </button>
-            )}
-            {detail?.parents.length > 0 && (
-              <button onClick={() => setDup({ name: `${row.item} 2`, qty: String(row.planned || ""), price: "" })}
-                title="copy this item as a new line — recipe, sourcing, weeks; no benches"
-                style={{ padding: "5px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: "#fff", color: C.text, fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
-                ⧉ Duplicate…
               </button>
             )}
           </div>
