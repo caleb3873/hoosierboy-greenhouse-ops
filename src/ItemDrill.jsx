@@ -343,6 +343,38 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
 
   const shift = tgt?.ready_shift || 0;
   const baseReady = agg?.readyMin ?? row.ship;
+
+  // Divide the projection total into k planting rounds, each covering an equal
+  // slice of the 2026 sales volume — the round's finish week is where its slice
+  // of demand started. No sales history → even split, two weeks apart.
+  function salesSplit(k) {
+    const total = tgt?.target_units ?? row.planned;
+    const wk = row.wk || [], salesTot = wk.reduce((a, b) => a + b, 0);
+    if (!salesTot || !weeks?.length) {
+      const per = Math.floor(total / k);
+      return Array.from({ length: k }, (_, i) => ({
+        units: i === k - 1 ? total - per * (k - 1) : per,
+        ready_week: (baseReady ?? weeks?.[0] ?? 14) + i * 2,
+      }));
+    }
+    const out = []; let seg = 0, segStart = 0, used = 0;
+    for (let i = 0; i < wk.length; i++) {
+      seg += wk[i];
+      if (out.length < k - 1 && seg >= salesTot / k && i < wk.length - 1) {
+        const u = Math.round(total * seg / salesTot);
+        out.push({ units: u, ready_week: weeks[segStart] });
+        used += u; segStart = i + 1; seg = 0;
+      }
+    }
+    out.push({ units: total - used, ready_week: weeks[segStart] });
+    return out;
+  }
+  function saveRounds(rounds) {
+    onSaveTarget({ rounds });
+    logChange("rounds_set", rounds?.length
+      ? { rounds: rounds.map(r => ({ units: r.units, ready_week: r.ready_week })) }
+      : { rounds: null, note: "back to one batch" });
+  }
   const effReady = baseReady != null ? baseReady + shift : null;
   const spark = a => { if (!a) return null; const m = Math.max(...a) || 1; return a; };
   const curve = spark(row.wk);
@@ -400,6 +432,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
                   : h.change_type === "component_removed" ? `removed ${d.plant}`
                   : h.change_type === "prop_tray" ? `${d.plant} now sticks in ${d.tray}`
                   : h.change_type === "ppp_change" ? `${d.plant} set to ${d.ppp} plants/pot`
+                  : h.change_type === "rounds_set" ? (d.rounds ? `split into ${d.rounds.length} rounds — ${d.rounds.map(r => `${(+r.units).toLocaleString()} @ wk${r.ready_week}`).join(", ")}` : "rounds removed — back to one batch")
                   : h.change_type === "combo_set" ? `✓ ${d.kind === "item" ? "item" : "combo"} SET for ${d.season} — ${(d.recipe || []).map(r => `${r.per_basket}× ${r.plant}`).join(", ")}${d.cost_per_basket != null ? ` (${money(d.cost_per_basket)}/unit)` : ""}`
                   : h.change_type === "layout_arranged" ? `planting layout arranged (${d.dots || "?"} plants placed${d.rows ? `, ${d.rows} bench rows` : ""})`
                   : h.change_type === "order_confirmation" ? `order confirmation: ${d.summary || JSON.stringify(d)}`
@@ -463,11 +496,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
           </div>
           {agg && agg.materials.length > 0 && (
             <div style={{ fontSize: 12.5, color: C.text, marginBottom: 8 }}>
-              🌱 <b>Item:</b> {agg.materials.map((m, i) => (
-                // a cost with no source behind it is a guess — show prices only when we
-                // know who quoted them
-                <span key={i}>{i > 0 ? " · " : ""}{m.variety}{m.prop ? ` — ${m.prop}` : ""}{m.cost != null && m.src ? ` @ ${money(m.cost)}/plant (${m.src})` : ""}</span>
-              ))}
+              🌱 <b>Item:</b> {agg.materials.map(m => m.variety).join(" · ")}
             </div>
           )}
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
@@ -511,6 +540,53 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
                 {shift !== 0 && <button style={{ ...chip, border: "none", color: C.red }} onClick={() => onSaveTarget({ ready_shift: null })}>×</button>}
               </div>
             )}
+          </div>
+
+          {/* planting rounds — one total in the projection, split into waves with their
+              own finish dates. Auto-split follows the 2026 weekly sales curve. */}
+          <div style={{ marginTop: 9 }}>
+            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+              <span style={{ fontSize: 12.5 }}>Rounds:</span>
+              {!(tgt?.rounds?.length) ? <>
+                <span style={{ fontSize: 11.5, color: C.muted }}>plants as one batch</span>
+                <button style={chip} onClick={() => saveRounds(salesSplit(2))}>＋ split into rounds</button>
+              </> : <>
+                <button style={chip} title="re-divide the current number of rounds by the 2026 weekly sales curve"
+                  onClick={() => saveRounds(salesSplit(tgt.rounds.length))}>↻ re-split by sales</button>
+                <button style={chip} onClick={() => saveRounds([...tgt.rounds, { units: 0, ready_week: (tgt.rounds[tgt.rounds.length - 1]?.ready_week ?? effReady ?? 14) + 2 }])}>＋ add round</button>
+                <button style={{ ...chip, border: "none", color: C.red }} onClick={() => saveRounds(null)}>× back to one batch</button>
+                {(() => {
+                  const sum = tgt.rounds.reduce((a, r) => a + (+r.units || 0), 0);
+                  const total = tgt?.target_units ?? row.planned;
+                  return sum !== total
+                    ? <span style={{ fontSize: 11.5, color: C.amber, fontWeight: 700 }}>rounds total {sum.toLocaleString()} ≠ {total.toLocaleString()} target (Δ{(sum - total).toLocaleString()})</span>
+                    : <span style={{ fontSize: 11.5, color: C.green, fontWeight: 700 }}>✓ matches target</span>;
+                })()}
+              </>}
+            </div>
+            {(tgt?.rounds || []).map((r, i) => {
+              const next = tgt.rounds[i + 1];
+              const sold = (row.wk || []).reduce((s, u, j) => s + (weeks[j] >= r.ready_week && (next == null || weeks[j] < next.ready_week) ? u : 0), 0);
+              const patch = (p) => saveRounds(tgt.rounds.map((x, j) => j === i ? { ...x, ...p } : x));
+              return (
+                <div key={i} style={{ display: "flex", gap: 7, alignItems: "center", padding: "3px 0 0 14px", fontSize: 12.5, flexWrap: "wrap" }}>
+                  <span style={{ color: C.muted, fontWeight: 800, fontSize: 11 }}>R{i + 1}</span>
+                  <input defaultValue={r.units} key={`u${i}-${r.units}`} inputMode="numeric"
+                    onBlur={e => { const v = parseInt(e.target.value.replace(/\D/g, "")); if (!isNaN(v) && v !== r.units) patch({ units: v }); }}
+                    onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                    style={{ width: 62, padding: "4px 6px", textAlign: "right", borderRadius: 7, border: `1px solid ${C.border}`, fontSize: 12.5, fontFamily: "inherit" }} />
+                  <span style={{ fontSize: 11.5, color: C.muted }}>finish</span>
+                  <button style={chip} onClick={() => patch({ ready_week: r.ready_week - 1 })}>◀</button>
+                  <b>wk{r.ready_week}</b>
+                  <button style={chip} onClick={() => patch({ ready_week: r.ready_week + 1 })}>▶</button>
+                  <span style={{ fontSize: 11, color: C.muted }} title="what 2026 actually sold in this round's window">
+                    2026 sold {sold.toLocaleString()} in wk{r.ready_week}{next ? `–${next.ready_week - 1}` : "+"}
+                  </span>
+                  {tgt.rounds.length > 1 && <button onClick={() => saveRounds(tgt.rounds.filter((_, j) => j !== i))}
+                    style={{ background: "none", border: "none", color: C.red, cursor: "pointer", fontWeight: 800 }}>×</button>}
+                </div>
+              );
+            })}
           </div>
           <div style={{ display: "flex", gap: 6, marginTop: 9 }}>
             <input value={note} onChange={e => setNote(e.target.value)} onBlur={() => { if ((note.trim() || null) !== (tgt?.note ?? null)) onSaveTarget({ note: note.trim() || null }); }}
