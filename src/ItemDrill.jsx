@@ -7,6 +7,7 @@
 // quantity stay DECISIONS in plan_targets, applied by production later.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getSupabase } from "./supabase";
+import { QuotePicker } from "./ProgramBuilder";
 
 const C = { dark: "#1e2d1a", light: "#7fb069", border: "#dfe7d8", muted: "#7a8c74",
   text: "#2f3b2a", red: "#c0392b", amber: "#c98a2e", green: "#2e7d32" };
@@ -36,7 +37,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
     const vids = [...new Set([...children.map(c => c.variety_id), ...(parents || []).map(p => p.variety_id)].filter(Boolean))];
     let vmap = {};
     if (vids.length) {
-      const { data: vs } = await sb.from("variety_library").select("id,crop_name,variety").in("id", vids);
+      const { data: vs } = await sb.from("variety_library").select("id,crop_name,variety,variety_key").in("id", vids);
       (vs || []).forEach(v => { vmap[v.id] = v; });
     }
     const { data: pl } = await sb.from("v_scheduled_crops_pl")
@@ -79,6 +80,8 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
       const v = detail.vmap[p.variety_id];
       const k = [v ? `${v.crop_name || ""} ${v.variety || ""}`.trim() : "?", p.prop_method, p.broker || p.supplier, p.liner_unit_cost].join("|");
       matKeys[k] = { variety: v ? `${v.crop_name || ""} ${v.variety || ""}`.trim() : "?", prop: p.prop_method,
+        variety_id: p.variety_id, vkey: v?.variety_key || null,
+        broker: p.broker, supplier: p.supplier,
         src: [p.broker, p.supplier].filter(Boolean).join(" / "), cost: +p.liner_unit_cost || null };
     }
     // per-basket cost anatomy: container+soil vs plants — so a mix change shows
@@ -121,6 +124,31 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
       await load();
     } catch (e) { window.alert("Couldn't update component: " + (e.message || e)); }
     setBusy(false);
+  }
+
+  // Re-source a plant (parent or combo component) from the quote catalog.
+  // Nothing writes until the confirm — the picker is a browse, the confirm is the save.
+  const [quoteFor, setQuoteFor] = useState(null);   // {kind, variety_id, label, vkey, current}
+  async function applyQuote(r) {
+    const t = quoteFor; if (!t || !detail) return;
+    const rows = t.kind === "component"
+      ? detail.children.filter(c => c.variety_id === t.variety_id)
+      : detail.parents.filter(p => p.variety_id === t.variety_id);
+    const FORM_MAP = { urc: "URC", callused: "CALL", plug: "PLUG", liner: "PLUG", rooted: "PLUG", bareroot: "BULB", seed: "SEED" };
+    const prop = FORM_MAP[String(r.form_class || "").toLowerCase()] || null;
+    if (!window.confirm(`Source ${t.label} from ${[r.broker, r.supplier].filter(Boolean).join(" / ")}\n${r.form_class}${r.form_raw ? ` (${r.form_raw})` : ""} @ $${(+r.landed).toFixed(3)}/plant\n\nApplies to ${rows.length} plan row(s) — liner cost changes immediately.`)) return;
+    setBusy(true);
+    try {
+      for (const x of rows) {
+        await sb.from("scheduled_crops").update({
+          liner_unit_cost: +r.landed, broker: r.broker, supplier: r.supplier,
+          ...(t.kind === "parent" && prop ? { prop_method: prop } : {}),
+        }).eq("id", x.id);
+      }
+      await load();
+    } catch (e) { window.alert("Couldn't update sourcing: " + (e.message || e)); }
+    setBusy(false);
+    setQuoteFor(null);
   }
 
   async function removeComponent(variety_id) {
@@ -215,7 +243,14 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
           {agg && agg.materials.length > 0 && (
             <div style={{ fontSize: 12.5, color: C.text, marginBottom: 8 }}>
               🌱 <b>Bought:</b> {agg.materials.map((m, i) => (
-                <span key={i}>{i > 0 ? " · " : ""}{m.variety}{m.prop ? ` — ${m.prop}` : ""}{m.cost != null ? ` @ ${money(m.cost)}/plant` : ""}{m.src ? ` (${m.src})` : ""}</span>
+                <span key={i}>{i > 0 ? " · " : ""}
+                  <span onClick={() => setQuoteFor({ kind: "parent", variety_id: m.variety_id, label: m.variety, vkey: m.vkey,
+                      current: { variety: m.variety, broker: m.broker, supplier: m.supplier, landed: m.cost } })}
+                    title="view quotes / change sourcing"
+                    style={{ cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted", textUnderlineOffset: 3 }}>
+                    {m.variety}{m.prop ? ` — ${m.prop}` : ""}{m.cost != null ? ` @ ${money(m.cost)}/plant` : ""}{m.src ? ` (${m.src})` : ""}
+                  </span>
+                </span>
               ))}
             </div>
           )}
@@ -326,7 +361,13 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
                     onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
                     style={{ width: 52, marginLeft: 5, padding: "4px 6px", textAlign: "right", borderRadius: 7, border: `1px solid ${C.border}`, fontSize: 12.5, fontFamily: "inherit" }} />
                 </label>
-                <span style={{ color: C.muted }}>{c.plants.toLocaleString()} plants{c.liner != null ? ` @ ${money(c.liner)}` : ""}</span>
+                <span onClick={() => setQuoteFor({ kind: "component", variety_id: c.variety_id, label: c.label,
+                    vkey: detail?.vmap[c.variety_id]?.variety_key || null,
+                    current: { variety: c.label, broker: c.broker, supplier: c.supplier, landed: c.liner } })}
+                  title="view quotes / change sourcing"
+                  style={{ color: C.muted, cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted", textUnderlineOffset: 3 }}>
+                  {c.plants.toLocaleString()} plants{c.liner != null ? ` @ ${money(c.liner)}` : ""}{(c.broker || c.supplier) ? ` (${[c.broker, c.supplier].filter(Boolean).join(" / ")})` : ""}
+                </span>
                 <button disabled={busy} onClick={() => removeComponent(c.variety_id)}
                   style={{ background: "none", border: "none", color: C.red, cursor: "pointer", fontWeight: 800, fontSize: 15 }}>×</button>
               </div>
@@ -351,6 +392,8 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
           </div>
         )}
       </div>
+      {quoteFor && <QuotePicker sb={sb} varietyKey={quoteFor.vkey} initialQuery={quoteFor.label}
+        current={quoteFor.current} onPick={applyQuote} onClose={() => setQuoteFor(null)} />}
     </div>
   );
 }
