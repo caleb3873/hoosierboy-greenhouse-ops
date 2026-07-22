@@ -265,13 +265,16 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
     } catch (e) { window.alert("Couldn't save layout: " + (e.message || e)); }
   }
 
-  // Milestone: the mix is DECIDED for this season. One log line that says so,
-  // with the full recipe snapshotted as it stood.
-  async function setComboForSeason() {
+  // Milestone: this item is DECIDED for the season. One log line that says so,
+  // with the recipe (combo) or the planting spec (monoculture) snapshotted.
+  async function setForSeason() {
     if (!agg) return;
-    const recipe = agg.comps.map(c => ({ plant: c.label, per_basket: c.per, landed: c.liner, broker: c.broker, supplier: c.supplier }));
-    if (!window.confirm(`Set this combo for ${plan.name}?\n\n${recipe.map(r => `${r.per_basket}× ${r.plant}`).join("\n")}\n\nLogs the recipe as decided — edits after this stay visible in history.`)) return;
-    await logChange("combo_set", { season: plan.name, recipe, cost_per_basket: agg.costPer != null ? +agg.costPer.toFixed(2) : null });
+    const isCombo = agg.comps.length > 0;
+    const recipe = isCombo
+      ? agg.comps.map(c => ({ plant: c.label, per_basket: c.per, landed: c.liner, broker: c.broker, supplier: c.supplier }))
+      : agg.materials.map(m => ({ plant: m.variety, per_basket: Math.max(...detail.parents.map(p => +p.ppp || 1)), landed: m.cost, broker: m.broker, supplier: m.supplier }));
+    if (!window.confirm(`Set this ${isCombo ? "combo" : "item"} for ${plan.name}?\n\n${recipe.map(r => `${r.per_basket}× ${r.plant}`).join("\n")}\n\nLogs it as decided — anything edited after this stays visible in history.`)) return;
+    await logChange("combo_set", { season: plan.name, kind: isCombo ? "combo" : "item", recipe, cost_per_basket: agg.costPer != null ? +agg.costPer.toFixed(2) : null });
     if (view === "history") setView("detail"); setView("history");
   }
 
@@ -377,7 +380,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
                   : h.change_type === "component_added" ? `added ${d.plant} at ${d.per_basket}/basket — ${[d.sourcing?.broker, d.sourcing?.supplier].filter(Boolean).join("/")} @ ${money(+d.sourcing?.landed)}`
                   : h.change_type === "component_removed" ? `removed ${d.plant}`
                   : h.change_type === "prop_tray" ? `${d.plant} now sticks in ${d.tray}`
-                  : h.change_type === "combo_set" ? `✓ combo SET for ${d.season} — ${(d.recipe || []).map(r => `${r.per_basket}× ${r.plant}`).join(", ")}${d.cost_per_basket != null ? ` (${money(d.cost_per_basket)}/basket)` : ""}`
+                  : h.change_type === "combo_set" ? `✓ ${d.kind === "item" ? "item" : "combo"} SET for ${d.season} — ${(d.recipe || []).map(r => `${r.per_basket}× ${r.plant}`).join(", ")}${d.cost_per_basket != null ? ` (${money(d.cost_per_basket)}/unit)` : ""}`
                   : h.change_type === "layout_arranged" ? `planting layout arranged (${d.dots || "?"} plants placed${d.rows ? `, ${d.rows} bench rows` : ""})`
                   : h.change_type === "order_confirmation" ? `order confirmation: ${d.summary || JSON.stringify(d)}`
                   : JSON.stringify(d);
@@ -424,7 +427,20 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
 
         {/* decisions: quantity + timing */}
         <div style={{ background: "#eef6e8", border: `1.5px solid ${C.light}`, borderRadius: 10, padding: "11px 13px", marginTop: 12 }}>
-          <div style={{ fontSize: 10.5, fontWeight: 800, color: "#3f6d33", textTransform: "uppercase", marginBottom: 7 }}>2027 decisions</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 7 }}>
+            <span style={{ fontSize: 10.5, fontWeight: 800, color: "#3f6d33", textTransform: "uppercase" }}>2027 decisions</span>
+            {agg && (agg.comps.length > 0 || detail?.parents.some(p => +p.ppp > 1)) && (
+              <button onClick={() => setArranging(true)} title="drag-to-place planting layout"
+                style={{ marginLeft: "auto", padding: "5px 12px", borderRadius: 8, border: `1.5px solid ${C.light}`, background: "#fff", color: C.dark, fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                ✏️ Arrange{detail?.parents.some(p => p.planting_layout) ? "" : " (no layout yet)"}
+              </button>
+            )}
+            {agg && (
+              <button onClick={setForSeason} style={{ marginLeft: agg.comps.length > 0 || detail?.parents.some(p => +p.ppp > 1) ? 0 : "auto", padding: "5px 12px", borderRadius: 8, border: "none", background: C.green, color: "#fff", fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                ✓ Set for {plan.name}
+              </button>
+            )}
+          </div>
           {agg && agg.materials.length > 0 && (
             <div style={{ fontSize: 12.5, color: C.text, marginBottom: 8 }}>
               🌱 <b>Bought:</b> {agg.materials.map((m, i) => {
@@ -515,18 +531,8 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
         {/* combo components — editable */}
         {agg && agg.comps.length > 0 && (
           <div style={{ background: "#fff", border: `1px solid ${C.border}`, borderRadius: 10, padding: "11px 13px", marginTop: 12 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-              <span style={{ fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase" }}>
-                Components {busy && <span style={{ color: C.amber }}>· saving…</span>}
-              </span>
-              <button onClick={() => setArranging(true)}
-                style={{ marginLeft: "auto", padding: "5px 12px", borderRadius: 8, border: `1.5px solid ${C.light}`, background: "#fff", color: C.dark, fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
-                ✏️ Arrange{detail?.parents.some(p => p.planting_layout) ? "" : " (no layout yet)"}
-              </button>
-              <button onClick={setComboForSeason}
-                style={{ padding: "5px 12px", borderRadius: 8, border: "none", background: C.green, color: "#fff", fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
-                ✓ Set combo for {plan.name}
-              </button>
+            <div style={{ fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", marginBottom: 6 }}>
+              Components {busy && <span style={{ color: C.amber }}>· saving…</span>}
             </div>
             {agg.costPer != null && (() => {
               const was = baseline.current, now = agg.costPer;
@@ -621,12 +627,17 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
         current={quoteFor.current} onPick={applyQuote} onClose={() => setQuoteFor(null)} />}
       {addQuote && <QuotePicker sb={sb} varietyKey={null} initialQuery=""
         onPick={addComponentFromQuote} onClose={() => setAddQuote(false)} />}
-      {arranging && agg && (
-        <BasketDesigner
-          layout={detail?.parents.find(p => p.planting_layout)?.planting_layout || { plants: agg.comps.map(c => c.label) }}
-          plantNames={agg.comps.map(c => c.label)}
-          onSave={saveLayout} onClose={() => setArranging(false)} />
-      )}
+      {arranging && agg && (() => {
+        const isCombo = agg.comps.length > 0;
+        const names = isCombo ? agg.comps.map(c => c.label)
+          : [agg.materials[0]?.variety || row.item];
+        const maxPpp = Math.max(...(detail?.parents.map(p => +p.ppp || 1) || [1]));
+        const saved = detail?.parents.find(p => p.planting_layout)?.planting_layout;
+        // monoculture default: the item's ppp as an evenly spaced ring of the one variety
+        const seed = saved || (isCombo ? { plants: names } : { plants: names, edge: { plant: 0, count: maxPpp } });
+        return <BasketDesigner layout={seed} plantNames={names}
+          onSave={saveLayout} onClose={() => setArranging(false)} />;
+      })()}
     </div>
   );
 }
