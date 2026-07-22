@@ -296,6 +296,43 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
     setBusy(false);
   }
 
+  // Duplicate this item as a NEW line — recipe, pot, soil, weeks, layout and
+  // sourcing copied; benches deliberately NOT copied (space is Tyler's call).
+  const [dup, setDup] = useState(null);   // {name, qty, price} while the mini-form is open
+  async function duplicateItem() {
+    if (!detail?.parents.length || busy) return;
+    const name = (dup.name || "").trim();
+    const qty = parseInt(dup.qty);
+    if (!name || !(qty > 0)) { window.alert("Give the new item a name and a quantity."); return; }
+    if (name.toUpperCase() === row.item.toUpperCase()) { window.alert("Pick a different name — that's the original's."); return; }
+    setBusy(true);
+    try {
+      const { data: tmpl, error: te } = await sb.from("scheduled_crops").select("*").eq("id", detail.parents[0].id).single();
+      if (te || !tmpl) throw te || new Error("couldn't load the original");
+      const { data: kids } = await sb.from("scheduled_crops").select("*").eq("combo_parent_id", tmpl.id);
+      const newId = crypto.randomUUID();
+      const parent = { ...tmpl, id: newId, item_name: name, qty_pots: qty, bench_id: null,
+        production_item_id: null, sale_price_per_pot: dup.price === "" ? tmpl.sale_price_per_pot : parseFloat(dup.price),
+        notes: `duplicated from ${row.item}` };
+      delete parent.created_at; delete parent.updated_at;
+      const { error } = await sb.from("scheduled_crops").insert(parent);
+      if (error) throw error;
+      for (const k of kids || []) {
+        const per = (+tmpl.qty_pots > 0) ? (+k.qty_plants_ordered || 0) / +tmpl.qty_pots : 0;
+        const child = { ...k, id: crypto.randomUUID(), combo_parent_id: newId, bench_id: null,
+          production_item_id: null, qty_plants_ordered: Math.round(per * qty) };
+        delete child.created_at; delete child.updated_at;
+        const { error: ce } = await sb.from("scheduled_crops").insert(child);
+        if (ce) throw ce;
+      }
+      await sb.from("item_change_log").insert({
+        plan_id: plan.id, item_name: name, change_type: "duplicated",
+        detail: { from: row.item, qty }, changed_by: displayName || null, source: "drill" });
+      setDup(null); setBusy(false);
+      window.alert(`Created "${name}" (${qty.toLocaleString()} units, no benches yet).\nIt appears in the table on the next refresh — the B2B catalog absorbs it automatically.`);
+    } catch (e) { setBusy(false); window.alert("Couldn't duplicate: " + (e.message || e)); }
+  }
+
   // Which tray a cutting roots in — 105s by default, 50s for the heavy stuff.
   async function setTray(variety_id, tray_id, kind = "component") {
     if (!detail || busy) return;
@@ -526,7 +563,27 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
                 ✓ Set for {plan.name}
               </button>
             )}
+            {detail?.parents.length > 0 && (
+              <button onClick={() => setDup({ name: `${row.item} 2`, qty: String(row.planned || ""), price: "" })}
+                title="copy this item as a new line — recipe, sourcing, weeks; no benches"
+                style={{ padding: "5px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: "#fff", color: C.text, fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                ⧉ Duplicate…
+              </button>
+            )}
           </div>
+          {dup && (
+            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", background: "#fff", border: `1px solid ${C.border}`, borderRadius: 9, padding: "8px 10px", marginBottom: 8 }}>
+              <input value={dup.name} onChange={e => setDup({ ...dup, name: e.target.value })} placeholder="new item name"
+                style={{ flex: 1, minWidth: 200, padding: "6px 9px", borderRadius: 7, border: `1px solid ${C.border}`, fontSize: 12.5, fontWeight: 700, fontFamily: "inherit" }} />
+              <input value={dup.qty} onChange={e => setDup({ ...dup, qty: e.target.value })} inputMode="numeric" placeholder="qty"
+                style={{ width: 72, padding: "6px 9px", textAlign: "right", borderRadius: 7, border: `1px solid ${C.border}`, fontSize: 12.5, fontFamily: "inherit" }} />
+              <input value={dup.price} onChange={e => setDup({ ...dup, price: e.target.value })} inputMode="decimal" placeholder={`$ (same)`}
+                style={{ width: 76, padding: "6px 9px", textAlign: "right", borderRadius: 7, border: `1px solid ${C.border}`, fontSize: 12.5, fontFamily: "inherit" }} />
+              <button disabled={busy} onClick={duplicateItem}
+                style={{ padding: "6px 13px", borderRadius: 7, border: "none", background: C.dark, color: "#c8e6b8", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>{busy ? "…" : "Create"}</button>
+              <button onClick={() => setDup(null)} style={{ background: "none", border: "none", color: C.muted, fontSize: 16, cursor: "pointer" }}>×</button>
+            </div>
+          )}
           {agg && agg.materials.length > 0 && (
             <div style={{ fontSize: 12.5, color: C.text, marginBottom: 8 }}>
               🌱 <b>Item:</b> {agg.materials.map(m => m.variety).join(" · ")}
