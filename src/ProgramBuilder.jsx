@@ -8,6 +8,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { getSupabase, getCultureClient } from "./supabase";
 import { useAuth } from "./Auth";
+import { makeKey, GENUS_SYN } from "./brokerKey";
+
+// One genus, one name. The culture db and the brokers disagree on botanical vs
+// common ("Sage" at Danziger, "Salvia" everywhere else) — makeKey already
+// collapses them for matching; this collapses them for HUMANS. Values are what
+// we call the crop; anything makeKey canonicalizes to the same genus token
+// files under it.
+const canonGenus = n => { const t = String(n || "").trim().toLowerCase(); return GENUS_SYN[t] || t; };
+const GENUS_DISPLAY = { sage: "Salvia", mint: "Mentha", thyme: "Thymus", rosemary: "Rosemary", basil: "Basil" };
 
 const C = { dark: "#1e2d1a", light: "#7fb069", border: "#dfe7d8", muted: "#7a8c74",
   text: "#2f3b2a", red: "#c0392b", amber: "#c98a2e", green: "#2e7d32", card: "#fff" };
@@ -64,8 +73,10 @@ export default function ProgramsPanel({ plan }) {
       let varietyId = v && v[0] ? v[0].id : null;
       if (!varietyId) {
         varietyId = crypto.randomUUID();
+        let vkey = null; try { vkey = makeKey(cropName, null, varName) || null; } catch { /* cron backfills */ }
         const { error: ve } = await sb.from("variety_library").insert({
           id: varietyId, crop_name: cropName, variety: varName,
+          variety_key: vkey,
           breeder: it.material?.supplier || null,
           notes: `created from program "${pr.name}"`,
         });
@@ -257,19 +268,32 @@ function AddProgramItem({ sb, program, itemCount, onDone, onCancel }) {
 
   // cascades, each narrowed by the choices above it
   const lc = v => String(v || "").trim();
+  // crop dropdown values are CANONICAL genus tokens so "Sage" and "Salvia" are one entry
   const pool = useMemo(() => (corpus || []).filter(r =>
     (!ptype || lc(r.category).toLowerCase() === ptype) &&
-    (!crop || lc(r.crop_name) === crop) &&
+    (!crop || canonGenus(r.crop_name) === crop) &&
     (!breeder || lc(r.breeder_name) === breeder)), [corpus, ptype, crop, breeder]);
   const cropOpts = useMemo(() => {
-    const m = new Map();
+    const m = new Map();   // canon → { display, count, names: raw-name tally }
     (corpus || []).filter(r => !ptype || lc(r.category).toLowerCase() === ptype)
-      .forEach(r => { const k = lc(r.crop_name); if (k) m.set(k, (m.get(k) || 0) + 1); });
-    return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+      .forEach(r => {
+        const raw = lc(r.crop_name); if (!raw) return;
+        const k = canonGenus(raw);
+        const e = m.get(k) || { count: 0, names: new Map() };
+        e.count++; e.names.set(raw, (e.names.get(raw) || 0) + 1);
+        m.set(k, e);
+      });
+    return [...m.entries()].map(([k, e]) => {
+      const display = GENUS_DISPLAY[k] || [...e.names.entries()].sort((a, b) => b[1] - a[1])[0][0];
+      return [k, e.count, display];
+    }).sort((a, b) => a[2].localeCompare(b[2]));
   }, [corpus, ptype]);
+  const cropDisplay = useMemo(() => {
+    const m = {}; cropOpts.forEach(([k, , d]) => { m[k] = d; }); return m;
+  }, [cropOpts]);
   const breederOpts = useMemo(() => {
     const m = new Map();
-    (corpus || []).filter(r => (!ptype || lc(r.category).toLowerCase() === ptype) && (!crop || lc(r.crop_name) === crop))
+    (corpus || []).filter(r => (!ptype || lc(r.category).toLowerCase() === ptype) && (!crop || canonGenus(r.crop_name) === crop))
       .forEach(r => { const k = lc(r.breeder_name); if (k) m.set(k, (m.get(k) || 0) + 1); });
     return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]));
   }, [corpus, ptype, crop]);
@@ -286,20 +310,34 @@ function AddProgramItem({ sb, program, itemCount, onDone, onCancel }) {
     setCulture(data || {});
   }
 
-  // best-effort price from the sourcing catalog once a variety is chosen
+  // price from the sourcing catalog once a variety is chosen — EXACT key join
+  // first (same normalizer that keys broker_prices, so Danziger "Sage May
+  // Night" lands on the Salvia quotes), fuzzy name-scoring only as fallback
   useEffect(() => { (async () => {
     setMat(null); setMatNote("");
     if (!chosen) return;
     const series = lc(chosen.series_name), varn = lc(chosen.series_variety);
-    let q = sb.from("v_sourcing_prices").select("crop,variety,broker,supplier,form_class,landed,variety_key").limit(200);
-    q = series ? q.ilike("variety", `%${series}%`) : q.ilike("crop", `%${lc(chosen.crop_name)}%`);
+    const cols = "crop,variety,broker,supplier,form_class,landed,variety_key";
+    let key = null;
+    try { key = makeKey(chosen.crop_name, null, [series, varn].filter(Boolean).join(" ") || chosen.crop_name); } catch { /* fall through to fuzzy */ }
+    if (key) {
+      const { data: exact } = await sb.from("v_sourcing_prices").select(cols).eq("variety_key", key).limit(20);
+      if (exact && exact.length) {
+        const cheapest = [...exact].sort((a, b) => (+a.landed || 9e9) - (+b.landed || 9e9))[0];
+        setMat(cheapest); setMatNote("");
+        return;
+      }
+    }
+    let q = sb.from("v_sourcing_prices").select(cols).limit(200);
+    q = series ? q.ilike("variety", `%${series}%`) : q.ilike("crop", `%${cropDisplay[canonGenus(chosen.crop_name)] || lc(chosen.crop_name)}%`);
     const { data } = await q;
     const toks = varn.toLowerCase().split(/\s+/).filter(w => w.length > 2);
     const scored = (data || []).map(r => ({ r,
       score: toks.filter(w => String(r.variety).toLowerCase().includes(w)).length }))
       .sort((a, b) => b.score - a.score || (+a.r.landed || 9) - (+b.r.landed || 9));
     const best = scored[0];
-    if (best && (best.score > 0 || !varn)) { setMat(best.r); setMatNote(""); }
+    // the exact key already missed, so anything from here is a guess — say so
+    if (best && (best.score > 0 || !varn)) { setMat(best.r); setMatNote("closest match — verify"); }
     else if (scored.length) { setMat(scored[0].r); setMatNote("closest match — verify"); }
     else setMatNote("no broker quote found — cost will need a hand-entered price");
   })(); }, [varId]); // eslint-disable-line
@@ -314,7 +352,8 @@ function AddProgramItem({ sb, program, itemCount, onDone, onCancel }) {
   }, [cont]);
 
   const varietyText = chosen ? [lc(chosen.series_name), lc(chosen.series_variety)].filter(Boolean).join(" ") : "";
-  const cropWord = chosen ? lc(chosen.crop_name) : crop;
+  // item names use OUR name for the genus (Salvia), whatever the breeder calls it (Sage)
+  const cropWord = chosen ? (cropDisplay[canonGenus(chosen.crop_name)] || lc(chosen.crop_name)) : (cropDisplay[crop] || crop);
   const fullVariety = varietyText.toLowerCase().includes(cropWord.toLowerCase()) ? varietyText : `${cropWord} ${varietyText}`.trim();
   const itemName = nameOverride ?? (chosen && sizeLabel ? `${sizeLabel} ${fullVariety.toUpperCase()}` : "");
   const sku = useMemo(() => {
@@ -453,6 +492,12 @@ function CultureModal({ record, onClose }) {
   const pd = record.propagation_details || {};
   const pdf = cd["Culture Guide PDF"] || cd["Culture Guide PDF (Origin)"] || null;
   const rows = obj => Object.entries(obj || {}).filter(([k, v]) => v != null && String(v).trim() && !/pdf/i.test(k));
+  // finishing size, pulled to the top — Mario plans space off these
+  const sizeOf = re => {
+    const hit = Object.entries(cd).find(([k, v]) => re.test(k) && !/prop/i.test(k) && v != null && String(v).trim());
+    return hit ? String(hit[1]) : null;
+  };
+  const finH = sizeOf(/height/i), finW = sizeOf(/width|spread/i);
   const Section = ({ title, obj }) => rows(obj).length ? (
     <div style={{ marginTop: 10 }}>
       <div style={{ fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", marginBottom: 4 }}>{title}</div>
@@ -475,6 +520,10 @@ function CultureModal({ record, onClose }) {
             <div style={{ fontSize: 12, color: C.muted }}>{record.breeder_name} · {record.category}{record.propagation_weeks ? ` · prop ${record.propagation_weeks} wks` : ""}{record.requires_heat ? " · needs heat" : ""}</div>
           </div>
           <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 24, color: C.muted, cursor: "pointer" }}>×</button>
+        </div>
+        <div style={{ marginTop: 10, padding: "9px 12px", borderRadius: 9, background: "#fff", border: `1.5px solid ${finH || finW ? C.light : C.border}`, display: "flex", gap: 18, fontSize: 13 }}>
+          <span><span style={{ color: C.muted, fontSize: 11, fontWeight: 800, textTransform: "uppercase" }}>Finish height</span><br /><b style={{ color: finH ? C.dark : C.muted }}>{finH || "not on file"}</b></span>
+          <span><span style={{ color: C.muted, fontSize: 11, fontWeight: 800, textTransform: "uppercase" }}>Finish width</span><br /><b style={{ color: finW ? C.dark : C.muted }}>{finW || "not on file"}</b></span>
         </div>
         {pdf && <a href={pdf} target="_blank" rel="noreferrer" style={{ display: "inline-block", marginTop: 8, padding: "7px 13px", borderRadius: 8, background: C.dark, color: "#c8e6b8", fontSize: 12.5, fontWeight: 800, textDecoration: "none" }}>📄 Open culture guide PDF</a>}
         <Section title="Culture" obj={cd} />

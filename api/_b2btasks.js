@@ -320,4 +320,33 @@ async function syncProductionTasks(db) {
   return out;
 }
 
-module.exports = { generateCountTasks, harvestCountTasks, bridgeOrdersToDeliveries, syncDeliveriesBack, syncProductionTasks };
+// 6. Identity spine maintenance — any variety that lands in the library without
+//    a canonical key (hand-entered, imported, converter edge case) gets keyed and
+//    linked here, so broker/culture joins never silently degrade back to name
+//    matching. Confirmed links are never touched.
+async function syncVarietyIdentity(db) {
+  const { makeKey } = require("../src/brokerKey.js");
+  const { data: rows } = await db.from("variety_library")
+    .select("id,crop_name,variety").is("variety_key", null).not("variety", "is", null).limit(200);
+  if (!rows || !rows.length) return { keyed: 0 };
+  let keyed = 0, linked = 0;
+  for (const v of rows) {
+    let key = null;
+    try { key = makeKey(v.crop_name, null, v.variety) || null; } catch { /* unkeyable name */ }
+    if (!key) continue;
+    const { error } = await db.from("variety_library").update({ variety_key: key }).eq("id", v.id);
+    if (error) continue;
+    keyed++;
+    const { data: exist } = await db.from("variety_links").select("variety_key,status,variety_id").eq("variety_key", key).maybeSingle();
+    if (!exist) {
+      const { error: le } = await db.from("variety_links").insert({
+        variety_key: key, variety_id: v.id, status: "auto", evidence: "keyed by cron" });
+      if (!le) linked++;
+    } else if (exist.status !== "confirmed" && !exist.variety_id) {
+      await db.from("variety_links").update({ variety_id: v.id, updated_at: new Date().toISOString() }).eq("variety_key", key);
+    }
+  }
+  return { keyed, linked };
+}
+
+module.exports = { generateCountTasks, harvestCountTasks, bridgeOrdersToDeliveries, syncDeliveriesBack, syncProductionTasks, syncVarietyIdentity };

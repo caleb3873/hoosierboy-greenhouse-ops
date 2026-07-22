@@ -5,7 +5,7 @@
 //     per customer bundling all their at-risk lines. Closes the last manual gap
 //     in the auto-lapse design: reserve → warned → take it or it releases.
 const { svc, dispatchCampaign, sendOne, buildReservationReminder } = require("./_campaigns");
-const { generateCountTasks, harvestCountTasks, bridgeOrdersToDeliveries, syncDeliveriesBack, syncProductionTasks } = require("./_b2btasks");
+const { generateCountTasks, harvestCountTasks, bridgeOrdersToDeliveries, syncDeliveriesBack, syncProductionTasks, syncVarietyIdentity } = require("./_b2btasks");
 
 function hourInIndy() {
   try { return +new Intl.DateTimeFormat("en-US", { timeZone: "America/Indiana/Indianapolis", hour: "numeric", hour12: false }).format(new Date()); }
@@ -38,6 +38,7 @@ module.exports = async (req, res) => {
       harvest: await harvestCountTasks(db).catch(e => ({ error: String(e.message || e) })),
       bridge: await bridgeOrdersToDeliveries(db).catch(e => ({ error: String(e.message || e) })),
       shipSync: await syncDeliveriesBack(db).catch(e => ({ error: String(e.message || e) })),
+      identity: await syncVarietyIdentity(db).catch(e => ({ error: String(e.message || e) })),
     };
 
     // 1. due scheduled campaigns
