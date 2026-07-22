@@ -2128,6 +2128,105 @@ function SalesVsPlanTab({ plan }) {
         </div>
         <div style={{ fontSize: 10.5, color: COLORS.muted, marginTop: 4 }}>★ = Mother's Day week</div>
       </div>
+
+      {/* ⚖ Season comparison — 2026 actual vs the 2027 projection AS DECIDED
+          (targets, drops, timing shifts, rounds; new items ride their finish week) */}
+      {(() => {
+        const core = rows.filter(r => !r.dualUse);
+        const nW = season.weeks.length;
+        const idxOf = Object.fromEntries(season.weeks.map((w, i) => [w, i]));
+        const rev27wk = Array(nW).fill(0);
+        let u26 = 0, r26 = 0, u27 = 0, r27 = 0, grows = 0, cuts = 0, drops = 0, news = 0;
+        const bySize = {};
+        for (const r of core) {
+          const t = targets[r.item] || {};
+          const units27 = t.target_units != null ? +t.target_units : r.planned;
+          const price = +r.price || 0;
+          const rev27 = units27 * price;
+          u26 += r.sold; r26 += r.rev; u27 += units27; r27 += rev27;
+          if (r.isNew) news++;
+          else if (t.target_units != null) { if (t.target_units === 0) drops++; else if (t.target_units > r.planned) grows++; else if (t.target_units < r.planned) cuts++; }
+          const s = bySize[r.size] || (bySize[r.size] = { rev26: 0, rev27: 0 });
+          s.rev26 += r.rev; s.rev27 += rev27;
+          if (!(units27 > 0) || !price) continue;
+          // weekly spread: rounds win; else last year's shape shifted by the timing move;
+          // no history → everything lands on the finish week (honest, if lumpy)
+          const shape = r.wk || [];
+          const shapeSum = shape.reduce((a, b) => a + b, 0);
+          const shift = +t.ready_shift || 0;
+          if (t.rounds?.length) {
+            for (let ri = 0; ri < t.rounds.length; ri++) {
+              const rd = t.rounds[ri], nxt = t.rounds[ri + 1];
+              const from = idxOf[rd.ready_week] ?? 0;
+              const to = nxt ? (idxOf[nxt.ready_week] ?? nW) : nW;
+              const win = Math.max(1, to - from);
+              const wSum = shape.slice(from, to).reduce((a, b) => a + b, 0);
+              for (let i = from; i < to && i < nW; i++) {
+                const wgt = wSum > 0 ? shape[i] / wSum : 1 / win;
+                rev27wk[i] += (+rd.units || 0) * wgt * price;
+              }
+            }
+          } else if (shapeSum > 0) {
+            const scale = units27 / (r.sold || units27);
+            for (let i = 0; i < nW; i++) {
+              const j = i + shift;
+              if (j >= 0 && j < nW) rev27wk[j] += shape[i] * scale * price;
+            }
+          } else {
+            const at = idxOf[(r.ship ?? season.weeks[0]) + shift];
+            rev27wk[at != null && at < nW ? at : nW - 1] += rev27;
+          }
+        }
+        const maxB = Math.max(...season.seasonRev, ...rev27wk, 1);
+        const pctd = (a, b) => b ? `${a >= b ? "+" : ""}${Math.round((a - b) / b * 100)}%` : "—";
+        return (
+          <details style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "12px 16px" }}>
+            <summary style={{ cursor: "pointer", fontWeight: 800, color: COLORS.dark, fontSize: 14 }}>
+              ⚖ Season comparison — 2026 actual {fmtMoney(r26)} vs 2027 projection <span style={{ color: r27 >= r26 ? "#2e7d32" : COLORS.red }}>{fmtMoney(r27)} ({pctd(r27, r26)})</span>
+            </summary>
+            <div style={{ display: "flex", gap: 14, flexWrap: "wrap", margin: "10px 0", fontSize: 12 }}>
+              <span>units {u26.toLocaleString()} → <b>{u27.toLocaleString()}</b> ({pctd(u27, u26)})</span>
+              <span style={{ color: "#2e7d32" }}>▲ {grows} grows</span>
+              <span style={{ color: COLORS.amber }}>▼ {cuts} cuts</span>
+              <span style={{ color: COLORS.red }}>✕ {drops} drops</span>
+              <span style={{ color: COLORS.light, fontWeight: 800 }}>+ {news} new items</span>
+              <span style={{ color: COLORS.muted }}>2027 prices assume 2026 averages until the pricing pass</span>
+            </div>
+            <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 130, borderBottom: `2px solid ${COLORS.border}` }}>
+              {season.weeks.map((w, i) => (
+                <div key={w} title={`wk${w} (${wkDateLabel(w)}) — 2026 ${fmtMoney(season.seasonRev[i])} · 2027 proj ${fmtMoney(rev27wk[i])}`}
+                  style={{ flex: 1, display: "flex", alignItems: "flex-end", justifyContent: "center", gap: 1 }}>
+                  <div style={{ width: "40%", height: Math.max(2, season.seasonRev[i] / maxB * 112), background: "#d9c9a3", borderRadius: "2px 2px 0 0" }} />
+                  <div style={{ width: "40%", height: Math.max(2, rev27wk[i] / maxB * 112), background: COLORS.dark, borderRadius: "2px 2px 0 0" }} />
+                </div>
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: 3, marginTop: 3 }}>
+              {season.weeks.map(w => (
+                <div key={w} style={{ flex: 1, fontSize: wkAsDate ? 8 : 9, color: COLORS.muted, textAlign: "center", whiteSpace: "nowrap" }}>
+                  {wkAsDate ? wkDateLabel(w) : w}
+                  {w === mothersWk && <div style={{ fontSize: 10, lineHeight: "10px", color: COLORS.amber }}>★</div>}
+                </div>
+              ))}
+            </div>
+            <div style={{ fontSize: 10.5, color: COLORS.muted, margin: "4px 0 10px" }}>tan = 2026 actual · dark = 2027 projection (targets + timing + rounds) · ★ Mother's Day</div>
+            <table style={{ borderCollapse: "collapse", fontSize: 12 }}>
+              <thead><tr>{["Size", "2026 rev", "2027 proj", "Δ"].map((h, i) => <th key={i} style={{ textAlign: i ? "right" : "left", padding: "3px 12px 3px 0", fontSize: 10, fontWeight: 800, color: COLORS.muted, textTransform: "uppercase", borderBottom: `1px solid ${COLORS.border}` }}>{h}</th>)}</tr></thead>
+              <tbody>
+                {Object.entries(bySize).sort((a, b) => b[1].rev26 - a[1].rev26).map(([sz, v]) => (
+                  <tr key={sz}>
+                    <td style={{ padding: "3px 12px 3px 0", fontWeight: 700 }}>{sz}</td>
+                    <td style={{ padding: "3px 12px 3px 0", textAlign: "right" }}>{fmtMoney(v.rev26)}</td>
+                    <td style={{ padding: "3px 12px 3px 0", textAlign: "right", fontWeight: 700 }}>{fmtMoney(v.rev27)}</td>
+                    <td style={{ padding: "3px 0", textAlign: "right", fontWeight: 800, color: v.rev27 >= v.rev26 ? "#2e7d32" : COLORS.red }}>{pctd(v.rev27, v.rev26)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </details>
+        );
+      })()}
+
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", fontSize: 12 }}>
         <input value={query} onChange={e => setQuery(e.target.value)} placeholder="🔍 Search item…"
           style={{ padding: "7px 11px", borderRadius: 16, border: `1px solid ${COLORS.border}`, fontSize: 12.5, fontFamily: "inherit", width: 200, boxSizing: "border-box" }} />
