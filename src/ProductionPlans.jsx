@@ -330,6 +330,7 @@ const PLAN_TABS = [
   { id: "prop",      label: "🌱 Propagation" },
   { id: "plugs",     label: "🧮 Plug Orders" },
   { id: "sales",     label: "📈 Sales vs Plan" },
+  { id: "yoy",       label: "⚖ Year over Year" },
   { id: "categories",label: "🏷 Categories" },
   { id: "orders",    label: "📋 Orders" },
   { id: "sourcing",  label: "🧭 Sourcing" },
@@ -473,6 +474,7 @@ function PlanDashboard({ plan, initialTab }) {
           {hasData && tab === "prop"      && <PropagationTab plan={plan} />}
           {hasData && tab === "plugs"     && <PlugOrdersTab plan={plan} />}
           {hasData && tab === "sales"     && <SalesVsPlanTab plan={plan} />}
+          {hasData && tab === "yoy"       && <YearOverYearTab plan={plan} />}
           {hasData && tab === "categories" && <CategoryProfiles plan={plan} />}
           {hasData && tab === "baskets"    && <BasketPlanner plan={plan} onOpenCombos={() => setTab("combos")} />}
           {hasData && tab === "orders"    && <OrdersTab plan={plan} />}
@@ -1753,6 +1755,147 @@ function PlugOrdersTab({ plan }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// ── Year over Year tab — item-level 2026 vs 2027, classified and filterable ──
+// Every item classified by what the projection DOES to it: new, growing,
+// declining, dropped, steady, or still undecided. The Mario view of the plan.
+function YearOverYearTab({ plan }) {
+  const sb = getSupabase();
+  const [items, setItems] = useState(null);
+  const [cls, setCls] = usePersistedState("gh_yoy_class", "all");
+  const [szF, setSzF] = usePersistedState("gh_yoy_size", "all");
+  const [q, setQ] = usePersistedState("gh_yoy_q", "");
+  const [sortC, setSortC] = usePersistedState("gh_yoy_sort", "dRev");
+  const [sortD, setSortD] = usePersistedState("gh_yoy_dir", "desc");
+
+  useEffect(() => {
+    if (!sb) return;
+    (async () => {
+      const COMPONENT = /\bVINE\b|\bIVY\b|HEDERA|MU[EH]+LENBECKIA|CAREX/i;
+      const [xw, tot, sc, tgRes] = await Promise.all([
+        srcPageAll(sb, "sales_sku_map", "sku,plan_item_name"),
+        srcPageAll(sb, "sales_totals", "sku,units,revenue"),
+        srcPageAll(sb, "scheduled_crops", "id,item_name,notes,broker,supplier,qty_pots,ppp,plants_per_unit,ready_week,ship_week,combo_parent_id,is_combo_component", f => f.eq("plan_id", plan.id)),
+        sb.from("plan_targets").select("*").eq("plan_id", plan.id),
+      ]);
+      const skuToItem = {}; xw.forEach(x => { if (x.plan_item_name) skuToItem[x.sku] = x.plan_item_name; });
+      const tg = Object.fromEntries((tgRes.data || []).map(t => [t.item_name, t]));
+      const parentIds = new Set(sc.map(r => r.combo_parent_id).filter(Boolean));
+      const withParents = new Set(sc.filter(r => parentIds.has(r.id)).map(r => r.item_name));
+      const plan27 = {}, ppp = {}, ppu = {}, ready = {}, newSet = new Set(), srcSet = new Set();
+      for (const r of sc) {
+        if (!(+r.qty_pots > 0) || r.is_combo_component || COMPONENT.test(r.item_name)) continue;
+        if (withParents.has(r.item_name) && !parentIds.has(r.id)) continue;
+        plan27[r.item_name] = (plan27[r.item_name] || 0) + +r.qty_pots;
+        ppp[r.item_name] = Math.max(ppp[r.item_name] || 0, +r.ppp || 1);
+        ppu[r.item_name] = Math.max(ppu[r.item_name] || 0, +r.plants_per_unit || 1);
+        const rw = r.ready_week ?? r.ship_week;
+        if (rw != null) ready[r.item_name] = Math.min(ready[r.item_name] ?? 999, +rw);
+        if (/^(duplicated from|from program:)/i.test(r.notes || "")) newSet.add(r.item_name);
+        if (/needs sourcing/i.test(r.notes || "") && !r.broker && !r.supplier) srcSet.add(r.item_name);
+      }
+      const sold = {}, rev = {};
+      for (const t of tot) { const it = skuToItem[t.sku]; if (!it) continue; sold[it] = (sold[it] || 0) + +t.units; rev[it] = (rev[it] || 0) + +t.revenue; }
+      const out = Object.keys(plan27).map(it => {
+        const planned = plan27[it];
+        const units26 = sold[it] || 0, rev26 = rev[it] || 0;
+        const price = units26 > 0 ? rev26 / units26 : null;
+        const planItems = plannedItems(planned, ppp[it], ppu[it]);
+        const t = tg[it] || {};
+        const decided = t.target_units != null;
+        const units27 = decided ? +t.target_units : planItems;
+        const rev27 = price != null ? units27 * price : null;
+        const dU = units27 - units26;
+        const klass = newSet.has(it) || units26 === 0 ? "new"
+          : units27 === 0 ? "dropped"
+          : !decided ? "undecided"
+          : dU / Math.max(1, units26) > 0.05 ? "growing"
+          : dU / Math.max(1, units26) < -0.05 ? "declining" : "steady";
+        return { it, size: sizeLabelForItem(it), units26, rev26, price,
+          planItems, units27, rev27, dU, dRev: rev27 != null ? rev27 - rev26 : (units26 ? -rev26 : 0),
+          shift: +t.ready_shift || 0, ready: ready[it] ?? null, rounds: t.rounds?.length || 0,
+          decided, klass, isNew: newSet.has(it), needsSrc: srcSet.has(it), note: t.note || null };
+      });
+      setItems(out);
+    })();
+  }, [sb, plan.id]); // eslint-disable-line
+
+  if (items === null) return <div style={{ padding: 20, color: COLORS.muted }}>Loading year-over-year…</div>;
+  const KL = { new: ["🌱 New", "#2e7d32"], growing: ["▲ Growing", "#2e7d32"], declining: ["▼ Declining", COLORS.amber], dropped: ["✕ Dropped", COLORS.red], steady: ["● Steady", COLORS.muted], undecided: ["□ Undecided", COLORS.text] };
+  const counts = {}; items.forEach(r => { counts[r.klass] = (counts[r.klass] || 0) + 1; });
+  const sizes = ["all", ...[...new Set(items.map(r => r.size))].sort()];
+  const qq = q.trim().toLowerCase();
+  let shown = items.filter(r => (cls === "all" || r.klass === cls) && (szF === "all" || r.size === szF) && (!qq || r.it.toLowerCase().includes(qq)));
+  const sv = { it: r => r.it, size: r => r.size, units26: r => r.units26, rev26: r => r.rev26, units27: r => r.units27, rev27: r => r.rev27 ?? -1, dU: r => r.dU, dRev: r => r.dRev, ready: r => r.ready ?? 99 };
+  shown = [...shown].sort((a, b) => { const av = sv[sortC](a), bv = sv[sortC](b); return (av < bv ? -1 : av > bv ? 1 : 0) * (sortD === "asc" ? 1 : -1); });
+  const T = shown.reduce((a, r) => ({ u26: a.u26 + r.units26, r26: a.r26 + r.rev26, u27: a.u27 + r.units27, r27: a.r27 + (r.rev27 || 0) }), { u26: 0, r26: 0, u27: 0, r27: 0 });
+  const Hd = ({ c, label, right }) => (
+    <th onClick={() => { if (sortC === c) setSortD(sortD === "asc" ? "desc" : "asc"); else { setSortC(c); setSortD(c === "it" || c === "size" ? "asc" : "desc"); } }}
+      style={{ ...th, position: "sticky", top: 0, zIndex: 5, background: "#eef3e8", textAlign: right ? "right" : "left", cursor: "pointer", whiteSpace: "nowrap", userSelect: "none" }}>
+      {label}{sortC === c ? (sortD === "asc" ? " ↑" : " ↓") : ""}
+    </th>
+  );
+  const chip = (on, color) => ({ padding: "6px 12px", borderRadius: 16, fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit",
+    border: `1.5px solid ${on ? color : COLORS.border}`, background: on ? color : "#fff", color: on ? "#fff" : COLORS.text });
+  const pctTxt = (a, b) => b ? `${a - b >= 0 ? "+" : ""}${Math.round((a - b) / b * 100)}%` : "—";
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+        <button onClick={() => setCls("all")} style={chip(cls === "all", COLORS.dark)}>All ({items.length})</button>
+        {Object.entries(KL).map(([k, [l, c]]) => counts[k] ? (
+          <button key={k} onClick={() => setCls(cls === k ? "all" : k)} style={chip(cls === k, c)}>{l} ({counts[k]})</button>
+        ) : null)}
+        <select value={szF} onChange={e => setSzF(e.target.value)} style={{ padding: "6px 10px", borderRadius: 16, border: `1px solid ${szF !== "all" ? COLORS.light : COLORS.border}`, fontSize: 12, fontFamily: "inherit", background: "#fff", cursor: "pointer" }}>
+          {sizes.map(s => <option key={s} value={s}>{s === "all" ? "All sizes" : s}</option>)}
+        </select>
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder="🔍 Search item…"
+          style={{ padding: "7px 11px", borderRadius: 16, border: `1px solid ${COLORS.border}`, fontSize: 12.5, fontFamily: "inherit", width: 190 }} />
+        <span style={{ marginLeft: "auto", fontSize: 12.5, color: COLORS.text }}>
+          <b>{shown.length}</b> items — 2026 {T.u26.toLocaleString()}u / {fmtMoney(T.r26)} → 2027 <b>{T.u27.toLocaleString()}u</b> ({pctTxt(T.u27, T.u26)}) / <b style={{ color: T.r27 >= T.r26 ? "#2e7d32" : COLORS.red }}>{fmtMoney(T.r27)} ({pctTxt(T.r27, T.r26)})</b>
+        </span>
+      </div>
+      <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, overflow: "auto", maxHeight: "74vh" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+          <thead><tr>
+            <Hd c="it" label="Item" /><Hd c="size" label="Size" />
+            <Hd c="units26" label="2026 sold" right /><Hd c="rev26" label="2026 $" right />
+            <Hd c="units27" label="2027 proj" right /><Hd c="rev27" label="2027 $" right />
+            <Hd c="dU" label="Δ units" right /><Hd c="dRev" label="Δ $" right />
+            <Hd c="ready" label="Finish" right />
+            <th style={{ ...th, position: "sticky", top: 0, zIndex: 5, background: "#eef3e8" }}>Class</th>
+          </tr></thead>
+          <tbody>
+            {shown.map(r => {
+              const [kl, kc] = KL[r.klass];
+              return (
+                <tr key={r.it} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
+                  <td style={{ ...td, fontWeight: 600 }}>
+                    {r.it}
+                    {r.isNew && <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 900, padding: "1px 5px", borderRadius: 7, color: "#fff", background: "#2e7d32" }}>NEW</span>}
+                    {r.needsSrc && <span style={{ marginLeft: 4, fontSize: 9, fontWeight: 900, padding: "1px 5px", borderRadius: 7, color: "#fff", background: "#c98a2e" }}>SOURCE</span>}
+                    {r.note && <div style={{ fontSize: 10.5, fontWeight: 400, color: COLORS.muted }}>“{r.note}”</div>}
+                  </td>
+                  <td style={{ ...td, color: COLORS.muted }}>{r.size}</td>
+                  <td style={{ ...td, textAlign: "right" }}>{r.units26.toLocaleString()}</td>
+                  <td style={{ ...td, textAlign: "right" }}>{fmtMoney(r.rev26)}</td>
+                  <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{r.units27.toLocaleString()}{r.rounds > 1 && <span title={`${r.rounds} planting rounds`} style={{ color: COLORS.muted, fontWeight: 400 }}> ·{r.rounds}r</span>}</td>
+                  <td style={{ ...td, textAlign: "right" }}>{r.rev27 != null ? fmtMoney(r.rev27) : <span style={{ color: COLORS.muted }} title="no 2026 price to project with — set pricing later">—</span>}</td>
+                  <td style={{ ...td, textAlign: "right", fontWeight: 700, color: r.dU > 0 ? "#2e7d32" : r.dU < 0 ? COLORS.red : COLORS.muted }}>{r.dU > 0 ? "+" : ""}{r.dU.toLocaleString()}</td>
+                  <td style={{ ...td, textAlign: "right", fontWeight: 700, color: r.dRev > 0 ? "#2e7d32" : r.dRev < 0 ? COLORS.red : COLORS.muted }}>{r.dRev > 0 ? "+" : ""}{fmtMoney(r.dRev)}</td>
+                  <td style={{ ...td, textAlign: "right", color: r.shift ? COLORS.amber : COLORS.muted }}>{r.ready != null ? `wk${r.ready + r.shift}${r.shift ? ` (${r.shift > 0 ? "+" : ""}${r.shift})` : ""}` : "—"}</td>
+                  <td style={td}><span style={{ fontSize: 10.5, fontWeight: 800, color: kc }}>{kl}</span></td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ fontSize: 11, color: COLORS.muted }}>
+        2027 $ projects target units at each item's 2026 average price — the pricing pass replaces this. Growing/declining = ±5% vs 2026 sold. New = created this cycle or no 2026 sales.
+      </div>
     </div>
   );
 }
