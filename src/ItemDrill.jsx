@@ -49,7 +49,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
 
   async function load() {
     const { data: parents } = await sb.from("scheduled_crops")
-      .select("id,bench_id,container_id,item_name,variety_id,qty_pots,ppp,pack_size,plant_week,plant_year,ship_week,ship_year,ready_week,ready_year,crop_weeks,prop_method,broker,supplier,liner_unit_cost,sale_price_per_pot,planting_layout")
+      .select("id,bench_id,container_id,item_name,variety_id,qty_pots,ppp,pack_size,plant_week,plant_year,ship_week,ship_year,ready_week,ready_year,crop_weeks,prop_method,prop_tray_id,broker,supplier,liner_unit_cost,sale_price_per_pot,planting_layout")
       .eq("plan_id", plan.id).eq("item_name", row.item).eq("is_combo_component", false).gt("qty_pots", 0);
     const ids = (parents || []).map(p => p.id);
     let children = [];
@@ -126,10 +126,12 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
     for (const p of detail.parents) {
       const v = detail.vmap[p.variety_id];
       const k = [v ? `${v.crop_name || ""} ${v.variety || ""}`.trim() : "?", p.prop_method, p.broker || p.supplier, p.liner_unit_cost].join("|");
-      matKeys[k] = { variety: v ? `${v.crop_name || ""} ${v.variety || ""}`.trim() : "?", prop: p.prop_method,
+      const e = matKeys[k] || (matKeys[k] = { variety: v ? `${v.crop_name || ""} ${v.variety || ""}`.trim() : "?", prop: p.prop_method,
         variety_id: p.variety_id, vkey: v?.variety_key || null,
-        broker: p.broker, supplier: p.supplier,
-        src: [p.broker, p.supplier].filter(Boolean).join(" / "), cost: +p.liner_unit_cost || null };
+        broker: p.broker, supplier: p.supplier, plants: 0,
+        prop_method: p.prop_method, prop_tray_id: p.prop_tray_id, propPer: propOf(p),
+        src: [p.broker, p.supplier].filter(Boolean).join(" / "), cost: +p.liner_unit_cost || null });
+      e.plants += (+p.qty_pots || 0) * (+p.ppp || 1);
     }
     // per-basket cost anatomy: container+soil vs plants — so a mix change shows
     // exactly what it does to the basket's cost
@@ -278,12 +280,29 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
     if (view === "history") setView("detail"); setView("history");
   }
 
+  // Plants per pot on a monoculture item — a plan edit exactly like a combo's
+  // per-basket count: liner orders change immediately, and it's logged.
+  async function setPpp(n) {
+    if (!detail || busy || !(n > 0)) return;
+    setBusy(true);
+    try {
+      for (const p of detail.parents) {
+        if (+p.ppp !== n) await sb.from("scheduled_crops").update({ ppp: n }).eq("id", p.id);
+      }
+      const m = agg?.materials[0];
+      await logChange("ppp_change", { plant: m?.variety || row.item, ppp: n }, m?.vkey || null);
+      await load();
+    } catch (e) { window.alert("Couldn't change plants/pot: " + (e.message || e)); }
+    setBusy(false);
+  }
+
   // Which tray a cutting roots in — 105s by default, 50s for the heavy stuff.
-  async function setTray(variety_id, tray_id) {
+  async function setTray(variety_id, tray_id, kind = "component") {
     if (!detail || busy) return;
     setBusy(true);
     try {
-      const ids = detail.children.filter(c => c.variety_id === variety_id).map(c => c.id);
+      const ids = (kind === "parent" ? detail.parents : detail.children)
+        .filter(c => c.variety_id === variety_id).map(c => c.id);
       for (let i = 0; i < ids.length; i += 100) {
         await sb.from("scheduled_crops").update({ prop_tray_id: tray_id || null }).in("id", ids.slice(i, i + 100));
       }
@@ -380,6 +399,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
                   : h.change_type === "component_added" ? `added ${d.plant} at ${d.per_basket}/basket — ${[d.sourcing?.broker, d.sourcing?.supplier].filter(Boolean).join("/")} @ ${money(+d.sourcing?.landed)}`
                   : h.change_type === "component_removed" ? `removed ${d.plant}`
                   : h.change_type === "prop_tray" ? `${d.plant} now sticks in ${d.tray}`
+                  : h.change_type === "ppp_change" ? `${d.plant} set to ${d.ppp} plants/pot`
                   : h.change_type === "combo_set" ? `✓ ${d.kind === "item" ? "item" : "combo"} SET for ${d.season} — ${(d.recipe || []).map(r => `${r.per_basket}× ${r.plant}`).join(", ")}${d.cost_per_basket != null ? ` (${money(d.cost_per_basket)}/unit)` : ""}`
                   : h.change_type === "layout_arranged" ? `planting layout arranged (${d.dots || "?"} plants placed${d.rows ? `, ${d.rows} bench rows` : ""})`
                   : h.change_type === "order_confirmation" ? `order confirmation: ${d.summary || JSON.stringify(d)}`
@@ -443,20 +463,9 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
           </div>
           {agg && agg.materials.length > 0 && (
             <div style={{ fontSize: 12.5, color: C.text, marginBottom: 8 }}>
-              🌱 <b>Bought:</b> {agg.materials.map((m, i) => {
-                const text = <>{m.variety}{m.prop ? ` — ${m.prop}` : ""}{m.cost != null ? ` @ ${money(m.cost)}/plant` : ""}{m.src ? ` (${m.src})` : ""}</>;
-                // a combo's parent row isn't a plant anyone buys — its components
-                // carry the sourcing, each clickable below
-                return <span key={i}>{i > 0 ? " · " : ""}
-                  {agg.comps.length ? <span>{text}</span>
-                    : <span onClick={() => setQuoteFor({ kind: "parent", variety_id: m.variety_id, label: m.variety, vkey: m.vkey,
-                          current: { variety: m.variety, broker: m.broker, supplier: m.supplier, landed: m.cost } })}
-                        title="view quotes / change sourcing"
-                        style={{ cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted", textUnderlineOffset: 3 }}>
-                        {text}
-                      </span>}
-                </span>;
-              })}
+              🌱 <b>Bought:</b> {agg.materials.map((m, i) => (
+                <span key={i}>{i > 0 ? " · " : ""}{m.variety}{m.prop ? ` — ${m.prop}` : ""}{m.cost != null ? ` @ ${money(m.cost)}/plant` : ""}{m.src ? ` (${m.src})` : ""}</span>
+              ))}
             </div>
           )}
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
@@ -618,6 +627,50 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
             </div>
             <div style={{ fontSize: 11, color: C.amber, marginTop: 7 }}>
               ⚠ Component edits change the plan (liner orders) immediately — quantity/timing above stay decisions for production to apply.
+            </div>
+          </div>
+        )}
+
+        {/* non-combo: the plant itself, same workflows as a component — just no adding */}
+        {agg && agg.comps.length === 0 && agg.materials.length > 0 && (
+          <div style={{ background: "#fff", border: `1px solid ${C.border}`, borderRadius: 10, padding: "11px 13px", marginTop: 12 }}>
+            <div style={{ fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", marginBottom: 6 }}>
+              Plant {busy && <span style={{ color: C.amber }}>· saving…</span>}
+            </div>
+            {agg.materials.map((m, i) => (
+              <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", padding: "4px 0", fontSize: 12.5, flexWrap: "wrap" }}>
+                <b onClick={() => setQuoteFor({ kind: "parent", variety_id: m.variety_id, label: m.variety, vkey: m.vkey,
+                    current: { variety: m.variety, broker: m.broker, supplier: m.supplier, landed: m.cost } })}
+                  title="view quotes / change sourcing"
+                  style={{ flex: 1, minWidth: 140, cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted", textUnderlineOffset: 3 }}>{m.variety}</b>
+                <label style={{ color: C.muted, fontSize: 11.5 }}>per pot
+                  <input defaultValue={Math.max(...detail.parents.map(p => +p.ppp || 1))} inputMode="numeric" disabled={busy}
+                    onBlur={e => { const v = parseInt(e.target.value); if (!isNaN(v) && v > 0 && v !== Math.max(...detail.parents.map(p => +p.ppp || 1))) setPpp(v); }}
+                    onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                    style={{ width: 52, marginLeft: 5, padding: "4px 6px", textAlign: "right", borderRadius: 7, border: `1px solid ${C.border}`, fontSize: 12.5, fontFamily: "inherit" }} />
+                </label>
+                <span onClick={() => setQuoteFor({ kind: "parent", variety_id: m.variety_id, label: m.variety, vkey: m.vkey,
+                    current: { variety: m.variety, broker: m.broker, supplier: m.supplier, landed: m.cost } })}
+                  title="view quotes / change sourcing"
+                  style={{ color: C.muted, cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted", textUnderlineOffset: 3 }}>
+                  {m.plants.toLocaleString()} plants{m.cost != null ? ` @ ${money(m.cost)}` : ""}{m.src ? ` (${m.src})` : ""}
+                </span>
+                {["URC", "CALL"].includes(m.prop_method) && detail?.trays?.length > 0 && (
+                  <label title={`stick + tray ≈ ${money(m.propPer)}/plant, in the item cost`} style={{ fontSize: 11, color: C.muted }}>
+                    tray
+                    <select disabled={busy} value={m.prop_tray_id || ""} onChange={e => setTray(m.variety_id, e.target.value || null, "parent")}
+                      style={{ marginLeft: 4, padding: "3px 5px", borderRadius: 6, border: `1px solid ${C.border}`, fontSize: 11, fontFamily: "inherit", cursor: "pointer" }}>
+                      <option value="">105 (default)</option>
+                      {detail.trays.filter(t => !/105/.test(t.name)).map(t => (
+                        <option key={t.id} value={t.id}>{(t.name.match(/^\d+/) || [t.name])[0]}{/deep/i.test(t.name) ? " deep" : ""} — {t.cells_per_flat} cell</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+              </div>
+            ))}
+            <div style={{ fontSize: 11, color: C.amber, marginTop: 7 }}>
+              ⚠ Sourcing / plants-per-pot edits change the plan (liner orders) immediately — quantity/timing above stay decisions for production to apply.
             </div>
           </div>
         )}
