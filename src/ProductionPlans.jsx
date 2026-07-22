@@ -1792,9 +1792,9 @@ function SalesVsPlanTab({ plan }) {
   const [sortCol, setSortCol] = useState("lostEst");
   const [sortDir, setSortDir] = useState("desc");
   const [filt, setFilt] = useState("all");
-  const [query, setQuery] = useState("");
-  const [sizeFilt, setSizeFilt] = useState("all");
-  const [basis, setBasis] = useState("pots"); // "pots" = normalized finished pots · "raw" = as-entered units
+  const [query, setQuery] = usePersistedState("gh_svp_query", "");
+  const [sizeFilt, setSizeFilt] = usePersistedState("gh_svp_size", "all");
+  const [basis, setBasis] = usePersistedState("gh_svp_basis", "pots"); // "pots" = normalized finished pots · "raw" = as-entered units
   // Projection session: agreed 2027 targets live in plan_targets, keyed by item
   // name, so the sales conversation never has to answer bench questions.
   const [targets, setTargets] = useState({});   // item_name → row
@@ -1809,11 +1809,14 @@ function SalesVsPlanTab({ plan }) {
     if (!sb) return;
     const COMPONENT = /\bVINE\b|\bIVY\b|HEDERA|MU[EH]+LENBECKIA|CAREX/i;
     (async () => {
-      const xw = await srcPageAll(sb, "sales_sku_map", "sku,plan_item_name");
+      const [xw, tot, wk, sc, tgRes] = await Promise.all([
+        srcPageAll(sb, "sales_sku_map", "sku,plan_item_name"),
+        srcPageAll(sb, "sales_totals", "sku,description,units,revenue,avg_price"),
+        srcPageAll(sb, "sales_weekly", "sku,wk,units,revenue"),
+        srcPageAll(sb, "scheduled_crops", "id,item_name,qty_pots,ppp,plants_per_unit,ship_week,ready_week,combo_parent_id,is_combo_component", q => q.eq("plan_id", plan.id)),
+        sb.from("plan_targets").select("*").eq("plan_id", plan.id),
+      ]);
       const skuToItem = {}; xw.forEach(x => { if (x.plan_item_name) skuToItem[x.sku] = x.plan_item_name; });
-      const tot = await srcPageAll(sb, "sales_totals", "sku,units,revenue,avg_price");
-      const wk = await srcPageAll(sb, "sales_weekly", "sku,wk,units,revenue");
-      const sc = await srcPageAll(sb, "scheduled_crops", "id,item_name,qty_pots,ppp,plants_per_unit,ship_week,ready_week,combo_parent_id,is_combo_component", q => q.eq("plan_id", plan.id));
       const weeks = [...new Set(wk.map(w => +w.wk))].sort((a, b) => a - b);
       const wIdx = Object.fromEntries(weeks.map((w, i) => [w, i]));
       // A combo basket = one finished unit (multiple plants on a row are for ONE basket, not many).
@@ -1892,8 +1895,7 @@ function SalesVsPlanTab({ plan }) {
       setMissing(Object.values(gaps).filter(g => g.rev > 250).sort((a, b) => b.rev - a.rev));
 
       setRows(out); setSeason({ weeks, seasonRev });
-      const { data: tg } = await sb.from("plan_targets").select("*").eq("plan_id", plan.id);
-      setTargets(Object.fromEntries((tg || []).map(t => [t.item_name, t])));
+      setTargets(Object.fromEntries((tgRes.data || []).map(t => [t.item_name, t])));
     })();
   }, [sb, plan.id]);
 
@@ -3009,11 +3011,11 @@ function CatalogTab({ plan }) {
   const [catalog, setCatalog] = useState([]);
   const [aliases, setAliases] = useState([]);
   const [cultureByGenus, setCultureByGenus] = useState({});
-  const [sortCol, setSortCol] = useState("y_curr_rev");
-  const [sortDir, setSortDir] = useState("desc");
-  const [filterSize, setFilterSize] = useState("all");
-  const [search, setSearch] = useState("");
-  const [viewMode, setViewMode] = useState("all");
+  const [sortCol, setSortCol] = usePersistedState("gh_cmp_sortcol", "y_curr_rev");
+  const [sortDir, setSortDir] = usePersistedState("gh_cmp_sortdir", "desc");
+  const [filterSize, setFilterSize] = usePersistedState("gh_cmp_size", "all");
+  const [search, setSearch] = usePersistedState("gh_cmp_search", "");
+  const [viewMode, setViewMode] = usePersistedState("gh_cmp_view", "all");
   const [mergeModal, setMergeModal] = useState(null);  // { sourceRow: ... }
   const [reloadTick, setReloadTick] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -3089,15 +3091,15 @@ function CatalogTab({ plan }) {
     if (!sb) return;
     setLoading(true);
     (async () => {
-      // Pull all history (paginated)
-      const all = await srcPageAll(sb, "houseplant_sales_history", "period,product_code,description,pot_size,qty_sold,sold_value");
-
-      // Pull saved catalog targets for this plan
-      const { data: cat } = await sb.from("houseplant_catalog").select("*").eq("plan_id", plan.id);
+      // history + catalog + aliases in parallel — the history table is the big one
+      const [all, catRes, aliasRes] = await Promise.all([
+        srcPageAll(sb, "houseplant_sales_history", "period,product_code,description,pot_size,qty_sold,sold_value"),
+        sb.from("houseplant_catalog").select("*").eq("plan_id", plan.id),
+        sb.from("houseplant_merge_aliases").select("*"),
+      ]);
+      const cat = catRes.data;
       setCatalog(cat || []);
-
-      // Pull manual merge aliases — these override normalization for known dupes
-      const { data: aliasData } = await sb.from("houseplant_merge_aliases").select("*");
+      const aliasData = aliasRes.data;
       setAliases(aliasData || []);
       const aliasMap = {};
       for (const a of (aliasData || [])) {
@@ -5587,16 +5589,34 @@ const money = v => (v == null ? "—" : "$" + Number(v).toFixed(4));
 
 // Paginated fetch (PostgREST caps at 1000/req) — used by the Pricing tab.
 async function srcPageAll(sb, table, select, filter) {
-  let out = [];
-  for (let f = 0; ; f += 1000) {
+  // first page carries the exact count, remaining pages fetch in PARALLEL —
+  // a 20k-row table is 1 sequential roundtrip + 19 concurrent, not 20 serial
+  let q0 = sb.from(table).select(select, { count: "exact" }).range(0, 999);
+  if (filter) q0 = filter(q0);
+  const { data, count, error } = await q0;
+  if (error || !data) return [];
+  if (!count || count <= data.length) return data;
+  const pages = [];
+  for (let f = 1000; f < count; f += 1000) {
     let q = sb.from(table).select(select).range(f, f + 999);
     if (filter) q = filter(q);
-    const { data, error } = await q;
-    if (error || !data || !data.length) break;
-    out = out.concat(data);
-    if (data.length < 1000) break;
+    pages.push(q);
   }
-  return out;
+  const rest = await Promise.all(pages);
+  return data.concat(...rest.map(r => r.data || []));
+}
+
+// Filter/sort state that survives a refresh — reads localStorage once, writes through.
+function usePersistedState(key, init) {
+  const [v, setV] = useState(() => {
+    try { const s = localStorage.getItem(key); return s !== null ? JSON.parse(s) : init; } catch { return init; }
+  });
+  const set = (val) => setV(prev => {
+    const next = typeof val === "function" ? val(prev) : val;
+    try { localStorage.setItem(key, JSON.stringify(next)); } catch { /* private mode */ }
+    return next;
+  });
+  return [v, set];
 }
 
 // Standalone Sourcing page (Production nav → 🧭 Sourcing) — same workspace, full width.
