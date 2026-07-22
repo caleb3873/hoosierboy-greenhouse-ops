@@ -158,6 +158,7 @@ export default function ProgramsPanel({ plan }) {
 
 function ProgramDetail({ sb, program, items, onChange, onConvert }) {
   const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState(null);   // item open in the editor modal
 
   async function patchItem(id, patch) {
     await sb.from("program_items").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", id);
@@ -184,29 +185,19 @@ function ProgramDetail({ sb, program, items, onChange, onConvert }) {
             {items.map(it => {
               const gm = it.target_price && it.est_unit_cost ? (it.target_price - it.est_unit_cost) / it.target_price : null;
               return (
-                <tr key={it.id} style={{ borderBottom: `1px solid ${C.border}` }}>
+                <tr key={it.id} onClick={() => setEditing(it)} title="view / edit — sourcing details, quantities, quote"
+                  style={{ borderBottom: `1px solid ${C.border}`, cursor: "pointer" }}>
                   <td style={{ padding: "5px 8px", fontWeight: 700 }}>{it.item_name}{it.scheduled_crop_id && <span title="already in the plan + B2B catalog" style={{ marginLeft: 6, fontSize: 10, fontWeight: 800, color: C.green }}>✓ IN PLAN</span>}{it.sku && <div style={{ fontFamily: "monospace", fontSize: 10.5, fontWeight: 400, color: C.muted }}>{it.sku}</div>}</td>
                   <td style={{ padding: "5px 8px", color: C.muted }}>{it.size || "—"}</td>
-                  <td style={{ padding: "5px 8px", textAlign: "right" }}>
-                    <input defaultValue={it.target_units ?? ""} inputMode="numeric" style={{ ...inp, width: 62, textAlign: "right" }}
-                      onBlur={e => {
-                        let n = parseInt(e.target.value.replace(/\D/g, ""));
-                        const cs = +(it.cost_parts?.case_size) || null;   // 4.5" sells in 10s
-                        if (!isNaN(n) && cs && n % cs !== 0) { n = Math.ceil(n / cs) * cs; e.target.value = String(n); }
-                        if (!isNaN(n) && n !== it.target_units) patchItem(it.id, { target_units: n });
-                      }} />
-                  </td>
-                  <td style={{ padding: "5px 8px", textAlign: "right" }}>
-                    <input defaultValue={it.target_price ?? ""} inputMode="decimal" style={{ ...inp, width: 62, textAlign: "right" }}
-                      onBlur={e => { const n = parseFloat(e.target.value.replace(/[^0-9.]/g, "")); if (!isNaN(n) && n !== +it.target_price) patchItem(it.id, { target_price: n }); }} />
-                  </td>
+                  <td style={{ padding: "5px 8px", textAlign: "right" }}>{it.target_units != null ? (+it.target_units).toLocaleString() : "—"}</td>
+                  <td style={{ padding: "5px 8px", textAlign: "right" }}>{it.target_price != null ? money(+it.target_price) : "—"}</td>
                   <td style={{ padding: "5px 8px", textAlign: "right", fontSize: 11.5, color: C.muted }}>
                     {it.material ? `${it.material.variety || ""}${it.ppp > 1 ? ` ×${it.ppp}` : ""} (${[it.material.broker, it.material.supplier].filter(Boolean).join("/")})` : "—"}
                   </td>
                   <td style={{ padding: "5px 8px", textAlign: "right" }}>{money(it.est_unit_cost)}</td>
                   <td style={{ padding: "5px 8px", textAlign: "right", fontWeight: 800, color: gm == null ? C.muted : gm < 0.6 ? C.red : C.green }}>{gm == null ? "—" : Math.round(gm * 100) + "%"}</td>
                   <td style={{ padding: "5px 8px", textAlign: "right" }}>
-                    <button onClick={() => delItem(it.id)} style={{ background: "none", border: "none", color: C.red, cursor: "pointer", fontWeight: 800 }}>×</button>
+                    <button onClick={e => { e.stopPropagation(); delItem(it.id); }} style={{ background: "none", border: "none", color: C.red, cursor: "pointer", fontWeight: 800 }}>×</button>
                   </td>
                 </tr>
               );
@@ -215,6 +206,8 @@ function ProgramDetail({ sb, program, items, onChange, onConvert }) {
         </table>
       )}
 
+      {editing && <ItemEditorModal sb={sb} item={editing} onClose={() => setEditing(null)}
+        onSaved={() => { setEditing(null); onChange(); }} />}
       {adding
         ? <AddProgramItem sb={sb} program={program} itemCount={items.length} onDone={() => { setAdding(false); onChange(); }} onCancel={() => setAdding(false)} />
         : (
@@ -243,6 +236,8 @@ function AddProgramItem({ sb, program, itemCount, onDone, onCancel }) {
   const [culture, setCulture] = useState(null);  // full record for the modal
   const [mat, setMat] = useState(null);          // matched sourcing price
   const [matNote, setMatNote] = useState("");
+  const [matKey, setMatKey] = useState(null);    // canonical key of the chosen variety
+  const [showQuotes, setShowQuotes] = useState(false);
   const [containers, setContainers] = useState([]);
   const [contId, setContId] = useState("");
   const [soil, setSoil] = useState(null);
@@ -322,11 +317,12 @@ function AddProgramItem({ sb, program, itemCount, onDone, onCancel }) {
     setMat(null); setMatNote("");
     if (!chosen) return;
     const series = lc(chosen.series_name), varn = lc(chosen.series_variety);
-    const cols = "crop,variety,broker,supplier,form_class,landed,variety_key";
+    const cols = "crop,variety,broker,supplier,form_class,form_raw,landed,variety_key";
     let key = null;
     try { key = makeKey(chosen.crop_name, null, [series, varn].filter(Boolean).join(" ") || chosen.crop_name); } catch { /* fall through to fuzzy */ }
+    setMatKey(key);
     if (key) {
-      const { data: exact } = await sb.from("v_sourcing_prices").select(cols).eq("variety_key", key).limit(20);
+      const { data: exact } = await sb.from("broker_prices").select(cols).eq("season", QUOTE_SEASON).eq("variety_key", key).gt("landed", 0).limit(50);
       if (exact && exact.length) {
         const cheapest = [...exact].sort((a, b) => (+a.landed || 9e9) - (+b.landed || 9e9))[0];
         setMat(cheapest); setMatNote("");
@@ -341,10 +337,10 @@ function AddProgramItem({ sb, program, itemCount, onDone, onCancel }) {
       score: toks.filter(w => String(r.variety).toLowerCase().includes(w)).length }))
       .sort((a, b) => b.score - a.score || (+a.r.landed || 9) - (+b.r.landed || 9));
     const best = scored[0];
-    // the exact key already missed, so anything from here is a guess — say so
-    if (best && (best.score > 0 || !varn)) { setMat(best.r); setMatNote("closest match — verify"); }
-    else if (scored.length) { setMat(scored[0].r); setMatNote("closest match — verify"); }
-    else setMatNote("no broker quote found — cost will need a hand-entered price");
+    // the exact key already missed, so anything from here is a guess — say so.
+    // NEVER attach a zero-score row (that's how an ivy once wore a begonia's price).
+    if (best && best.score > 0) { setMat(best.r); setMatNote("closest match — verify"); }
+    else setMatNote("no close match — 🔍 search the quotes");
   })(); }, [varId]); // eslint-disable-line
 
   const cont = containers.find(c => c.id === contId) || null;
@@ -397,7 +393,7 @@ function AddProgramItem({ sb, program, itemCount, onDone, onCancel }) {
       material: {
         crop: cropWord, variety: fullVariety, breeder: chosen ? lc(chosen.breeder_name) : null,
         plant_type: ptype || (chosen ? lc(chosen.category) : null), culture_source_id: chosen?.id || null,
-        ...(mat ? { broker: mat.broker, supplier: mat.supplier, form: mat.form_class, landed: +mat.landed || null, variety_key: mat.variety_key } : {}),
+        ...(mat ? { broker: mat.broker, supplier: mat.supplier, form: mat.form_class, form_raw: mat.form_raw || null, item_min: mat.item_min || null, landed: +mat.landed || null, variety_key: mat.variety_key } : {}),
       },
       est_unit_cost: parts.total,
       cost_parts: { liner: parts.liner, container: parts.container, carrier: parts.carrier, soil: parts.soil, soil_mix: soil?.name || null, case_size: caseOf },
@@ -427,7 +423,7 @@ function AddProgramItem({ sb, program, itemCount, onDone, onCancel }) {
           <span style={lab}>Species</span>
           <select value={crop} onChange={e => { setCrop(e.target.value); setBreeder(""); setVarId(""); setNameOverride(null); }} style={{ ...inp, width: "100%", cursor: "pointer" }}>
             <option value="">Choose…</option>
-            {cropOpts.map(([c, n]) => <option key={c} value={c}>{c} ({n})</option>)}
+            {cropOpts.map(([c, n, d]) => <option key={c} value={c}>{d} ({n})</option>)}
           </select>
         </div>
         <div style={{ minWidth: 170 }}>
@@ -468,12 +464,17 @@ function AddProgramItem({ sb, program, itemCount, onDone, onCancel }) {
       </div>
 
       {chosen && (
-        <div style={{ fontSize: 12, color: C.muted, marginTop: 8 }}>
+        <div style={{ fontSize: 12, color: C.muted, marginTop: 8, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           {mat
-            ? <>💵 Sourcing: <b style={{ color: C.text }}>{mat.variety}</b> — {money(+mat.landed)} {mat.form_class} ({[mat.broker, mat.supplier].filter(Boolean).join("/")}){matNote && <b style={{ color: C.amber }}> · {matNote}</b>}</>
+            ? <span>💵 Sourcing: <b style={{ color: C.text }}>{mat.variety}</b> — {money(+mat.landed)} {mat.form_class}{mat.form_raw ? ` (${mat.form_raw})` : ""} ({[mat.broker, mat.supplier].filter(Boolean).join("/")}){matNote && <b style={{ color: C.amber }}> · {matNote}</b>}</span>
             : <b style={{ color: C.amber }}>💵 {matNote || "matching a broker quote…"}</b>}
+          <button onClick={() => setShowQuotes(true)} style={{ padding: "4px 10px", borderRadius: 7, border: `1.5px solid ${C.light}`, background: "#fff", color: C.dark, fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>🔍 Search quotes</button>
         </div>
       )}
+      {showQuotes && chosen && <QuotePicker sb={sb} varietyKey={matKey}
+        initialQuery={fullVariety} current={mat}
+        onPick={r => { setMat({ ...r, form_class: r.form_class }); setMatNote("hand-picked"); setShowQuotes(false); }}
+        onClose={() => setShowQuotes(false)} />}
 
       {(itemName || sku) && (
         <div style={{ background: "#f4f7f1", border: `1px solid ${C.border}`, borderRadius: 9, padding: "9px 12px", marginTop: 8, display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center" }}>
@@ -505,7 +506,190 @@ function AddProgramItem({ sb, program, itemCount, onDone, onCancel }) {
   );
 }
 
-// The culture on file: details, propagation, finish times, PDF when there is one.
+// Click an item row → this. Everything is DRAFT until Save — nothing writes on
+// blur or on quote pick, so a wrong click costs nothing.
+function ItemEditorModal({ sb, item, onClose, onSaved }) {
+  const [units, setUnits] = useState(item.target_units ?? "");
+  const [price, setPrice] = useState(item.target_price ?? "");
+  const [ppp, setPpp] = useState(item.ppp || 1);
+  const [mat, setMat] = useState(item.material || null);
+  const [showQuotes, setShowQuotes] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const caseOf = +(item.cost_parts?.case_size) || null;
+
+  const cp = item.cost_parts || {};
+  const liner = mat && mat.landed != null ? (+mat.landed) * (parseInt(ppp) || 1) : (cp.liner ?? null);
+  const est = (liner || 0) + (+cp.container || 0) + (+cp.carrier || 0) + (+cp.soil || 0) || null;
+  const gm = est && parseFloat(price) > 0 ? (parseFloat(price) - est) / parseFloat(price) : null;
+  const dirty = String(units) !== String(item.target_units ?? "") || String(price) !== String(item.target_price ?? "")
+    || +ppp !== +(item.ppp || 1) || mat !== item.material;
+
+  async function save() {
+    setSaving(true);
+    let n = parseInt(units);
+    if (caseOf && n > 0 && n % caseOf !== 0) n = Math.ceil(n / caseOf) * caseOf;
+    const cost_parts = { ...cp, liner };
+    const { error } = await sb.from("program_items").update({
+      target_units: isNaN(n) ? null : n,
+      target_price: price === "" ? null : parseFloat(price),
+      ppp: parseInt(ppp) || 1,
+      material: mat, cost_parts, est_unit_cost: est,
+      updated_at: new Date().toISOString(),
+    }).eq("id", item.id);
+    setSaving(false);
+    if (error) { window.alert(`Did NOT save: ${error.message}`); return; }
+    onSaved();
+  }
+
+  const lab = { fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", display: "block", marginBottom: 3 };
+  const inp = { padding: "7px 9px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit", background: "#fff" };
+  const Fact = ({ k, v }) => <div style={{ display: "flex", gap: 8, fontSize: 12.5, padding: "1.5px 0" }}><span style={{ minWidth: 90, color: C.muted }}>{k}</span><b style={{ color: C.text }}>{v || "—"}</b></div>;
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 9350, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "#f6f9f3", borderRadius: 14, width: "100%", maxWidth: 560, maxHeight: "88vh", overflow: "auto", padding: 18 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, marginBottom: 4 }}>
+          <div>
+            <div style={{ fontSize: 16.5, fontWeight: 800, color: C.dark, fontFamily: "'DM Serif Display',Georgia,serif" }}>{item.item_name}</div>
+            <div style={{ fontSize: 11.5, color: C.muted, fontFamily: "monospace" }}>{item.sku}{item.size ? ` · ${item.size}` : ""}</div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 24, color: C.muted, cursor: "pointer" }}>×</button>
+        </div>
+
+        {/* where the plant comes from */}
+        <div style={{ background: "#fff", border: `1.5px solid ${C.light}`, borderRadius: 10, padding: "10px 12px", margin: "8px 0" }}>
+          <div style={{ display: "flex", alignItems: "center", marginBottom: 4 }}>
+            <span style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase" }}>Sourcing</span>
+            <button onClick={() => setShowQuotes(true)} style={{ marginLeft: "auto", padding: "4px 10px", borderRadius: 7, border: `1.5px solid ${C.light}`, background: "#fff", color: C.dark, fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>🔍 Change quote</button>
+          </div>
+          {mat ? <>
+            <Fact k="Plant" v={mat.variety} />
+            <Fact k="Form" v={[mat.form, mat.form_raw].filter(Boolean).join(" · ")} />
+            <Fact k="Broker" v={mat.broker} />
+            <Fact k="Supplier" v={mat.supplier} />
+            <Fact k="Per cell" v={mat.landed != null ? money(+mat.landed) : null} />
+            {mat.item_min && <Fact k="Minimum" v={mat.item_min} />}
+          </> : <div style={{ fontSize: 12.5, color: C.amber }}>No quote attached — cost uses pot + soil only. 🔍 to pick one.</div>}
+        </div>
+
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", margin: "10px 0" }}>
+          <div style={{ width: 110 }}>
+            <span style={lab}>Quantity{caseOf ? ` (×${caseOf})` : ""}</span>
+            <input value={units} onChange={e => setUnits(e.target.value)} inputMode="numeric" style={{ ...inp, width: "100%" }} />
+          </div>
+          <div style={{ width: 90 }}>
+            <span style={lab}>Price</span>
+            <input value={price} onChange={e => setPrice(e.target.value)} inputMode="decimal" style={{ ...inp, width: "100%" }} />
+          </div>
+          <div style={{ width: 90 }}>
+            <span style={lab}>Plants/pot</span>
+            <input value={ppp} onChange={e => setPpp(e.target.value)} inputMode="numeric" style={{ ...inp, width: "100%" }} />
+          </div>
+        </div>
+
+        <div style={{ fontSize: 12.5, color: C.text, margin: "6px 0 12px" }}>
+          {liner != null && <>liner {money(liner)}</>}
+          {cp.container != null && <> + pot {money(+cp.container)}</>}
+          {cp.carrier != null && <> + case {money(+cp.carrier)}</>}
+          {cp.soil != null && <> + soil {money(+cp.soil)}</>}
+          {est != null && <>{" = "}<b style={{ fontSize: 14 }}>{money(est)}</b></>}
+          {gm != null && <b style={{ marginLeft: 8, color: gm < 0.6 ? C.red : C.green }}>{Math.round(gm * 100)}% margin</b>}
+        </div>
+
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={onClose} style={{ padding: "8px 13px", borderRadius: 8, border: `1px solid ${C.border}`, background: "#fff", color: C.muted, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+          <button onClick={save} disabled={!dirty || saving}
+            style={{ flex: 1, padding: "8px 13px", borderRadius: 8, border: "none", background: dirty ? C.dark : "#c8d8c0", color: "#c8e6b8", fontWeight: 800, cursor: dirty ? "pointer" : "default", fontFamily: "inherit" }}>
+            {saving ? "Saving…" : dirty ? "Save changes" : "No changes"}
+          </button>
+        </div>
+
+        {showQuotes && <QuotePicker sb={sb} varietyKey={mat?.variety_key || null}
+          initialQuery={mat?.variety || item.item_name.replace(/^[\d.\"]+\s*/, "")}
+          current={mat}
+          onPick={r => { setMat({ ...(mat || {}), crop: r.crop, variety: r.variety, broker: r.broker, supplier: r.supplier, form: r.form_class, form_raw: r.form_raw, item_min: r.item_min, landed: r.landed, variety_key: r.variety_key }); setShowQuotes(false); }}
+          onClose={() => setShowQuotes(false)} />}
+      </div>
+    </div>
+  );
+}
+
+// Quote comparison window — the auto-attach can't answer "URC or callused?
+// 160 or 288? whose price?" so the human gets the whole quote set: form, tray,
+// broker, supplier, minimums, list vs landed. Exact key matches float to the
+// top with a ●; the search box covers everything else.
+const QUOTE_COLS = "id,crop,variety,broker,supplier,form_class,form_raw,item_min,list_price,landed,royalty,freight,variety_key";
+const QUOTE_SEASON = "2026-2027"; // the loaded broker files
+export function QuotePicker({ sb, varietyKey, initialQuery, current, onPick, onClose }) {
+  const [q, setQ] = useState(initialQuery || "");
+  const [rows, setRows] = useState(null);
+  const [busy, setBusy] = useState(false);
+  async function load(term) {
+    setBusy(true);
+    const out = new Map();
+    if (varietyKey) {
+      const { data } = await sb.from("broker_prices").select(QUOTE_COLS)
+        .eq("season", QUOTE_SEASON).eq("variety_key", varietyKey).gt("landed", 0).limit(100);
+      (data || []).forEach(r => out.set(r.id, { ...r, exact: true }));
+    }
+    const toks = String(term || "").trim().split(/\s+/).filter(t => t.length > 1).slice(0, 5);
+    if (toks.length) {
+      let qq = sb.from("broker_prices").select(QUOTE_COLS).eq("season", QUOTE_SEASON).gt("landed", 0).limit(300);
+      toks.forEach(t => { qq = qq.or(`variety.ilike.*${t}*,crop.ilike.*${t}*`); });
+      const { data } = await qq;
+      (data || []).forEach(r => { if (!out.has(r.id)) out.set(r.id, { ...r, exact: false }); });
+    }
+    setRows([...out.values()].sort((a, b) => (b.exact ? 1 : 0) - (a.exact ? 1 : 0) || (+a.landed || 9e9) - (+b.landed || 9e9)));
+    setBusy(false);
+  }
+  useEffect(() => { load(q); }, []); // eslint-disable-line
+  const th = { textAlign: "left", padding: "4px 8px", fontSize: 10, fontWeight: 800, color: C.muted, textTransform: "uppercase", borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0, background: "#f6f9f3" };
+  const td = { padding: "5px 8px", fontSize: 12, borderBottom: `1px solid ${C.border}` };
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 9400, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "#f6f9f3", borderRadius: 14, width: "100%", maxWidth: 860, maxHeight: "88vh", display: "flex", flexDirection: "column", padding: 16 }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 8 }}>
+          <div style={{ fontSize: 16, fontWeight: 800, color: C.dark, fontFamily: "'DM Serif Display',Georgia,serif" }}>💵 Broker quotes</div>
+          {current?.variety && <span style={{ fontSize: 11.5, color: C.muted }}>current: <b>{current.variety}</b> {money(+current.landed)} ({[current.broker, current.supplier].filter(Boolean).join("/")})</span>}
+          <button onClick={onClose} style={{ marginLeft: "auto", background: "none", border: "none", fontSize: 22, color: C.muted, cursor: "pointer" }}>×</button>
+        </div>
+        <form onSubmit={e => { e.preventDefault(); load(q); }} style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="search variety or crop…" autoFocus
+            style={{ flex: 1, padding: "7px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit" }} />
+          <button type="submit" style={{ padding: "7px 14px", borderRadius: 8, border: "none", background: C.light, color: "#fff", fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>Search</button>
+        </form>
+        <div style={{ overflow: "auto", flex: 1, background: "#fff", borderRadius: 9, border: `1px solid ${C.border}` }}>
+          {rows === null || busy ? <div style={{ padding: 16, color: C.muted, fontSize: 13 }}>Searching the catalog…</div>
+          : !rows.length ? <div style={{ padding: 16, color: C.muted, fontSize: 13 }}>No quotes found — try fewer words.</div>
+          : <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead><tr>
+                <th style={th}></th><th style={th}>Variety</th><th style={th}>Form</th><th style={th}>Broker</th><th style={th}>Supplier</th>
+                <th style={{ ...th, textAlign: "right" }}>Min</th><th style={{ ...th, textAlign: "right" }}>List</th><th style={{ ...th, textAlign: "right" }}>Landed</th>
+              </tr></thead>
+              <tbody>
+                {rows.slice(0, 200).map(r => (
+                  <tr key={r.id} onClick={() => onPick(r)} title="use this quote"
+                    style={{ cursor: "pointer", background: r.exact ? "#f2f8ee" : "#fff" }}>
+                    <td style={{ ...td, color: C.green, fontWeight: 800 }}>{r.exact ? "●" : ""}</td>
+                    <td style={{ ...td, fontWeight: 700 }}>{r.variety}<div style={{ fontSize: 10.5, fontWeight: 400, color: C.muted }}>{r.crop}</div></td>
+                    <td style={td}>{r.form_class}{r.form_raw ? <div style={{ fontSize: 10.5, color: C.muted }}>{r.form_raw}</div> : null}</td>
+                    <td style={td}>{r.broker}</td>
+                    <td style={td}>{r.supplier}</td>
+                    <td style={{ ...td, textAlign: "right", color: C.muted }}>{r.item_min || "—"}</td>
+                    <td style={{ ...td, textAlign: "right", color: C.muted }}>{r.list_price != null ? money(+r.list_price) : "—"}</td>
+                    <td style={{ ...td, textAlign: "right", fontWeight: 800 }}>{money(+r.landed)}
+                      {(+r.royalty > 0 || +r.freight > 0) && <div style={{ fontSize: 10, fontWeight: 400, color: C.muted }}>{+r.royalty > 0 ? `roy ${money(+r.royalty)}` : ""}{+r.freight > 0 ? ` frt ${money(+r.freight)}` : ""}</div>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>}
+        </div>
+        <div style={{ fontSize: 10.5, color: C.muted, marginTop: 6 }}>● = exact catalog match for this variety · landed = list + royalty + freight per cell · click a row to use it</div>
+      </div>
+    </div>
+  );
+}
+
 function CultureModal({ record, onClose }) {
   const cd = record.culture_details || {};
   const pd = record.propagation_details || {};
