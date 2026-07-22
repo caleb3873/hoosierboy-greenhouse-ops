@@ -229,7 +229,11 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
                 inputMode="numeric"
                 onBlur={e => {
                   const t = e.target.value.trim();
-                  if (t === "") { onSaveTarget({ target_units: null, decision: null }); return; }
+                  if (t === String(tgt?.target_units ?? "")) return;          // untouched
+                  if (t === "") {
+                    if (tgt?.target_units == null) return;                    // empty→empty no-op
+                    onSaveTarget({ target_units: null, decision: null }); return;
+                  }
                   const n = Math.max(0, Math.round(+t.replace(/[^0-9.]/g, "")));
                   if (!isNaN(n)) onSaveTarget({ target_units: n, decision: n === 0 ? "drop" : n > row.planned ? "grow" : n < row.planned ? "cut" : "hold" });
                 }}
@@ -258,7 +262,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
             )}
           </div>
           <div style={{ display: "flex", gap: 6, marginTop: 9 }}>
-            <input value={note} onChange={e => setNote(e.target.value)} onBlur={() => onSaveTarget({ note: note.trim() || null })}
+            <input value={note} onChange={e => setNote(e.target.value)} onBlur={() => { if ((note.trim() || null) !== (tgt?.note ?? null)) onSaveTarget({ note: note.trim() || null }); }}
               placeholder="note from the room — why this decision…"
               style={{ flex: 1, padding: "7px 10px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 12.5, fontFamily: "inherit" }} />
           </div>

@@ -72,19 +72,16 @@ export default function BasketPlanner({ plan, onOpenCombos }) {
   // Same decision store as the item projection — a basket target is not a
   // proposal, it's a projection decision like any other item's.
   async function saveTarget(b, patch) {
-    const prev = targets[b.name] || {};
+    // partial writes only — unsent columns keep their DB values (see ProductionPlans)
     const next = {
-      plan_id: plan.id, item_name: b.name,
-      target_units: patch.target_units !== undefined ? patch.target_units : (prev.target_units ?? null),
-      ready_shift: patch.ready_shift !== undefined ? patch.ready_shift : (prev.ready_shift ?? null),
-      decision: patch.decision !== undefined ? patch.decision : (prev.decision ?? null),
+      plan_id: plan.id, item_name: b.name, ...patch,
       prior_units: b.sold, current_units: b.baskets,
       decided_by: displayName || "planner", decided_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
-    setTargets(t => ({ ...t, [b.name]: { ...prev, ...next } }));
-    try { await sb.from("plan_targets").upsert(next, { onConflict: "plan_id,item_name" }); }
-    catch (e) { console.warn("target save failed", e); }
+    setTargets(t => ({ ...t, [b.name]: { ...(t[b.name] || {}), ...next } }));
+    const { error } = await sb.from("plan_targets").upsert(next, { onConflict: "plan_id,item_name" });
+    if (error) window.alert("Decision did NOT save: " + error.message);
   }
 
   useEffect(() => {
@@ -378,7 +375,11 @@ function ProjectionRow({ b, tgt, onSave }) {
         <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
           <span style={{ fontSize: 12.5, color: C.text }}>Baskets:</span>
           <input value={val} onChange={e => setVal(e.target.value)}
-            onBlur={e => commit(e.target.value)} onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
+            onBlur={e => {
+              if (String(e.target.value).trim() === String(tgt?.target_units ?? "").trim()) return; // untouched
+              if (e.target.value.trim() === "" && tgt?.target_units == null) return;
+              commit(e.target.value);
+            }} onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
             placeholder={String(b.baskets)}
             style={{ width: 74, padding: "6px 8px", textAlign: "right", borderRadius: 8, fontSize: 13,
               fontFamily: "inherit", border: `1.5px solid ${tgt?.target_units != null ? C.light : C.border}`,
