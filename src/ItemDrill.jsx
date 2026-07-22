@@ -10,6 +10,7 @@ import { getSupabase } from "./supabase";
 import { QuotePicker } from "./ProgramBuilder";
 import { BasketDesigner } from "./ProductionPlans";
 import { useAuth } from "./Auth";
+import { makeKey } from "./brokerKey";
 
 const C = { dark: "#1e2d1a", light: "#7fb069", border: "#dfe7d8", muted: "#7a8c74",
   text: "#2f3b2a", red: "#c0392b", amber: "#c98a2e", green: "#2e7d32" };
@@ -176,6 +177,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
         per_basket: per,
       }, v?.variety_key || null);
       await load();
+      onMutated?.();
     } catch (e) { window.alert("Couldn't update component: " + (e.message || e)); }
     setBusy(false);
   }
@@ -189,22 +191,45 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
       ? detail.children.filter(c => c.variety_id === t.variety_id)
       : detail.parents.filter(p => p.variety_id === t.variety_id);
     const prop = FORM_MAP[String(r.form_class || "").toLowerCase()] || null;
-    if (!window.confirm(`Source ${t.label} from ${[r.broker, r.supplier].filter(Boolean).join(" / ")}\n${r.form_class}${r.form_raw ? ` (${r.form_raw})` : ""} @ $${(+r.landed).toFixed(3)}/plant\n\nApplies to ${rows.length} plan row(s) — liner cost changes immediately.`)) return;
+    // picking a DIFFERENT plant replaces the variety, not just the price
+    const v = detail.vmap[t.variety_id];
+    let curKey = t.vkey || v?.variety_key || null;
+    if (!curKey && v) { try { curKey = makeKey(v.crop_name, null, v.variety); } catch { /* unkeyable */ } }
+    const swapping = !!r.variety_key && !!curKey && r.variety_key !== curKey;
+    const msg = swapping
+      ? `REPLACE ${t.label}\nwith ${r.variety}\n\n${[r.broker, r.supplier].filter(Boolean).join(" / ")} — ${r.form_class}${r.form_raw ? ` (${r.form_raw})` : ""} @ $${(+r.landed).toFixed(3)}/plant\nApplies to ${rows.length} plan row(s) immediately.`
+      : `Source ${t.label} from ${[r.broker, r.supplier].filter(Boolean).join(" / ")}\n${r.form_class}${r.form_raw ? ` (${r.form_raw})` : ""} @ $${(+r.landed).toFixed(3)}/plant\n\nApplies to ${rows.length} plan row(s) — liner cost changes immediately.`;
+    if (!window.confirm(msg)) return;
     setBusy(true);
     try {
+      let newVid = null;
+      if (swapping) {
+        const { data: hit } = await sb.from("variety_library").select("id").eq("variety_key", r.variety_key).limit(1);
+        newVid = hit && hit[0] ? hit[0].id : null;
+        if (!newVid) {
+          newVid = crypto.randomUUID();
+          const { error: ve } = await sb.from("variety_library").insert({
+            id: newVid, crop_name: r.crop || null, variety: r.variety, variety_key: r.variety_key,
+            notes: "created from a broker quote (component swap)" });
+          if (ve) throw ve;
+        }
+      }
       for (const x of rows) {
         await sb.from("scheduled_crops").update({
           liner_unit_cost: +r.landed, broker: r.broker, supplier: r.supplier,
           ...(prop ? { prop_method: prop, prop_method_source: "recorded" } : {}),
+          ...(newVid ? { variety_id: newVid } : {}),
         }).eq("id", x.id);
       }
       const w0 = rows[0] || {};
       await logChange("sourcing_change", {
         plant: t.label, kind: t.kind, rows: rows.length,
+        ...(swapping ? { replaced_with: r.variety } : {}),
         before: { broker: w0.broker, supplier: w0.supplier, landed: +w0.liner_unit_cost || null },
         after: { broker: r.broker, supplier: r.supplier, landed: +r.landed, form: r.form_class, form_raw: r.form_raw },
       }, r.variety_key);
       await load();
+      onMutated?.();
     } catch (e) { window.alert("Couldn't update sourcing: " + (e.message || e)); }
     setBusy(false);
     setQuoteFor(null);
@@ -250,6 +275,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
         sourcing: { broker: r.broker, supplier: r.supplier, form: r.form_class, form_raw: r.form_raw, landed: +r.landed },
       }, r.variety_key);
       await load();
+      onMutated?.();
     } catch (e) { window.alert("Couldn't add component: " + (e.message || e)); }
     setBusy(false);
   }
@@ -292,6 +318,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
       const m = agg?.materials[0];
       await logChange("ppp_change", { plant: m?.variety || row.item, ppp: n }, m?.vkey || null);
       await load();
+      onMutated?.();
     } catch (e) { window.alert("Couldn't change plants/pot: " + (e.message || e)); }
     setBusy(false);
   }
@@ -369,6 +396,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
         plant: v ? `${v.crop_name || ""} ${v.variety || ""}`.trim() : variety_id, rows: ids.length,
       }, v?.variety_key || null);
       await load();
+      onMutated?.();
     } catch (e) { window.alert("Couldn't remove: " + (e.message || e)); }
     setBusy(false);
   }
@@ -460,7 +488,10 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
       <div onClick={e => e.stopPropagation()} style={{ background: "#f6f9f3", width: "min(760px, 94vw)", maxHeight: "92vh", overflow: "auto", padding: 20, borderRadius: 14, boxShadow: "0 14px 48px rgba(0,0,0,.35)", fontFamily: "'DM Sans','Segoe UI',sans-serif" }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
           <div>
-            <div style={{ fontSize: 19, fontWeight: 800, color: C.dark, fontFamily: "'DM Serif Display',Georgia,serif" }}>{row.item}</div>
+            <div style={{ fontSize: 19, fontWeight: 800, color: C.dark, fontFamily: "'DM Serif Display',Georgia,serif" }}>
+              {row.item}
+              {row.isNew && <span style={{ marginLeft: 8, fontSize: 10, fontWeight: 900, padding: "2px 8px", borderRadius: 9, color: "#fff", background: C.green, letterSpacing: 0.5, verticalAlign: "middle", fontFamily: "'DM Sans',sans-serif" }}>NEW</span>}
+            </div>
             <div style={{ fontSize: 12, color: C.muted }}>
               {detail ? `${detail.parents.length} bench row${detail.parents.length !== 1 ? "s" : ""}` : "…"}
               {agg?.comps.length ? ` · combo, ${agg.comps.length} components` : ""}
@@ -489,7 +520,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
                 const d = h.detail || {};
                 const when = new Date(h.changed_at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
                 const line =
-                  h.change_type === "sourcing_change" ? `${d.plant}: ${[d.before?.broker, d.before?.supplier].filter(Boolean).join("/") || "?"} @ ${d.before?.landed != null ? money(+d.before.landed) : "?"} → ${[d.after?.broker, d.after?.supplier].filter(Boolean).join("/")} ${d.after?.form || ""}${d.after?.form_raw ? ` (${d.after.form_raw})` : ""} @ ${money(+d.after?.landed)}`
+                  h.change_type === "sourcing_change" ? `${d.plant}${d.replaced_with ? ` REPLACED with ${d.replaced_with}` : ""}: ${[d.before?.broker, d.before?.supplier].filter(Boolean).join("/") || "?"} @ ${d.before?.landed != null ? money(+d.before.landed) : "?"} → ${[d.after?.broker, d.after?.supplier].filter(Boolean).join("/")} ${d.after?.form || ""}${d.after?.form_raw ? ` (${d.after.form_raw})` : ""} @ ${money(+d.after?.landed)}`
                   : h.change_type === "component_qty" ? `${d.plant} set to ${d.per_basket}/basket`
                   : h.change_type === "component_added" ? `added ${d.plant} at ${d.per_basket}/basket — ${[d.sourcing?.broker, d.sourcing?.supplier].filter(Boolean).join("/")} @ ${money(+d.sourcing?.landed)}`
                   : h.change_type === "component_removed" ? `removed ${d.plant}`
