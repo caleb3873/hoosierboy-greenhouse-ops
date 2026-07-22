@@ -14,6 +14,7 @@ const C = { dark: "#1e2d1a", light: "#7fb069", border: "#dfe7d8", muted: "#7a8c7
   text: "#2f3b2a", red: "#c0392b", amber: "#c98a2e", green: "#2e7d32" };
 const money = n => n == null ? "—" : (Math.abs(n) >= 1000 ? `$${Math.round(n).toLocaleString()}` : `$${(+n).toFixed(2)}`);
 const pct = n => n == null ? "—" : `${Math.round(n * 100)}%`;
+const FORM_MAP = { urc: "URC", callused: "CALL", plug: "PLUG", liner: "PLUG", rooted: "PLUG", bareroot: "BULB", seed: "SEED" };
 
 export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose }) {
   const sb = getSupabase();
@@ -53,10 +54,18 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
     let children = [];
     if (ids.length) {
       const { data: ch } = await sb.from("scheduled_crops")
-        .select("id,combo_parent_id,variety_id,qty_plants_ordered,liner_unit_cost,broker,supplier")
+        .select("id,combo_parent_id,variety_id,qty_plants_ordered,liner_unit_cost,broker,supplier,prop_method,prop_tray_id")
         .in("combo_parent_id", ids);
       children = ch || [];
     }
+    // prop cost inputs: plug trays + the sticking rate
+    const [trayRes, csRes] = await Promise.all([
+      sb.from("containers").select("id,name,cost_per_unit,cells_per_flat").not("cells_per_flat", "is", null).ilike("name", "%plug%"),
+      sb.from("cost_settings").select("value").eq("key", "urc_stick_cost"),
+    ]);
+    const trays = (trayRes.data || []).filter(t => +t.cost_per_unit > 0);
+    const defaultTray = trays.find(t => /105/.test(t.name)) || null;
+    const stick = +(csRes.data?.[0]?.value) || 0;
     const vids = [...new Set([...children.map(c => c.variety_id), ...(parents || []).map(p => p.variety_id)].filter(Boolean))];
     let vmap = {};
     if (vids.length) {
@@ -73,7 +82,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
       const { data: bs } = await sb.from("benches").select("id,code,zone_label,position").in("id", bids);
       (bs || []).forEach(b => { bmap[b.id] = b; });
     }
-    setDetail({ parents: parents || [], children, vmap, costById, bmap });
+    setDetail({ parents: parents || [], children, vmap, costById, bmap, trays, defaultTray, stick });
   }
   useEffect(() => { load(); }, [row.item]); // eslint-disable-line
 
@@ -92,14 +101,21 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
   const agg = useMemo(() => {
     if (!detail) return null;
     const baskets = detail.parents.reduce((a, p) => a + (+p.qty_pots || 0), 0);
+    // per-plant prop add-on for a cutting: sticking labor + its tray's per-cell share
+    const propOf = ch => {
+      if (!["URC", "CALL"].includes(ch.prop_method)) return 0;
+      const tray = detail.trays?.find(t => t.id === ch.prop_tray_id) || detail.defaultTray;
+      return (detail.stick || 0) + (tray ? +tray.cost_per_unit / (+tray.cells_per_flat || 1) : 0);
+    };
     const cost = detail.parents.reduce((a, p) => a + (detail.costById[p.id] || 0), 0)
-      + detail.children.reduce((a, c) => a + (+c.qty_plants_ordered || 0) * (+c.liner_unit_cost || 0), 0);
+      + detail.children.reduce((a, c) => a + (+c.qty_plants_ordered || 0) * ((+c.liner_unit_cost || 0) + propOf(c)), 0);
     const comps = {};
     for (const ch of detail.children) {
       const v = detail.vmap[ch.variety_id];
       const k = ch.variety_id;
       const o = comps[k] || (comps[k] = { variety_id: k, label: v ? `${v.crop_name || ""} ${v.variety || ""}`.trim() : "?",
-        plants: 0, liner: +ch.liner_unit_cost || null, broker: ch.broker, supplier: ch.supplier });
+        plants: 0, liner: +ch.liner_unit_cost || null, broker: ch.broker, supplier: ch.supplier,
+        prop_method: ch.prop_method, prop_tray_id: ch.prop_tray_id, propPer: propOf(ch) });
       o.plants += +ch.qty_plants_ordered || 0;
       if (o.liner == null && ch.liner_unit_cost) o.liner = +ch.liner_unit_cost;
     }
@@ -118,7 +134,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
     // exactly what it does to the basket's cost
     const parentLinerCost = detail.parents.reduce((t, p) => t + (+p.qty_pots || 0) * (+p.ppp || 1) * (+p.liner_unit_cost || 0), 0);
     const containerCost = detail.parents.reduce((t, p) => t + (detail.costById[p.id] || 0), 0) - parentLinerCost;
-    const childLinerCost = detail.children.reduce((t, c) => t + (+c.qty_plants_ordered || 0) * (+c.liner_unit_cost || 0), 0);
+    const childLinerCost = detail.children.reduce((t, c) => t + (+c.qty_plants_ordered || 0) * ((+c.liner_unit_cost || 0) + propOf(c)), 0);
     const planPrice = Math.max(0, ...detail.parents.map(p => +p.sale_price_per_pot || 0)) || null;
     const ready = detail.parents.map(p => p.ready_week).filter(x => x != null);
     return { baskets, cost, costPer: baskets ? cost / baskets : null, materials: Object.values(matKeys),
@@ -169,7 +185,6 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
     const rows = t.kind === "component"
       ? detail.children.filter(c => c.variety_id === t.variety_id)
       : detail.parents.filter(p => p.variety_id === t.variety_id);
-    const FORM_MAP = { urc: "URC", callused: "CALL", plug: "PLUG", liner: "PLUG", rooted: "PLUG", bareroot: "BULB", seed: "SEED" };
     const prop = FORM_MAP[String(r.form_class || "").toLowerCase()] || null;
     if (!window.confirm(`Source ${t.label} from ${[r.broker, r.supplier].filter(Boolean).join(" / ")}\n${r.form_class}${r.form_raw ? ` (${r.form_raw})` : ""} @ $${(+r.landed).toFixed(3)}/plant\n\nApplies to ${rows.length} plan row(s) — liner cost changes immediately.`)) return;
     setBusy(true);
@@ -177,7 +192,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
       for (const x of rows) {
         await sb.from("scheduled_crops").update({
           liner_unit_cost: +r.landed, broker: r.broker, supplier: r.supplier,
-          ...(t.kind === "parent" && prop ? { prop_method: prop } : {}),
+          ...(prop ? { prop_method: prop, prop_method_source: "recorded" } : {}),
         }).eq("id", x.id);
       }
       const w0 = rows[0] || {};
@@ -223,6 +238,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
           plant_week: p.plant_week, plant_year: p.plant_year,
           ship_week: p.ship_week, ship_year: p.ship_year, status: "planned",
           liner_unit_cost: +r.landed, broker: r.broker, supplier: r.supplier,
+          prop_method: FORM_MAP[String(r.form_class || "").toLowerCase()] || null,
         });
         if (error) throw error;
       }
@@ -232,6 +248,26 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
       }, r.variety_key);
       await load();
     } catch (e) { window.alert("Couldn't add component: " + (e.message || e)); }
+    setBusy(false);
+  }
+
+  // Which tray a cutting roots in — 105s by default, 50s for the heavy stuff.
+  async function setTray(variety_id, tray_id) {
+    if (!detail || busy) return;
+    setBusy(true);
+    try {
+      const ids = detail.children.filter(c => c.variety_id === variety_id).map(c => c.id);
+      for (let i = 0; i < ids.length; i += 100) {
+        await sb.from("scheduled_crops").update({ prop_tray_id: tray_id || null }).in("id", ids.slice(i, i + 100));
+      }
+      const v = detail.vmap[variety_id];
+      const tray = detail.trays.find(t => t.id === tray_id);
+      await logChange("prop_tray", {
+        plant: v ? `${v.crop_name || ""} ${v.variety || ""}`.trim() : variety_id,
+        tray: tray ? tray.name : "105 (default)",
+      }, v?.variety_key || null);
+      await load();
+    } catch (e) { window.alert("Couldn't change tray: " + (e.message || e)); }
     setBusy(false);
   }
 
@@ -316,6 +352,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
                   : h.change_type === "component_qty" ? `${d.plant} set to ${d.per_basket}/basket`
                   : h.change_type === "component_added" ? `added ${d.plant} at ${d.per_basket}/basket — ${[d.sourcing?.broker, d.sourcing?.supplier].filter(Boolean).join("/")} @ ${money(+d.sourcing?.landed)}`
                   : h.change_type === "component_removed" ? `removed ${d.plant}`
+                  : h.change_type === "prop_tray" ? `${d.plant} now sticks in ${d.tray}`
                   : h.change_type === "order_confirmation" ? `order confirmation: ${d.summary || JSON.stringify(d)}`
                   : JSON.stringify(d);
                 return (
@@ -463,7 +500,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
               return (
                 <div style={{ background: changed ? "#fdf7ec" : "#f4f7f1", border: `1.5px solid ${changed ? C.amber : C.border}`, borderRadius: 9, padding: "9px 12px", marginBottom: 9 }}>
                   <div style={{ fontSize: 12.5, color: C.text }}>
-                    💰 <b>Cost per basket:</b> container + soil {money(agg.containerPer)} · plants {money(agg.plantsPer)} ={" "}
+                    💰 <b>Cost per basket:</b> container + soil {money(agg.containerPer)} · plants incl. stick+tray {money(agg.plantsPer)} ={" "}
                     {changed ? (
                       <span>
                         <span style={{ textDecoration: "line-through", color: C.muted }}>{money(was)}</span>
@@ -503,6 +540,18 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
                   style={{ color: C.muted, cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted", textUnderlineOffset: 3 }}>
                   {c.plants.toLocaleString()} plants{c.liner != null ? ` @ ${money(c.liner)}` : ""}{(c.broker || c.supplier) ? ` (${[c.broker, c.supplier].filter(Boolean).join(" / ")})` : ""}
                 </span>
+                {["URC", "CALL"].includes(c.prop_method) && detail?.trays?.length > 0 && (
+                  <label title={`stick + tray ≈ ${money(c.propPer)}/plant, in the basket cost`} style={{ fontSize: 11, color: C.muted }}>
+                    tray
+                    <select disabled={busy} value={c.prop_tray_id || ""} onChange={e => setTray(c.variety_id, e.target.value || null)}
+                      style={{ marginLeft: 4, padding: "3px 5px", borderRadius: 6, border: `1px solid ${C.border}`, fontSize: 11, fontFamily: "inherit", cursor: "pointer" }}>
+                      <option value="">105 (default)</option>
+                      {detail.trays.filter(t => !/105/.test(t.name)).map(t => (
+                        <option key={t.id} value={t.id}>{(t.name.match(/^\d+/) || [t.name])[0]}{/deep/i.test(t.name) ? " deep" : ""} — {t.cells_per_flat} cell</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
                 <button disabled={busy} onClick={() => removeComponent(c.variety_id)}
                   style={{ background: "none", border: "none", color: C.red, cursor: "pointer", fontWeight: 800, fontSize: 15 }}>×</button>
               </div>

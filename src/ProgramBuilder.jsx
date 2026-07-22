@@ -241,6 +241,7 @@ function AddProgramItem({ sb, program, itemCount, onDone, onCancel }) {
   const [containers, setContainers] = useState([]);
   const [contId, setContId] = useState("");
   const [soil, setSoil] = useState(null);
+  const [stick, setStick] = useState(0);   // cost_settings.urc_stick_cost
   const [ppp, setPpp] = useState("1");
   const [units, setUnits] = useState("");
   const [price, setPrice] = useState("");
@@ -258,7 +259,9 @@ function AddProgramItem({ sb, program, itemCount, onDone, onCancel }) {
       }
       setCorpus(out);
     } else setCorpus([]);
-    const { data: k } = await sb.from("containers").select("id,name,cost_per_unit,fill_volume_cu_ft,has_carrier,carrier_name,carrier_cost,pots_per_carrier,case_size").order("name");
+    const { data: k } = await sb.from("containers").select("id,name,cost_per_unit,fill_volume_cu_ft,cells_per_flat,has_carrier,carrier_name,carrier_cost,pots_per_carrier,case_size").order("name");
+    const { data: cs } = await sb.from("cost_settings").select("value").eq("key", "urc_stick_cost");
+    setStick(+(cs?.[0]?.value) || 0);
     setContainers(k || []);
     const { data: sm } = await sb.from("soil_mixes").select("name,cost_per_bag,fluffed_volume");
     const priced = (sm || []).filter(x => +x.cost_per_bag > 0 && +x.fluffed_volume > 0)
@@ -373,9 +376,15 @@ function AddProgramItem({ sb, program, itemCount, onDone, onCancel }) {
     // pots that ship in a carry tray (4.5" = 10-pack) owe their share of the tray
     const carrier = cont && cont.has_carrier && +cont.carrier_cost > 0 && +cont.pots_per_carrier > 0
       ? +cont.carrier_cost / +cont.pots_per_carrier : null;
-    const total = (liner || 0) + (container || 0) + (soilCost || 0) + (carrier || 0);
-    return { liner, container, soil: soilCost, carrier, total: total > 0 ? total : null };
-  }, [mat, cont, soil, ppp]);
+    // cuttings owe sticking labor + a 105-tray cell (per plant, so × ppp)
+    let prop = null;
+    if (mat && /urc|callused/i.test(mat.form_class || "")) {
+      const t105 = containers.find(x => /105/.test(x.name) && +x.cells_per_flat > 0);
+      prop = (stick + (t105 ? +t105.cost_per_unit / +t105.cells_per_flat : 0)) * (parseInt(ppp) || 1) || null;
+    }
+    const total = (liner || 0) + (container || 0) + (soilCost || 0) + (carrier || 0) + (prop || 0);
+    return { liner, container, soil: soilCost, carrier, prop, total: total > 0 ? total : null };
+  }, [mat, cont, soil, ppp, stick, containers]);
   // selling increment: case_size (or pots per carrier) — 4.5" sells in 10s, period
   const caseOf = cont ? (+cont.case_size || +cont.pots_per_carrier || null) : null;
   const unitsOff = caseOf && units && parseInt(units) > 0 && parseInt(units) % caseOf !== 0;
@@ -396,7 +405,7 @@ function AddProgramItem({ sb, program, itemCount, onDone, onCancel }) {
         ...(mat ? { broker: mat.broker, supplier: mat.supplier, form: mat.form_class, form_raw: mat.form_raw || null, item_min: mat.item_min || null, landed: +mat.landed || null, variety_key: mat.variety_key } : {}),
       },
       est_unit_cost: parts.total,
-      cost_parts: { liner: parts.liner, container: parts.container, carrier: parts.carrier, soil: parts.soil, soil_mix: soil?.name || null, case_size: caseOf },
+      cost_parts: { liner: parts.liner, container: parts.container, carrier: parts.carrier, prop: parts.prop, soil: parts.soil, soil_mix: soil?.name || null, case_size: caseOf },
       sort: Date.now() % 100000,
     });
     onDone();
@@ -485,6 +494,7 @@ function AddProgramItem({ sb, program, itemCount, onDone, onCancel }) {
               {parts.liner != null && <>liner {money(parts.liner)}</>}
               {parts.container != null && <> + pot {money(parts.container)}</>}
               {parts.carrier != null && <> + case {money(parts.carrier)} <span style={{ color: C.muted }}>({cont.carrier_name || `tray`} {money(+cont.carrier_cost)} ÷ {+cont.pots_per_carrier})</span></>}
+              {parts.prop != null && <> + stick/tray {money(parts.prop)}</>}
               {parts.soil != null && <> + soil {money(parts.soil)}</>}
               {" = "}<b style={{ fontSize: 14 }}>{money(parts.total)}</b>
               {gm != null && <> · <b style={{ color: gm < 0.6 ? C.red : C.green }}>{Math.round(gm * 100)}%</b></>}
