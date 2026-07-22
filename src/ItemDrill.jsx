@@ -493,6 +493,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
                   : h.change_type === "rounds_set" ? (d.rounds ? `split into ${d.rounds.length} rounds — ${d.rounds.map(r => `${(+r.units).toLocaleString()} @ wk${r.ready_week}`).join(", ")}` : "rounds removed — back to one batch")
                   : h.change_type === "combo_set" ? `✓ ${d.kind === "item" ? "item" : "combo"} SET for ${d.season} — ${(d.recipe || []).map(r => `${r.per_basket}× ${r.plant}`).join(", ")}${d.cost_per_basket != null ? ` (${money(d.cost_per_basket)}/unit)` : ""}`
                   : h.change_type === "layout_arranged" ? `planting layout arranged (${d.dots || "?"} plants placed${d.rows ? `, ${d.rows} bench rows` : ""})`
+                  : h.change_type === "duplicated" ? `created as a duplicate of ${d.from} (${(+d.qty).toLocaleString()} units)`
                   : h.change_type === "order_confirmation" ? `order confirmation: ${d.summary || JSON.stringify(d)}`
                   : JSON.stringify(d);
                 return (
