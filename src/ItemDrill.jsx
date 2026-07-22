@@ -463,8 +463,10 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
           </div>
           {agg && agg.materials.length > 0 && (
             <div style={{ fontSize: 12.5, color: C.text, marginBottom: 8 }}>
-              🌱 <b>Bought:</b> {agg.materials.map((m, i) => (
-                <span key={i}>{i > 0 ? " · " : ""}{m.variety}{m.prop ? ` — ${m.prop}` : ""}{m.cost != null ? ` @ ${money(m.cost)}/plant` : ""}{m.src ? ` (${m.src})` : ""}</span>
+              🌱 <b>Item:</b> {agg.materials.map((m, i) => (
+                // a cost with no source behind it is a guess — show prices only when we
+                // know who quoted them
+                <span key={i}>{i > 0 ? " · " : ""}{m.variety}{m.prop ? ` — ${m.prop}` : ""}{m.cost != null && m.src ? ` @ ${money(m.cost)}/plant (${m.src})` : ""}</span>
               ))}
             </div>
           )}
@@ -589,7 +591,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
                     current: { variety: c.label, broker: c.broker, supplier: c.supplier, landed: c.liner } })}
                   title="view quotes / change sourcing"
                   style={{ color: C.muted, cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted", textUnderlineOffset: 3 }}>
-                  {c.plants.toLocaleString()} plants{c.liner != null ? ` @ ${money(c.liner)}` : ""}{(c.broker || c.supplier) ? ` (${[c.broker, c.supplier].filter(Boolean).join(" / ")})` : ""}
+                  {c.plants.toLocaleString()} plants{c.liner != null && (c.broker || c.supplier) ? ` @ ${money(c.liner)} (${[c.broker, c.supplier].filter(Boolean).join(" / ")})` : c.liner == null && !(c.broker || c.supplier) ? " — no cost on file, click to source" : (c.broker || c.supplier) ? ` (${[c.broker, c.supplier].filter(Boolean).join(" / ")})` : " — unsourced cost, click to verify"}
                 </span>
                 {["URC", "CALL"].includes(c.prop_method) && detail?.trays?.length > 0 && (
                   <label title={`stick + tray ≈ ${money(c.propPer)}/plant, in the basket cost`} style={{ fontSize: 11, color: C.muted }}>
@@ -653,7 +655,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
                     current: { variety: m.variety, broker: m.broker, supplier: m.supplier, landed: m.cost } })}
                   title="view quotes / change sourcing"
                   style={{ color: C.muted, cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted", textUnderlineOffset: 3 }}>
-                  {m.plants.toLocaleString()} plants{m.cost != null ? ` @ ${money(m.cost)}` : ""}{m.src ? ` (${m.src})` : ""}
+                  {m.plants.toLocaleString()} plants{m.cost != null && m.src ? ` @ ${money(m.cost)} (${m.src})` : m.cost == null && !m.src ? " — no cost on file, click to source" : m.src ? ` (${m.src})` : " — unsourced cost, click to verify"}
                 </span>
                 {["URC", "CALL"].includes(m.prop_method) && detail?.trays?.length > 0 && (
                   <label title={`stick + tray ≈ ${money(m.propPer)}/plant, in the item cost`} style={{ fontSize: 11, color: C.muted }}>
