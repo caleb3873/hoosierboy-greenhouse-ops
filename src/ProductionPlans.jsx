@@ -1898,23 +1898,20 @@ function SalesVsPlanTab({ plan }) {
   // Save a decision. Snapshots what it sold and what the plan held, so the
   // production session can see the reasoning later without recomputing it.
   async function saveTarget(r, patch) {
-    const prev = targets[r.item] || {};
+    // PARTIAL writes only. The old version rebuilt the WHOLE row from browser
+    // state, so a timing-arrow click or blur before targets finished loading
+    // overwrote saved values with null (wiped two real decisions). On-conflict
+    // updates only the columns sent; unsent fields keep their DB values.
     const next = {
-      plan_id: plan.id, item_name: r.item,
-      target_units: patch.target_units !== undefined ? patch.target_units : (prev.target_units ?? null),
-      ready_shift: patch.ready_shift !== undefined ? patch.ready_shift : (prev.ready_shift ?? null),
-      note: patch.note !== undefined ? patch.note : (prev.note ?? null),
-      decision: patch.decision !== undefined ? patch.decision : (prev.decision ?? null),
-      note: patch.note !== undefined ? patch.note : (prev.note ?? null),
+      plan_id: plan.id, item_name: r.item, ...patch,
       prior_units: r.sold, current_units: r.planned,
       decided_by: displayName || "planner", decided_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
-    setTargets(t => ({ ...t, [r.item]: { ...prev, ...next } }));
+    setTargets(t => ({ ...t, [r.item]: { ...(t[r.item] || {}), ...next } }));
     setSavingT(s => ({ ...s, [r.item]: true }));
-    try {
-      await sb.from("plan_targets").upsert(next, { onConflict: "plan_id,item_name" });
-    } catch (e) { console.warn("target save failed", e); }
+    const { error } = await sb.from("plan_targets").upsert(next, { onConflict: "plan_id,item_name" });
+    if (error) window.alert("Decision did NOT save: " + error.message);
     setSavingT(s => { const n = { ...s }; delete n[r.item]; return n; });
   }
   if (!rows) return <div style={{ padding: 20, color: COLORS.muted }}>Loading sales vs plan…</div>;
@@ -2243,7 +2240,13 @@ function TargetCell({ r, tgt, draft, saving, onDraft, onSave }) {
         <input
           value={val}
           onChange={e => onDraft(e.target.value)}
-          onBlur={e => { onDraft(undefined); commit(e.target.value); }}
+          onBlur={e => {
+            const touched = draft !== undefined;       // only write if the user actually edited
+            onDraft(undefined);
+            if (!touched) return;
+            if (e.target.value.trim() === "" && tgt?.target_units == null) return;  // empty-over-empty no-op
+            commit(e.target.value);
+          }}
           onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
           placeholder={String(r.planned)}
           style={{ width: 62, padding: "3px 6px", textAlign: "right", borderRadius: 6, fontSize: 12.5,
