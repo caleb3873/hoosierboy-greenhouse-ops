@@ -2248,6 +2248,11 @@ function SalesVsPlanTab({ plan }) {
         const gSold = barRows.reduce((a, r) => a + (r.sold || 0), 0);
         const gRev = barRows.reduce((a, r) => a + (r.rev || 0), 0);
         const gSt = gPlanned ? Math.round(gSold / gPlanned * 100) : null;
+        // 2027 as decided so far: targets where set, planned otherwise — and its $ at each item's price
+        const g27 = barRows.reduce((a, r) => a + (targets[r.item]?.target_units != null ? +targets[r.item].target_units : (r.planned || 0)), 0);
+        const g27Rev = barRows.reduce((a, r) => a + (targets[r.item]?.target_units != null ? +targets[r.item].target_units : (r.planned || 0)) * (+r.price || 0), 0);
+        const decided = barRows.filter(r => targets[r.item]?.target_units != null).length;
+        const dU = g27 - gPlanned, dPct = gPlanned ? Math.round(dU / gPlanned * 100) : null;
         return (
           <div style={{ background: "#eef4e9", border: `1.5px solid ${COLORS.light}`, borderRadius: 10, padding: "11px 14px", display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
             <div style={{ fontSize: 12.5, color: COLORS.text }}>
@@ -2257,6 +2262,14 @@ function SalesVsPlanTab({ plan }) {
               {" — "}{gPlanned.toLocaleString()} planned · {gSold.toLocaleString()} sold
               {gSt != null ? <> · <b style={{ color: gSt >= 95 ? "#2e7d32" : gSt < 60 ? COLORS.red : COLORS.text }}>{gSt}% sell-through</b></> : null}
               {" · "}{fmtMoney(gRev)}
+              <div style={{ marginTop: 3 }}>
+                <b style={{ color: COLORS.dark }}>2027:</b> {g27.toLocaleString()} units
+                {gPlanned > 0 && <b style={{ marginLeft: 5, color: dU > 0 ? "#2e7d32" : dU < 0 ? COLORS.red : COLORS.muted }}>
+                  {dU === 0 ? "same as 2026" : `${dU > 0 ? "+" : ""}${dU.toLocaleString()} (${dPct > 0 ? "+" : ""}${dPct}%) vs 2026`}
+                </b>}
+                {g27Rev > 0 && <> · ≈{fmtMoney(g27Rev)}{gRev > 0 && <b style={{ marginLeft: 4, color: g27Rev >= gRev ? "#2e7d32" : COLORS.red }}>({g27Rev >= gRev ? "+" : ""}{fmtMoney(g27Rev - gRev)})</b>}</>}
+                <span style={{ color: COLORS.muted }}> · {decided}/{barRows.length} decided</span>
+              </div>
             </div>
             <div style={{ display: "flex", gap: 5, alignItems: "center", marginLeft: "auto", flexWrap: "wrap" }}>
               <span style={{ fontSize: 11, fontWeight: 800, color: COLORS.muted, textTransform: "uppercase" }}>Apply to {selSet.size ? `${selSet.size} selected` : `all ${shown.length}`}:</span>
