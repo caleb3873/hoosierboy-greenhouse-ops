@@ -151,6 +151,45 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
     setQuoteFor(null);
   }
 
+  // Add a component straight from a broker quote — the quote brings the variety,
+  // the form, the source AND the price in one pick. Lands at 1/basket, adjust after.
+  const [addQuote, setAddQuote] = useState(false);
+  async function addComponentFromQuote(r) {
+    setAddQuote(false);
+    if (!detail || busy) return;
+    const already = agg?.comps.find(c => detail.vmap[c.variety_id]?.variety_key && detail.vmap[c.variety_id].variety_key === r.variety_key);
+    if (already) { window.alert(`${already.label} is already a component — adjust its per-basket count or click its sourcing to change the quote.`); return; }
+    if (!window.confirm(`Add ${r.variety} at 1 per basket?\n\nSourced ${[r.broker, r.supplier].filter(Boolean).join(" / ")} — ${r.form_class}${r.form_raw ? ` (${r.form_raw})` : ""} @ $${(+r.landed).toFixed(3)}/plant.\nAdjust the per-basket count after.`)) return;
+    setBusy(true);
+    try {
+      let vid = null;
+      const { data: hit } = await sb.from("variety_library").select("id").eq("variety_key", r.variety_key).limit(1);
+      if (hit && hit[0]) vid = hit[0].id;
+      if (!vid) {
+        vid = crypto.randomUUID();
+        const { error: ve } = await sb.from("variety_library").insert({
+          id: vid, crop_name: r.crop || null, variety: r.variety, variety_key: r.variety_key,
+          notes: "created from a broker quote (combo component)" });
+        if (ve) throw ve;
+      }
+      for (const p of detail.parents) {
+        const want = Math.round(+p.qty_pots || 0);
+        if (!want) continue;
+        const { error } = await sb.from("scheduled_crops").insert({
+          id: crypto.randomUUID(), plan_id: plan.id, item_name: p.item_name,
+          variety_id: vid, container_id: p.container_id, qty_pots: 0, ppp: 1,
+          qty_plants_ordered: want, is_combo_component: true, combo_parent_id: p.id,
+          plant_week: p.plant_week, plant_year: p.plant_year,
+          ship_week: p.ship_week, ship_year: p.ship_year, status: "planned",
+          liner_unit_cost: +r.landed, broker: r.broker, supplier: r.supplier,
+        });
+        if (error) throw error;
+      }
+      await load();
+    } catch (e) { window.alert("Couldn't add component: " + (e.message || e)); }
+    setBusy(false);
+  }
+
   async function removeComponent(variety_id) {
     if (!detail || busy) return;
     if (!window.confirm("Remove this component from every bench row of this item?")) return;
@@ -242,16 +281,20 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
           <div style={{ fontSize: 10.5, fontWeight: 800, color: "#3f6d33", textTransform: "uppercase", marginBottom: 7 }}>2027 decisions</div>
           {agg && agg.materials.length > 0 && (
             <div style={{ fontSize: 12.5, color: C.text, marginBottom: 8 }}>
-              🌱 <b>Bought:</b> {agg.materials.map((m, i) => (
-                <span key={i}>{i > 0 ? " · " : ""}
-                  <span onClick={() => setQuoteFor({ kind: "parent", variety_id: m.variety_id, label: m.variety, vkey: m.vkey,
-                      current: { variety: m.variety, broker: m.broker, supplier: m.supplier, landed: m.cost } })}
-                    title="view quotes / change sourcing"
-                    style={{ cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted", textUnderlineOffset: 3 }}>
-                    {m.variety}{m.prop ? ` — ${m.prop}` : ""}{m.cost != null ? ` @ ${money(m.cost)}/plant` : ""}{m.src ? ` (${m.src})` : ""}
-                  </span>
-                </span>
-              ))}
+              🌱 <b>Bought:</b> {agg.materials.map((m, i) => {
+                const text = <>{m.variety}{m.prop ? ` — ${m.prop}` : ""}{m.cost != null ? ` @ ${money(m.cost)}/plant` : ""}{m.src ? ` (${m.src})` : ""}</>;
+                // a combo's parent row isn't a plant anyone buys — its components
+                // carry the sourcing, each clickable below
+                return <span key={i}>{i > 0 ? " · " : ""}
+                  {agg.comps.length ? <span>{text}</span>
+                    : <span onClick={() => setQuoteFor({ kind: "parent", variety_id: m.variety_id, label: m.variety, vkey: m.vkey,
+                          current: { variety: m.variety, broker: m.broker, supplier: m.supplier, landed: m.cost } })}
+                        title="view quotes / change sourcing"
+                        style={{ cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted", textUnderlineOffset: 3 }}>
+                        {text}
+                      </span>}
+                </span>;
+              })}
             </div>
           )}
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
@@ -373,7 +416,11 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
               </div>
             ))}
             <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 8, paddingTop: 8 }}>
-              <input value={addSearch} onChange={e => setAddSearch(e.target.value)} placeholder="＋ add a component — search the variety library…"
+              <button disabled={busy} onClick={() => setAddQuote(true)}
+                style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: `1.5px solid ${C.light}`, background: "#fff", color: C.dark, fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", marginBottom: 6 }}>
+                ＋ Add a component — search the broker catalog
+              </button>
+              <input value={addSearch} onChange={e => setAddSearch(e.target.value)} placeholder="…or search the variety library (in-house / no quote needed)"
                 style={{ width: "100%", padding: "7px 10px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 12.5, fontFamily: "inherit", boxSizing: "border-box" }} />
               {addHits.length > 0 && (
                 <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, marginTop: 4, maxHeight: 160, overflow: "auto" }}>
@@ -394,6 +441,8 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
       </div>
       {quoteFor && <QuotePicker sb={sb} varietyKey={quoteFor.vkey} initialQuery={quoteFor.label}
         current={quoteFor.current} onPick={applyQuote} onClose={() => setQuoteFor(null)} />}
+      {addQuote && <QuotePicker sb={sb} varietyKey={null} initialQuery=""
+        onPick={addComponentFromQuote} onClose={() => setAddQuote(false)} />}
     </div>
   );
 }
