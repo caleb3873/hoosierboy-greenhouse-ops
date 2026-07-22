@@ -1929,6 +1929,23 @@ function SalesVsPlanTab({ plan }) {
   const tOver = core.reduce((a, r) => a + r.over, 0), tLostEst = core.reduce((a, r) => a + r.lostEst, 0), tRev = core.reduce((a, r) => a + r.rev, 0);
   const soldOutCount = rows.filter(r => r.soldOut).length;
   const maxR = Math.max(...season.seasonRev, 1); const pkWk = season.weeks[season.seasonRev.indexOf(maxR)];
+  // wk ↔ date axis + Mother's Day star, same as the item drill
+  const salesYear2 = (parseInt(String(plan?.name || "").match(/20\d\d/)?.[0]) || new Date().getFullYear() + 1) - 1;
+  const [wkAsDate, setWkAsDate] = usePersistedState("gh_svp_wkdate", false);
+  const wkDateLabel = (w, offset = 0) => {
+    const jan4 = new Date(Date.UTC(salesYear2, 0, 4));
+    const day = jan4.getUTCDay() || 7;
+    const d = new Date(jan4); d.setUTCDate(jan4.getUTCDate() - day + 1 + (w - 1) * 7 + offset);
+    return `${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
+  };
+  const mothersWk = useMemo(() => {
+    const may1 = new Date(Date.UTC(salesYear2, 4, 1));
+    const md = new Date(Date.UTC(salesYear2, 4, 1 + (7 - may1.getUTCDay()) % 7 + 7));
+    const t = new Date(md); const day = t.getUTCDay() || 7;
+    t.setUTCDate(t.getUTCDate() + 4 - day);
+    const ys = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));
+    return Math.ceil((((t - ys) / 86400000) + 1) / 7);
+  }, [salesYear2]);
   const sizes = ["all", ...Array.from(new Set(rows.map(r => r.size))).sort()];
   const q = query.trim().toLowerCase();
   const sortVal = { item: r => r.item, st: r => r.st ?? -1, price: r => r.price ?? -1, firstWk: r => r.firstWk ?? 99, planned: r => dPlanned(r), sold: r => r.sold, status: r => r.status, over: r => r.over, lostEst: r => r.lostEst, rev: r => r.rev, peak: r => r.peak ?? 99 };
@@ -2082,15 +2099,29 @@ function SalesVsPlanTab({ plan }) {
       )}
 
       <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "14px 16px" }}>
-        <div style={{ fontWeight: 800, color: COLORS.dark, marginBottom: 10 }}>📈 Season revenue by week (2026)</div>
+        <div style={{ display: "flex", alignItems: "center", marginBottom: 10 }}>
+          <span style={{ fontWeight: 800, color: COLORS.dark }}>📈 Season revenue by week (2026)</span>
+          <button onClick={() => setWkAsDate(!wkAsDate)} title="switch the axis between week numbers and dates"
+            style={{ marginLeft: "auto", padding: "4px 11px", borderRadius: 7, border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.muted, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+            {wkAsDate ? "show wk #" : "show dates"}
+          </button>
+        </div>
         <div style={{ display: "flex", alignItems: "flex-end", gap: 4, height: 150, borderBottom: `2px solid ${COLORS.border}` }}>
           {season.seasonRev.map((v, i) => (
-            <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end" }} title={`wk${season.weeks[i]}: ${fmtMoney(v)}`}>
+            <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end" }} title={`wk${season.weeks[i]} (${wkDateLabel(season.weeks[i])}): ${fmtMoney(v)}`}>
               <div style={{ width: "76%", height: Math.max(2, v / maxR * 132), background: season.weeks[i] === pkWk ? COLORS.dark : COLORS.light, borderRadius: "3px 3px 0 0" }} />
             </div>
           ))}
         </div>
-        <div style={{ display: "flex", gap: 4, marginTop: 3 }}>{season.weeks.map(w => <div key={w} style={{ flex: 1, fontSize: 9, color: COLORS.muted, textAlign: "center" }}>{w}</div>)}</div>
+        <div style={{ display: "flex", gap: 4, marginTop: 3 }}>
+          {season.weeks.map(w => (
+            <div key={w} style={{ flex: 1, fontSize: wkAsDate ? 8 : 9, color: COLORS.muted, textAlign: "center", whiteSpace: "nowrap" }}>
+              {wkAsDate ? wkDateLabel(w) : w}
+              {w === mothersWk && <div title={`Mother's Day week — ends Sun ${wkDateLabel(w, 6)}`} style={{ fontSize: 10, lineHeight: "10px", color: COLORS.amber }}>★</div>}
+            </div>
+          ))}
+        </div>
+        <div style={{ fontSize: 10.5, color: COLORS.muted, marginTop: 4 }}>★ = Mother's Day week</div>
       </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", fontSize: 12 }}>
         <input value={query} onChange={e => setQuery(e.target.value)} placeholder="🔍 Search item…"
