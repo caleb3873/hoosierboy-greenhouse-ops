@@ -92,7 +92,7 @@ export default function ProgramsPanel({ plan }) {
         broker: it.material?.broker ?? null, supplier: it.material?.supplier ?? null,
         prop_method: FORM_MAP[String(it.material?.form || "").toLowerCase()] || null,
         is_combo_component: false, sellable: true, status: "planned",
-        notes: `from program: ${pr.name}`,
+        notes: `from program: ${pr.name}${it.material?.placeholder ? ' · [needs sourcing]' : ''}`,
       });
       if (error) { window.alert(`${it.item_name}: ${error.message}`); continue; }
       await sb.from("program_items").update({ scheduled_crop_id: rowId }).eq("id", it.id);
@@ -192,7 +192,8 @@ function ProgramDetail({ sb, program, items, onChange, onConvert }) {
                   <td style={{ padding: "5px 8px", textAlign: "right" }}>{it.target_units != null ? (+it.target_units).toLocaleString() : "—"}</td>
                   <td style={{ padding: "5px 8px", textAlign: "right" }}>{it.target_price != null ? money(+it.target_price) : "—"}</td>
                   <td style={{ padding: "5px 8px", textAlign: "right", fontSize: 11.5, color: C.muted }}>
-                    {it.material ? `${it.material.variety || ""}${it.ppp > 1 ? ` ×${it.ppp}` : ""} (${[it.material.broker, it.material.supplier].filter(Boolean).join("/")})` : "—"}
+                    {it.material?.placeholder ? <b style={{ color: C.amber }}>placeholder — needs sourcing</b>
+                      : it.material ? `${it.material.variety || ""}${it.ppp > 1 ? ` ×${it.ppp}` : ""} (${[it.material.broker, it.material.supplier].filter(Boolean).join("/")})` : "—"}
                   </td>
                   <td style={{ padding: "5px 8px", textAlign: "right" }}>{money(it.est_unit_cost)}</td>
                   <td style={{ padding: "5px 8px", textAlign: "right", fontWeight: 800, color: gm == null ? C.muted : gm < 0.6 ? C.red : C.green }}>{gm == null ? "—" : Math.round(gm * 100) + "%"}</td>
@@ -237,6 +238,7 @@ function AddProgramItem({ sb, program, itemCount, onDone, onCancel }) {
   const [mat, setMat] = useState(null);          // matched sourcing price
   const [matNote, setMatNote] = useState("");
   const [matKey, setMatKey] = useState(null);    // canonical key of the chosen variety
+  const [phCost, setPhCost] = useState("");      // placeholder $/plant when nothing is quoted
   const [showQuotes, setShowQuotes] = useState(false);
   const [containers, setContainers] = useState([]);
   const [contId, setContId] = useState("");
@@ -402,7 +404,8 @@ function AddProgramItem({ sb, program, itemCount, onDone, onCancel }) {
       material: {
         crop: cropWord, variety: fullVariety, breeder: chosen ? lc(chosen.breeder_name) : null,
         plant_type: ptype || (chosen ? lc(chosen.category) : null), culture_source_id: chosen?.id || null,
-        ...(mat ? { broker: mat.broker, supplier: mat.supplier, form: mat.form_class, form_raw: mat.form_raw || null, item_min: mat.item_min || null, landed: +mat.landed || null, variety_key: mat.variety_key } : {}),
+        ...(mat?.placeholder ? { placeholder: true, needs_sourcing: true, landed: mat.landed != null ? +mat.landed : null }
+          : mat ? { broker: mat.broker, supplier: mat.supplier, form: mat.form_class, form_raw: mat.form_raw || null, item_min: mat.item_min || null, landed: +mat.landed || null, variety_key: mat.variety_key } : {}),
       },
       est_unit_cost: parts.total,
       cost_parts: { liner: parts.liner, container: parts.container, carrier: parts.carrier, prop: parts.prop, soil: parts.soil, soil_mix: soil?.name || null, case_size: caseOf },
@@ -474,10 +477,24 @@ function AddProgramItem({ sb, program, itemCount, onDone, onCancel }) {
 
       {chosen && (
         <div style={{ fontSize: 12, color: C.muted, marginTop: 8, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          {mat
+          {mat?.placeholder
+            ? <b style={{ color: C.amber }}>💵 PLACEHOLDER{mat.landed != null ? ` @ ${money(+mat.landed)}/plant est.` : " — no cost yet"} · needs sourcing</b>
+            : mat
             ? <span>💵 Sourcing: <b style={{ color: C.text }}>{mat.variety}</b> — {money(+mat.landed)} {mat.form_class}{mat.form_raw ? ` (${mat.form_raw})` : ""} ({[mat.broker, mat.supplier].filter(Boolean).join("/")}){matNote && <b style={{ color: C.amber }}> · {matNote}</b>}</span>
             : <b style={{ color: C.amber }}>💵 {matNote || "matching a broker quote…"}</b>}
           <button onClick={() => setShowQuotes(true)} style={{ padding: "4px 10px", borderRadius: 7, border: `1.5px solid ${C.light}`, background: "#fff", color: C.dark, fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>🔍 Search quotes</button>
+          {!mat && (
+            <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+              <input value={phCost} onChange={e => setPhCost(e.target.value)} inputMode="decimal" placeholder="est. $/plant"
+                style={{ width: 78, padding: "4px 8px", borderRadius: 7, border: `1.5px solid ${C.border}`, fontSize: 11.5, fontFamily: "inherit" }} />
+              <button onClick={() => { setMat({ placeholder: true, variety: fullVariety, crop: cropWord, landed: phCost !== "" && !isNaN(+phCost) ? +phCost : null }); setMatNote(""); }}
+                title="no quote in the catalog — save with an estimate and flag it NEEDS SOURCING"
+                style={{ padding: "4px 10px", borderRadius: 7, border: `1.5px solid ${C.amber}`, background: "#fff", color: C.amber, fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                use placeholder
+              </button>
+            </span>
+          )}
+          {mat?.placeholder && <button onClick={() => { setMat(null); setPhCost(""); }} style={{ background: "none", border: "none", color: C.red, fontSize: 13, cursor: "pointer", fontWeight: 700 }}>×</button>}
         </div>
       )}
       {showQuotes && chosen && <QuotePicker sb={sb} varietyKey={matKey}

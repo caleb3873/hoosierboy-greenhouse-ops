@@ -1814,7 +1814,7 @@ function SalesVsPlanTab({ plan }) {
         srcPageAll(sb, "sales_sku_map", "sku,plan_item_name"),
         srcPageAll(sb, "sales_totals", "sku,description,units,revenue,avg_price"),
         srcPageAll(sb, "sales_weekly", "sku,wk,units,revenue"),
-        srcPageAll(sb, "scheduled_crops", "id,item_name,notes,qty_pots,ppp,plants_per_unit,ship_week,ready_week,combo_parent_id,is_combo_component", q => q.eq("plan_id", plan.id)),
+        srcPageAll(sb, "scheduled_crops", "id,item_name,notes,broker,supplier,qty_pots,ppp,plants_per_unit,ship_week,ready_week,combo_parent_id,is_combo_component", q => q.eq("plan_id", plan.id)),
         sb.from("plan_targets").select("*").eq("plan_id", plan.id),
       ]);
       const skuToItem = {}; xw.forEach(x => { if (x.plan_item_name) skuToItem[x.sku] = x.plan_item_name; });
@@ -1862,7 +1862,7 @@ function SalesVsPlanTab({ plan }) {
         const cutoff = (peak != null && peak <= EARLY_PEAK_WK) ? EARLY_CUTOFF_WK : MD_CUTOFF_WK;
         const soldOut = s >= pItems && pItems > 0 && lastWk != null && lastWk < cutoff;
         const lostEst = soldOut ? Math.round((s / Math.max(1, lastWk - firstWk + 1)) * (cutoff - lastWk) * price) : 0;
-        out.push({ item: it, isNew: newItems.has(it), size: sizeTokenForItem(it), converted: pItems !== planned, planRaw: planned, planned: pItems, sold: s, st: pItems ? s / pItems : 0, over, lostEst, soldOut, cutoff, lastWk, firstWk, price: s > 0 ? (rev[it] || 0) / s : (price || null), rev: Math.round(rev[it] || 0), wk: wkA, peak, ship: readyByItem[it] ?? shipByItem[it] ?? null, status: soldOut ? "SOLDOUT" : s >= pItems ? "HIT" : (s === 0 ? "NOSALE" : "SHORT") });
+        out.push({ item: it, isNew: newItems.has(it), needsSourcing: needsSrc.has(it), size: sizeTokenForItem(it), converted: pItems !== planned, planRaw: planned, planned: pItems, sold: s, st: pItems ? s / pItems : 0, over, lostEst, soldOut, cutoff, lastWk, firstWk, price: s > 0 ? (rev[it] || 0) / s : (price || null), rev: Math.round(rev[it] || 0), wk: wkA, peak, ship: readyByItem[it] ?? shipByItem[it] ?? null, status: soldOut ? "SOLDOUT" : s >= pItems ? "HIT" : (s === 0 ? "NOSALE" : "SHORT") });
       }
       // Dual-use rows: real retail sales, but planned volume mostly feeds combos,
       // so sell-through / over / lost are meaningless and deliberately left null.
@@ -1884,6 +1884,8 @@ function SalesVsPlanTab({ plan }) {
       // their own bucket above, but they must not read as "missing"
       // items born this cycle (duplicates, program conversions) — marked NEW in the table
       const newItems = new Set(sc.filter(r => /^(duplicated from|from program:)/i.test(r.notes || "")).map(r => r.item_name));
+      // flagged at creation as placeholder material and still without a real source
+      const needsSrc = new Set(sc.filter(r => /needs sourcing/i.test(r.notes || "") && !r.broker && !r.supplier).map(r => r.item_name));
       const inPlan = new Set([...Object.keys(planByItem), ...Object.keys(dualUse)]);
       const gaps = {};
       for (const t of tot) {
@@ -2338,6 +2340,7 @@ function SalesVsPlanTab({ plan }) {
                       {r.item}
                     </span>
                     {r.isNew && <span title="created this cycle (duplicate or new program item) — no sales history" style={{ marginLeft: 6, fontSize: 9.5, fontWeight: 900, padding: "1px 6px", borderRadius: 8, color: "#fff", background: "#2e7d32", letterSpacing: 0.5 }}>NEW</span>}
+                    {r.needsSourcing && <span title="material is a placeholder — no broker quote attached yet. Open the item and click the plant to source it." style={{ marginLeft: 6, fontSize: 9.5, fontWeight: 900, padding: "1px 6px", borderRadius: 8, color: "#fff", background: "#c98a2e", letterSpacing: 0.5 }}>SOURCE</span>}
                     {r.converted && <span title="entered in individual pots — shown in the sold pack (flat/case) to match sales" style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: COLORS.muted }}>⤵</span>}
                   </td>
                   <td style={{ ...td, textAlign: "right" }}>{dPlanned(r).toLocaleString()}</td>

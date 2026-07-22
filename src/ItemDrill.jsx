@@ -491,6 +491,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
             <div style={{ fontSize: 19, fontWeight: 800, color: C.dark, fontFamily: "'DM Serif Display',Georgia,serif" }}>
               {row.item}
               {row.isNew && <span style={{ marginLeft: 8, fontSize: 10, fontWeight: 900, padding: "2px 8px", borderRadius: 9, color: "#fff", background: C.green, letterSpacing: 0.5, verticalAlign: "middle", fontFamily: "'DM Sans',sans-serif" }}>NEW</span>}
+              {row.needsSourcing && <span title="placeholder material — click the plant below to attach a real quote" style={{ marginLeft: 6, fontSize: 10, fontWeight: 900, padding: "2px 8px", borderRadius: 9, color: "#fff", background: C.amber, letterSpacing: 0.5, verticalAlign: "middle", fontFamily: "'DM Sans',sans-serif" }}>NEEDS SOURCING</span>}
             </div>
             <div style={{ fontSize: 12, color: C.muted }}>
               {detail ? `${detail.parents.length} bench row${detail.parents.length !== 1 ? "s" : ""}` : "…"}
