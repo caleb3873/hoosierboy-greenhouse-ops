@@ -1764,7 +1764,11 @@ function PlugOrdersTab({ plan }) {
 // declining, dropped, steady, or still undecided. The Mario view of the plan.
 function YearOverYearTab({ plan }) {
   const sb = getSupabase();
-  const [items, setItems] = useState(null);
+  const { displayName } = useAuth();
+  const [base, setBase] = useState(null);        // everything from the DB except decisions
+  const [targets, setTargets] = useState({});    // item_name → plan_targets row
+  const [drill, setDrill] = useState(null);      // item open in the ItemDrill popup
+  const [tick, setTick] = useState(0);
   const [cls, setCls] = usePersistedState("gh_yoy_class", "all");
   const [szF, setSzF] = usePersistedState("gh_yoy_size", "all");
   const [q, setQ] = usePersistedState("gh_yoy_q", "");
@@ -1775,14 +1779,14 @@ function YearOverYearTab({ plan }) {
     if (!sb) return;
     (async () => {
       const COMPONENT = /\bVINE\b|\bIVY\b|HEDERA|MU[EH]+LENBECKIA|CAREX/i;
-      const [xw, tot, sc, tgRes] = await Promise.all([
+      const [xw, tot, wkRows, sc, tgRes] = await Promise.all([
         srcPageAll(sb, "sales_sku_map", "sku,plan_item_name"),
         srcPageAll(sb, "sales_totals", "sku,units,revenue"),
+        srcPageAll(sb, "sales_weekly", "sku,wk,units"),
         srcPageAll(sb, "scheduled_crops", "id,item_name,notes,broker,supplier,qty_pots,ppp,plants_per_unit,ready_week,ship_week,combo_parent_id,is_combo_component", f => f.eq("plan_id", plan.id)),
         sb.from("plan_targets").select("*").eq("plan_id", plan.id),
       ]);
       const skuToItem = {}; xw.forEach(x => { if (x.plan_item_name) skuToItem[x.sku] = x.plan_item_name; });
-      const tg = Object.fromEntries((tgRes.data || []).map(t => [t.item_name, t]));
       const parentIds = new Set(sc.map(r => r.combo_parent_id).filter(Boolean));
       const withParents = new Set(sc.filter(r => parentIds.has(r.id)).map(r => r.item_name));
       const plan27 = {}, ppp = {}, ppu = {}, ready = {}, newSet = new Set(), srcSet = new Set();
@@ -1797,31 +1801,55 @@ function YearOverYearTab({ plan }) {
         if (/^(duplicated from|from program:)/i.test(r.notes || "")) newSet.add(r.item_name);
         if (/needs sourcing/i.test(r.notes || "") && !r.broker && !r.supplier) srcSet.add(r.item_name);
       }
-      const sold = {}, rev = {};
+      const weeks = [...new Set(wkRows.map(w => +w.wk))].sort((a, b) => a - b);
+      const wIdx = Object.fromEntries(weeks.map((w, i) => [w, i]));
+      const sold = {}, rev = {}, wkly = {};
       for (const t of tot) { const it = skuToItem[t.sku]; if (!it) continue; sold[it] = (sold[it] || 0) + +t.units; rev[it] = (rev[it] || 0) + +t.revenue; }
-      const out = Object.keys(plan27).map(it => {
-        const planned = plan27[it];
-        const units26 = sold[it] || 0, rev26 = rev[it] || 0;
-        const price = units26 > 0 ? rev26 / units26 : null;
-        const planItems = plannedItems(planned, ppp[it], ppu[it]);
-        const t = tg[it] || {};
-        const decided = t.target_units != null;
-        const units27 = decided ? +t.target_units : planItems;
-        const rev27 = price != null ? units27 * price : null;
-        const dU = units27 - units26;
-        const klass = newSet.has(it) || units26 === 0 ? "new"
-          : units27 === 0 ? "dropped"
-          : !decided ? "undecided"
-          : dU / Math.max(1, units26) > 0.05 ? "growing"
-          : dU / Math.max(1, units26) < -0.05 ? "declining" : "steady";
-        return { it, size: sizeLabelForItem(it), units26, rev26, price,
-          planItems, units27, rev27, dU, dRev: rev27 != null ? rev27 - rev26 : (units26 ? -rev26 : 0),
-          shift: +t.ready_shift || 0, ready: ready[it] ?? null, rounds: t.rounds?.length || 0,
-          decided, klass, isNew: newSet.has(it), needsSrc: srcSet.has(it), note: t.note || null };
-      });
-      setItems(out);
+      for (const w of wkRows) { const it = skuToItem[w.sku]; if (!it) continue; (wkly[it] = wkly[it] || Array(weeks.length).fill(0))[wIdx[+w.wk]] += +w.units; }
+      setBase({ plan27, ppp, ppu, ready, newSet, srcSet, sold, rev, wkly, weeks });
+      setTargets(Object.fromEntries((tgRes.data || []).map(t => [t.item_name, t])));
     })();
-  }, [sb, plan.id]); // eslint-disable-line
+  }, [sb, plan.id, tick]); // eslint-disable-line
+
+  // same partial-write decision saver as Sales vs Plan — never clobbers unsent columns
+  async function saveTarget(r, patch) {
+    const next = {
+      plan_id: plan.id, item_name: r.item, ...patch,
+      prior_units: r.sold, current_units: r.planned,
+      decided_by: displayName || "planner", decided_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    setTargets(t => ({ ...t, [r.item]: { ...(t[r.item] || {}), ...next } }));
+    const { error } = await sb.from("plan_targets").upsert(next, { onConflict: "plan_id,item_name" });
+    if (error) window.alert("Decision did NOT save: " + error.message);
+  }
+
+  const items = useMemo(() => {
+    if (!base) return null;
+    return Object.keys(base.plan27).map(it => {
+      const planned = base.plan27[it];
+      const units26 = base.sold[it] || 0, rev26 = base.rev[it] || 0;
+      const price = units26 > 0 ? rev26 / units26 : null;
+      const planItems = plannedItems(planned, base.ppp[it], base.ppu[it]);
+      const t = targets[it] || {};
+      const decided = t.target_units != null;
+      const units27 = decided ? +t.target_units : planItems;
+      const rev27 = price != null ? units27 * price : null;
+      const dU = units27 - units26;
+      const klass = base.newSet.has(it) || units26 === 0 ? "new"
+        : units27 === 0 ? "dropped"
+        : !decided ? "undecided"
+        : dU / Math.max(1, units26) > 0.05 ? "growing"
+        : dU / Math.max(1, units26) < -0.05 ? "declining" : "steady";
+      const wkA = base.wkly[it] || Array(base.weeks.length).fill(0);
+      const peak = wkA.some(x => x > 0) ? base.weeks[wkA.indexOf(Math.max(...wkA))] : null;
+      return { it, size: sizeLabelForItem(it), units26, rev26, price,
+        planItems, units27, rev27, dU, dRev: rev27 != null ? rev27 - rev26 : (units26 ? -rev26 : 0),
+        shift: +t.ready_shift || 0, ready: base.ready[it] ?? null, rounds: t.rounds?.length || 0,
+        decided, klass, isNew: base.newSet.has(it), needsSrc: base.srcSet.has(it), note: t.note || null,
+        wkA, peak };
+    });
+  }, [base, targets]);
 
   if (items === null) return <div style={{ padding: 20, color: COLORS.muted }}>Loading year-over-year…</div>;
   const KL = { new: ["🌱 New", "#2e7d32"], growing: ["▲ Growing", "#2e7d32"], declining: ["▼ Declining", COLORS.amber], dropped: ["✕ Dropped", COLORS.red], steady: ["● Steady", COLORS.muted], undecided: ["□ Undecided", COLORS.text] };
@@ -1832,6 +1860,11 @@ function YearOverYearTab({ plan }) {
   const sv = { it: r => r.it, size: r => r.size, units26: r => r.units26, rev26: r => r.rev26, units27: r => r.units27, rev27: r => r.rev27 ?? -1, dU: r => r.dU, dRev: r => r.dRev, ready: r => r.ready ?? 99 };
   shown = [...shown].sort((a, b) => { const av = sv[sortC](a), bv = sv[sortC](b); return (av < bv ? -1 : av > bv ? 1 : 0) * (sortD === "asc" ? 1 : -1); });
   const T = shown.reduce((a, r) => ({ u26: a.u26 + r.units26, r26: a.r26 + r.rev26, u27: a.u27 + r.units27, r27: a.r27 + (r.rev27 || 0) }), { u26: 0, r26: 0, u27: 0, r27: 0 });
+  // the drill takes the same row shape Sales vs Plan hands it
+  const drillRowOf = r => ({ item: r.it, size: r.size, planned: r.planItems, sold: r.units26,
+    st: r.planItems ? r.units26 / r.planItems : null, price: r.price, rev: Math.round(r.rev26),
+    wk: r.wkA, peak: r.peak, ship: r.ready, isNew: r.isNew, needsSourcing: r.needsSrc,
+    lostEst: 0, over: 0, soldOut: false, status: "", planRaw: r.planItems });
   const Hd = ({ c, label, right }) => (
     <th onClick={() => { if (sortC === c) setSortD(sortD === "asc" ? "desc" : "asc"); else { setSortC(c); setSortD(c === "it" || c === "size" ? "asc" : "desc"); } }}
       style={{ ...th, position: "sticky", top: 0, zIndex: 5, background: "#eef3e8", textAlign: right ? "right" : "left", cursor: "pointer", whiteSpace: "nowrap", userSelect: "none" }}>
@@ -1871,9 +1904,10 @@ function YearOverYearTab({ plan }) {
             {shown.map(r => {
               const [kl, kc] = KL[r.klass];
               return (
-                <tr key={r.it} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
+                <tr key={r.it} onClick={() => setDrill(r)} title="open the item drill — sales story, decisions, components, history"
+                  style={{ borderBottom: `1px solid ${COLORS.border}`, cursor: "pointer" }}>
                   <td style={{ ...td, fontWeight: 600 }}>
-                    {r.it}
+                    <span style={{ textDecoration: "underline", textDecorationColor: "#c9d8c0", textUnderlineOffset: 3 }}>{r.it}</span>
                     {r.isNew && <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 900, padding: "1px 5px", borderRadius: 7, color: "#fff", background: "#2e7d32" }}>NEW</span>}
                     {r.needsSrc && <span style={{ marginLeft: 4, fontSize: 9, fontWeight: 900, padding: "1px 5px", borderRadius: 7, color: "#fff", background: "#c98a2e" }}>SOURCE</span>}
                     {r.note && <div style={{ fontSize: 10.5, fontWeight: 400, color: COLORS.muted }}>“{r.note}”</div>}
@@ -1894,8 +1928,13 @@ function YearOverYearTab({ plan }) {
         </table>
       </div>
       <div style={{ fontSize: 11, color: COLORS.muted }}>
-        2027 $ projects target units at each item's 2026 average price — the pricing pass replaces this. Growing/declining = ±5% vs 2026 sold. New = created this cycle or no 2026 sales.
+        2027 $ projects target units at each item's 2026 average price — the pricing pass replaces this. Growing/declining = ±5% vs 2026 sold. New = created this cycle or no 2026 sales. Click any row to open the full item drill.
       </div>
+      {drill && (
+        <ItemDrill plan={plan} row={drillRowOf(drill)} tgt={targets[drill.it]} weeks={base.weeks}
+          onSaveTarget={patch => saveTarget(drillRowOf(drill), patch)} onClose={() => setDrill(null)}
+          onMutated={() => setTick(t => t + 1)} />
+      )}
     </div>
   );
 }
