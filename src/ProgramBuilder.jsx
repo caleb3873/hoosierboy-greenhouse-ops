@@ -623,6 +623,10 @@ export function QuotePicker({ sb, varietyKey, initialQuery, current, onPick, onC
   const [q, setQ] = useState(initialQuery || "");
   const [rows, setRows] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [fForm, setFForm] = useState("");
+  const [fBroker, setFBroker] = useState("");
+  const [fSupplier, setFSupplier] = useState("");
+  const [sort, setSort] = useState(null);   // {col, dir} — null = exact-first, cheapest-first
   async function load(term) {
     setBusy(true);
     const out = new Map();
@@ -642,8 +646,35 @@ export function QuotePicker({ sb, varietyKey, initialQuery, current, onPick, onC
     setBusy(false);
   }
   useEffect(() => { load(q); }, []); // eslint-disable-line
-  const th = { textAlign: "left", padding: "4px 8px", fontSize: 10, fontWeight: 800, color: C.muted, textTransform: "uppercase", borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0, background: "#f6f9f3" };
+
+  // filters + sorting are client-side over whatever the search pulled in
+  const opts = useMemo(() => {
+    const u = k => [...new Set((rows || []).map(r => r[k]).filter(Boolean))].sort();
+    return { form: u("form_class"), broker: u("broker"), supplier: u("supplier") };
+  }, [rows]);
+  const shown = useMemo(() => {
+    let out = (rows || []).filter(r =>
+      (!fForm || r.form_class === fForm) && (!fBroker || r.broker === fBroker) && (!fSupplier || r.supplier === fSupplier));
+    if (sort) {
+      const num = ["item_min", "list_price", "landed"].includes(sort.col);
+      out = [...out].sort((a, b) => {
+        const av = num ? (+a[sort.col] || (sort.dir > 0 ? 9e9 : -1)) : String(a[sort.col] || "").toLowerCase();
+        const bv = num ? (+b[sort.col] || (sort.dir > 0 ? 9e9 : -1)) : String(b[sort.col] || "").toLowerCase();
+        return (av < bv ? -1 : av > bv ? 1 : 0) * sort.dir;
+      });
+    }
+    return out;
+  }, [rows, fForm, fBroker, fSupplier, sort]);
+  const clickSort = col => setSort(s => s && s.col === col ? (s.dir > 0 ? { col, dir: -1 } : null) : { col, dir: 1 });
+
+  const th = { textAlign: "left", padding: "4px 8px", fontSize: 10, fontWeight: 800, color: C.muted, textTransform: "uppercase", borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0, background: "#f6f9f3", cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" };
   const td = { padding: "5px 8px", fontSize: 12, borderBottom: `1px solid ${C.border}` };
+  const Th = ({ col, right, children }) => (
+    <th style={{ ...th, textAlign: right ? "right" : "left" }} onClick={() => clickSort(col)} title="sort">
+      {children}{sort?.col === col ? (sort.dir > 0 ? " ▲" : " ▼") : ""}
+    </th>
+  );
+  const filtSel = { padding: "5px 8px", borderRadius: 7, border: `1px solid ${C.border}`, fontSize: 12, fontFamily: "inherit", background: "#fff", cursor: "pointer" };
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 9400, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div onClick={e => e.stopPropagation()} style={{ background: "#f6f9f3", borderRadius: 14, width: "100%", maxWidth: 860, maxHeight: "88vh", display: "flex", flexDirection: "column", padding: 16 }}>
@@ -657,16 +688,33 @@ export function QuotePicker({ sb, varietyKey, initialQuery, current, onPick, onC
             style={{ flex: 1, padding: "7px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit" }} />
           <button type="submit" style={{ padding: "7px 14px", borderRadius: 8, border: "none", background: C.light, color: "#fff", fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>Search</button>
         </form>
+        <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <select value={fForm} onChange={e => setFForm(e.target.value)} style={filtSel}>
+            <option value="">All forms</option>{opts.form.map(x => <option key={x} value={x}>{x}</option>)}
+          </select>
+          <select value={fBroker} onChange={e => setFBroker(e.target.value)} style={filtSel}>
+            <option value="">All brokers</option>{opts.broker.map(x => <option key={x} value={x}>{x}</option>)}
+          </select>
+          <select value={fSupplier} onChange={e => setFSupplier(e.target.value)} style={filtSel}>
+            <option value="">All suppliers</option>{opts.supplier.map(x => <option key={x} value={x}>{x}</option>)}
+          </select>
+          {(fForm || fBroker || fSupplier) && (
+            <button onClick={() => { setFForm(""); setFBroker(""); setFSupplier(""); }}
+              style={{ background: "none", border: "none", color: C.red, fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>✕ clear</button>
+          )}
+          <span style={{ marginLeft: "auto", fontSize: 11, color: C.muted }}>{rows ? `${shown.length} of ${rows.length} quotes` : ""}</span>
+        </div>
         <div style={{ overflow: "auto", flex: 1, background: "#fff", borderRadius: 9, border: `1px solid ${C.border}` }}>
           {rows === null || busy ? <div style={{ padding: 16, color: C.muted, fontSize: 13 }}>Searching the catalog…</div>
-          : !rows.length ? <div style={{ padding: 16, color: C.muted, fontSize: 13 }}>No quotes found — try fewer words.</div>
+          : !shown.length ? <div style={{ padding: 16, color: C.muted, fontSize: 13 }}>{rows.length ? "Nothing matches those filters." : "No quotes found — try fewer words."}</div>
           : <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead><tr>
-                <th style={th}></th><th style={th}>Variety</th><th style={th}>Form</th><th style={th}>Broker</th><th style={th}>Supplier</th>
-                <th style={{ ...th, textAlign: "right" }}>Min</th><th style={{ ...th, textAlign: "right" }}>List</th><th style={{ ...th, textAlign: "right" }}>Landed</th>
+                <th style={{ ...th, cursor: "default" }}></th>
+                <Th col="variety">Variety</Th><Th col="form_class">Form</Th><Th col="broker">Broker</Th><Th col="supplier">Supplier</Th>
+                <Th col="item_min" right>Min</Th><Th col="list_price" right>List</Th><Th col="landed" right>Landed</Th>
               </tr></thead>
               <tbody>
-                {rows.slice(0, 200).map(r => (
+                {shown.slice(0, 200).map(r => (
                   <tr key={r.id} onClick={() => onPick(r)} title="use this quote"
                     style={{ cursor: "pointer", background: r.exact ? "#f2f8ee" : "#fff" }}>
                     <td style={{ ...td, color: C.green, fontWeight: 800 }}>{r.exact ? "●" : ""}</td>
