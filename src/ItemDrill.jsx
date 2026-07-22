@@ -570,19 +570,6 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
               </button>
             )}
           </div>
-          {dup && (
-            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", background: "#fff", border: `1px solid ${C.border}`, borderRadius: 9, padding: "8px 10px", marginBottom: 8 }}>
-              <input value={dup.name} onChange={e => setDup({ ...dup, name: e.target.value })} placeholder="new item name"
-                style={{ flex: 1, minWidth: 200, padding: "6px 9px", borderRadius: 7, border: `1px solid ${C.border}`, fontSize: 12.5, fontWeight: 700, fontFamily: "inherit" }} />
-              <input value={dup.qty} onChange={e => setDup({ ...dup, qty: e.target.value })} inputMode="numeric" placeholder="qty"
-                style={{ width: 72, padding: "6px 9px", textAlign: "right", borderRadius: 7, border: `1px solid ${C.border}`, fontSize: 12.5, fontFamily: "inherit" }} />
-              <input value={dup.price} onChange={e => setDup({ ...dup, price: e.target.value })} inputMode="decimal" placeholder={`$ (same)`}
-                style={{ width: 76, padding: "6px 9px", textAlign: "right", borderRadius: 7, border: `1px solid ${C.border}`, fontSize: 12.5, fontFamily: "inherit" }} />
-              <button disabled={busy} onClick={duplicateItem}
-                style={{ padding: "6px 13px", borderRadius: 7, border: "none", background: C.dark, color: "#c8e6b8", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>{busy ? "…" : "Create"}</button>
-              <button onClick={() => setDup(null)} style={{ background: "none", border: "none", color: C.muted, fontSize: 16, cursor: "pointer" }}>×</button>
-            </div>
-          )}
           {agg && agg.materials.length > 0 && (
             <div style={{ fontSize: 12.5, color: C.text, marginBottom: 8 }}>
               🌱 <b>Item:</b> {agg.materials.map(m => m.variety).join(" · ")}
@@ -843,6 +830,36 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
         )}
         </>}
       </div>
+      {dup && (
+        <div onClick={() => setDup(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.5)", zIndex: 9300, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: "#f6f9f3", borderRadius: 14, width: "100%", maxWidth: 460, padding: 18 }}>
+            <div style={{ fontSize: 16.5, fontWeight: 800, color: C.dark, fontFamily: "'DM Serif Display',Georgia,serif", marginBottom: 2 }}>⧉ Duplicate {row.item}</div>
+            <div style={{ fontSize: 11.5, color: C.muted, marginBottom: 12 }}>Copies the recipe, sourcing, weeks and layout. Benches stay empty — that's the production session's call.</div>
+            <label style={{ display: "block", fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", marginBottom: 3 }}>New item name</label>
+            <input value={dup.name} onChange={e => setDup({ ...dup, name: e.target.value })} autoFocus
+              style={{ width: "100%", boxSizing: "border-box", padding: "8px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13.5, fontWeight: 700, fontFamily: "inherit", marginBottom: 10 }} />
+            <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
+              <div>
+                <label style={{ display: "block", fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", marginBottom: 3 }}>Quantity</label>
+                <input value={dup.qty} onChange={e => setDup({ ...dup, qty: e.target.value })} inputMode="numeric"
+                  style={{ width: 100, padding: "8px 10px", textAlign: "right", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13.5, fontFamily: "inherit" }} />
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", marginBottom: 3 }}>Price (blank = same)</label>
+                <input value={dup.price} onChange={e => setDup({ ...dup, price: e.target.value })} inputMode="decimal" placeholder={agg?.planPrice ? `$${(+agg.planPrice).toFixed(2)}` : ""}
+                  style={{ width: 110, padding: "8px 10px", textAlign: "right", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13.5, fontFamily: "inherit" }} />
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => setDup(null)} style={{ padding: "9px 14px", borderRadius: 8, border: `1px solid ${C.border}`, background: "#fff", color: C.muted, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+              <button disabled={busy} onClick={duplicateItem}
+                style={{ flex: 1, padding: "9px 14px", borderRadius: 8, border: "none", background: C.dark, color: "#c8e6b8", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                {busy ? "Creating…" : "✓ Create duplicate"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {quoteFor && <QuotePicker sb={sb} varietyKey={quoteFor.vkey} initialQuery={quoteFor.label}
         current={quoteFor.current} onPick={applyQuote} onClose={() => setQuoteFor(null)} />}
       {addQuote && <QuotePicker sb={sb} varietyKey={null} initialQuery=""
