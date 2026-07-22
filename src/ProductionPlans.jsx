@@ -1801,6 +1801,7 @@ function SalesVsPlanTab({ plan }) {
   const [missing, setMissing] = useState([]);   // sold in 2026, absent from this plan
   const [bulkBusy, setBulkBusy] = useState(false);
   const [drill, setDrill] = useState(null);          // item row opened in the drawer
+  const [reloadTick, setReloadTick] = useState(0);   // bumped when the drill creates a new item
   const [selSet, setSelSet] = useState(() => new Set());  // checkbox multi-select
   const [draft, setDraft] = useState({});       // item_name → in-flight input text
   const [savingT, setSavingT] = useState({});
@@ -1897,7 +1898,7 @@ function SalesVsPlanTab({ plan }) {
       setRows(out); setSeason({ weeks, seasonRev });
       setTargets(Object.fromEntries((tgRes.data || []).map(t => [t.item_name, t])));
     })();
-  }, [sb, plan.id]);
+  }, [sb, plan.id, reloadTick]);
 
   // Save a decision. Snapshots what it sold and what the plan held, so the
   // production session can see the reasoning later without recomputing it.
@@ -2184,7 +2185,8 @@ function SalesVsPlanTab({ plan }) {
 
       {drill && (
         <ItemDrill plan={plan} row={drill} tgt={targets[drill.item]} weeks={season.weeks}
-          onSaveTarget={patch => saveTarget(drill, patch)} onClose={() => setDrill(null)} />
+          onSaveTarget={patch => saveTarget(drill, patch)} onClose={() => setDrill(null)}
+          onMutated={() => setReloadTick(t => t + 1)} />
       )}
 
       <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, overflow: "auto", maxHeight: "72vh" }}>

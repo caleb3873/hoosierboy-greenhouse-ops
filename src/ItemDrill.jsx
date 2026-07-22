@@ -17,7 +17,7 @@ const money = n => n == null ? "—" : (Math.abs(n) >= 1000 ? `$${Math.round(n).
 const pct = n => n == null ? "—" : `${Math.round(n * 100)}%`;
 const FORM_MAP = { urc: "URC", callused: "CALL", plug: "PLUG", liner: "PLUG", rooted: "PLUG", bareroot: "BULB", seed: "SEED" };
 
-export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose }) {
+export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose, onMutated }) {
   const sb = getSupabase();
   const { displayName } = useAuth();
   const [detail, setDetail] = useState(null);
@@ -329,7 +329,8 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
         plan_id: plan.id, item_name: name, change_type: "duplicated",
         detail: { from: row.item, qty }, changed_by: displayName || null, source: "drill" });
       setDup(null); setBusy(false);
-      window.alert(`Created "${name}" (${qty.toLocaleString()} units, no benches yet).\nIt appears in the table on the next refresh — the B2B catalog absorbs it automatically.`);
+      onMutated?.();   // the Sales vs Plan table reloads and the new line appears immediately
+      window.alert(`Created "${name}" (${qty.toLocaleString()} units, no benches yet).\n\nIt's in the Sales vs Plan table now — this popup stays on ${row.item}; close it and open the new line to work on it. The B2B catalog absorbs it automatically.`);
     } catch (e) { setBusy(false); window.alert("Couldn't duplicate: " + (e.message || e)); }
   }
 
