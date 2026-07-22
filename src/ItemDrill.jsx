@@ -8,6 +8,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getSupabase } from "./supabase";
 import { QuotePicker } from "./ProgramBuilder";
+import { BasketDesigner } from "./ProductionPlans";
 import { useAuth } from "./Auth";
 
 const C = { dark: "#1e2d1a", light: "#7fb069", border: "#dfe7d8", muted: "#7a8c74",
@@ -48,7 +49,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
 
   async function load() {
     const { data: parents } = await sb.from("scheduled_crops")
-      .select("id,bench_id,container_id,item_name,variety_id,qty_pots,ppp,pack_size,plant_week,plant_year,ship_week,ship_year,ready_week,ready_year,crop_weeks,prop_method,broker,supplier,liner_unit_cost,sale_price_per_pot")
+      .select("id,bench_id,container_id,item_name,variety_id,qty_pots,ppp,pack_size,plant_week,plant_year,ship_week,ship_year,ready_week,ready_year,crop_weeks,prop_method,broker,supplier,liner_unit_cost,sale_price_per_pot,planting_layout")
       .eq("plan_id", plan.id).eq("item_name", row.item).eq("is_combo_component", false).gt("qty_pots", 0);
     const ids = (parents || []).map(p => p.id);
     let children = [];
@@ -251,6 +252,29 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
     setBusy(false);
   }
 
+  // Arrange the basket right here — same drag-to-place designer as the combo
+  // gallery, saved to every bench row of the item.
+  const [arranging, setArranging] = useState(false);
+  async function saveLayout(l) {
+    try {
+      const { data } = await sb.from("scheduled_crops").update({ planting_layout: l })
+        .eq("item_name", row.item).eq("plan_id", plan.id).eq("is_combo_component", false).select("id");
+      await logChange("layout_arranged", { plants: (l.plants || []).length ? l.plants : undefined, dots: (l.dots || []).length, rows: data?.length || 0 });
+      setArranging(false);
+      await load();
+    } catch (e) { window.alert("Couldn't save layout: " + (e.message || e)); }
+  }
+
+  // Milestone: the mix is DECIDED for this season. One log line that says so,
+  // with the full recipe snapshotted as it stood.
+  async function setComboForSeason() {
+    if (!agg) return;
+    const recipe = agg.comps.map(c => ({ plant: c.label, per_basket: c.per, landed: c.liner, broker: c.broker, supplier: c.supplier }));
+    if (!window.confirm(`Set this combo for ${plan.name}?\n\n${recipe.map(r => `${r.per_basket}× ${r.plant}`).join("\n")}\n\nLogs the recipe as decided — edits after this stay visible in history.`)) return;
+    await logChange("combo_set", { season: plan.name, recipe, cost_per_basket: agg.costPer != null ? +agg.costPer.toFixed(2) : null });
+    if (view === "history") setView("detail"); setView("history");
+  }
+
   // Which tray a cutting roots in — 105s by default, 50s for the heavy stuff.
   async function setTray(variety_id, tray_id) {
     if (!detail || busy) return;
@@ -353,6 +377,8 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
                   : h.change_type === "component_added" ? `added ${d.plant} at ${d.per_basket}/basket — ${[d.sourcing?.broker, d.sourcing?.supplier].filter(Boolean).join("/")} @ ${money(+d.sourcing?.landed)}`
                   : h.change_type === "component_removed" ? `removed ${d.plant}`
                   : h.change_type === "prop_tray" ? `${d.plant} now sticks in ${d.tray}`
+                  : h.change_type === "combo_set" ? `✓ combo SET for ${d.season} — ${(d.recipe || []).map(r => `${r.per_basket}× ${r.plant}`).join(", ")}${d.cost_per_basket != null ? ` (${money(d.cost_per_basket)}/basket)` : ""}`
+                  : h.change_type === "layout_arranged" ? `planting layout arranged (${d.dots || "?"} plants placed${d.rows ? `, ${d.rows} bench rows` : ""})`
                   : h.change_type === "order_confirmation" ? `order confirmation: ${d.summary || JSON.stringify(d)}`
                   : JSON.stringify(d);
                 return (
@@ -489,8 +515,18 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
         {/* combo components — editable */}
         {agg && agg.comps.length > 0 && (
           <div style={{ background: "#fff", border: `1px solid ${C.border}`, borderRadius: 10, padding: "11px 13px", marginTop: 12 }}>
-            <div style={{ fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", marginBottom: 6 }}>
-              Components {busy && <span style={{ color: C.amber }}>· saving…</span>}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+              <span style={{ fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase" }}>
+                Components {busy && <span style={{ color: C.amber }}>· saving…</span>}
+              </span>
+              <button onClick={() => setArranging(true)}
+                style={{ marginLeft: "auto", padding: "5px 12px", borderRadius: 8, border: `1.5px solid ${C.light}`, background: "#fff", color: C.dark, fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                ✏️ Arrange{detail?.parents.some(p => p.planting_layout) ? "" : " (no layout yet)"}
+              </button>
+              <button onClick={setComboForSeason}
+                style={{ padding: "5px 12px", borderRadius: 8, border: "none", background: C.green, color: "#fff", fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                ✓ Set combo for {plan.name}
+              </button>
             </div>
             {agg.costPer != null && (() => {
               const was = baseline.current, now = agg.costPer;
@@ -585,6 +621,12 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
         current={quoteFor.current} onPick={applyQuote} onClose={() => setQuoteFor(null)} />}
       {addQuote && <QuotePicker sb={sb} varietyKey={null} initialQuery=""
         onPick={addComponentFromQuote} onClose={() => setAddQuote(false)} />}
+      {arranging && agg && (
+        <BasketDesigner
+          layout={detail?.parents.find(p => p.planting_layout)?.planting_layout || { plants: agg.comps.map(c => c.label) }}
+          plantNames={agg.comps.map(c => c.label)}
+          onSave={saveLayout} onClose={() => setArranging(false)} />
+      )}
     </div>
   );
 }

@@ -7213,7 +7213,7 @@ async function shareComboDiagram(row, planId, recipe) {
 }
 
 // Drag-to-place basket designer — move plant dots anywhere in the basket, add/remove, lock & save.
-function BasketDesigner({ layout, plantNames, onSave, onClose }) {
+export function BasketDesigner({ layout, plantNames, onSave, onClose }) {
   const plants = (layout.plants && layout.plants.length) ? layout.plants : (plantNames || []);
   const COLS = plants.map((p, i) => plantColor(p) || PALETTE[i % PALETTE.length]);
   const cx = 130, cy = 130, RB = 118, dotR = 15, VB = 260;

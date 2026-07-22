@@ -637,6 +637,30 @@ export function QuotePicker({ sb, varietyKey, initialQuery, current, onPick, onC
   const [fBroker, setFBroker] = useState("");
   const [fSupplier, setFSupplier] = useState("");
   const [sort, setSort] = useState(null);   // {col, dir} — null = exact-first, cheapest-first
+  // row click = look, green ＋ = commit. Culture info loads for the looked-at row.
+  const [sel, setSel] = useState(null);
+  const [selCulture, setSelCulture] = useState(null);   // "loading" | record | false
+  const [fullCulture, setFullCulture] = useState(null); // record for the CultureModal
+  const cc = getCultureClient();
+  async function showRow(r) {
+    setSel(r); setSelCulture(cc ? "loading" : false);
+    if (!cc) return;
+    try {
+      const g1 = String(r.crop || r.variety || "").trim().split(/\s+/)[0];
+      const names = [...new Set([g1, canonGenus(g1), GENUS_DISPLAY[canonGenus(g1)]].filter(Boolean))];
+      const { data: cands } = await cc.from("culture_guides_public")
+        .select("id,crop_name,series_name,series_variety")
+        .or(names.map(n => `crop_name.ilike.*${n}*`).join(",")).limit(500);
+      let best = null;
+      for (const c of cands || []) {
+        const label = [c.series_name, c.series_variety].filter(Boolean).join(" ") || c.crop_name;
+        try { if (makeKey(c.crop_name, null, label) === r.variety_key) { best = c; break; } } catch { /* skip */ }
+      }
+      if (!best) { setSelCulture(false); return; }
+      const { data: full } = await cc.from("culture_guides_public").select("*").eq("id", best.id).single();
+      setSelCulture(full || false);
+    } catch { setSelCulture(false); }
+  }
   async function load(term) {
     setBusy(true);
     const out = new Map();
@@ -722,11 +746,12 @@ export function QuotePicker({ sb, varietyKey, initialQuery, current, onPick, onC
                 <th style={{ ...th, cursor: "default" }}></th>
                 <Th col="variety">Variety</Th><Th col="form_class">Form</Th><Th col="broker">Broker</Th><Th col="supplier">Supplier</Th>
                 <Th col="item_min" right>Min</Th><Th col="list_price" right>List</Th><Th col="landed" right>Landed</Th>
+                <th style={{ ...th, cursor: "default" }}></th>
               </tr></thead>
               <tbody>
                 {shown.slice(0, 200).map(r => (
-                  <tr key={r.id} onClick={() => onPick(r)} title="use this quote"
-                    style={{ cursor: "pointer", background: r.exact ? "#f2f8ee" : "#fff" }}>
+                  <tr key={r.id} onClick={() => showRow(r)} title="view culture & details"
+                    style={{ cursor: "pointer", background: sel?.id === r.id ? "#e4f0dc" : r.exact ? "#f2f8ee" : "#fff" }}>
                     <td style={{ ...td, color: C.green, fontWeight: 800 }}>{r.exact ? "●" : ""}</td>
                     <td style={{ ...td, fontWeight: 700 }}>{r.variety}<div style={{ fontSize: 10.5, fontWeight: 400, color: C.muted }}>{r.crop}</div></td>
                     <td style={td}>{r.form_class}{r.form_raw ? <div style={{ fontSize: 10.5, color: C.muted }}>{r.form_raw}</div> : null}</td>
@@ -737,12 +762,47 @@ export function QuotePicker({ sb, varietyKey, initialQuery, current, onPick, onC
                     <td style={{ ...td, textAlign: "right", fontWeight: 800 }}>{money(+r.landed)}
                       {(+r.royalty > 0 || +r.freight > 0) && <div style={{ fontSize: 10, fontWeight: 400, color: C.muted }}>{+r.royalty > 0 ? `roy ${money(+r.royalty)}` : ""}{+r.freight > 0 ? ` frt ${money(+r.freight)}` : ""}</div>}
                     </td>
+                    <td style={{ ...td, textAlign: "center" }}>
+                      <button onClick={e => { e.stopPropagation(); onPick(r); }} title="add this one"
+                        style={{ width: 24, height: 24, borderRadius: 12, border: "none", background: C.green, color: "#fff", fontWeight: 800, fontSize: 15, cursor: "pointer", lineHeight: "24px", padding: 0 }}>＋</button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>}
         </div>
-        <div style={{ fontSize: 10.5, color: C.muted, marginTop: 6 }}>● = exact catalog match for this variety · landed = list + royalty + freight per cell · click a row to use it</div>
+        {sel && (
+          <div style={{ background: "#fff", border: `1.5px solid ${C.light}`, borderRadius: 10, padding: "10px 12px", marginTop: 8 }}>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <b style={{ fontSize: 13.5 }}>{sel.variety}</b>
+              <span style={{ fontSize: 12, color: C.muted }}>{sel.form_class}{sel.form_raw ? ` (${sel.form_raw})` : ""} · {[sel.broker, sel.supplier].filter(Boolean).join(" / ")} · <b style={{ color: C.text }}>{money(+sel.landed)}</b>/plant</span>
+              <button onClick={() => onPick(sel)}
+                style={{ marginLeft: "auto", padding: "7px 16px", borderRadius: 8, border: "none", background: C.green, color: "#fff", fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>＋ Add to the mix</button>
+              <button onClick={() => { setSel(null); setSelCulture(null); }} style={{ background: "none", border: "none", fontSize: 18, color: C.muted, cursor: "pointer" }}>×</button>
+            </div>
+            <div style={{ fontSize: 12, color: C.muted, marginTop: 5 }}>
+              {selCulture === "loading" ? "looking up the culture library…"
+              : selCulture === false || !selCulture ? "no culture guide on file for this one"
+              : (() => {
+                  const cd = selCulture.culture_details || {};
+                  const pick = re => { const h = Object.entries(cd).find(([k, v]) => re.test(k) && !/prop/i.test(k) && v != null && String(v).trim()); return h ? String(h[1]) : null; };
+                  const fh = pick(/height/i), fw = pick(/width|spread/i);
+                  return (
+                    <span style={{ color: C.text }}>
+                      📖 {selCulture.breeder_name} · {selCulture.category}
+                      {selCulture.propagation_weeks ? ` · prop ${selCulture.propagation_weeks} wks` : ""}
+                      {selCulture.requires_heat ? " · needs heat" : ""}
+                      {fh ? ` · finish H ${fh}` : ""}{fw ? ` · W ${fw}` : ""}
+                      <button onClick={() => setFullCulture(selCulture)}
+                        style={{ marginLeft: 8, padding: "3px 10px", borderRadius: 7, border: `1.5px solid ${C.light}`, background: "#fff", color: C.dark, fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>full culture</button>
+                    </span>
+                  );
+                })()}
+            </div>
+          </div>
+        )}
+        {fullCulture && <CultureModal record={fullCulture} onClose={() => setFullCulture(null)} />}
+        <div style={{ fontSize: 10.5, color: C.muted, marginTop: 6 }}>● = exact catalog match · landed = list + royalty + freight per cell · click a row for culture info, ＋ to add it</div>
       </div>
     </div>
   );
