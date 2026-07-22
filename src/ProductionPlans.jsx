@@ -5742,21 +5742,24 @@ const money = v => (v == null ? "—" : "$" + Number(v).toFixed(4));
 
 // Paginated fetch (PostgREST caps at 1000/req) — used by the Pricing tab.
 async function srcPageAll(sb, table, select, filter) {
-  // first page carries the exact count, remaining pages fetch in PARALLEL —
-  // a 20k-row table is 1 sequential roundtrip + 19 concurrent, not 20 serial
-  let q0 = sb.from(table).select(select, { count: "exact" }).range(0, 999);
-  if (filter) q0 = filter(q0);
-  const { data, count, error } = await q0;
-  if (error || !data) return [];
-  if (!count || count <= data.length) return data;
-  const pages = [];
-  for (let f = 1000; f < count; f += 1000) {
+  // NO count(*) — counting a complex view (v_scheduled_crops_pl etc.) forces
+  // the whole thing to compute just to learn its size. Instead: fetch page 0;
+  // if it's full, speculatively fetch batches of 8 pages in parallel until one
+  // comes back short. Small tables cost exactly one request.
+  const page = async f => {
     let q = sb.from(table).select(select).range(f, f + 999);
     if (filter) q = filter(q);
-    pages.push(q);
+    const { data, error } = await q;
+    return error ? [] : (data || []);
+  };
+  let out = await page(0);
+  if (out.length < 1000) return out;
+  const BATCH = 8;
+  for (let f = 1000; ; f += BATCH * 1000) {
+    const pages = await Promise.all(Array.from({ length: BATCH }, (_, i) => page(f + i * 1000)));
+    for (const p of pages) out = out.concat(p);
+    if (pages.some(p => p.length < 1000)) return out;   // hit the end
   }
-  const rest = await Promise.all(pages);
-  return data.concat(...rest.map(r => r.data || []));
 }
 
 // Filter/sort state that survives a refresh — reads localStorage once, writes through.
