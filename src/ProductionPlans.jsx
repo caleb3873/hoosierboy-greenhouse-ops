@@ -1876,7 +1876,9 @@ function SalesVsPlanTab({ plan }) {
       // Sold last season but absent from this plan — invisible in a plan-driven
       // table, and exactly what gets dropped by accident when a plan is built by
       // replaying last year's master list.
-      const inPlan = new Set(Object.keys(planByItem));
+      // dual-use components (ivy, vinca vine, …) ARE plan items — they live in
+      // their own bucket above, but they must not read as "missing"
+      const inPlan = new Set([...Object.keys(planByItem), ...Object.keys(dualUse)]);
       const gaps = {};
       for (const t of tot) {
         const it = skuToItem[t.sku];
