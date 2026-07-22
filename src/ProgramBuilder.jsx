@@ -189,7 +189,12 @@ function ProgramDetail({ sb, program, items, onChange, onConvert }) {
                   <td style={{ padding: "5px 8px", color: C.muted }}>{it.size || "—"}</td>
                   <td style={{ padding: "5px 8px", textAlign: "right" }}>
                     <input defaultValue={it.target_units ?? ""} inputMode="numeric" style={{ ...inp, width: 62, textAlign: "right" }}
-                      onBlur={e => { const n = parseInt(e.target.value.replace(/\D/g, "")); if (!isNaN(n) && n !== it.target_units) patchItem(it.id, { target_units: n }); }} />
+                      onBlur={e => {
+                        let n = parseInt(e.target.value.replace(/\D/g, ""));
+                        const cs = +(it.cost_parts?.case_size) || null;   // 4.5" sells in 10s
+                        if (!isNaN(n) && cs && n % cs !== 0) { n = Math.ceil(n / cs) * cs; e.target.value = String(n); }
+                        if (!isNaN(n) && n !== it.target_units) patchItem(it.id, { target_units: n });
+                      }} />
                   </td>
                   <td style={{ padding: "5px 8px", textAlign: "right" }}>
                     <input defaultValue={it.target_price ?? ""} inputMode="decimal" style={{ ...inp, width: 62, textAlign: "right" }}
@@ -258,7 +263,7 @@ function AddProgramItem({ sb, program, itemCount, onDone, onCancel }) {
       }
       setCorpus(out);
     } else setCorpus([]);
-    const { data: k } = await sb.from("containers").select("id,name,cost_per_unit,fill_volume_cu_ft").order("name");
+    const { data: k } = await sb.from("containers").select("id,name,cost_per_unit,fill_volume_cu_ft,has_carrier,carrier_name,carrier_cost,pots_per_carrier,case_size").order("name");
     setContainers(k || []);
     const { data: sm } = await sb.from("soil_mixes").select("name,cost_per_bag,fluffed_volume");
     const priced = (sm || []).filter(x => +x.cost_per_bag > 0 && +x.fluffed_volume > 0)
@@ -369,9 +374,15 @@ function AddProgramItem({ sb, program, itemCount, onDone, onCancel }) {
     const liner = mat && mat.landed ? (+mat.landed) * (parseInt(ppp) || 1) : null;
     const container = cont && +cont.cost_per_unit > 0 ? +cont.cost_per_unit : null;
     const soilCost = cont && soil && +cont.fill_volume_cu_ft > 0 ? +cont.fill_volume_cu_ft * soil.perCuFt : null;
-    const total = (liner || 0) + (container || 0) + (soilCost || 0);
-    return { liner, container, soil: soilCost, total: total > 0 ? total : null };
+    // pots that ship in a carry tray (4.5" = 10-pack) owe their share of the tray
+    const carrier = cont && cont.has_carrier && +cont.carrier_cost > 0 && +cont.pots_per_carrier > 0
+      ? +cont.carrier_cost / +cont.pots_per_carrier : null;
+    const total = (liner || 0) + (container || 0) + (soilCost || 0) + (carrier || 0);
+    return { liner, container, soil: soilCost, carrier, total: total > 0 ? total : null };
   }, [mat, cont, soil, ppp]);
+  // selling increment: case_size (or pots per carrier) — 4.5" sells in 10s, period
+  const caseOf = cont ? (+cont.case_size || +cont.pots_per_carrier || null) : null;
+  const unitsOff = caseOf && units && parseInt(units) > 0 && parseInt(units) % caseOf !== 0;
   const gm = parts.total && price && parseFloat(price) > 0 ? (parseFloat(price) - parts.total) / parseFloat(price) : null;
 
   async function save() {
@@ -380,7 +391,7 @@ function AddProgramItem({ sb, program, itemCount, onDone, onCancel }) {
       id: crypto.randomUUID(), program_id: program.id,
       item_name: itemName.trim(), size: sizeLabel, sku,
       container_id: contId || null,
-      target_units: units ? parseInt(units) : null,
+      target_units: units ? (caseOf ? Math.ceil(parseInt(units) / caseOf) * caseOf : parseInt(units)) : null,
       target_price: price ? parseFloat(price) : null,
       ppp: parseInt(ppp) || 1,
       material: {
@@ -389,7 +400,7 @@ function AddProgramItem({ sb, program, itemCount, onDone, onCancel }) {
         ...(mat ? { broker: mat.broker, supplier: mat.supplier, form: mat.form_class, landed: +mat.landed || null, variety_key: mat.variety_key } : {}),
       },
       est_unit_cost: parts.total,
-      cost_parts: { liner: parts.liner, container: parts.container, soil: parts.soil, soil_mix: soil?.name || null },
+      cost_parts: { liner: parts.liner, container: parts.container, carrier: parts.carrier, soil: parts.soil, soil_mix: soil?.name || null, case_size: caseOf },
       sort: Date.now() % 100000,
     });
     onDone();
@@ -445,7 +456,14 @@ function AddProgramItem({ sb, program, itemCount, onDone, onCancel }) {
           </select>
         </div>
         <div style={{ width: 62 }}><span style={lab}>PPP</span><input value={ppp} onChange={e => setPpp(e.target.value)} inputMode="numeric" style={{ ...inp, width: "100%" }} /></div>
-        <div style={{ width: 88 }}><span style={lab}>Quantity</span><input value={units} onChange={e => setUnits(e.target.value)} inputMode="numeric" style={{ ...inp, width: "100%" }} /></div>
+        <div style={{ width: 108 }}>
+          <span style={lab}>Quantity{caseOf ? ` (×${caseOf})` : ""}</span>
+          <input value={units} onChange={e => setUnits(e.target.value)} inputMode="numeric"
+            onBlur={() => { const n = parseInt(units); if (caseOf && n > 0 && n % caseOf !== 0) setUnits(String(Math.ceil(n / caseOf) * caseOf)); }}
+            style={{ ...inp, width: "100%", borderColor: unitsOff ? C.amber : undefined }} />
+          {caseOf && parseInt(units) > 0 && !unitsOff &&
+            <div style={{ fontSize: 10.5, color: C.muted, marginTop: 2 }}>{(parseInt(units) / caseOf).toLocaleString()} cases of {caseOf}</div>}
+        </div>
         <div style={{ width: 84 }}><span style={lab}>Price $</span><input value={price} onChange={e => setPrice(e.target.value)} inputMode="decimal" style={{ ...inp, width: "100%" }} /></div>
       </div>
 
@@ -465,6 +483,7 @@ function AddProgramItem({ sb, program, itemCount, onDone, onCancel }) {
             <span style={{ fontSize: 12.5, color: C.text }}>
               {parts.liner != null && <>liner {money(parts.liner)}</>}
               {parts.container != null && <> + pot {money(parts.container)}</>}
+              {parts.carrier != null && <> + case {money(parts.carrier)} <span style={{ color: C.muted }}>({cont.carrier_name || `tray`} {money(+cont.carrier_cost)} ÷ {+cont.pots_per_carrier})</span></>}
               {parts.soil != null && <> + soil {money(parts.soil)}</>}
               {" = "}<b style={{ fontSize: 14 }}>{money(parts.total)}</b>
               {gm != null && <> · <b style={{ color: gm < 0.6 ? C.red : C.green }}>{Math.round(gm * 100)}%</b></>}
