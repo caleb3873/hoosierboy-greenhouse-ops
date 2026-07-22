@@ -344,6 +344,27 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
   const shift = tgt?.ready_shift || 0;
   const baseReady = agg?.readyMin ?? row.ship;
 
+  // week ↔ date axis: sales year = the year before the plan; Mother's Day week
+  // (the ISO week ENDING on Mother's Day Sunday) gets a ★ — the spring finish line
+  const salesYear = (parseInt(String(plan?.name || "").match(/20\d\d/)?.[0]) || new Date().getFullYear() + 1) - 1;
+  const [wkAsDate, setWkAsDate] = useState(() => { try { return JSON.parse(localStorage.getItem("gh_drill_wkdate")) || false; } catch { return false; } });
+  const wkMonday = w => {  // Monday of ISO week w in salesYear
+    const jan4 = new Date(Date.UTC(salesYear, 0, 4));
+    const day = jan4.getUTCDay() || 7;
+    const d = new Date(jan4); d.setUTCDate(jan4.getUTCDate() - day + 1 + (w - 1) * 7);
+    return d;
+  };
+  const wkDateLabel = (w, offset = 0) => { const d = wkMonday(w); d.setUTCDate(d.getUTCDate() + offset); return `${d.getUTCMonth() + 1}/${d.getUTCDate()}`; };
+  const mothersWk = useMemo(() => {  // 2nd Sunday of May → its ISO week
+    const may1 = new Date(Date.UTC(salesYear, 4, 1));
+    const firstSunOff = (7 - may1.getUTCDay()) % 7;
+    const md = new Date(Date.UTC(salesYear, 4, 1 + firstSunOff + 7));
+    const t = new Date(md); const day = t.getUTCDay() || 7;
+    t.setUTCDate(t.getUTCDate() + 4 - day);
+    const ys = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));
+    return Math.ceil((((t - ys) / 86400000) + 1) / 7);
+  }, [salesYear]);
+
   // Divide the projection total into k planting rounds, each covering an equal
   // slice of the 2026 sales volume — the round's finish week is where its slice
   // of demand started. No sales history → even split, two weeks apart.
@@ -463,18 +484,30 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
 
         {curve && curve.some(x => x > 0) && (
           <div style={{ background: "#fff", border: `1px solid ${C.border}`, borderRadius: 10, padding: "11px 13px" }}>
-            <div style={{ fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", marginBottom: 7 }}>Weekly sales, 2026</div>
+            <div style={{ display: "flex", alignItems: "center", marginBottom: 7 }}>
+              <span style={{ fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase" }}>Weekly sales, {salesYear}</span>
+              <button onClick={() => setWkAsDate(d => { try { localStorage.setItem("gh_drill_wkdate", JSON.stringify(!d)); } catch { } return !d; })}
+                title="switch the axis between week numbers and dates"
+                style={{ marginLeft: "auto", padding: "3px 10px", borderRadius: 7, border: `1px solid ${C.border}`, background: "#fff", color: C.muted, fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                {wkAsDate ? "show wk #" : "show dates"}
+              </button>
+            </div>
             <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 76 }}>
               {curve.map((v, i) => (
-                <div key={i} title={`wk${weeks[i]}: ${v.toLocaleString()}`}
+                <div key={i} title={`wk${weeks[i]} (${wkDateLabel(weeks[i])}): ${v.toLocaleString()}`}
                   style={{ flex: 1, height: Math.max(2, v / maxC * 70), borderRadius: "2px 2px 0 0",
                     background: weeks[i] === row.peak ? C.dark : effReady != null && weeks[i] < effReady ? "#d9c9a3" : C.light }} />
               ))}
             </div>
             <div style={{ display: "flex", gap: 3, marginTop: 2 }}>
-              {weeks.map(w => <div key={w} style={{ flex: 1, fontSize: 8.5, color: w === effReady ? C.dark : C.muted, fontWeight: w === effReady ? 800 : 400, textAlign: "center" }}>{w}</div>)}
+              {weeks.map(w => (
+                <div key={w} style={{ flex: 1, fontSize: wkAsDate ? 7.5 : 8.5, color: w === effReady ? C.dark : C.muted, fontWeight: w === effReady ? 800 : 400, textAlign: "center", whiteSpace: "nowrap" }}>
+                  {wkAsDate ? wkDateLabel(w) : w}
+                  {w === mothersWk && <div title={`Mother's Day week — ends Sun ${wkDateLabel(w, 6)}`} style={{ fontSize: 9, lineHeight: "9px", color: C.amber }}>★</div>}
+                </div>
+              ))}
             </div>
-            {effReady != null && <div style={{ fontSize: 10.5, color: C.muted, marginTop: 4 }}>tan bars = demand before the wk{effReady} finish{shift ? " (after your move)" : ""}</div>}
+            {effReady != null && <div style={{ fontSize: 10.5, color: C.muted, marginTop: 4 }}>tan bars = demand before the wk{effReady} finish{shift ? " (after your move)" : ""} · ★ = Mother's Day week</div>}
           </div>
         )}
 
