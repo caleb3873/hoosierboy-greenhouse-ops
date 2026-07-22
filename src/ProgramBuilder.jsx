@@ -6,7 +6,7 @@
 // (searched from the 39k-row sourcing db), not plan rows — production converts
 // an approved program into scheduled_crops later.
 import { useEffect, useMemo, useState } from "react";
-import { getSupabase } from "./supabase";
+import { getSupabase, getCultureClient } from "./supabase";
 import { useAuth } from "./Auth";
 
 const C = { dark: "#1e2d1a", light: "#7fb069", border: "#dfe7d8", muted: "#7a8c74",
@@ -214,44 +214,95 @@ function ProgramDetail({ sb, program, items, onChange, onConvert }) {
   );
 }
 
-// New item, built from real data: species → variety → finished size.
-// Name and SKU generate themselves; cost = liner×ppp + container + soil.
+// New item, Caleb's flow: Annual/Perennial → species → breeder → variety
+// (with culture on file) → size from our containers → quantity.
+// The culture DB drives the lookup; the sourcing catalog attaches the price.
 function AddProgramItem({ sb, program, itemCount, onDone, onCancel }) {
-  const [crops, setCrops] = useState([]);
+  const cc = getCultureClient();
+  const [corpus, setCorpus] = useState(null);   // light rows from culture_guides_public
+  const [ptype, setPtype] = useState("");
   const [crop, setCrop] = useState("");
-  const [vars, setVars] = useState([]);
-  const [mat, setMat] = useState(null);          // chosen variety row (cheapest source)
+  const [breeder, setBreeder] = useState("");
+  const [varId, setVarId] = useState("");
+  const [culture, setCulture] = useState(null);  // full record for the modal
+  const [mat, setMat] = useState(null);          // matched sourcing price
+  const [matNote, setMatNote] = useState("");
   const [containers, setContainers] = useState([]);
   const [contId, setContId] = useState("");
-  const [soil, setSoil] = useState(null);        // {name, perCuFt}
+  const [soil, setSoil] = useState(null);
   const [ppp, setPpp] = useState("1");
   const [units, setUnits] = useState("");
   const [price, setPrice] = useState("");
   const [nameOverride, setNameOverride] = useState(null);
 
   useEffect(() => { (async () => {
-    const { data: c } = await sb.from("v_sourcing_crops").select("*").order("varieties", { ascending: false }).limit(500);
-    setCrops(c || []);
+    if (cc) {
+      let out = [], from = 0;
+      for (;;) {
+        const { data } = await cc.from("culture_guides_public")
+          .select("id,category,crop_name,breeder_name,series_name,series_variety").range(from, from + 999);
+        out = out.concat(data || []);
+        if (!data || data.length < 1000) break;
+        from += 1000;
+      }
+      setCorpus(out);
+    } else setCorpus([]);
     const { data: k } = await sb.from("containers").select("id,name,cost_per_unit,fill_volume_cu_ft").order("name");
     setContainers(k || []);
     const { data: sm } = await sb.from("soil_mixes").select("name,cost_per_bag,fluffed_volume");
     const priced = (sm || []).filter(x => +x.cost_per_bag > 0 && +x.fluffed_volume > 0)
-      .map(x => ({ name: x.name, perCuFt: +x.cost_per_bag / +x.fluffed_volume }))
-      .sort((a, b) => a.perCuFt - b.perCuFt);
+      .map(x => ({ name: x.name, perCuFt: +x.cost_per_bag / +x.fluffed_volume })).sort((a, b) => a.perCuFt - b.perCuFt);
     setSoil(priced.find(x => /BM5/i.test(x.name)) || priced[0] || null);
   })(); }, []); // eslint-disable-line
 
+  // cascades, each narrowed by the choices above it
+  const lc = v => String(v || "").trim();
+  const pool = useMemo(() => (corpus || []).filter(r =>
+    (!ptype || lc(r.category).toLowerCase() === ptype) &&
+    (!crop || lc(r.crop_name) === crop) &&
+    (!breeder || lc(r.breeder_name) === breeder)), [corpus, ptype, crop, breeder]);
+  const cropOpts = useMemo(() => {
+    const m = new Map();
+    (corpus || []).filter(r => !ptype || lc(r.category).toLowerCase() === ptype)
+      .forEach(r => { const k = lc(r.crop_name); if (k) m.set(k, (m.get(k) || 0) + 1); });
+    return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  }, [corpus, ptype]);
+  const breederOpts = useMemo(() => {
+    const m = new Map();
+    (corpus || []).filter(r => (!ptype || lc(r.category).toLowerCase() === ptype) && (!crop || lc(r.crop_name) === crop))
+      .forEach(r => { const k = lc(r.breeder_name); if (k) m.set(k, (m.get(k) || 0) + 1); });
+    return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  }, [corpus, ptype, crop]);
+  const varOpts = useMemo(() => pool
+    .map(r => ({ id: r.id, label: [lc(r.series_name), lc(r.series_variety)].filter(Boolean).join(" ") || lc(r.crop_name) }))
+    .filter(v => v.label).sort((a, b) => a.label.localeCompare(b.label)), [pool]);
+  const chosen = (corpus || []).find(r => r.id === varId) || null;
+
+  // culture on file for the chosen variety
+  async function openCulture() {
+    if (!cc || !chosen) return;
+    const { data } = await cc.from("culture_guides_public")
+      .select("*").eq("id", chosen.id).single();
+    setCulture(data || {});
+  }
+
+  // best-effort price from the sourcing catalog once a variety is chosen
   useEffect(() => { (async () => {
-    setMat(null); setVars([]);
-    if (!crop) return;
-    const { data } = await sb.from("v_sourcing_prices")
-      .select("crop,variety,broker,supplier,form_class,landed,variety_key")
-      .ilike("crop", crop).order("landed").limit(1000);
-    // one row per variety, cheapest source wins
-    const seen = new Map();
-    (data || []).forEach(r => { if (!seen.has(r.variety_key)) seen.set(r.variety_key, r); });
-    setVars([...seen.values()].sort((a, b) => (a.variety || "").localeCompare(b.variety || "")));
-  })(); }, [crop]); // eslint-disable-line
+    setMat(null); setMatNote("");
+    if (!chosen) return;
+    const series = lc(chosen.series_name), varn = lc(chosen.series_variety);
+    let q = sb.from("v_sourcing_prices").select("crop,variety,broker,supplier,form_class,landed,variety_key").limit(200);
+    q = series ? q.ilike("variety", `%${series}%`) : q.ilike("crop", `%${lc(chosen.crop_name)}%`);
+    const { data } = await q;
+    const toks = varn.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+    const scored = (data || []).map(r => ({ r,
+      score: toks.filter(w => String(r.variety).toLowerCase().includes(w)).length }))
+      .sort((a, b) => b.score - a.score || (+a.r.landed || 9) - (+b.r.landed || 9));
+    const best = scored[0];
+    if (best && (best.score > 0 || !varn)) { setMat(best.r); setMatNote(""); }
+    else if (scored.length) { setMat(scored[0].r); setMatNote("closest match — verify"); }
+    else setMatNote("no broker quote found — cost will need a hand-entered price");
+  })(); }, [varId]); // eslint-disable-line
 
   const cont = containers.find(c => c.id === contId) || null;
   const sizeLabel = useMemo(() => {
@@ -262,15 +313,18 @@ function AddProgramItem({ sb, program, itemCount, onDone, onCancel }) {
     return n ? `${parseFloat(n[0])}"` : cont.name;
   }, [cont]);
 
-  const itemName = nameOverride ?? (mat && sizeLabel ? `${sizeLabel} ${String(mat.variety).toUpperCase()}` : "");
+  const varietyText = chosen ? [lc(chosen.series_name), lc(chosen.series_variety)].filter(Boolean).join(" ") : "";
+  const cropWord = chosen ? lc(chosen.crop_name) : crop;
+  const fullVariety = varietyText.toLowerCase().includes(cropWord.toLowerCase()) ? varietyText : `${cropWord} ${varietyText}`.trim();
+  const itemName = nameOverride ?? (chosen && sizeLabel ? `${sizeLabel} ${fullVariety.toUpperCase()}` : "");
   const sku = useMemo(() => {
-    if (!mat || !sizeLabel) return null;
+    if (!chosen || !sizeLabel) return null;
     const pgm = (program.name.match(/[A-Za-z]+/) || ["PGM"])[0].slice(0, 3).toUpperCase();
     const g = sizeLabel.includes("GAL") ? sizeLabel.replace(/[^0-9]/g, "") + "G"
       : String(Math.floor(parseFloat(sizeLabel))).padStart(2, "0");
-    const crop3 = (crop.match(/[A-Za-z]+/) || ["XXX"])[0].slice(0, 3).toUpperCase();
+    const crop3 = (cropWord.match(/[A-Za-z]+/) || ["XXX"])[0].slice(0, 3).toUpperCase();
     return `${pgm}${g}${crop3}${String(itemCount + 1).padStart(3, "0")}`;
-  }, [mat, sizeLabel, crop, program.name, itemCount]);
+  }, [chosen, sizeLabel, cropWord, program.name, itemCount]);
 
   const parts = useMemo(() => {
     const liner = mat && mat.landed ? (+mat.landed) * (parseInt(ppp) || 1) : null;
@@ -290,8 +344,13 @@ function AddProgramItem({ sb, program, itemCount, onDone, onCancel }) {
       target_units: units ? parseInt(units) : null,
       target_price: price ? parseFloat(price) : null,
       ppp: parseInt(ppp) || 1,
-      material: mat ? { variety: mat.variety, crop, broker: mat.broker, supplier: mat.supplier, form: mat.form_class, landed: +mat.landed || null, variety_key: mat.variety_key } : null,
-      est_unit_cost: parts.total, cost_parts: { liner: parts.liner, container: parts.container, soil: parts.soil, soil_mix: soil?.name || null },
+      material: {
+        crop: cropWord, variety: fullVariety, breeder: chosen ? lc(chosen.breeder_name) : null,
+        plant_type: ptype || (chosen ? lc(chosen.category) : null), culture_source_id: chosen?.id || null,
+        ...(mat ? { broker: mat.broker, supplier: mat.supplier, form: mat.form_class, landed: +mat.landed || null, variety_key: mat.variety_key } : {}),
+      },
+      est_unit_cost: parts.total,
+      cost_parts: { liner: parts.liner, container: parts.container, soil: parts.soil, soil_mix: soil?.name || null },
       sort: Date.now() % 100000,
     });
     onDone();
@@ -299,49 +358,77 @@ function AddProgramItem({ sb, program, itemCount, onDone, onCancel }) {
 
   const inp = { padding: "8px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit", background: "#fff", boxSizing: "border-box" };
   const lab = { fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", display: "block", marginBottom: 3 };
+  if (corpus === null) return <div style={{ padding: 14, color: C.muted, fontSize: 13 }}>Loading the culture library…</div>;
+
   return (
     <div style={{ background: "#fff", border: `1.5px solid ${C.light}`, borderRadius: 10, padding: 12 }}>
+      {/* step 1: type */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+        {[["annual", "🌸 Annual"], ["perennial", "🌿 Perennial"]].map(([k, l]) => (
+          <button key={k} onClick={() => { setPtype(ptype === k ? "" : k); setCrop(""); setBreeder(""); setVarId(""); setNameOverride(null); }}
+            style={{ padding: "8px 16px", borderRadius: 9, cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 800,
+              border: `1.5px solid ${ptype === k ? C.light : C.border}`, background: ptype === k ? C.light : "#fff", color: ptype === k ? "#fff" : C.text }}>{l}</button>
+        ))}
+        {!cc && <span style={{ fontSize: 11.5, color: C.amber, alignSelf: "center" }}>culture library not configured — lookup limited</span>}
+      </div>
+
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
         <div style={{ minWidth: 170 }}>
           <span style={lab}>Species</span>
-          <select value={crop} onChange={e => { setCrop(e.target.value); setNameOverride(null); }} style={{ ...inp, width: "100%", cursor: "pointer" }}>
+          <select value={crop} onChange={e => { setCrop(e.target.value); setBreeder(""); setVarId(""); setNameOverride(null); }} style={{ ...inp, width: "100%", cursor: "pointer" }}>
             <option value="">Choose…</option>
-            {crops.map(c => <option key={c.crop} value={c.crop}>{c.crop} ({c.varieties})</option>)}
+            {cropOpts.map(([c, n]) => <option key={c} value={c}>{c} ({n})</option>)}
           </select>
         </div>
-        <div style={{ minWidth: 220, flex: 1 }}>
-          <span style={lab}>Variety {crop && vars.length ? `(${vars.length})` : ""}</span>
-          <select value={mat ? mat.variety_key : ""} disabled={!crop}
-            onChange={e => { setMat(vars.find(v => v.variety_key === e.target.value) || null); setNameOverride(null); }}
-            style={{ ...inp, width: "100%", cursor: "pointer" }}>
-            <option value="">{crop ? "Choose…" : "pick a species first"}</option>
-            {vars.map(v => <option key={v.variety_key} value={v.variety_key}>{v.variety} — {money(+v.landed)} ({v.broker})</option>)}
+        <div style={{ minWidth: 170 }}>
+          <span style={lab}>Breeder</span>
+          <select value={breeder} disabled={!crop} onChange={e => { setBreeder(e.target.value); setVarId(""); setNameOverride(null); }} style={{ ...inp, width: "100%", cursor: "pointer" }}>
+            <option value="">{crop ? "All breeders" : "pick a species"}</option>
+            {breederOpts.map(([b, n]) => <option key={b} value={b}>{b} ({n})</option>)}
           </select>
+        </div>
+        <div style={{ minWidth: 230, flex: 1 }}>
+          <span style={lab}>Variety</span>
+          <div style={{ display: "flex", gap: 6 }}>
+            <select value={varId} disabled={!crop} onChange={e => { setVarId(e.target.value); setNameOverride(null); }} style={{ ...inp, flex: 1, cursor: "pointer" }}>
+              <option value="">{crop ? "Choose…" : "pick a species"}</option>
+              {varOpts.map(v => <option key={v.id} value={v.id}>{v.label}</option>)}
+            </select>
+            <button onClick={openCulture} disabled={!chosen} title="Culture information on file"
+              style={{ padding: "0 12px", borderRadius: 8, border: `1.5px solid ${chosen ? C.light : C.border}`, background: "#fff", color: chosen ? C.dark : C.muted, cursor: chosen ? "pointer" : "default", fontSize: 15 }}>📖</button>
+          </div>
         </div>
         <div style={{ minWidth: 190 }}>
-          <span style={lab}>Finished size (container library)</span>
+          <span style={lab}>Size (our containers)</span>
           <select value={contId} onChange={e => { setContId(e.target.value); setNameOverride(null); }} style={{ ...inp, width: "100%", cursor: "pointer" }}>
             <option value="">Choose…</option>
             {containers.map(c => <option key={c.id} value={c.id}>{c.name}{+c.cost_per_unit > 0 ? ` — ${money(+c.cost_per_unit)}` : ""}</option>)}
           </select>
         </div>
         <div style={{ width: 62 }}><span style={lab}>PPP</span><input value={ppp} onChange={e => setPpp(e.target.value)} inputMode="numeric" style={{ ...inp, width: "100%" }} /></div>
-        <div style={{ width: 84 }}><span style={lab}>Units</span><input value={units} onChange={e => setUnits(e.target.value)} inputMode="numeric" style={{ ...inp, width: "100%" }} /></div>
+        <div style={{ width: 88 }}><span style={lab}>Quantity</span><input value={units} onChange={e => setUnits(e.target.value)} inputMode="numeric" style={{ ...inp, width: "100%" }} /></div>
         <div style={{ width: 84 }}><span style={lab}>Price $</span><input value={price} onChange={e => setPrice(e.target.value)} inputMode="decimal" style={{ ...inp, width: "100%" }} /></div>
       </div>
 
+      {chosen && (
+        <div style={{ fontSize: 12, color: C.muted, marginTop: 8 }}>
+          {mat
+            ? <>💵 Sourcing: <b style={{ color: C.text }}>{mat.variety}</b> — {money(+mat.landed)} {mat.form_class} ({[mat.broker, mat.supplier].filter(Boolean).join("/")}){matNote && <b style={{ color: C.amber }}> · {matNote}</b>}</>
+            : <b style={{ color: C.amber }}>💵 {matNote || "matching a broker quote…"}</b>}
+        </div>
+      )}
+
       {(itemName || sku) && (
-        <div style={{ background: "#f4f7f1", border: `1px solid ${C.border}`, borderRadius: 9, padding: "9px 12px", marginTop: 10, display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center" }}>
-          <input value={itemName} onChange={e => setNameOverride(e.target.value)}
-            style={{ ...inp, fontWeight: 800, minWidth: 240, flex: 1 }} title="Generated — edit if needed" />
+        <div style={{ background: "#f4f7f1", border: `1px solid ${C.border}`, borderRadius: 9, padding: "9px 12px", marginTop: 8, display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center" }}>
+          <input value={itemName} onChange={e => setNameOverride(e.target.value)} style={{ ...inp, fontWeight: 800, minWidth: 240, flex: 1 }} />
           {sku && <span style={{ fontFamily: "monospace", fontWeight: 700, color: C.dark, background: "#fff", border: `1px solid ${C.border}`, borderRadius: 7, padding: "4px 9px" }}>{sku}</span>}
           {parts.total != null && (
             <span style={{ fontSize: 12.5, color: C.text }}>
-              💰 {parts.liner != null && <>liner {money(parts.liner)}</>}
+              {parts.liner != null && <>liner {money(parts.liner)}</>}
               {parts.container != null && <> + pot {money(parts.container)}</>}
               {parts.soil != null && <> + soil {money(parts.soil)}</>}
               {" = "}<b style={{ fontSize: 14 }}>{money(parts.total)}</b>
-              {gm != null && <> · <b style={{ color: gm < 0.6 ? C.red : C.green }}>{Math.round(gm * 100)}%</b> @ {money(parseFloat(price))}</>}
+              {gm != null && <> · <b style={{ color: gm < 0.6 ? C.red : C.green }}>{Math.round(gm * 100)}%</b></>}
             </span>
           )}
         </div>
@@ -353,6 +440,46 @@ function AddProgramItem({ sb, program, itemCount, onDone, onCancel }) {
           style={{ flex: 1, padding: "8px 13px", borderRadius: 8, border: "none", background: itemName.trim() ? C.dark : "#c8d8c0", color: "#c8e6b8", fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
           Add to {program.name}
         </button>
+      </div>
+
+      {culture && <CultureModal record={culture} onClose={() => setCulture(null)} />}
+    </div>
+  );
+}
+
+// The culture on file: details, propagation, finish times, PDF when there is one.
+function CultureModal({ record, onClose }) {
+  const cd = record.culture_details || {};
+  const pd = record.propagation_details || {};
+  const pdf = cd["Culture Guide PDF"] || cd["Culture Guide PDF (Origin)"] || null;
+  const rows = obj => Object.entries(obj || {}).filter(([k, v]) => v != null && String(v).trim() && !/pdf/i.test(k));
+  const Section = ({ title, obj }) => rows(obj).length ? (
+    <div style={{ marginTop: 10 }}>
+      <div style={{ fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", marginBottom: 4 }}>{title}</div>
+      {rows(obj).map(([k, v]) => (
+        <div key={k} style={{ display: "flex", gap: 10, fontSize: 12.5, padding: "2px 0" }}>
+          <span style={{ minWidth: 170, color: C.muted }}>{k}</span>
+          <span style={{ color: C.text }}>{String(v)}</span>
+        </div>
+      ))}
+    </div>
+  ) : null;
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 9400, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "#f6f9f3", borderRadius: 14, width: "100%", maxWidth: 560, maxHeight: "86vh", overflow: "auto", padding: 20 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+          <div>
+            <div style={{ fontSize: 17, fontWeight: 800, color: C.dark, fontFamily: "'DM Serif Display',Georgia,serif" }}>
+              📖 {[record.crop_name, record.series_name, record.series_variety].filter(Boolean).join(" ")}
+            </div>
+            <div style={{ fontSize: 12, color: C.muted }}>{record.breeder_name} · {record.category}{record.propagation_weeks ? ` · prop ${record.propagation_weeks} wks` : ""}{record.requires_heat ? " · needs heat" : ""}</div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 24, color: C.muted, cursor: "pointer" }}>×</button>
+        </div>
+        {pdf && <a href={pdf} target="_blank" rel="noreferrer" style={{ display: "inline-block", marginTop: 8, padding: "7px 13px", borderRadius: 8, background: C.dark, color: "#c8e6b8", fontSize: 12.5, fontWeight: 800, textDecoration: "none" }}>📄 Open culture guide PDF</a>}
+        <Section title="Culture" obj={cd} />
+        <Section title="Propagation" obj={pd} />
+        {!rows(cd).length && !rows(pd).length && !pdf && <div style={{ marginTop: 12, color: C.muted, fontSize: 13 }}>Nothing on file for this one yet.</div>}
       </div>
     </div>
   );
