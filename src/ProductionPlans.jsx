@@ -3121,7 +3121,7 @@ function SalesVsPlanTab({ plan }) {
       {missing.length > 0 && (() => {
         const openMiss = missing.filter(m => !gapDismissed.has(m.key));
         return (
-        <details id="svp-missing" open={openMiss.length > 0} style={{ background: COLORS.card, border: `1px solid ${openMiss.length ? COLORS.amber : "#c2e0be"}`, borderRadius: 10 }}>
+        <details id="svp-missing" style={{ background: COLORS.card, border: `1px solid ${openMiss.length ? COLORS.amber : "#c2e0be"}`, borderRadius: 10 }}>
           <summary style={{ cursor: "pointer", padding: "11px 14px", fontWeight: 800, color: COLORS.dark }}>
             {openMiss.length ? "⚠" : "✓"} Sold in 2026 but not in this plan — <b>{openMiss.length}</b> open · {fmtMoney(openMiss.reduce((a, m) => a + m.rev, 0))}
             {missing.length - openMiss.length > 0 && <span style={{ fontWeight: 500, color: COLORS.muted, fontSize: 12 }}> · {missing.length - openMiss.length} resolved</span>}
