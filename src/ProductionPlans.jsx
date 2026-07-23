@@ -2060,6 +2060,18 @@ function curveWaves(total, wkA, weeks, finishes, incr) {
   });
 }
 
+// A single editable wave amount: local draft while you type, commits rounded on
+// blur/Enter, and re-syncs when the value changes from outside (%, template).
+function WaveCell({ value, incr, onCommit, style }) {
+  const [v, setV] = useState(String(value ?? 0));
+  useEffect(() => { setV(String(value ?? 0)); }, [value]);
+  const commit = () => { const raw = parseInt(v) || 0; const step = incr || 100; onCommit(raw > 0 ? Math.round(raw / step) * step : 0); };
+  return <input value={v} inputMode="numeric"
+    onChange={e => setV(e.target.value.replace(/[^\d]/g, ""))}
+    onBlur={commit} onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
+    style={style} />;
+}
+
 // Bulk wave builder: pick a set of color varieties, seed a group total split by
 // %, then let each color's waves ramp toward the peak on its own 2026 curve.
 // Writes plan_targets (target + rounds) per color — same model as the drill.
@@ -2240,10 +2252,8 @@ function GroupBuilder({ rows, weeks, peakDefault, initialSel, supplierByItem, on
                         <td style={{ padding: "4px 8px", borderBottom: `1px solid ${COLORS.border}`, fontWeight: 600, position: "sticky", left: 0, background: "#fff", whiteSpace: "nowrap" }} title={b.breeder}>{r.item}</td>
                         {waves.map((w, wi) => (
                           <td key={wi} style={cell}>
-                            <input key={`${r.item}-${wi}-${w.units}`} defaultValue={w.units}
-                              onBlur={e => editWave(r.item, wi, roundUp(parseInt(e.target.value.replace(/\D/g, "")) || 0, b.incr))}
-                              onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
-                              inputMode="numeric" style={{ width: 62, textAlign: "right", padding: "3px 5px", borderRadius: 6, border: `1px solid ${COLORS.border}`, fontSize: 12, fontFamily: "inherit", fontWeight: 700 }} />
+                            <WaveCell value={w.units} incr={b.incr} onCommit={n => editWave(r.item, wi, n)}
+                              style={{ width: 62, textAlign: "right", padding: "3px 5px", borderRadius: 6, border: `1px solid ${COLORS.border}`, fontSize: 12, fontFamily: "inherit", fontWeight: 700 }} />
                           </td>
                         ))}
                         <td style={{ ...cell, fontWeight: 800 }}>{countOf(r.item).toLocaleString()}</td>
@@ -2294,10 +2304,8 @@ function GroupBuilder({ rows, weeks, peakDefault, initialSel, supplierByItem, on
                           {waves.map((w, wi) => (
                             <div key={wi} style={{ display: "flex", flexDirection: "column", gap: 3, background: "#fff", border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "6px 9px" }}>
                               <span style={{ fontSize: 10, fontWeight: 800, color: COLORS.muted, textTransform: "uppercase" }}>Wave {wi + 1} · wk{w.ready_week}</span>
-                              <input key={`${r.item}-${wi}-${w.units}`} defaultValue={w.units}
-                                onBlur={e => editWave(r.item, wi, roundUp(parseInt(e.target.value.replace(/\D/g, "")) || 0, b.incr))}
-                                onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
-                                inputMode="numeric" style={{ ...inp, width: 76, textAlign: "right", fontWeight: 700, padding: "4px 6px" }} />
+                              <WaveCell value={w.units} incr={b.incr} onCommit={n => editWave(r.item, wi, n)}
+                                style={{ ...inp, width: 76, textAlign: "right", fontWeight: 700, padding: "4px 6px" }} />
                             </div>
                           ))}
                           <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", gap: 4 }}>
