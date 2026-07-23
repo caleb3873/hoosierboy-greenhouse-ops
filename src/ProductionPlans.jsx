@@ -3052,6 +3052,7 @@ function SalesVsPlanTab({ plan }) {
       : filt === "soldout" ? r.soldOut
       : filt === "todo" ? targetOf(r) == null
       : filt === "done" ? targetOf(r) != null
+      : filt === "dropped" ? (targets[r.item]?.decision === "drop" || targets[r.item]?.target_units === 0)
       : r.status === "HIT")
       && (sizeFilt === "all" || r.size === sizeFilt)
       && (!q || r.item.toLowerCase().includes(q)))
@@ -3284,7 +3285,7 @@ function SalesVsPlanTab({ plan }) {
           style={{ padding: "7px 10px", borderRadius: 16, border: `1px solid ${sizeFilt !== "all" ? COLORS.light : COLORS.border}`, fontSize: 12, fontFamily: "inherit", background: "#fff", color: COLORS.text, cursor: "pointer" }}>
           {sizes.map(s => <option key={s} value={s}>{s === "all" ? "All sizes" : s}</option>)}
         </select>
-        {[["all", "All"], ["over", "🟠 Overplanned"], ["soldout", "🔴 Sold out early"], ["hit", "🟢 Hit"], ["todo", "◻ Undecided"], ["done", "✓ Decided"]].map(([f, l]) => <button key={f} onClick={() => setFilt(f)} style={{ padding: "6px 12px", borderRadius: 16, fontWeight: 700, cursor: "pointer", border: `1px solid ${filt === f ? COLORS.light : COLORS.border}`, background: filt === f ? COLORS.light : "#fff", color: filt === f ? "#fff" : COLORS.text }}>{l}</button>)}
+        {[["all", "All"], ["over", "🟠 Overplanned"], ["soldout", "🔴 Sold out early"], ["hit", "🟢 Hit"], ["todo", "◻ Undecided"], ["done", "✓ Decided"], ["dropped", "✕ Dropped"]].map(([f, l]) => <button key={f} onClick={() => setFilt(f)} style={{ padding: "6px 12px", borderRadius: 16, fontWeight: 700, cursor: "pointer", border: `1px solid ${filt === f ? COLORS.light : COLORS.border}`, background: filt === f ? COLORS.light : "#fff", color: filt === f ? "#fff" : COLORS.text }}>{l}</button>)}
         <button onClick={() => setSelSet(new Set(shown.map(r => r.item)))} title="Select every item currently shown"
           style={{ padding: "6px 12px", borderRadius: 16, fontWeight: 700, cursor: "pointer", border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.text }}>☑ Select all{shown.length !== rows.length ? " shown" : ""}</button>
         {selSet.size > 0 && <button onClick={() => setSelSet(new Set())} style={{ padding: "6px 12px", borderRadius: 16, fontWeight: 700, cursor: "pointer", border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.muted }}>clear ({selSet.size})</button>}

@@ -302,10 +302,12 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
   // Arrange the basket right here — same drag-to-place designer as the combo
   // gallery, saved to every bench row of the item.
   const [arranging, setArranging] = useState(false);
-  const [copyLayout, setCopyLayout] = useState(null);   // arrangement copied from another item
+  const [copyLayout, setCopyLayout] = useState(null);   // arrangement copied + mapped from another item
   const [copySearch, setCopySearch] = useState("");
   const [copyHits, setCopyHits] = useState([]);
-  useEffect(() => { if (!arranging) { setCopyLayout(null); setCopySearch(""); setCopyHits([]); } }, [arranging]);
+  const [copySource, setCopySource] = useState(null);   // {layout, srcPlants} pending plant mapping
+  const [mapSel, setMapSel] = useState({});             // source plant idx -> this item's plant idx (or -1 skip)
+  useEffect(() => { if (!arranging) { setCopyLayout(null); setCopySearch(""); setCopyHits([]); setCopySource(null); setMapSel({}); } }, [arranging]);
   useEffect(() => {
     if (!arranging || !copySearch.trim()) { setCopyHits([]); return; }
     let live = true;
@@ -328,6 +330,31 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
       setArranging(false);
       await load();
     } catch (e) { window.alert("Couldn't save layout: " + (e.message || e)); }
+  }
+
+  // this item's plant labels (combo components, or the single variety) for the arrange pad
+  const arrangeNames = useMemo(() => !agg ? [] : (agg.comps.length ? agg.comps.map(c => c.label) : [agg.materials[0]?.variety || row.item]), [agg, row.item]); // eslint-disable-line
+  // best target-plant index for a source label: exact name, else most shared words, else no match
+  const matchPlant = (srcLabel, targets) => {
+    const norm = s => String(s || "").toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+    const sn = norm(srcLabel);
+    let i = targets.findIndex(t => norm(t) === sn); if (i >= 0) return i;
+    const stoks = new Set(sn.split(" ").filter(w => w.length > 2));
+    let best = -1, score = 0;
+    targets.forEach((t, ti) => { const s = norm(t).split(" ").filter(w => w.length > 2).filter(w => stoks.has(w)).length; if (s > score) { score = s; best = ti; } });
+    return score > 0 ? best : -1;
+  };
+  function pickCopySource(layout) {
+    const srcPlants = layout.plants || [];
+    const used = [...new Set((layout.dots || []).map(d => d.plant))];
+    const auto = {}; used.forEach(pi => { auto[pi] = matchPlant(srcPlants[pi], arrangeNames); });
+    setCopySource({ layout, srcPlants }); setMapSel(auto); setCopySearch(""); setCopyHits([]);
+  }
+  function applyMapping() {
+    const { layout } = copySource;
+    const dots = (layout.dots || []).map(d => { const ti = mapSel[d.plant]; return ti == null || ti < 0 ? null : { ...d, plant: ti }; }).filter(Boolean);
+    setCopyLayout({ plants: arrangeNames, dots });
+    setCopySource(null);
   }
 
   // Milestone: this item is DECIDED for the season. One log line that says so,
@@ -1029,7 +1056,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
                 {copyHits.length > 0 && (
                   <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 5, background: "#fff", border: `1px solid ${C.border}`, borderRadius: 8, marginTop: 3, maxHeight: 200, overflow: "auto", boxShadow: "0 6px 20px rgba(0,0,0,.15)" }}>
                     {copyHits.map((h, i) => (
-                      <div key={i} onClick={() => { setCopyLayout(h.planting_layout); setCopySearch(""); setCopyHits([]); }}
+                      <div key={i} onClick={() => pickCopySource(h.planting_layout)}
                         style={{ padding: "7px 10px", fontSize: 12.5, cursor: "pointer", borderBottom: `1px solid ${C.border}` }}>
                         {h.item_name} <span style={{ color: C.muted, fontSize: 11 }}>— {h.planting_layout.dots.length} plants placed</span>
                       </div>
@@ -1037,8 +1064,34 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
                   </div>
                 )}
               </div>
-              {copyLayout && <div style={{ fontSize: 11.5, color: C.green, marginBottom: 6 }}>✓ copied an arrangement — adjust and Lock &amp; save. <button onClick={() => setCopyLayout(null)} style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", textDecoration: "underline", fontSize: 11.5 }}>reset</button></div>}
-              <BasketDesigner key={copyLayout ? "copied" : "base"} layout={seed} plantNames={seedNames} onSave={saveLayout} onClose={() => setArranging(false)} />
+              {copyLayout && <div style={{ fontSize: 11.5, color: C.green, marginBottom: 6 }}>✓ copied &amp; matched — adjust and Lock &amp; save. <button onClick={() => setCopyLayout(null)} style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", textDecoration: "underline", fontSize: 11.5 }}>reset</button></div>}
+              {copySource ? (() => {
+                const srcUsed = [...new Set((copySource.layout.dots || []).map(d => d.plant))];
+                const allMatched = srcUsed.every(pi => (mapSel[pi] ?? -1) >= 0);
+                return (
+                  <div style={{ background: "#fff", border: `1.5px solid ${C.light}`, borderRadius: 10, padding: "10px 12px", marginBottom: 8 }}>
+                    <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", marginBottom: 6 }}>Match plants — which of this item's plants is each one?</div>
+                    {srcUsed.map(pi => (
+                      <div key={pi} style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12.5, padding: "3px 0" }}>
+                        <span style={{ flex: 1, color: C.text }}>{copySource.srcPlants[pi] || `plant ${pi + 1}`} <span style={{ color: C.muted, fontSize: 11 }}>({(copySource.layout.dots || []).filter(d => d.plant === pi).length})</span></span>
+                        <span style={{ color: C.muted }}>→</span>
+                        <select value={mapSel[pi] ?? -1} onChange={e => setMapSel(m => ({ ...m, [pi]: +e.target.value }))}
+                          style={{ padding: "4px 6px", borderRadius: 7, border: `1.5px solid ${(mapSel[pi] ?? -1) < 0 ? C.amber : C.border}`, fontSize: 12, fontFamily: "inherit", cursor: "pointer", minWidth: 150 }}>
+                          <option value={-1}>— skip (don't place)</option>
+                          {arrangeNames.map((n, ti) => <option key={ti} value={ti}>{n}</option>)}
+                        </select>
+                      </div>
+                    ))}
+                    {!allMatched && <div style={{ fontSize: 11, color: C.amber, marginTop: 4 }}>Unmatched plants will be skipped — set them so nothing is placed on the wrong variety.</div>}
+                    <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                      <button onClick={() => setCopySource(null)} style={{ padding: "6px 12px", borderRadius: 7, border: `1px solid ${C.border}`, background: "#fff", color: C.muted, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+                      <button onClick={applyMapping} style={{ flex: 1, padding: "6px 12px", borderRadius: 7, border: "none", background: C.dark, color: "#c8e6b8", fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>Use this arrangement</button>
+                    </div>
+                  </div>
+                );
+              })() : (
+                <BasketDesigner key={copyLayout ? "copied" : "base"} layout={seed} plantNames={seedNames} onSave={saveLayout} onClose={() => setArranging(false)} />
+              )}
             </div>
           </div>
         );
