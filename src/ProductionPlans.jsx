@@ -3360,7 +3360,7 @@ function SalesVsPlanTab({ plan }) {
             <SortHdr col="price" label="Avg $" align="right" />
             <SortHdr col="firstWk" label="1st sold" align="right" />
             <th style={stickyTh} title="Finish (ready) week vs demand peak. ◀ ▶ record a decision to bring it in earlier or later — production applies it by moving the plant week; the finish follows automatically.">Timing</th>
-            <th style={{ ...stickyTh, textAlign: "right", background: "#e4eedd", borderLeft: `2px solid ${COLORS.light}` }} title="Agreed 2027 target in sellable units. Saved to plan_targets — production distributes it across benches later.">2027 target</th>
+            <th style={{ ...stickyTh, textAlign: "right", right: 0, zIndex: 12, background: "#e4eedd", borderLeft: `2px solid ${COLORS.light}`, minWidth: 128 }} title="Agreed 2027 target in sellable units. Saved to plan_targets — production distributes it across benches later.">2027 target</th>
           </tr></thead>
           <tbody>
             {shown.slice(0, 500).map((r, i) => {
@@ -3424,7 +3424,7 @@ function TargetCell({ r, tgt, draft, saving, onDraft, onSave }) {
         border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.muted }}>{label}</button>
   );
   return (
-    <td style={{ ...td, textAlign: "right", background: committed ? "#f2f8ee" : "#fbfdfa", borderLeft: `2px solid ${COLORS.light}`, whiteSpace: "nowrap" }}>
+    <td style={{ ...td, textAlign: "right", background: committed ? "#eef6e8" : "#fbfdfa", borderLeft: `2px solid ${COLORS.light}`, whiteSpace: "nowrap", position: "sticky", right: 0, zIndex: 1, minWidth: 128 }}>
       <div style={{ display: "flex", gap: 4, alignItems: "center", justifyContent: "flex-end" }}>
         {delta != null && delta !== 0 && (
           <span style={{ fontSize: 10, fontWeight: 800, color: delta > 0 ? COLORS.red : "#2e7d32" }}>
