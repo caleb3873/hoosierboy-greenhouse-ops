@@ -2034,8 +2034,8 @@ function scorecardFrom(rows, targets, dismissed, missing) {
 // Split a color's total across N waves ending at the peak week, each wave sized
 // by how that color actually sold in the window it covers (2026 curve) — so
 // volume ramps toward Mother's Day, weighted by real demand. No history → even.
-function curveWaves(total, wkA, weeks, N, peakWk, spacing) {
-  const sp = spacing || 2;
+function curveWaves(total, wkA, weeks, N, peakWk, spacing, incr) {
+  const sp = spacing || 2, step = incr || 1;
   const finishes = Array.from({ length: N }, (_, i) => peakWk - (N - 1 - i) * sp);
   const wIdx = Object.fromEntries(weeks.map((w, i) => [w, i]));
   const weights = finishes.map((f, i) => {
@@ -2045,11 +2045,18 @@ function curveWaves(total, wkA, weeks, N, peakWk, spacing) {
     return s;
   });
   const wsum = weights.reduce((a, b) => a + b, 0);
-  let used = 0;
+  // allocate in whole `step` increments; the last wave absorbs the remainder so
+  // the waves always sum to the color total (itself a multiple of step)
+  let remaining = total;
   return finishes.map((f, i) => {
-    const u = wsum > 0 ? (i < N - 1 ? Math.round(total * weights[i] / wsum) : total - used)
-      : (i < N - 1 ? Math.floor(total / N) : total - used);
-    used += u;
+    let u;
+    if (i === N - 1) u = remaining;
+    else {
+      const raw = wsum > 0 ? total * weights[i] / wsum : total / N;
+      u = Math.round(raw / step) * step;
+      u = Math.max(0, Math.min(u, remaining - step * (N - 1 - i)));   // leave room for later waves
+    }
+    remaining -= u;
     return { units: Math.max(0, u), ready_week: f };
   });
 }
@@ -2057,10 +2064,10 @@ function curveWaves(total, wkA, weeks, N, peakWk, spacing) {
 // Bulk wave builder: pick a set of color varieties, seed a group total split by
 // %, then let each color's waves ramp toward the peak on its own 2026 curve.
 // Writes plan_targets (target + rounds) per color — same model as the drill.
-function GroupBuilder({ rows, weeks, peakDefault, onCommit, onClose }) {
+function GroupBuilder({ rows, weeks, peakDefault, initialSel, supplierByItem, onCommit, onClose }) {
   const sb = getSupabase();
   const core = rows.filter(r => !r.dualUse);
-  const [sel, setSel] = useState(() => new Set(rows.filter(r => !r.dualUse).map(r => r.item)));
+  const [sel, setSel] = useState(() => new Set(initialSel || []));
   const [q, setQ] = useState("");
   const [total, setTotal] = useState("");
   const [pct, setPct] = useState({});      // item -> %
@@ -2075,12 +2082,13 @@ function GroupBuilder({ rows, weeks, peakDefault, onCommit, onClose }) {
   const INCR = 100, MIN_BREEDER = 2000;   // uniform defaults: 10 cases of 10; 2000/breeder
   useEffect(() => { if (sb) sb.from("breeder_rules").select("*").then(({ data }) => setBrules(data || [])); }, [sb]);
   useEffect(() => { setWaveOv({}); }, [nWaves, peak, spacing]);   // re-splitting resets hand edits
-  // breeder/supplier for a variety: matching series rule wins; else the plan row's supplier; else unassigned
+  // breeder/supplier for a variety: matching series rule wins; else the supplier
+  // ASSIGNED IN SOURCING (from the plan row once a quote was picked); else unassigned
   const breederOf = it => {
     const rule = brules.find(b => it.toLowerCase().includes(String(b.series_pattern).toLowerCase()));
     if (rule) return { breeder: rule.breeder, min: rule.min_order || MIN_BREEDER, incr: rule.order_increment || INCR };
-    const r = rowByItemLocal[it];
-    return { breeder: r?.supplier || r?.broker || "— unassigned", min: MIN_BREEDER, incr: INCR };
+    const sup = supplierByItem?.[it];
+    return { breeder: sup || "— unassigned", min: MIN_BREEDER, incr: INCR };
   };
   const roundUp = (n, incr) => n > 0 ? Math.round(n / incr) * incr : 0;
   const selRows = core.filter(r => sel.has(r.item));
@@ -2095,8 +2103,8 @@ function GroupBuilder({ rows, weeks, peakDefault, onCommit, onClose }) {
   // a color's total: hand-edited waves win (sum them), else the seeded/typed count
   const countOf = it => waveOv[it] ? waveOv[it].reduce((a, w) => a + (+w.units || 0), 0)
     : count[it] != null ? +count[it] : (parseInt(total) ? roundUp(Math.round((parseInt(total)) * pctOf(it) / 100), breederOf(it).incr) : (rowByItemLocal[it]?.planned || 0));
-  // the waves for a color — hand-edited override, else the curve split
-  const wavesFor = it => waveOv[it] || curveWaves(countOf(it), rowByItemLocal[it]?.wk, weeks, Math.max(1, nWaves), peak, spacing);
+  // the waves for a color — hand-edited override, else the curve split (in 100s)
+  const wavesFor = it => waveOv[it] || curveWaves(countOf(it), rowByItemLocal[it]?.wk, weeks, Math.max(1, nWaves), peak, spacing, breederOf(it).incr);
   const editWave = (it, wi, patch) => setWaveOv(o => { const cur = (o[it] || wavesFor(it)).map(w => ({ ...w })); cur[wi] = { ...cur[wi], ...patch }; return { ...o, [it]: cur }; });
   const grand = selRows.reduce((a, r) => a + countOf(r.item), 0);
   const toggle = it => setSel(s => { const n = new Set(s); n.has(it) ? n.delete(it) : n.add(it); return n; });
@@ -2171,6 +2179,7 @@ function GroupBuilder({ rows, weeks, peakDefault, onCommit, onClose }) {
                             <div key={wi} style={{ display: "flex", flexDirection: "column", gap: 3, background: "#fff", border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "6px 9px" }}>
                               <span style={{ fontSize: 10, fontWeight: 800, color: COLORS.muted, textTransform: "uppercase" }}>Wave {wi + 1}</span>
                               <input value={w.units} onChange={e => editWave(r.item, wi, { units: parseInt(e.target.value.replace(/\D/g, "")) || 0 })}
+                                onBlur={e => editWave(r.item, wi, { units: roundUp(parseInt(e.target.value.replace(/\D/g, "")) || 0, b.incr) })}
                                 inputMode="numeric" style={{ ...inp, width: 76, textAlign: "right", fontWeight: 700, padding: "4px 6px" }} />
                               <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11.5 }}>
                                 <button onClick={() => editWave(r.item, wi, { ready_week: (+w.ready_week || 0) - 1 })} style={{ padding: "0 5px", borderRadius: 5, border: `1px solid ${COLORS.border}`, background: "#fff", cursor: "pointer" }}>◀</button>
@@ -2622,6 +2631,7 @@ function SalesVsPlanTab({ plan }) {
   const [gapDismissed, setGapDismissed] = useState(new Set());  // gap keys decided-not-to-chase
   const [goal, setGoal] = useState(plan.growth_goal_pct ?? null);
   const [showGroup, setShowGroup] = useState(false);   // group/wave builder modal
+  const [supplierMap, setSupplierMap] = useState({});  // item -> assigned supplier (from sourcing)
   const { displayName } = useAuth();
   useEffect(() => {
     if (!sb) return;
@@ -2646,7 +2656,7 @@ function SalesVsPlanTab({ plan }) {
       // (e.g. mix baskets entered once per color bench) and would over-count the finished total.
       const parentIds = new Set(sc.map(r => r.combo_parent_id).filter(Boolean));
       const itemsWithParents = new Set(sc.filter(r => parentIds.has(r.id)).map(r => r.item_name));
-      const planByItem = {}, shipByItem = {}, readyByItem = {}, pppByItem = {}, ppuByItem = {};
+      const planByItem = {}, shipByItem = {}, readyByItem = {}, pppByItem = {}, ppuByItem = {}, supplierByItem = {};
       // Ivy / vinca vine / muehlenbeckia / carex are grown mostly as combo inputs
       // but ALSO sold retail as 4.5" packs. Counting their full planned volume as
       // finished items would show ~12% sell-through and read as a disaster, so
@@ -2662,6 +2672,7 @@ function SalesVsPlanTab({ plan }) {
         ppuByItem[r.item_name] = Math.max(ppuByItem[r.item_name] || 0, +r.plants_per_unit || 1);
         if (r.ship_week != null) shipByItem[r.item_name] = Math.min(shipByItem[r.item_name] ?? 999, +r.ship_week);
         if (r.ready_week != null) readyByItem[r.item_name] = Math.min(readyByItem[r.item_name] ?? 999, +r.ready_week);
+        if (!supplierByItem[r.item_name] && (r.supplier || r.broker)) supplierByItem[r.item_name] = r.supplier || r.broker;
       }
       const sold = {}, rev = {}, prc = {}, prn = {}, wkly = {};
       for (const t of tot) { const it = skuToItem[t.sku]; if (!it) continue; sold[it] = (sold[it] || 0) + +t.units; rev[it] = (rev[it] || 0) + +t.revenue; prc[it] = (prc[it] || 0) + +t.avg_price; prn[it] = (prn[it] || 0) + 1; }
@@ -2728,6 +2739,7 @@ function SalesVsPlanTab({ plan }) {
       }
       setBenchData({ occ, benches: benchRows || [] });
       setGapDismissed(new Set((gapRes.data || []).map(g => g.gap_key)));
+      setSupplierMap(supplierByItem);
 
       setRows(out); setSeason({ weeks, seasonRev });
       setTargets(Object.fromEntries((tgRes.data || []).map(t => [t.item_name, t])));
@@ -3120,8 +3132,12 @@ function SalesVsPlanTab({ plan }) {
           {sizes.map(s => <option key={s} value={s}>{s === "all" ? "All sizes" : s}</option>)}
         </select>
         {[["all", "All"], ["over", "🟠 Overplanned"], ["soldout", "🔴 Sold out early"], ["hit", "🟢 Hit"], ["todo", "◻ Undecided"], ["done", "✓ Decided"]].map(([f, l]) => <button key={f} onClick={() => setFilt(f)} style={{ padding: "6px 12px", borderRadius: 16, fontWeight: 700, cursor: "pointer", border: `1px solid ${filt === f ? COLORS.light : COLORS.border}`, background: filt === f ? COLORS.light : "#fff", color: filt === f ? "#fff" : COLORS.text }}>{l}</button>)}
-        <button onClick={() => setShowGroup(true)} title="Bulk-build waves across a set of colors, ramping to the peak"
-          style={{ padding: "6px 12px", borderRadius: 16, fontWeight: 800, cursor: "pointer", border: `1.5px solid ${COLORS.dark}`, background: COLORS.dark, color: "#c8e6b8" }}>🎨 Group builder</button>
+        <button onClick={() => setSelSet(new Set(shown.map(r => r.item)))} title="Select every item currently shown"
+          style={{ padding: "6px 12px", borderRadius: 16, fontWeight: 700, cursor: "pointer", border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.text }}>☑ Select all{shown.length !== rows.length ? " shown" : ""}</button>
+        {selSet.size > 0 && <button onClick={() => setSelSet(new Set())} style={{ padding: "6px 12px", borderRadius: 16, fontWeight: 700, cursor: "pointer", border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.muted }}>clear ({selSet.size})</button>}
+        <button onClick={() => selSet.size ? setShowGroup(true) : window.alert("Select the items first — tick their checkboxes or use ☑ Select all — then open the group builder.")}
+          title="Bulk-build waves across the SELECTED colors, ramping to the peak"
+          style={{ padding: "6px 12px", borderRadius: 16, fontWeight: 800, cursor: "pointer", border: `1.5px solid ${COLORS.dark}`, background: selSet.size ? COLORS.dark : "#9fb096", color: "#c8e6b8" }}>🎨 Group builder{selSet.size ? ` (${selSet.size})` : ""}</button>
         <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ color: COLORS.muted }} title="Item quantity = qty_pots (what sells). As-entered shows the raw plan number before pot→pack conversion.">units:</span>
           {[["pots", "Item qty"], ["raw", "As entered"]].map(([k, l]) => <button key={k} onClick={() => setBasis(k)} style={{ padding: "6px 10px", borderRadius: 16, fontSize: 11, fontWeight: 700, cursor: "pointer", border: `1px solid ${basis === k ? COLORS.dark : COLORS.border}`, background: basis === k ? COLORS.dark : "#fff", color: basis === k ? "#fff" : COLORS.text }}>{l}</button>)}
@@ -3190,7 +3206,8 @@ function SalesVsPlanTab({ plan }) {
           onMutated={() => setReloadTick(t => t + 1)} />
       )}
       {showGroup && (
-        <GroupBuilder rows={shown.filter(r => !r.dualUse)} weeks={season.weeks} peakDefault={mothersWk}
+        <GroupBuilder rows={rows.filter(r => !r.dualUse && selSet.has(r.item))} weeks={season.weeks} peakDefault={mothersWk}
+          initialSel={[...selSet]} supplierByItem={supplierMap}
           onCommit={commitGroups} onClose={() => setShowGroup(false)} />
       )}
 
