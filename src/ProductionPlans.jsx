@@ -491,9 +491,33 @@ function PlanDashboard({ plan, initialTab }) {
 }
 
 // ── Dashboard tab ───────────────────────────────────────────────────────────
+function ProjectionHandoffBadge({ planId }) {
+  const sb = getSupabase();
+  const [c, setC] = useState(null);
+  useEffect(() => {
+    if (!sb || !planId) return;
+    (async () => {
+      const [dec, app] = await Promise.all([
+        sb.from("plan_targets").select("id", { count: "exact", head: true }).eq("plan_id", planId),
+        sb.from("plan_targets").select("id", { count: "exact", head: true }).eq("plan_id", planId).not("applied_at", "is", null),
+      ]);
+      setC({ decided: dec.count || 0, applied: app.count || 0 });
+    })();
+  }, [sb, planId]);
+  if (!c || !c.decided) return null;
+  const pending = c.decided - c.applied;
+  return (
+    <div style={{ padding: "10px 14px", borderRadius: 10, border: `1.5px solid ${pending ? COLORS.amber : "#c2e0be"}`, background: pending ? "#fff8ee" : "#eef7ec", fontSize: 12.5 }}>
+      <b style={{ color: COLORS.dark }}>Projection handoff:</b> {c.decided} decision{c.decided !== 1 ? "s" : ""} recorded · <b style={{ color: pending ? COLORS.amber : "#2e7d32" }}>{c.applied} applied to production</b>
+      {pending > 0 && <span style={{ color: COLORS.muted }}> · {pending} still projection-only — this dashboard shows the plan as production has built it, not the as-decided projection (that's Sales vs Plan).</span>}
+    </div>
+  );
+}
+
 function DashboardTab({ pl, planId, houses, housesProfit, drilldown, setDrilldown }) {
   return (
     <div style={{ display: "grid", gap: 16 }}>
+      <ProjectionHandoffBadge planId={planId} />
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
         <KPI label="Direct Cost"  value={fmtMoney(pl.cost)}    color={COLORS.dark} />
         <KPI label="Revenue"      value={fmtMoney(pl.revenue)} color={COLORS.light} />
@@ -1874,8 +1898,12 @@ function YearOverYearTab({ plan }) {
   const chip = (on, color) => ({ padding: "6px 12px", borderRadius: 16, fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit",
     border: `1.5px solid ${on ? color : COLORS.border}`, background: on ? color : "#fff", color: on ? "#fff" : COLORS.text });
   const pctTxt = (a, b) => b ? `${a - b >= 0 ? "+" : ""}${Math.round((a - b) / b * 100)}%` : "—";
+  const yTotal = items.reduce((a, r) => a + r.rev26, 0);
+  const yDecidedRev = items.filter(r => r.decided).reduce((a, r) => a + r.rev26, 0);
+  const ysc = { decidedPct: yTotal ? yDecidedRev / yTotal : 0, decidedCount: items.filter(r => r.decided).length, coreCount: items.length, undecidedRev: yTotal - yDecidedRev, undecided: [], lostUnaddr: 0, lostOpen: 0, missOpen: [], missOpenRev: 0 };
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <ProjectionScorecard sc={ysc} compact />
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
         <button onClick={() => setCls("all")} style={chip(cls === "all", COLORS.dark)}>All ({items.length})</button>
         {Object.entries(KL).map(([k, [l, c]]) => counts[k] ? (
@@ -1967,6 +1995,171 @@ function wkStartLabel(wk) {
   mon.setUTCDate(jan4.getUTCDate() - ((jan4.getUTCDay() + 6) % 7) + (wk - 1) * 7);
   return mon.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 }
+
+// An item is DECIDED once a call is recorded — a target, or an explicit
+// decision (hold/drop). "hold" is what makes 100% reachable: reviewing a crop
+// and keeping it as planned has to be distinguishable from forgetting it.
+const isDecided = t => !!t && (t.target_units != null || !!t.decision);
+
+// The projection scorecard: the quantifiable finish line. Revenue-weighted, not
+// count-weighted — locking a $40k crop must move the needle more than clearing a
+// $12 novelty. Reads the DECISION layer (plan_targets), never scheduled_crops.
+function scorecardFrom(rows, targets, dismissed, missing) {
+  const core = (rows || []).filter(r => !r.dualUse);
+  let totalRev = 0, decidedRev = 0, lostTotal = 0, lostUnaddr = 0, decidedCount = 0;
+  const undecided = [];
+  for (const r of core) {
+    totalRev += r.rev;
+    const t = targets[r.item];
+    const dec = isDecided(t);
+    if (dec) { decidedRev += r.rev; decidedCount++; } else undecided.push(r);
+    if (r.soldOut) {
+      lostTotal += r.lostEst;
+      if (!(dec || (t && t.lost_ack))) lostUnaddr += r.lostEst;
+    }
+  }
+  undecided.sort((a, b) => b.rev - a.rev);
+  const missOpen = (missing || []).filter(m => !(dismissed && dismissed.has(m.key)));
+  return { totalRev, decidedRev, undecidedRev: totalRev - decidedRev,
+    decidedPct: totalRev ? decidedRev / totalRev : 0,
+    undecided, decidedCount, coreCount: core.length,
+    lostTotal, lostUnaddr, lostOpen: core.filter(r => r.soldOut && !(isDecided(targets[r.item]) || targets[r.item]?.lost_ack)).length,
+    missOpen, missOpenRev: missOpen.reduce((a, m) => a + m.rev, 0) };
+}
+
+// Space fill, directional: pots-per-bench from the current footprint, scaled by
+// each item's decided-vs-current ratio, per zone. Untagged → denominator is the
+// benches in ranges that currently hold spring crops.
+function computeFill(benchData, scaleOf) {
+  const { occ, benches } = benchData;
+  const byBench = {};
+  for (const o of occ) { const b = byBench[o.bench_id] || (byBench[o.bench_id] = { zone: o.zone, cur: 0, proj: 0 }); b.cur += o.qty; b.proj += o.qty * scaleOf(o.item); }
+  const tagged = benches.some(b => b.spring_footprint);
+  const occZones = new Set(Object.values(byBench).map(b => b.zone));
+  const zoneAgg = {};
+  for (const b of benches) {
+    const inFoot = tagged ? !!b.spring_footprint : occZones.has(b.zone_label);
+    if (!inFoot || !b.zone_label) continue;
+    (zoneAgg[b.zone_label] || (zoneAgg[b.zone_label] = { total: 0, occ: 0, cur: 0, proj: 0 })).total++;
+  }
+  for (const b of Object.values(byBench)) { const z = zoneAgg[b.zone]; if (!z) continue; z.occ++; z.cur += b.cur; z.proj += b.proj; }
+  const zones = Object.entries(zoneAgg).map(([zone, z]) => {
+    const ppb = z.occ ? z.cur / z.occ : 0;
+    const projB = ppb ? z.proj / ppb : z.occ;
+    const pct = z.total ? Math.round(projB / z.total * 100) : 0;
+    return { zone, pct, total: z.total, free: Math.max(0, z.total - Math.round(projB)) };
+  }).filter(z => z.total > 0).sort((a, b) => a.pct - b.pct);
+  const totalFoot = zones.reduce((a, z) => a + z.total, 0);
+  const totalProjB = zones.reduce((a, z) => a + z.pct / 100 * z.total, 0);
+  return { zones, tagged, overallPct: totalFoot ? Math.round(totalProjB / totalFoot * 100) : 0,
+    freeBenches: zones.reduce((a, z) => a + z.free, 0), overZones: zones.filter(z => z.pct > 100).length };
+}
+
+// Decided-revenue burndown: cumulative decided $ over the days of the session.
+function computeBurndown(targets, rows) {
+  const revOf = {}; rows.forEach(r => { if (!r.dualUse) revOf[r.item] = r.rev; });
+  const total = Object.values(revOf).reduce((a, b) => a + b, 0);
+  const events = Object.entries(targets).filter(([it, t]) => isDecided(t) && t.decided_at && revOf[it] != null)
+    .map(([it, t]) => ({ d: t.decided_at.slice(0, 10), rev: revOf[it] }));
+  if (!events.length || !total) return null;
+  const byDay = {}; for (const e of events) byDay[e.d] = (byDay[e.d] || 0) + e.rev;
+  const days = Object.keys(byDay).sort();
+  let cum = 0; const pts = [{ label: "start", remaining: total }];
+  for (const d of days) { cum += byDay[d]; pts.push({ label: d, remaining: total - cum }); }
+  return { total, remaining: total - cum, pts };
+}
+
+// Revenue-decided bar + the three gap counters that each burn to $0. Optional
+// goal gauge, session burndown, and space-fill strip when the caller has them.
+function ProjectionScorecard({ sc, compact, plan, projRev, onGoal, onFilter, burndown, fill }) {
+  const pct = Math.round(sc.decidedPct * 100);
+  const goal = plan?.growth_goal_pct != null ? +plan.growth_goal_pct : null;
+  const [editGoal, setEditGoal] = useState(false);
+  const [goalDraft, setGoalDraft] = useState(goal ?? "");
+  const Counter = ({ label, val, open, onClick }) => (
+    <button onClick={onClick} disabled={!onClick}
+      title={open ? "click to work this list" : "cleared"}
+      style={{ flex: 1, minWidth: 150, textAlign: "left", padding: "9px 12px", borderRadius: 9, cursor: onClick ? "pointer" : "default", fontFamily: "inherit",
+        border: `1.5px solid ${open ? COLORS.amber : "#c2e0be"}`, background: open ? "#fff8ee" : "#eef7ec" }}>
+      <div style={{ fontSize: 10, fontWeight: 800, color: COLORS.muted, textTransform: "uppercase" }}>{label}</div>
+      <div style={{ fontSize: 17, fontWeight: 800, color: open ? COLORS.amber : "#2e7d32" }}>{open ? fmtMoney(val) : "✓ $0"}</div>
+    </button>
+  );
+  return (
+    <div style={{ background: COLORS.card, border: `2px solid ${pct >= 100 ? "#2e7d32" : COLORS.dark}`, borderRadius: 12, padding: "13px 16px", display: "grid", gap: 11 }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 13, fontWeight: 900, color: COLORS.dark, textTransform: "uppercase", letterSpacing: 0.5 }}>Projection progress</span>
+        <span style={{ fontSize: 22, fontWeight: 900, color: pct >= 100 ? "#2e7d32" : COLORS.dark }}>{pct}%</span>
+        <span style={{ fontSize: 12.5, color: COLORS.muted }}>of 2026 revenue decided · <b style={{ color: COLORS.dark }}>{sc.decidedCount}/{sc.coreCount}</b> items · <b style={{ color: sc.undecidedRev ? COLORS.amber : "#2e7d32" }}>{fmtMoney(sc.undecidedRev)}</b> still open</span>
+      </div>
+      <div style={{ height: 16, borderRadius: 9, background: "#e6ede1", overflow: "hidden", position: "relative" }}>
+        <div style={{ height: "100%", width: `${Math.min(100, pct)}%`, background: pct >= 100 ? "#2e7d32" : COLORS.light, transition: "width .3s", borderRadius: 9 }} />
+      </div>
+      {!compact && (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <Counter label="Undecided revenue · worklist" val={sc.undecidedRev} open={sc.undecidedRev > 0} onClick={onFilter ? () => onFilter("todo") : null} />
+          <Counter label={`Lost sales unaddressed · ${sc.lostOpen} sold out`} val={sc.lostUnaddr} open={sc.lostUnaddr > 0} onClick={onFilter ? () => onFilter("soldout") : null} />
+          <Counter label={`Sold '26, not planned · ${sc.missOpen.length}`} val={sc.missOpenRev} open={sc.missOpenRev > 0} onClick={onFilter ? () => onFilter("missing") : null} />
+          {goal != null ? (
+            <div style={{ flex: 1, minWidth: 160, padding: "9px 12px", borderRadius: 9, border: `1.5px solid ${COLORS.border}`, background: "#fff" }}>
+              <div style={{ fontSize: 10, fontWeight: 800, color: COLORS.muted, textTransform: "uppercase" }}>2027 vs goal (+{goal}%)</div>
+              {(() => { const target = sc.totalRev * (1 + goal / 100); const p = target ? Math.round((projRev || 0) / target * 100) : 0;
+                return <div style={{ fontSize: 15, fontWeight: 800, color: p >= 100 ? "#2e7d32" : p >= 90 ? COLORS.dark : COLORS.red }}>{fmtMoney(projRev || 0)} <span style={{ fontSize: 11, color: COLORS.muted }}>/ {fmtMoney(target)} ({p}%)</span> <button onClick={() => { setGoalDraft(goal); setEditGoal(true); }} style={{ marginLeft: 4, background: "none", border: "none", color: COLORS.muted, cursor: "pointer", fontSize: 11 }}>✎</button></div>; })()}
+            </div>
+          ) : onGoal ? (
+            <button onClick={() => setEditGoal(true)} style={{ flex: 1, minWidth: 160, padding: "9px 12px", borderRadius: 9, border: `1.5px dashed ${COLORS.border}`, background: "#fff", color: COLORS.muted, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>+ set a revenue growth goal</button>
+          ) : null}
+        </div>
+      )}
+      {editGoal && onGoal && (
+        <div style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 12.5 }}>
+          Growth goal vs 2026:&nbsp;
+          <input value={goalDraft} onChange={e => setGoalDraft(e.target.value)} inputMode="decimal" placeholder="e.g. 6" autoFocus
+            style={{ width: 64, padding: "5px 8px", textAlign: "right", borderRadius: 7, border: `1px solid ${COLORS.border}`, fontFamily: "inherit" }} />%
+          <button onClick={() => { onGoal(goalDraft === "" ? null : parseFloat(goalDraft)); setEditGoal(false); }}
+            style={{ padding: "5px 12px", borderRadius: 7, border: "none", background: COLORS.dark, color: "#fff", fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>Save</button>
+          <button onClick={() => setEditGoal(false)} style={{ background: "none", border: "none", color: COLORS.muted, cursor: "pointer" }}>cancel</button>
+        </div>
+      )}
+      {fill && <FillStrip fill={fill} />}
+      {burndown && burndown.pts.length > 1 && (
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 800, color: COLORS.muted, textTransform: "uppercase", marginBottom: 3 }}>Decided-revenue burndown — {fmtMoney(burndown.remaining)} left</div>
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 34 }}>
+            {burndown.pts.map((p, i) => (
+              <div key={i} title={`${p.label}: ${fmtMoney(p.remaining)} open`} style={{ flex: 1, height: `${Math.max(3, p.remaining / burndown.total * 100)}%`, background: i === burndown.pts.length - 1 ? COLORS.dark : "#cdd9c4", borderRadius: "2px 2px 0 0" }} />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Space fill: are we filling the houses? Directional — reads the bench footprint
+// production already replayed, scaled by decisions. Not geometric capacity.
+function FillStrip({ fill }) {
+  return (
+    <div>
+      <div style={{ fontSize: 10, fontWeight: 800, color: COLORS.muted, textTransform: "uppercase", marginBottom: 4 }}>
+        Space fill (as decided) — <b style={{ color: fill.overallPct > 100 ? COLORS.red : fill.overallPct >= 92 ? "#2e7d32" : COLORS.amber }}>{fill.overallPct}%</b> of {fill.tagged ? "tagged spring footprint" : "occupied footprint"} · {fill.freeBenches} benches open{fill.overZones ? ` · ${fill.overZones} range${fill.overZones > 1 ? "s" : ""} over` : ""}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+        {fill.zones.slice(0, 8).map(z => (
+          <div key={z.zone} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11.5 }}>
+            <span style={{ width: 150, color: COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={z.zone}>{z.zone}</span>
+            <div style={{ flex: 1, height: 11, borderRadius: 6, background: "#e6ede1", overflow: "hidden" }}>
+              <div style={{ height: "100%", width: `${Math.min(100, z.pct)}%`, background: z.pct > 100 ? COLORS.red : z.pct >= 92 ? "#2e7d32" : COLORS.amber }} />
+            </div>
+            <span style={{ width: 88, textAlign: "right", color: z.pct > 100 ? COLORS.red : COLORS.muted, fontWeight: 700 }}>{z.pct}% · {z.free > 0 ? `${z.free} free` : z.pct > 100 ? "over" : "full"}</span>
+          </div>
+        ))}
+      </div>
+      <div style={{ fontSize: 10, color: COLORS.muted, marginTop: 3 }}>Directional: occupied benches scaled by decided vs current volume. {fill.tagged ? "" : "Tag spring-footprint zones for an authoritative denominator."}</div>
+    </div>
+  );
+}
+
 function SalesVsPlanTab({ plan }) {
   const sb = getSupabase();
   const [rows, setRows] = useState(null);
@@ -1987,19 +2180,25 @@ function SalesVsPlanTab({ plan }) {
   const [selSet, setSelSet] = useState(() => new Set());  // checkbox multi-select
   const [draft, setDraft] = useState({});       // item_name → in-flight input text
   const [savingT, setSavingT] = useState({});
+  const [benchData, setBenchData] = useState(null);   // {occ, benches} for the fill strip
+  const [gapDismissed, setGapDismissed] = useState(new Set());  // gap keys decided-not-to-chase
+  const [goal, setGoal] = useState(plan.growth_goal_pct ?? null);
   const { displayName } = useAuth();
   useEffect(() => {
     if (!sb) return;
     const COMPONENT = /\bVINE\b|\bIVY\b|HEDERA|MU[EH]+LENBECKIA|CAREX/i;
     (async () => {
-      const [xw, tot, wk, sc, tgRes] = await Promise.all([
+      const [xw, tot, wk, sc, tgRes, benchRows, gapRes] = await Promise.all([
         srcPageAll(sb, "sales_sku_map", "sku,plan_item_name"),
         srcPageAll(sb, "sales_totals", "sku,description,units,revenue,avg_price"),
         srcPageAll(sb, "sales_weekly", "sku,wk,units,revenue"),
-        srcPageAll(sb, "scheduled_crops", "id,item_name,notes,broker,supplier,qty_pots,ppp,plants_per_unit,ship_week,ready_week,combo_parent_id,is_combo_component", q => q.eq("plan_id", plan.id)),
+        srcPageAll(sb, "scheduled_crops", "id,item_name,notes,broker,supplier,bench_id,qty_pots,ppp,plants_per_unit,ship_week,ready_week,combo_parent_id,is_combo_component", q => q.eq("plan_id", plan.id)),
         sb.from("plan_targets").select("*").eq("plan_id", plan.id),
+        srcPageAll(sb, "benches", "id,zone_label,spring_footprint"),
+        sb.from("plan_gap_decisions").select("gap_key").eq("plan_id", plan.id),
       ]);
       const skuToItem = {}; xw.forEach(x => { if (x.plan_item_name) skuToItem[x.sku] = x.plan_item_name; });
+      const zoneOf = {}; (benchRows || []).forEach(b => { zoneOf[b.id] = b.zone_label; });
       const weeks = [...new Set(wk.map(w => +w.wk))].sort((a, b) => a - b);
       const wIdx = Object.fromEntries(weeks.map((w, i) => [w, i]));
       // A combo basket = one finished unit (multiple plants on a row are for ONE basket, not many).
@@ -2081,10 +2280,31 @@ function SalesVsPlanTab({ plan }) {
       for (const g of Object.values(gaps)) if (!g.desc) g.desc = totBySku[g.key]?.description || g.key;
       setMissing(Object.values(gaps).filter(g => g.rev > 250).sort((a, b) => b.rev - a.rev));
 
+      // bench occupancy for the fill strip: real spring pots by bench+zone
+      const occ = [];
+      for (const r of sc) {
+        if (r.is_combo_component || !(+r.qty_pots > 0) || !r.bench_id) continue;
+        if (COMPONENT.test(r.item_name)) continue;
+        occ.push({ bench_id: r.bench_id, zone: zoneOf[r.bench_id] || "Unassigned", item: r.item_name, qty: +r.qty_pots });
+      }
+      setBenchData({ occ, benches: benchRows || [] });
+      setGapDismissed(new Set((gapRes.data || []).map(g => g.gap_key)));
+
       setRows(out); setSeason({ weeks, seasonRev });
       setTargets(Object.fromEntries((tgRes.data || []).map(t => [t.item_name, t])));
     })();
   }, [sb, plan.id, reloadTick]);
+
+  async function saveGoal(v) {
+    setGoal(v);
+    await sb.from("production_plans").update({ growth_goal_pct: v }).eq("id", plan.id);
+  }
+  async function dismissGap(m, status = "dismissed") {
+    setGapDismissed(s => new Set([...s, m.key]));
+    await sb.from("plan_gap_decisions").upsert(
+      { plan_id: plan.id, gap_key: m.key, status, note: m.desc, decided_by: displayName || "planner" },
+      { onConflict: "plan_id,gap_key" });
+  }
 
   // Save a decision. Snapshots what it sold and what the plan held, so the
   // production session can see the reasoning later without recomputing it.
@@ -2169,6 +2389,19 @@ function SalesVsPlanTab({ plan }) {
   }, { units: 0, rev: 0, bySize: {} });
   const sizeDeltas = Object.entries(impact.bySize).filter(([, v]) => v !== 0).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
 
+  // ── The projection scorecard (the quantifiable finish line) ──
+  const rowByItem = Object.fromEntries(rows.map(r => [r.item, r]));
+  const scaleOf = it => { const r = rowByItem[it]; if (!r) return 1; const t = targetOf(r); return t == null || !r.planned ? 1 : t / r.planned; };
+  const scorecard = scorecardFrom(rows, targets, gapDismissed, missing);
+  const projRev = rows.filter(r => !r.dualUse).reduce((a, r) => { const t = targetOf(r); return a + (t == null ? r.planned : t) * (r.price || 0); }, 0);
+  const fill = benchData ? computeFill(benchData, scaleOf) : null;
+  const burndown = computeBurndown(targets, rows);
+  const onScorecardFilter = f => {
+    if (f === "missing") { document.getElementById("svp-missing")?.scrollIntoView({ behavior: "smooth", block: "start" }); return; }
+    setFilt(f); if (f === "todo") { setSortCol("rev"); setSortDir("desc"); }
+    document.getElementById("svp-table")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
   // Projection sessions run on groups, not varieties — "drop bacopa 20% in 4.5\"".
   // Applying a % to the filtered set records a per-item target (so nothing is
   // lost) while the decision itself is one action.
@@ -2207,6 +2440,8 @@ function SalesVsPlanTab({ plan }) {
     .sort((a, b) => { const va = (sortVal[sortCol] || sortVal.lostEst)(a), vb = (sortVal[sortCol] || sortVal.lostEst)(b); const c = typeof va === "string" ? va.localeCompare(vb) : (va - vb); return sortDir === "asc" ? c : -c; });
   return (
     <div style={{ display: "grid", gap: 14 }}>
+      <ProjectionScorecard sc={scorecard} plan={{ growth_goal_pct: goal }} projRev={projRev}
+        onGoal={saveGoal} onFilter={onScorecardFilter} burndown={burndown} fill={fill} />
       <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "12px 14px", fontSize: 12, color: COLORS.muted }}>
         2026 actual sales vs this plan (item quantity = qty_pots, matched by SKU crosswalk). <strong style={{ color: COLORS.amber }}>Overplanned&nbsp;$</strong> = (planned − sold) × price where you grew more than sold (cut-back candidates). <strong style={{ color: COLORS.red }}>Lost sales&nbsp;$</strong> = est. missed revenue on items that <em>sold out before their season's cutoff</em> (main season wk&nbsp;{MD_CUTOFF_WK} / Mother's Day; early-spring &amp; pansies wk&nbsp;{EARLY_CUTOFF_WK}, ~end of March) — grow-more candidates. <strong>2026 sales</strong> = these items' real revenue. Items entered in pots (marked <span style={{ fontWeight: 700, color: COLORS.muted }}>⤵</span>) shown in their sold pack.
       </div>
@@ -2265,27 +2500,40 @@ function SalesVsPlanTab({ plan }) {
       </div>
       <ProgramsPanel plan={plan} />
 
-      {missing.length > 0 && (
-        <details style={{ background: COLORS.card, border: `1px solid ${COLORS.amber}`, borderRadius: 10 }}>
+      {missing.length > 0 && (() => {
+        const openMiss = missing.filter(m => !gapDismissed.has(m.key));
+        return (
+        <details id="svp-missing" open={openMiss.length > 0} style={{ background: COLORS.card, border: `1px solid ${openMiss.length ? COLORS.amber : "#c2e0be"}`, borderRadius: 10 }}>
           <summary style={{ cursor: "pointer", padding: "11px 14px", fontWeight: 800, color: COLORS.dark }}>
-            ⚠ Sold in 2026 but not in this plan — {missing.length} items · {fmtMoney(missing.reduce((a, m) => a + m.rev, 0))}
-            <span style={{ fontWeight: 500, color: COLORS.muted, fontSize: 12 }}> · decide whether each was dropped on purpose</span>
+            {openMiss.length ? "⚠" : "✓"} Sold in 2026 but not in this plan — <b>{openMiss.length}</b> open · {fmtMoney(openMiss.reduce((a, m) => a + m.rev, 0))}
+            {missing.length - openMiss.length > 0 && <span style={{ fontWeight: 500, color: COLORS.muted, fontSize: 12 }}> · {missing.length - openMiss.length} resolved</span>}
+            <span style={{ fontWeight: 500, color: COLORS.muted, fontSize: 12 }}> · mark each: dropped on purpose, or queue to re-add</span>
           </summary>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-            <thead><tr><th style={th}>Item</th><th style={{ ...th, textAlign: "right" }}>2026 units</th><th style={{ ...th, textAlign: "right" }}>2026 $</th><th style={th}>Match</th></tr></thead>
+            <thead><tr><th style={th}>Item</th><th style={{ ...th, textAlign: "right" }}>2026 units</th><th style={{ ...th, textAlign: "right" }}>2026 $</th><th style={th}>Match</th><th style={{ ...th, textAlign: "right" }}>Decision</th></tr></thead>
             <tbody>
-              {missing.map((m, i) => (
-                <tr key={i} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
+              {missing.map((m, i) => {
+                const done = gapDismissed.has(m.key);
+                return (
+                <tr key={i} style={{ borderBottom: `1px solid ${COLORS.border}`, opacity: done ? 0.5 : 1 }}>
                   <td style={{ ...td, fontWeight: 600 }}>{m.desc}</td>
                   <td style={{ ...td, textAlign: "right" }}>{Math.round(m.units).toLocaleString()}</td>
                   <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{fmtMoney(m.rev)}</td>
                   <td style={{ ...td, fontSize: 11, color: COLORS.muted }}>{m.mapped ? "maps to an item not in this plan" : "no SKU match"}</td>
+                  <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap" }}>
+                    {done ? <span style={{ color: "#2e7d32", fontWeight: 700, fontSize: 11.5 }}>✓ resolved</span>
+                      : <>
+                        <button onClick={() => dismissGap(m, "readd")} style={{ padding: "3px 9px", borderRadius: 7, border: `1px solid ${COLORS.light}`, background: "#fff", color: COLORS.dark, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", marginRight: 4 }}>queue re-add</button>
+                        <button onClick={() => dismissGap(m, "dismissed")} style={{ padding: "3px 9px", borderRadius: 7, border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.muted, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>drop on purpose</button>
+                      </>}
+                  </td>
                 </tr>
-              ))}
+              ); })}
             </tbody>
           </table>
         </details>
-      )}
+        );
+      })()}
 
       <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "14px 16px" }}>
         <div style={{ display: "flex", alignItems: "center", marginBottom: 10 }}>
@@ -2487,7 +2735,7 @@ function SalesVsPlanTab({ plan }) {
           onMutated={() => setReloadTick(t => t + 1)} />
       )}
 
-      <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, overflow: "auto", maxHeight: "72vh" }}>
+      <div id="svp-table" style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, overflow: "auto", maxHeight: "72vh" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead><tr>
             <th style={{ ...stickyTh, width: 28 }} title="Select shown items">
