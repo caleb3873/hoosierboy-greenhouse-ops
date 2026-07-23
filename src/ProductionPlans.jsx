@@ -2113,16 +2113,24 @@ function GroupBuilder({ rows, weeks, peakDefault, initialSel, supplierByItem, on
   const rowByItemLocal = Object.fromEntries(core.map(r => [r.item, r]));
   // count from % of the group total, rounded to the breeder increment
   const derivedCount = it => parseInt(total) ? roundUp(Math.round(parseInt(total) * pctOf(it) / 100), breederOf(it).incr) : (rowByItemLocal[it]?.planned || 0);
-  // a color's total: hand-edited waves win (sum), else a typed count, else % of total
-  const countOf = it => waveOv[it] ? waveOv[it].reduce((a, u) => a + (+u || 0), 0)
-    : countOv[it] != null ? +countOv[it] : derivedCount(it);
-  // waves: global finish weeks; amounts hand-edited or curve-split in 100s
+  // Waves are the single source of truth when hand-edited: cells AND the row
+  // total both read the override array over the CURRENT wave count, so they can
+  // never diverge (missing waves = 0). No auto values mixed in once edited.
   const wavesFor = it => {
-    const auto = curveWaves(countOf(it), rowByItemLocal[it]?.wk, weeks, waveFinishes, breederOf(it).incr);
     const ov = waveOv[it];
-    return waveFinishes.map((f, i) => ({ units: ov ? (ov[i] ?? auto[i]?.units ?? 0) : (auto[i]?.units || 0), ready_week: f }));
+    if (ov) return waveFinishes.map((f, i) => ({ units: +ov[i] || 0, ready_week: f }));
+    const base = countOv[it] != null ? +countOv[it] : derivedCount(it);
+    const auto = curveWaves(base, rowByItemLocal[it]?.wk, weeks, waveFinishes, breederOf(it).incr);
+    return waveFinishes.map((f, i) => ({ units: auto[i]?.units || 0, ready_week: f }));
   };
-  const editWave = (it, wi, units) => setWaveOv(o => { const cur = (o[it] || wavesFor(it).map(w => w.units)).slice(); cur[wi] = units; return { ...o, [it]: cur }; });
+  const countOf = it => waveOv[it] ? waveFinishes.reduce((a, f, i) => a + (+waveOv[it][i] || 0), 0)
+    : countOv[it] != null ? +countOv[it] : derivedCount(it);
+  const editWave = (it, wi, units) => setWaveOv(o => {
+    const src = o[it] || wavesFor(it).map(w => w.units);
+    const cur = waveFinishes.map((_, i) => +src[i] || 0);   // always full length, no holes
+    cur[wi] = units;
+    return { ...o, [it]: cur };
+  });
   const setPctLive = (it, v) => { setPct(p => ({ ...p, [it]: v })); setCountOv(c => { const n = { ...c }; delete n[it]; return n; }); setWaveOv(o => { const n = { ...o }; delete n[it]; return n; }); };
   const setCountManual = (it, v) => { setCountOv(c => ({ ...c, [it]: v })); if (parseInt(total)) setPct(p => ({ ...p, [it]: Math.round(v / parseInt(total) * 1000) / 10 })); setWaveOv(o => { const n = { ...o }; delete n[it]; return n; }); };
   const grand = selRows.reduce((a, r) => a + countOf(r.item), 0);
