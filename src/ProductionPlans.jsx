@@ -3030,6 +3030,23 @@ function SalesVsPlanTab({ plan }) {
     setBulkBusy(false);
   }
 
+  // Add the same note to every selected/shown item — note only, no target change.
+  async function applyNote() {
+    const targetRows = selSet.size ? shown.filter(r => selSet.has(r.item)) : shown;
+    if (!targetRows.length || bulkBusy) return;
+    const text = window.prompt(`Add a note to ${targetRows.length} ${selSet.size ? "selected" : "shown"} item${targetRows.length !== 1 ? "s" : ""}:`);
+    if (text == null) return;
+    const note = text.trim() || null;
+    setBulkBusy(true);
+    const stamp = new Date().toISOString();
+    const payload = targetRows.map(r => ({ plan_id: plan.id, item_name: r.item, note, decided_by: displayName || "planner", updated_at: stamp }));
+    try {
+      for (let i = 0; i < payload.length; i += 200) await sb.from("plan_targets").upsert(payload.slice(i, i + 200), { onConflict: "plan_id,item_name" });
+      setTargets(t => { const n = { ...t }; payload.forEach(p => { n[p.item_name] = { ...(n[p.item_name] || {}), note }; }); return n; });
+    } catch (e) { window.alert("Couldn't add note: " + (e.message || e)); }
+    setBulkBusy(false);
+  }
+
   const shown = rows.filter(r => (filt === "all" ? true
       : filt === "over" ? r.status === "SHORT"
       : filt === "soldout" ? r.soldOut
@@ -3324,6 +3341,10 @@ function SalesVsPlanTab({ plan }) {
               <button disabled={bulkBusy} onClick={() => { const v = window.prompt("Percent change (e.g. -20 or 15):"); if (v != null && v.trim() !== "" && !isNaN(+v)) applyPct(+v); }}
                 style={{ padding: "5px 11px", borderRadius: 8, fontSize: 12, fontWeight: 800, cursor: "pointer", border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.text }}>
                 custom…
+              </button>
+              <button disabled={bulkBusy} onClick={applyNote}
+                style={{ padding: "5px 11px", borderRadius: 8, fontSize: 12, fontWeight: 800, cursor: "pointer", border: `1px solid ${COLORS.light}`, background: "#fff", color: COLORS.dark }}>
+                📝 Note all
               </button>
               {selSet.size > 0 && (
                 <button onClick={() => setSelSet(new Set())}
