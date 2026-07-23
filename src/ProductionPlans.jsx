@@ -2113,7 +2113,14 @@ function GroupBuilder({ rows, weeks, peakDefault, initialSel, supplierByItem, on
   const grand = selRows.reduce((a, r) => a + countOf(r.item), 0);
   const pctTotal = selRows.reduce((a, r) => a + pctOf(r.item), 0);
   const normalizePct = () => { const s = pctTotal || 1; setPct(p => { const n = {}; selRows.forEach(r => { n[r.item] = Math.round(pctOf(r.item) / s * 1000) / 10; }); return n; }); setCountOv({}); setWaveOv({}); };
-  const setWaveFinish = (wi, delta) => setWaveFinishes(f => f.map((x, i) => i === wi ? x + delta : x));
+  // Change a wave's finish week, then keep waves sorted so W1 is always the
+  // earliest ready date. Reorder every color's amount edits by the same shuffle.
+  const setWaveFinish = (wi, delta) => {
+    const nf = waveFinishes.map((x, i) => i === wi ? x + delta : x);
+    const order = nf.map((_, i) => i).sort((a, b) => nf[a] - nf[b]);
+    setWaveFinishes(order.map(i => nf[i]));
+    setWaveOv(o => { const n = {}; for (const [it, arr] of Object.entries(o)) n[it] = order.map(i => arr[i]); return n; });
+  };
   // Templates: color mix + waves, reusable across years. Finish weeks stored as
   // offsets from the peak (Mother's Day) so they translate to next year's calendar.
   async function saveTemplate() {
@@ -2135,7 +2142,7 @@ function GroupBuilder({ rows, weeks, peakDefault, initialSel, supplierByItem, on
     setPct(Object.fromEntries(items.map(x => [x.item, x.pct])));
     setCountOv({}); setWaveOv({});
     if (cfg.n_waves) setNWaves(cfg.n_waves);
-    if (cfg.wave_offsets) setWaveFinishes(cfg.wave_offsets.map(o => peakDefault + o));
+    if (cfg.wave_offsets) setWaveFinishes(cfg.wave_offsets.map(o => peakDefault + o).sort((a, b) => a - b));
     if (missing) window.alert(`Applied "${t.name}". ${missing} item(s) from the template aren't in this plan and were skipped.`);
   }
   const toggle = it => setSel(s => { const n = new Set(s); n.has(it) ? n.delete(it) : n.add(it); return n; });
