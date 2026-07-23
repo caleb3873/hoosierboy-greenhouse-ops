@@ -383,13 +383,16 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
     } catch (e) { setBusy(false); window.alert("Couldn't duplicate: " + (e.message || e)); }
   }
 
-  // Rename this item everywhere it's referenced, then reopen under the new name.
-  async function renameItem() {
-    const nn = window.prompt("Rename this item:", row.item);
-    if (nn == null) return;
-    const name = nn.trim();
-    if (!name || name === row.item) return;
-    setBusy(true);
+  // Inline rename (pencil next to the name). Save confirms first, then updates the
+  // item everywhere and reopens under the new name.
+  const [editName, setEditName] = useState(false);
+  const [nameDraft, setNameDraft] = useState("");
+  function renameItem() { setNameDraft(row.item); setEditName(true); }   // header button opens inline edit too
+  async function saveNameEdit() {
+    const name = nameDraft.trim();
+    if (!name || name === row.item) { setEditName(false); return; }
+    if (!window.confirm(`Rename "${row.item}" to "${name}"?\n\nThis changes the item EVERYWHERE across the platform — the plan, sales matching, order lists and history all update. Continue?`)) return;
+    setEditName(false); setBusy(true);
     try {
       await sb.from("scheduled_crops").update({ item_name: name }).eq("plan_id", plan.id).eq("item_name", row.item);
       await sb.from("plan_targets").update({ item_name: name }).eq("plan_id", plan.id).eq("item_name", row.item);
@@ -549,9 +552,22 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
         <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
           <div>
             <div style={{ fontSize: 19, fontWeight: 800, color: C.dark, fontFamily: "'DM Serif Display',Georgia,serif" }}>
-              {row.item}
-              {row.isNew && <span style={{ marginLeft: 8, fontSize: 10, fontWeight: 900, padding: "2px 8px", borderRadius: 9, color: "#fff", background: C.green, letterSpacing: 0.5, verticalAlign: "middle", fontFamily: "'DM Sans',sans-serif" }}>NEW</span>}
-              {row.needsSourcing && <span title="placeholder material — click the plant below to attach a real quote" style={{ marginLeft: 6, fontSize: 10, fontWeight: 900, padding: "2px 8px", borderRadius: 9, color: "#fff", background: C.amber, letterSpacing: 0.5, verticalAlign: "middle", fontFamily: "'DM Sans',sans-serif" }}>NEEDS SOURCING</span>}
+              {editName ? (
+                <span style={{ display: "inline-flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                  <input value={nameDraft} autoFocus onChange={e => setNameDraft(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Enter") saveNameEdit(); if (e.key === "Escape") setEditName(false); }}
+                    style={{ fontSize: 16, fontWeight: 800, fontFamily: "inherit", padding: "5px 9px", borderRadius: 8, border: `1.5px solid ${C.light}`, minWidth: 260 }} />
+                  <button onClick={saveNameEdit} disabled={busy} title="save" style={{ padding: "5px 11px", borderRadius: 8, border: "none", background: C.dark, color: "#c8e6b8", fontWeight: 800, cursor: "pointer", fontFamily: "'DM Sans',sans-serif", fontSize: 13 }}>Save</button>
+                  <button onClick={() => setEditName(false)} title="cancel" style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", fontSize: 18 }}>×</button>
+                </span>
+              ) : (
+                <>
+                  {row.item}
+                  <button onClick={renameItem} title="edit item name" style={{ marginLeft: 8, background: "none", border: "none", cursor: "pointer", fontSize: 15, verticalAlign: "middle" }}>✏️</button>
+                  {row.isNew && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 900, padding: "2px 8px", borderRadius: 9, color: "#fff", background: C.green, letterSpacing: 0.5, verticalAlign: "middle", fontFamily: "'DM Sans',sans-serif" }}>NEW</span>}
+                  {row.needsSourcing && <span title="placeholder material — click the plant below to attach a real quote" style={{ marginLeft: 6, fontSize: 10, fontWeight: 900, padding: "2px 8px", borderRadius: 9, color: "#fff", background: C.amber, letterSpacing: 0.5, verticalAlign: "middle", fontFamily: "'DM Sans',sans-serif" }}>NEEDS SOURCING</span>}
+                </>
+              )}
             </div>
             <div style={{ fontSize: 12, color: C.muted }}>
               {detail ? `${detail.parents.length} bench row${detail.parents.length !== 1 ? "s" : ""}` : "…"}
@@ -562,8 +578,6 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
             <button onClick={() => { setView("detail"); setDup(d => d ? null : { rows: [{ name: `${row.item} 2`, qty: String(row.planned || "") }], price: "" }); }}
               title="copy this item as a new line — recipe, sourcing, weeks; no benches"
               style={{ padding: "5px 10px", borderRadius: 8, fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", border: `1.5px solid ${C.border}`, background: "#fff", color: C.text }}>⧉ Duplicate</button>
-            <button onClick={renameItem} disabled={busy} title="rename this item everywhere"
-              style={{ padding: "5px 10px", borderRadius: 8, fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", border: `1.5px solid ${C.border}`, background: "#fff", color: C.text }}>✎ Rename</button>
             <button onClick={dropItem} title="don't grow it in 2027 but keep the record"
               style={{ padding: "5px 10px", borderRadius: 8, fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", border: `1.5px solid ${C.amber}`, background: "#fff", color: C.amber }}>✕ Drop</button>
             <button onClick={deleteItem} disabled={busy} title="remove it from the plan entirely"
