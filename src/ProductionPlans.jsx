@@ -1862,21 +1862,24 @@ function YearOverYearTab({ plan }) {
       const price = units26 > 0 ? rev26 / units26 : null;
       const planItems = plannedItems(planned, base.ppp[it], base.ppu[it]);
       const t = targets[it] || {};
-      const decided = t.target_units != null;
-      const units27 = decided ? +t.target_units : planItems;
-      const rev27 = price != null ? units27 * price : null;
-      const dU = units27 - units26;
+      // 2027 projected reflects ONLY confirmed Sales-vs-Plan decisions — not last
+      // year's plan for items nobody has decided on yet (those show blank).
+      const decided = t.target_units != null || !!t.decision;
+      const units27 = decided ? (t.target_units != null ? +t.target_units : 0) : null;
+      const rev27 = decided && price != null ? units27 * price : null;
+      const dU = decided ? units27 - units26 : null;
+      const dRev = !decided ? null : rev27 != null ? rev27 - rev26 : (units27 === 0 ? -rev26 : null);
       const klass = base.newSet.has(it) || units26 === 0 ? "new"
-        : units27 === 0 ? "dropped"
         : !decided ? "undecided"
+        : units27 === 0 ? "dropped"
         : dU / Math.max(1, units26) > 0.05 ? "growing"
         : dU / Math.max(1, units26) < -0.05 ? "declining" : "steady";
       const wkA = base.wkly[it] || Array(base.weeks.length).fill(0);
       const peak = wkA.some(x => x > 0) ? base.weeks[wkA.indexOf(Math.max(...wkA))] : null;
       return { it, size: sizeLabelForItem(it), units26, rev26, price,
-        planItems, units27, rev27, dU, dRev: rev27 != null ? rev27 - rev26 : (units26 ? -rev26 : 0),
+        planItems, units27, rev27, dU, dRev, decided,
         shift: +t.ready_shift || 0, ready: base.ready[it] ?? null, rounds: t.rounds?.length || 0,
-        decided, klass, isNew: base.newSet.has(it), needsSrc: base.srcSet.has(it), note: t.note || null,
+        klass, isNew: base.newSet.has(it), needsSrc: base.srcSet.has(it), note: t.note || null,
         wkA, peak };
     });
   }, [base, targets]);
@@ -1887,9 +1890,10 @@ function YearOverYearTab({ plan }) {
   const sizes = ["all", ...[...new Set(items.map(r => r.size))].sort()];
   const qq = q.trim().toLowerCase();
   let shown = items.filter(r => (cls === "all" || r.klass === cls) && (szF === "all" || r.size === szF) && (!qq || r.it.toLowerCase().includes(qq)));
-  const sv = { it: r => r.it, size: r => r.size, units26: r => r.units26, rev26: r => r.rev26, units27: r => r.units27, rev27: r => r.rev27 ?? -1, dU: r => r.dU, dRev: r => r.dRev, ready: r => r.ready ?? 99 };
+  const sv = { it: r => r.it, size: r => r.size, units26: r => r.units26, rev26: r => r.rev26, units27: r => r.units27 ?? -1, rev27: r => r.rev27 ?? -1, dU: r => r.dU ?? -1e9, dRev: r => r.dRev ?? -1e12, ready: r => r.ready ?? 99 };
   shown = [...shown].sort((a, b) => { const av = sv[sortC](a), bv = sv[sortC](b); return (av < bv ? -1 : av > bv ? 1 : 0) * (sortD === "asc" ? 1 : -1); });
-  const T = shown.reduce((a, r) => ({ u26: a.u26 + r.units26, r26: a.r26 + r.rev26, u27: a.u27 + r.units27, r27: a.r27 + (r.rev27 || 0) }), { u26: 0, r26: 0, u27: 0, r27: 0 });
+  // 2027 totals count only decided items (undecided contribute nothing)
+  const T = shown.reduce((a, r) => ({ u26: a.u26 + r.units26, r26: a.r26 + r.rev26, u27: a.u27 + (r.units27 || 0), r27: a.r27 + (r.rev27 || 0), dec: a.dec + (r.decided ? 1 : 0) }), { u26: 0, r26: 0, u27: 0, r27: 0, dec: 0 });
   // the drill takes the same row shape Sales vs Plan hands it
   const drillRowOf = r => ({ item: r.it, size: r.size, planned: r.planItems, sold: r.units26,
     st: r.planItems ? r.units26 / r.planItems : null, price: r.price, rev: Math.round(r.rev26),
@@ -1921,7 +1925,7 @@ function YearOverYearTab({ plan }) {
         <input value={q} onChange={e => setQ(e.target.value)} placeholder="🔍 Search item…"
           style={{ padding: "7px 11px", borderRadius: 16, border: `1px solid ${COLORS.border}`, fontSize: 12.5, fontFamily: "inherit", width: 190 }} />
         <span style={{ marginLeft: "auto", fontSize: 12.5, color: COLORS.text }}>
-          <b>{shown.length}</b> items — 2026 {T.u26.toLocaleString()}u / {fmtMoney(T.r26)} → 2027 <b>{T.u27.toLocaleString()}u</b> ({pctTxt(T.u27, T.u26)}) / <b style={{ color: T.r27 >= T.r26 ? "#2e7d32" : COLORS.red }}>{fmtMoney(T.r27)} ({pctTxt(T.r27, T.r26)})</b>
+          <b>{shown.length}</b> items — 2026 {T.u26.toLocaleString()}u / {fmtMoney(T.r26)} → 2027 <b>{T.u27.toLocaleString()}u</b> / <b style={{ color: T.r27 >= T.r26 ? "#2e7d32" : COLORS.red }}>{fmtMoney(T.r27)}</b> <span style={{ color: COLORS.muted, fontWeight: 400 }}>({T.dec}/{shown.length} decided)</span>
         </span>
       </div>
       <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, overflow: "auto", maxHeight: "74vh" }}>
@@ -1949,10 +1953,10 @@ function YearOverYearTab({ plan }) {
                   <td style={{ ...td, color: COLORS.muted }}>{r.size}</td>
                   <td style={{ ...td, textAlign: "right" }}>{r.units26.toLocaleString()}</td>
                   <td style={{ ...td, textAlign: "right" }}>{fmtMoney(r.rev26)}</td>
-                  <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{r.units27.toLocaleString()}{r.rounds > 1 && <span title={`${r.rounds} planting rounds`} style={{ color: COLORS.muted, fontWeight: 400 }}> ·{r.rounds}r</span>}</td>
-                  <td style={{ ...td, textAlign: "right" }}>{r.rev27 != null ? fmtMoney(r.rev27) : <span style={{ color: COLORS.muted }} title="no 2026 price to project with — set pricing later">—</span>}</td>
-                  <td style={{ ...td, textAlign: "right", fontWeight: 700, color: r.dU > 0 ? "#2e7d32" : r.dU < 0 ? COLORS.red : COLORS.muted }}>{r.dU > 0 ? "+" : ""}{r.dU.toLocaleString()}</td>
-                  <td style={{ ...td, textAlign: "right", fontWeight: 700, color: r.dRev > 0 ? "#2e7d32" : r.dRev < 0 ? COLORS.red : COLORS.muted }}>{r.dRev > 0 ? "+" : ""}{fmtMoney(r.dRev)}</td>
+                  <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{r.units27 == null ? <span style={{ color: COLORS.muted, fontWeight: 400 }} title="no 2027 decision yet — set a target in Sales vs Plan">—</span> : <>{r.units27.toLocaleString()}{r.rounds > 1 && <span title={`${r.rounds} planting rounds`} style={{ color: COLORS.muted, fontWeight: 400 }}> ·{r.rounds}r</span>}</>}</td>
+                  <td style={{ ...td, textAlign: "right" }}>{r.rev27 != null ? fmtMoney(r.rev27) : <span style={{ color: COLORS.muted }} title={r.decided ? "no 2026 price to project with" : "no 2027 decision yet"}>—</span>}</td>
+                  <td style={{ ...td, textAlign: "right", fontWeight: 700, color: r.dU == null ? COLORS.muted : r.dU > 0 ? "#2e7d32" : r.dU < 0 ? COLORS.red : COLORS.muted }}>{r.dU == null ? "—" : `${r.dU > 0 ? "+" : ""}${r.dU.toLocaleString()}`}</td>
+                  <td style={{ ...td, textAlign: "right", fontWeight: 700, color: r.dRev == null ? COLORS.muted : r.dRev > 0 ? "#2e7d32" : r.dRev < 0 ? COLORS.red : COLORS.muted }}>{r.dRev == null ? "—" : `${r.dRev > 0 ? "+" : ""}${fmtMoney(r.dRev)}`}</td>
                   <td style={{ ...td, textAlign: "right", color: r.shift ? COLORS.amber : COLORS.muted }}>{r.ready != null ? `wk${r.ready + r.shift}${r.shift ? ` (${r.shift > 0 ? "+" : ""}${r.shift})` : ""}` : "—"}</td>
                   <td style={td}><span style={{ fontSize: 10.5, fontWeight: 800, color: kc }}>{kl}</span></td>
                 </tr>
