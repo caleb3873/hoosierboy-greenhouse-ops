@@ -988,6 +988,10 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
           </div>
         )}
         </>}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 16, paddingTop: 12, borderTop: `1px solid ${C.border}` }}>
+          <span style={{ fontSize: 11.5, color: C.muted }}>Changes save automatically as you make them.</span>
+          <button onClick={onClose} style={{ marginLeft: "auto", padding: "9px 20px", borderRadius: 9, border: "none", background: C.dark, color: "#c8e6b8", fontWeight: 800, fontSize: 13.5, cursor: "pointer", fontFamily: "inherit" }}>✓ Done — close</button>
+        </div>
       </div>
       {dup && (
         <div onClick={() => setDup(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.5)", zIndex: 9300, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
