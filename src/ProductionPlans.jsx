@@ -2027,6 +2027,119 @@ function scorecardFrom(rows, targets, dismissed, missing) {
     missOpen, missOpenRev: missOpen.reduce((a, m) => a + m.rev, 0) };
 }
 
+// Split a color's total across N waves ending at the peak week, each wave sized
+// by how that color actually sold in the window it covers (2026 curve) — so
+// volume ramps toward Mother's Day, weighted by real demand. No history → even.
+function curveWaves(total, wkA, weeks, N, peakWk, spacing) {
+  const sp = spacing || 2;
+  const finishes = Array.from({ length: N }, (_, i) => peakWk - (N - 1 - i) * sp);
+  const wIdx = Object.fromEntries(weeks.map((w, i) => [w, i]));
+  const weights = finishes.map((f, i) => {
+    const from = wIdx[f] ?? 0;
+    const to = i < N - 1 ? (wIdx[finishes[i + 1]] ?? weeks.length) : weeks.length;
+    let s = 0; for (let j = Math.max(0, from); j < to && j < (wkA || []).length; j++) s += wkA[j];
+    return s;
+  });
+  const wsum = weights.reduce((a, b) => a + b, 0);
+  let used = 0;
+  return finishes.map((f, i) => {
+    const u = wsum > 0 ? (i < N - 1 ? Math.round(total * weights[i] / wsum) : total - used)
+      : (i < N - 1 ? Math.floor(total / N) : total - used);
+    used += u;
+    return { units: Math.max(0, u), ready_week: f };
+  });
+}
+
+// Bulk wave builder: pick a set of color varieties, seed a group total split by
+// %, then let each color's waves ramp toward the peak on its own 2026 curve.
+// Writes plan_targets (target + rounds) per color — same model as the drill.
+function GroupBuilder({ rows, weeks, peakDefault, onCommit, onClose }) {
+  const core = rows.filter(r => !r.dualUse);
+  const [sel, setSel] = useState(() => new Set(rows.filter(r => !r.dualUse).map(r => r.item)));
+  const [q, setQ] = useState("");
+  const [total, setTotal] = useState("");
+  const [pct, setPct] = useState({});      // item -> %
+  const [count, setCount] = useState({});  // item -> committed count (editable)
+  const [nWaves, setNWaves] = useState(3);
+  const [peak, setPeak] = useState(peakDefault);
+  const [spacing, setSpacing] = useState(2);
+  const [busy, setBusy] = useState(false);
+  const selRows = core.filter(r => sel.has(r.item));
+  const evenPct = selRows.length ? Math.round(1000 / selRows.length) / 10 : 0;
+  const pctOf = it => pct[it] != null ? +pct[it] : evenPct;
+  const seed = () => {
+    const t = parseInt(total) || 0; const c = {};
+    selRows.forEach(r => { c[r.item] = Math.round(t * pctOf(r.item) / 100); });
+    setCount(c);
+  };
+  const countOf = it => count[it] != null ? +count[it] : (parseInt(total) ? Math.round((parseInt(total)) * pctOf(it) / 100) : (rowByItemLocal[it]?.planned || 0));
+  const rowByItemLocal = Object.fromEntries(core.map(r => [r.item, r]));
+  const grand = selRows.reduce((a, r) => a + countOf(r.item), 0);
+  const toggle = it => setSel(s => { const n = new Set(s); n.has(it) ? n.delete(it) : n.add(it); return n; });
+  const shown = core.filter(r => !q || r.item.toLowerCase().includes(q.toLowerCase()));
+  async function commit() {
+    setBusy(true);
+    const groups = selRows.map(r => {
+      const c = countOf(r.item);
+      const waves = curveWaves(c, r.wk, weeks, Math.max(1, nWaves), peak, spacing);
+      return { item: r.item, planned: r.planned, target: c, waves };
+    });
+    await onCommit(groups);
+    setBusy(false); onClose();
+  }
+  const inp = { padding: "6px 9px", borderRadius: 7, border: `1px solid ${COLORS.border}`, fontSize: 12.5, fontFamily: "inherit" };
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.5)", zIndex: 9300, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "#f6f9f3", borderRadius: 14, width: "100%", maxWidth: 780, maxHeight: "90vh", overflow: "auto", padding: 18 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+          <div style={{ fontSize: 17, fontWeight: 800, color: COLORS.dark, fontFamily: "'DM Serif Display',Georgia,serif" }}>🎨 Group builder — colors → waves</div>
+          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, color: COLORS.muted, cursor: "pointer" }}>×</button>
+        </div>
+        <div style={{ fontSize: 11.5, color: COLORS.muted, marginBottom: 10 }}>Seed a group total split by %, tweak any color, then split each into waves that ramp toward the peak on its 2026 curve. Writes a target + rounds on every selected color.</div>
+
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 10 }}>
+          <div><label style={lab}>Group total</label><input value={total} onChange={e => setTotal(e.target.value)} inputMode="numeric" placeholder="e.g. 12000" style={{ ...inp, width: 100 }} /></div>
+          <button onClick={seed} style={{ ...inp, cursor: "pointer", fontWeight: 800, background: COLORS.light, color: "#fff", border: "none" }}>Seed by % →</button>
+          <div><label style={lab}>Waves</label><input value={nWaves} onChange={e => setNWaves(Math.max(1, parseInt(e.target.value) || 1))} inputMode="numeric" style={{ ...inp, width: 54 }} /></div>
+          <div><label style={lab}>Peak finish wk</label><input value={peak} onChange={e => setPeak(parseInt(e.target.value) || peakDefault)} inputMode="numeric" style={{ ...inp, width: 54 }} /></div>
+          <div><label style={lab}>Wks apart</label><input value={spacing} onChange={e => setSpacing(Math.max(1, parseInt(e.target.value) || 1))} inputMode="numeric" style={{ ...inp, width: 54 }} /></div>
+          <div style={{ marginLeft: "auto", fontSize: 12.5, color: COLORS.text }}>{selRows.length} colors · <b>{grand.toLocaleString()}</b> total</div>
+        </div>
+
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder="🔍 filter colors to include…" style={{ ...inp, width: "100%", boxSizing: "border-box", marginBottom: 6 }} />
+        <div style={{ maxHeight: "42vh", overflow: "auto", border: `1px solid ${COLORS.border}`, borderRadius: 8, background: "#fff" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+            <thead><tr>{["", "Color", "2026 sold", "%", "2027 count", "Waves (units @ finish wk)"].map((h, i) => <th key={i} style={{ ...th, position: "sticky", top: 0, background: "#eef3e8", textAlign: i >= 2 && i <= 4 ? "right" : "left" }}>{h}</th>)}</tr></thead>
+            <tbody>
+              {shown.map(r => {
+                const on = sel.has(r.item);
+                const c = countOf(r.item);
+                const waves = on ? curveWaves(c, r.wk, weeks, Math.max(1, nWaves), peak, spacing) : [];
+                return (
+                  <tr key={r.item} style={{ borderBottom: `1px solid ${COLORS.border}`, opacity: on ? 1 : 0.5 }}>
+                    <td style={{ ...td, width: 26 }}><input type="checkbox" checked={on} onChange={() => toggle(r.item)} /></td>
+                    <td style={{ ...td, fontWeight: 600 }}>{r.item}</td>
+                    <td style={{ ...td, textAlign: "right", color: COLORS.muted }}>{r.sold.toLocaleString()}</td>
+                    <td style={{ ...td, textAlign: "right" }}>{on ? <input value={pct[r.item] ?? evenPct} onChange={e => setPct(p => ({ ...p, [r.item]: e.target.value }))} inputMode="decimal" style={{ ...inp, width: 48, textAlign: "right", padding: "3px 5px" }} /> : "—"}</td>
+                    <td style={{ ...td, textAlign: "right" }}>{on ? <input value={count[r.item] ?? c} onChange={e => setCount(x => ({ ...x, [r.item]: e.target.value }))} inputMode="numeric" style={{ ...inp, width: 66, textAlign: "right", padding: "3px 5px", fontWeight: 700 }} /> : "—"}</td>
+                    <td style={{ ...td, fontSize: 11, color: COLORS.muted }}>{on ? waves.map((w, i) => `${w.units.toLocaleString()}@wk${w.ready_week}`).join("  ·  ") : ""}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div style={{ display: "flex", gap: 8, marginTop: 12, alignItems: "center" }}>
+          <span style={{ fontSize: 11.5, color: COLORS.muted }}>Peak wk{peak} ≈ Mother's Day run. Waves ramp toward it, weighted by each color's 2026 sales.</span>
+          <button onClick={onClose} style={{ marginLeft: "auto", padding: "9px 14px", borderRadius: 8, border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.muted, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+          <button onClick={commit} disabled={busy || !selRows.length} style={{ padding: "9px 16px", borderRadius: 8, border: "none", background: COLORS.dark, color: "#c8e6b8", fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>{busy ? "Saving…" : `✓ Set ${selRows.length} colors`}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+const lab = { display: "block", fontSize: 10, fontWeight: 800, color: COLORS.muted, textTransform: "uppercase", marginBottom: 3 };
+
 // Space fill, directional: pots-per-bench from the current footprint, scaled by
 // each item's decided-vs-current ratio, per zone. Untagged → denominator is the
 // benches in ranges that currently hold spring crops.
@@ -2183,6 +2296,7 @@ function SalesVsPlanTab({ plan }) {
   const [benchData, setBenchData] = useState(null);   // {occ, benches} for the fill strip
   const [gapDismissed, setGapDismissed] = useState(new Set());  // gap keys decided-not-to-chase
   const [goal, setGoal] = useState(plan.growth_goal_pct ?? null);
+  const [showGroup, setShowGroup] = useState(false);   // group/wave builder modal
   const { displayName } = useAuth();
   useEffect(() => {
     if (!sb) return;
@@ -2298,6 +2412,20 @@ function SalesVsPlanTab({ plan }) {
   async function saveGoal(v) {
     setGoal(v);
     await sb.from("production_plans").update({ growth_goal_pct: v }).eq("id", plan.id);
+  }
+  // Group builder → a target + waves (rounds) on each selected color at once.
+  async function commitGroups(groups) {
+    const stamp = new Date().toISOString();
+    const payload = groups.map(g => ({
+      plan_id: plan.id, item_name: g.item, target_units: g.target,
+      decision: g.target === 0 ? "drop" : g.target > g.planned ? "grow" : g.target < g.planned ? "cut" : "hold",
+      rounds: g.waves, note: `group builder — ${g.waves.length} wave${g.waves.length > 1 ? "s" : ""}`,
+      prior_units: null, current_units: g.planned, decided_by: displayName || "planner", decided_at: stamp, updated_at: stamp,
+    }));
+    try {
+      for (let i = 0; i < payload.length; i += 200) await sb.from("plan_targets").upsert(payload.slice(i, i + 200), { onConflict: "plan_id,item_name" });
+      setTargets(t => { const n = { ...t }; payload.forEach(p => { n[p.item_name] = { ...(n[p.item_name] || {}), ...p }; }); return n; });
+    } catch (e) { window.alert("Couldn't save the group: " + (e.message || e)); }
   }
   async function dismissGap(m, status = "dismissed") {
     setGapDismissed(s => new Set([...s, m.key]));
@@ -2667,6 +2795,8 @@ function SalesVsPlanTab({ plan }) {
           {sizes.map(s => <option key={s} value={s}>{s === "all" ? "All sizes" : s}</option>)}
         </select>
         {[["all", "All"], ["over", "🟠 Overplanned"], ["soldout", "🔴 Sold out early"], ["hit", "🟢 Hit"], ["todo", "◻ Undecided"], ["done", "✓ Decided"]].map(([f, l]) => <button key={f} onClick={() => setFilt(f)} style={{ padding: "6px 12px", borderRadius: 16, fontWeight: 700, cursor: "pointer", border: `1px solid ${filt === f ? COLORS.light : COLORS.border}`, background: filt === f ? COLORS.light : "#fff", color: filt === f ? "#fff" : COLORS.text }}>{l}</button>)}
+        <button onClick={() => setShowGroup(true)} title="Bulk-build waves across a set of colors, ramping to the peak"
+          style={{ padding: "6px 12px", borderRadius: 16, fontWeight: 800, cursor: "pointer", border: `1.5px solid ${COLORS.dark}`, background: COLORS.dark, color: "#c8e6b8" }}>🎨 Group builder</button>
         <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ color: COLORS.muted }} title="Item quantity = qty_pots (what sells). As-entered shows the raw plan number before pot→pack conversion.">units:</span>
           {[["pots", "Item qty"], ["raw", "As entered"]].map(([k, l]) => <button key={k} onClick={() => setBasis(k)} style={{ padding: "6px 10px", borderRadius: 16, fontSize: 11, fontWeight: 700, cursor: "pointer", border: `1px solid ${basis === k ? COLORS.dark : COLORS.border}`, background: basis === k ? COLORS.dark : "#fff", color: basis === k ? "#fff" : COLORS.text }}>{l}</button>)}
@@ -2733,6 +2863,10 @@ function SalesVsPlanTab({ plan }) {
         <ItemDrill plan={plan} row={drill} tgt={targets[drill.item]} weeks={season.weeks}
           onSaveTarget={patch => saveTarget(drill, patch)} onClose={() => setDrill(null)}
           onMutated={() => setReloadTick(t => t + 1)} />
+      )}
+      {showGroup && (
+        <GroupBuilder rows={shown.filter(r => !r.dualUse)} weeks={season.weeks} peakDefault={mothersWk}
+          onCommit={commitGroups} onClose={() => setShowGroup(false)} />
       )}
 
       <div id="svp-table" style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, overflow: "auto", maxHeight: "72vh" }}>
