@@ -2058,6 +2058,7 @@ function curveWaves(total, wkA, weeks, N, peakWk, spacing) {
 // %, then let each color's waves ramp toward the peak on its own 2026 curve.
 // Writes plan_targets (target + rounds) per color — same model as the drill.
 function GroupBuilder({ rows, weeks, peakDefault, onCommit, onClose }) {
+  const sb = getSupabase();
   const core = rows.filter(r => !r.dualUse);
   const [sel, setSel] = useState(() => new Set(rows.filter(r => !r.dualUse).map(r => r.item)));
   const [q, setQ] = useState("");
@@ -2068,23 +2069,39 @@ function GroupBuilder({ rows, weeks, peakDefault, onCommit, onClose }) {
   const [peak, setPeak] = useState(peakDefault);
   const [spacing, setSpacing] = useState(2);
   const [busy, setBusy] = useState(false);
+  const [brules, setBrules] = useState([]);
+  const INCR = 100, MIN_BREEDER = 2000;   // uniform defaults: 10 cases of 10; 2000/breeder
+  useEffect(() => { if (sb) sb.from("breeder_rules").select("*").then(({ data }) => setBrules(data || [])); }, [sb]);
+  // breeder/supplier for a variety: matching series rule wins; else the plan row's supplier; else unassigned
+  const breederOf = it => {
+    const rule = brules.find(b => it.toLowerCase().includes(String(b.series_pattern).toLowerCase()));
+    if (rule) return { breeder: rule.breeder, min: rule.min_order || MIN_BREEDER, incr: rule.order_increment || INCR };
+    const r = rowByItemLocal[it];
+    return { breeder: r?.supplier || r?.broker || "— unassigned", min: MIN_BREEDER, incr: INCR };
+  };
+  const roundUp = (n, incr) => n > 0 ? Math.round(n / incr) * incr : 0;
   const selRows = core.filter(r => sel.has(r.item));
   const evenPct = selRows.length ? Math.round(1000 / selRows.length) / 10 : 0;
   const pctOf = it => pct[it] != null ? +pct[it] : evenPct;
   const seed = () => {
     const t = parseInt(total) || 0; const c = {};
-    selRows.forEach(r => { c[r.item] = Math.round(t * pctOf(r.item) / 100); });
+    selRows.forEach(r => { c[r.item] = roundUp(Math.round(t * pctOf(r.item) / 100), breederOf(r.item).incr); });
     setCount(c);
   };
-  const countOf = it => count[it] != null ? +count[it] : (parseInt(total) ? Math.round((parseInt(total)) * pctOf(it) / 100) : (rowByItemLocal[it]?.planned || 0));
   const rowByItemLocal = Object.fromEntries(core.map(r => [r.item, r]));
+  const countOf = it => count[it] != null ? +count[it] : (parseInt(total) ? roundUp(Math.round((parseInt(total)) * pctOf(it) / 100), breederOf(it).incr) : (rowByItemLocal[it]?.planned || 0));
   const grand = selRows.reduce((a, r) => a + countOf(r.item), 0);
   const toggle = it => setSel(s => { const n = new Set(s); n.has(it) ? n.delete(it) : n.add(it); return n; });
   const shown = core.filter(r => !q || r.item.toLowerCase().includes(q.toLowerCase()));
+  // pool totals by breeder for the 2000-minimum check
+  const byBreeder = {};
+  selRows.forEach(r => { const b = breederOf(r.item); (byBreeder[b.breeder] = byBreeder[b.breeder] || { total: 0, min: b.min }).total += countOf(r.item); });
+  const shortBreeders = Object.entries(byBreeder).filter(([bn, v]) => v.total > 0 && v.total < v.min && !bn.startsWith("—"));
   async function commit() {
+    if (shortBreeders.length && !window.confirm(`Below the ${MIN_BREEDER.toLocaleString()} minimum for: ${shortBreeders.map(([b, v]) => `${b} (${v.total.toLocaleString()})`).join(", ")}.\n\nSuppliers won't take an order this small. Set anyway?`)) return;
     setBusy(true);
     const groups = selRows.map(r => {
-      const c = countOf(r.item);
+      const c = roundUp(countOf(r.item), breederOf(r.item).incr);
       const waves = curveWaves(c, r.wk, weeks, Math.max(1, nWaves), peak, spacing);
       return { item: r.item, planned: r.planned, target: c, waves };
     });
@@ -2113,19 +2130,23 @@ function GroupBuilder({ rows, weeks, peakDefault, onCommit, onClose }) {
         <input value={q} onChange={e => setQ(e.target.value)} placeholder="🔍 filter colors to include…" style={{ ...inp, width: "100%", boxSizing: "border-box", marginBottom: 6 }} />
         <div style={{ maxHeight: "42vh", overflow: "auto", border: `1px solid ${COLORS.border}`, borderRadius: 8, background: "#fff" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-            <thead><tr>{["", "Color", "2026 sold", "%", "2027 count", "Waves (units @ finish wk)"].map((h, i) => <th key={i} style={{ ...th, position: "sticky", top: 0, background: "#eef3e8", textAlign: i >= 2 && i <= 4 ? "right" : "left" }}>{h}</th>)}</tr></thead>
+            <thead><tr>{["", "Color", "Breeder", "2026 sold", "%", "2027 count", "Waves (units @ finish wk)"].map((h, i) => <th key={i} style={{ ...th, position: "sticky", top: 0, background: "#eef3e8", textAlign: i >= 3 && i <= 5 ? "right" : "left" }}>{h}</th>)}</tr></thead>
             <tbody>
               {shown.map(r => {
                 const on = sel.has(r.item);
                 const c = countOf(r.item);
+                const b = breederOf(r.item);
                 const waves = on ? curveWaves(c, r.wk, weeks, Math.max(1, nWaves), peak, spacing) : [];
                 return (
                   <tr key={r.item} style={{ borderBottom: `1px solid ${COLORS.border}`, opacity: on ? 1 : 0.5 }}>
                     <td style={{ ...td, width: 26 }}><input type="checkbox" checked={on} onChange={() => toggle(r.item)} /></td>
                     <td style={{ ...td, fontWeight: 600 }}>{r.item}</td>
+                    <td style={{ ...td, fontSize: 11, color: b.breeder.startsWith("—") ? COLORS.amber : COLORS.muted }}>{b.breeder}</td>
                     <td style={{ ...td, textAlign: "right", color: COLORS.muted }}>{r.sold.toLocaleString()}</td>
                     <td style={{ ...td, textAlign: "right" }}>{on ? <input value={pct[r.item] ?? evenPct} onChange={e => setPct(p => ({ ...p, [r.item]: e.target.value }))} inputMode="decimal" style={{ ...inp, width: 48, textAlign: "right", padding: "3px 5px" }} /> : "—"}</td>
-                    <td style={{ ...td, textAlign: "right" }}>{on ? <input value={count[r.item] ?? c} onChange={e => setCount(x => ({ ...x, [r.item]: e.target.value }))} inputMode="numeric" style={{ ...inp, width: 66, textAlign: "right", padding: "3px 5px", fontWeight: 700 }} /> : "—"}</td>
+                    <td style={{ ...td, textAlign: "right" }}>{on ? <input value={count[r.item] ?? c} onChange={e => setCount(x => ({ ...x, [r.item]: e.target.value }))}
+                      onBlur={e => { const n = roundUp(parseInt(e.target.value) || 0, b.incr); setCount(x => ({ ...x, [r.item]: n })); }}
+                      inputMode="numeric" style={{ ...inp, width: 66, textAlign: "right", padding: "3px 5px", fontWeight: 700 }} /> : "—"}</td>
                     <td style={{ ...td, fontSize: 11, color: COLORS.muted }}>{on ? waves.map((w, i) => `${w.units.toLocaleString()}@wk${w.ready_week}`).join("  ·  ") : ""}</td>
                   </tr>
                 );
@@ -2133,8 +2154,20 @@ function GroupBuilder({ rows, weeks, peakDefault, onCommit, onClose }) {
             </tbody>
           </table>
         </div>
+        {Object.keys(byBreeder).length > 0 && (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+            {Object.entries(byBreeder).sort((a, b) => b[1].total - a[1].total).map(([bn, v]) => {
+              const short = v.total > 0 && v.total < v.min && !bn.startsWith("—");
+              return (
+                <span key={bn} title={short ? `Below the ${v.min.toLocaleString()} minimum order for ${bn}` : ""} style={{ fontSize: 12, fontWeight: 700, padding: "4px 10px", borderRadius: 8, border: `1.5px solid ${short ? COLORS.amber : "#c2e0be"}`, background: short ? "#fff8ee" : "#eef7ec", color: short ? COLORS.amber : COLORS.dark }}>
+                  {bn}: {v.total.toLocaleString()}{short ? ` ⚠ under ${v.min.toLocaleString()}` : bn.startsWith("—") ? "" : " ✓"}
+                </span>
+              );
+            })}
+          </div>
+        )}
         <div style={{ display: "flex", gap: 8, marginTop: 12, alignItems: "center" }}>
-          <span style={{ fontSize: 11.5, color: COLORS.muted }}>Peak wk{peak} ≈ Mother's Day run. Waves ramp toward it, weighted by each color's 2026 sales.</span>
+          <span style={{ fontSize: 11.5, color: COLORS.muted }}>Increments of {INCR} (10 cases of 10) · min {MIN_BREEDER.toLocaleString()} per breeder/supplier · peak wk{peak} ≈ Mother's Day.</span>
           <button onClick={onClose} style={{ marginLeft: "auto", padding: "9px 14px", borderRadius: 8, border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.muted, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
           <button onClick={commit} disabled={busy || !selRows.length} style={{ padding: "9px 16px", borderRadius: 8, border: "none", background: COLORS.dark, color: "#c8e6b8", fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>{busy ? "Saving…" : `✓ Set ${selRows.length} colors`}</button>
         </div>
@@ -2283,9 +2316,65 @@ function FillStrip({ fill }) {
 // weeks and prop lead come from the plan's own inherited weeks, so no new data.
 function ReadyDatesTab({ plan }) {
   const sb = getSupabase();
+  const { displayName } = useAuth();
   const [data, setData] = useState(null);
   const [open, setOpen] = useState(null);
   const [tick, setTick] = useState(0);
+  const [applying, setApplying] = useState(false);
+
+  // One-click apply: push the decided quantities + timing into scheduled_crops
+  // (the bench rows the order tabs read) and stamp applied_at. Wave-splitting onto
+  // separate benches stays a production step — this makes the totals + dates real.
+  async function applyDecisions() {
+    const [{ data: tgs }, sc] = await Promise.all([
+      sb.from("plan_targets").select("*").eq("plan_id", plan.id),
+      srcPageAll(sb, "scheduled_crops", "id,item_name,qty_pots,ppp,plants_per_unit,ready_week,plant_week,ship_week,combo_parent_id,is_combo_component", q => q.eq("plan_id", plan.id)),
+    ]);
+    const decided = (tgs || []).filter(t => t.target_units != null || t.decision);
+    const parents = {}; const kids = {};
+    for (const r of sc) {
+      if (r.is_combo_component && r.combo_parent_id) (kids[r.combo_parent_id] = kids[r.combo_parent_id] || []).push(r);
+      else if (+r.qty_pots > 0) (parents[r.item_name] = parents[r.item_name] || []).push(r);
+    }
+    let qChanged = 0, dropped = 0, timed = 0, skipped = 0, rowsTouched = 0;
+    const plan27 = decided.map(t => {
+      const rows = parents[t.item_name];
+      if (!rows || !rows.length) { skipped++; return null; }
+      const totalCur = rows.reduce((a, r) => a + +r.qty_pots, 0);
+      const isDrop = t.decision === "drop" || t.target_units === 0;
+      const target = isDrop ? 0 : (t.target_units != null ? +t.target_units : totalCur);
+      const shift = +t.ready_shift || 0;
+      return { t, rows, totalCur, target, shift, isDrop, factor: totalCur > 0 ? target / totalCur : 0 };
+    }).filter(Boolean);
+    plan27.forEach(g => { if (g.isDrop) dropped++; else if (g.target !== g.totalCur) qChanged++; if (g.shift) timed++; });
+    if (!plan27.length) { window.alert("Nothing to apply — no decided items have bench rows yet. New items need a plant week/bench in production first."); return; }
+    if (!window.confirm(`Apply ${plan27.length} decision${plan27.length !== 1 ? "s" : ""} to the production plan?\n\n• ${qChanged} quantity change${qChanged !== 1 ? "s" : ""}\n• ${dropped} drop${dropped !== 1 ? "s" : ""} (set to 0)\n• ${timed} timing shift${timed !== 1 ? "s" : ""}\n${skipped ? `• ${skipped} new item(s) skipped — need a bench/plant week in production first\n` : ""}\nThis rewrites the bench-row quantities the order tabs read. Wave splitting onto separate benches stays a production step.`)) return;
+    setApplying(true);
+    const stamp = new Date().toISOString();
+    try {
+      for (const g of plan27) {
+        let assigned = 0;
+        for (let i = 0; i < g.rows.length; i++) {
+          const r = g.rows[i];
+          const nq = g.isDrop ? 0 : (i === g.rows.length - 1 ? g.target - assigned : Math.round(+r.qty_pots * g.factor));
+          assigned += nq;
+          const patch = { qty_pots: Math.max(0, nq) };
+          if (g.shift) { if (r.ready_week != null) patch.ready_week = r.ready_week + g.shift; if (r.plant_week != null) patch.plant_week = r.plant_week + g.shift; if (r.ship_week != null) patch.ship_week = r.ship_week + g.shift; }
+          await sb.from("scheduled_crops").update(patch).eq("id", r.id);
+          rowsTouched++;
+          // scale this parent's components
+          for (const k of (kids[r.id] || [])) {
+            await sb.from("scheduled_crops").update({ qty_plants_ordered: g.isDrop ? 0 : Math.round((+k.qty_plants_ordered || 0) * g.factor), ...(g.shift ? { ready_week: (k.ready_week ?? 0) + g.shift, plant_week: (k.plant_week ?? 0) + g.shift, ship_week: (k.ship_week ?? 0) + g.shift } : {}) }).eq("id", k.id);
+            rowsTouched++;
+          }
+        }
+        await sb.from("plan_targets").update({ applied_at: stamp, applied_by: displayName || "planner" }).eq("plan_id", plan.id).eq("item_name", g.t.item_name);
+      }
+      window.alert(`Applied ${plan27.length} decisions · ${rowsTouched} bench rows updated. The order tabs (Propagation, Materials) and dashboard now reflect them.`);
+      setTick(x => x + 1);
+    } catch (e) { window.alert("Apply stopped partway: " + (e.message || e)); }
+    setApplying(false);
+  }
 
   useEffect(() => {
     if (!sb) return;
@@ -2386,6 +2475,15 @@ function ReadyDatesTab({ plan }) {
   );
   return (
     <div style={{ display: "grid", gap: 14 }}>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", background: "#eef4e9", border: `1.5px solid ${COLORS.dark}`, borderRadius: 10, padding: "11px 14px" }}>
+        <div style={{ fontSize: 12.5, color: COLORS.text }}>
+          <b style={{ color: COLORS.dark }}>{data.items.length} decided items</b> ready to hand to production — push these quantities & dates into the plan the order tabs read.
+        </div>
+        <button onClick={applyDecisions} disabled={applying}
+          style={{ marginLeft: "auto", padding: "9px 16px", borderRadius: 9, border: "none", background: COLORS.dark, color: "#c8e6b8", fontWeight: 800, cursor: "pointer", fontFamily: "inherit", fontSize: 13 }}>
+          {applying ? "Applying…" : "⚡ Apply decisions to production"}
+        </button>
+      </div>
       <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "11px 14px", fontSize: 12, color: COLORS.muted }}>
         Decided items only. <b>Ready</b> (finish) week is the anchor — it should coincide with the 2026 <b>first-sale</b> week. <b>Plant</b> = ready − crop weeks; <b>Order</b> = plant − prop lead, from this plan's own inherited timing. Adjust ready with ◀▶ and plant/order follow. Amber ⚠ = finishing 2+ weeks after it first sold in 2026 (late).
       </div>
