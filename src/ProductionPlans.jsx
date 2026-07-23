@@ -2070,8 +2070,11 @@ function GroupBuilder({ rows, weeks, peakDefault, onCommit, onClose }) {
   const [spacing, setSpacing] = useState(2);
   const [busy, setBusy] = useState(false);
   const [brules, setBrules] = useState([]);
+  const [expanded, setExpanded] = useState(null);   // color whose waves are open for editing
+  const [waveOv, setWaveOv] = useState({});         // item -> hand-edited [{units, ready_week}]
   const INCR = 100, MIN_BREEDER = 2000;   // uniform defaults: 10 cases of 10; 2000/breeder
   useEffect(() => { if (sb) sb.from("breeder_rules").select("*").then(({ data }) => setBrules(data || [])); }, [sb]);
+  useEffect(() => { setWaveOv({}); }, [nWaves, peak, spacing]);   // re-splitting resets hand edits
   // breeder/supplier for a variety: matching series rule wins; else the plan row's supplier; else unassigned
   const breederOf = it => {
     const rule = brules.find(b => it.toLowerCase().includes(String(b.series_pattern).toLowerCase()));
@@ -2089,10 +2092,15 @@ function GroupBuilder({ rows, weeks, peakDefault, onCommit, onClose }) {
     setCount(c);
   };
   const rowByItemLocal = Object.fromEntries(core.map(r => [r.item, r]));
-  const countOf = it => count[it] != null ? +count[it] : (parseInt(total) ? roundUp(Math.round((parseInt(total)) * pctOf(it) / 100), breederOf(it).incr) : (rowByItemLocal[it]?.planned || 0));
+  // a color's total: hand-edited waves win (sum them), else the seeded/typed count
+  const countOf = it => waveOv[it] ? waveOv[it].reduce((a, w) => a + (+w.units || 0), 0)
+    : count[it] != null ? +count[it] : (parseInt(total) ? roundUp(Math.round((parseInt(total)) * pctOf(it) / 100), breederOf(it).incr) : (rowByItemLocal[it]?.planned || 0));
+  // the waves for a color — hand-edited override, else the curve split
+  const wavesFor = it => waveOv[it] || curveWaves(countOf(it), rowByItemLocal[it]?.wk, weeks, Math.max(1, nWaves), peak, spacing);
+  const editWave = (it, wi, patch) => setWaveOv(o => { const cur = (o[it] || wavesFor(it)).map(w => ({ ...w })); cur[wi] = { ...cur[wi], ...patch }; return { ...o, [it]: cur }; });
   const grand = selRows.reduce((a, r) => a + countOf(r.item), 0);
   const toggle = it => setSel(s => { const n = new Set(s); n.has(it) ? n.delete(it) : n.add(it); return n; });
-  const shown = core.filter(r => !q || r.item.toLowerCase().includes(q.toLowerCase()));
+  const shown = core.filter(r => !q || r.item.toLowerCase().includes(q.toLowerCase())).sort((a, b) => a.item.localeCompare(b.item));
   // pool totals by breeder for the 2000-minimum check
   const byBreeder = {};
   selRows.forEach(r => { const b = breederOf(r.item); (byBreeder[b.breeder] = byBreeder[b.breeder] || { total: 0, min: b.min }).total += countOf(r.item); });
@@ -2101,8 +2109,8 @@ function GroupBuilder({ rows, weeks, peakDefault, onCommit, onClose }) {
     if (shortBreeders.length && !window.confirm(`Below the ${MIN_BREEDER.toLocaleString()} minimum for: ${shortBreeders.map(([b, v]) => `${b} (${v.total.toLocaleString()})`).join(", ")}.\n\nSuppliers won't take an order this small. Set anyway?`)) return;
     setBusy(true);
     const groups = selRows.map(r => {
-      const c = roundUp(countOf(r.item), breederOf(r.item).incr);
-      const waves = curveWaves(c, r.wk, weeks, Math.max(1, nWaves), peak, spacing);
+      const waves = wavesFor(r.item).map(w => ({ units: +w.units || 0, ready_week: +w.ready_week }));
+      const c = waves.reduce((a, w) => a + w.units, 0);
       return { item: r.item, planned: r.planned, target: c, waves };
     });
     await onCommit(groups);
@@ -2130,25 +2138,56 @@ function GroupBuilder({ rows, weeks, peakDefault, onCommit, onClose }) {
         <input value={q} onChange={e => setQ(e.target.value)} placeholder="🔍 filter colors to include…" style={{ ...inp, width: "100%", boxSizing: "border-box", marginBottom: 6 }} />
         <div style={{ maxHeight: "42vh", overflow: "auto", border: `1px solid ${COLORS.border}`, borderRadius: 8, background: "#fff" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-            <thead><tr>{["", "Color", "Breeder", "2026 sold", "%", "2027 count", "Waves (units @ finish wk)"].map((h, i) => <th key={i} style={{ ...th, position: "sticky", top: 0, background: "#eef3e8", textAlign: i >= 3 && i <= 5 ? "right" : "left" }}>{h}</th>)}</tr></thead>
+            <thead><tr>{["", "Color", "Breeder", "2026 sold", "%", "2027 count", "Waves — click to adjust"].map((h, i) => <th key={i} style={{ ...th, position: "sticky", top: 0, background: "#eef3e8", textAlign: i >= 3 && i <= 5 ? "right" : "left" }}>{h}</th>)}</tr></thead>
             <tbody>
               {shown.map(r => {
                 const on = sel.has(r.item);
                 const c = countOf(r.item);
                 const b = breederOf(r.item);
-                const waves = on ? curveWaves(c, r.wk, weeks, Math.max(1, nWaves), peak, spacing) : [];
+                const waves = on ? wavesFor(r.item) : [];
+                const isOpen = expanded === r.item;
+                const edited = !!waveOv[r.item];
                 return (
-                  <tr key={r.item} style={{ borderBottom: `1px solid ${COLORS.border}`, opacity: on ? 1 : 0.5 }}>
+                  <Fragment key={r.item}>
+                  <tr style={{ borderBottom: `1px solid ${isOpen ? "transparent" : COLORS.border}`, opacity: on ? 1 : 0.5, background: isOpen ? "#f4f8f1" : "#fff" }}>
                     <td style={{ ...td, width: 26 }}><input type="checkbox" checked={on} onChange={() => toggle(r.item)} /></td>
                     <td style={{ ...td, fontWeight: 600 }}>{r.item}</td>
                     <td style={{ ...td, fontSize: 11, color: b.breeder.startsWith("—") ? COLORS.amber : COLORS.muted }}>{b.breeder}</td>
                     <td style={{ ...td, textAlign: "right", color: COLORS.muted }}>{r.sold.toLocaleString()}</td>
                     <td style={{ ...td, textAlign: "right" }}>{on ? <input value={pct[r.item] ?? evenPct} onChange={e => setPct(p => ({ ...p, [r.item]: e.target.value }))} inputMode="decimal" style={{ ...inp, width: 48, textAlign: "right", padding: "3px 5px" }} /> : "—"}</td>
-                    <td style={{ ...td, textAlign: "right" }}>{on ? <input value={count[r.item] ?? c} onChange={e => setCount(x => ({ ...x, [r.item]: e.target.value }))}
+                    <td style={{ ...td, textAlign: "right" }}>{on ? <input value={count[r.item] ?? c} onChange={e => { setWaveOv(o => { const n = { ...o }; delete n[r.item]; return n; }); setCount(x => ({ ...x, [r.item]: e.target.value })); }}
                       onBlur={e => { const n = roundUp(parseInt(e.target.value) || 0, b.incr); setCount(x => ({ ...x, [r.item]: n })); }}
                       inputMode="numeric" style={{ ...inp, width: 66, textAlign: "right", padding: "3px 5px", fontWeight: 700 }} /> : "—"}</td>
-                    <td style={{ ...td, fontSize: 11, color: COLORS.muted }}>{on ? waves.map((w, i) => `${w.units.toLocaleString()}@wk${w.ready_week}`).join("  ·  ") : ""}</td>
+                    <td style={{ ...td, fontSize: 11.5, color: COLORS.dark, cursor: on ? "pointer" : "default" }} onClick={() => on && setExpanded(isOpen ? null : r.item)}>
+                      {on ? <>{isOpen ? "▾ " : "▸ "}{waves.map(w => (+w.units).toLocaleString()).join(" · ")} <span style={{ color: COLORS.muted }}>({waves.length} wave{waves.length !== 1 ? "s" : ""}{edited ? ", edited" : ""})</span></> : ""}
+                    </td>
                   </tr>
+                  {on && isOpen && (
+                    <tr style={{ background: "#f4f8f1", borderBottom: `1px solid ${COLORS.border}` }}>
+                      <td colSpan={7} style={{ padding: "4px 14px 10px 40px" }}>
+                        <div style={{ fontSize: 11, color: COLORS.muted, marginBottom: 4 }}>Edit each wave's amount and finish week — the color total follows the sum. Latest waves finish nearest Mother's Day.</div>
+                        <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+                          {waves.map((w, wi) => (
+                            <div key={wi} style={{ display: "flex", flexDirection: "column", gap: 3, background: "#fff", border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "6px 9px" }}>
+                              <span style={{ fontSize: 10, fontWeight: 800, color: COLORS.muted, textTransform: "uppercase" }}>Wave {wi + 1}</span>
+                              <input value={w.units} onChange={e => editWave(r.item, wi, { units: parseInt(e.target.value.replace(/\D/g, "")) || 0 })}
+                                inputMode="numeric" style={{ ...inp, width: 76, textAlign: "right", fontWeight: 700, padding: "4px 6px" }} />
+                              <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11.5 }}>
+                                <button onClick={() => editWave(r.item, wi, { ready_week: (+w.ready_week || 0) - 1 })} style={{ padding: "0 5px", borderRadius: 5, border: `1px solid ${COLORS.border}`, background: "#fff", cursor: "pointer" }}>◀</button>
+                                <span style={{ color: COLORS.muted }}>finish <b style={{ color: COLORS.text }}>wk{w.ready_week}</b></span>
+                                <button onClick={() => editWave(r.item, wi, { ready_week: (+w.ready_week || 0) + 1 })} style={{ padding: "0 5px", borderRadius: 5, border: `1px solid ${COLORS.border}`, background: "#fff", cursor: "pointer" }}>▶</button>
+                              </div>
+                            </div>
+                          ))}
+                          <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", gap: 4 }}>
+                            <div style={{ fontSize: 12.5, fontWeight: 800, color: COLORS.dark }}>= {c.toLocaleString()} total</div>
+                            {edited && <button onClick={() => setWaveOv(o => { const n = { ...o }; delete n[r.item]; return n; })} style={{ fontSize: 11, color: COLORS.muted, background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}>reset to curve split</button>}
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 );
               })}
             </tbody>
@@ -2426,7 +2465,7 @@ function ReadyDatesTab({ plan }) {
           broker: rep.broker, supplier: rep.supplier, firstSale: firstSale[it] ?? null,
           comps, hasRounds: !!(t.rounds && t.rounds.length), shift });
       }
-      items.sort((a, b) => (a.waves[0]?.ready ?? 99) - (b.waves[0]?.ready ?? 99));
+      items.sort((a, b) => (a.waves[0]?.ready ?? 99) - (b.waves[0]?.ready ?? 99) || a.item.localeCompare(b.item));
       setData({ items });
     })();
   }, [sb, plan.id, tick]); // eslint-disable-line
@@ -2467,7 +2506,7 @@ function ReadyDatesTab({ plan }) {
       }
     }
   }
-  const buyRows = Object.values(buy).filter(b => b.plants > 0).sort((a, b) => a.orderWk - b.orderWk || b.plants - a.plants);
+  const buyRows = Object.values(buy).filter(b => b.plants > 0).sort((a, b) => a.orderWk - b.orderWk || a.name.localeCompare(b.name));
   const buyTotal = buyRows.reduce((a, b) => a + b.plants, 0);
 
   const arrow = (it, wi, d) => (
