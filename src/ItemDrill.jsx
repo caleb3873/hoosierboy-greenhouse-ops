@@ -18,6 +18,24 @@ const money = n => n == null ? "—" : (Math.abs(n) >= 1000 ? `$${Math.round(n).
 const pct = n => n == null ? "—" : `${Math.round(n * 100)}%`;
 const FORM_MAP = { urc: "URC", callused: "CALL", plug: "PLUG", liner: "PLUG", rooted: "PLUG", bareroot: "BULB", seed: "SEED" };
 
+// Numeric field that keeps its own draft and will NOT be reset while you're
+// typing in it (a background re-render clobbering the value is what dropped
+// digits — "30" becoming "3"). Commits on blur/Enter; syncs from outside only
+// when not focused.
+function NumInput({ value, onCommit, placeholder, style, decimal }) {
+  const [v, setV] = useState(value == null || value === "" ? "" : String(value));
+  const focused = useRef(false);
+  useEffect(() => { if (!focused.current) setV(value == null || value === "" ? "" : String(value)); }, [value]);
+  return (
+    <input value={v} placeholder={placeholder} inputMode={decimal ? "decimal" : "numeric"}
+      onFocus={() => { focused.current = true; }}
+      onChange={e => setV(e.target.value.replace(decimal ? /[^0-9.]/g : /[^0-9]/g, ""))}
+      onBlur={() => { focused.current = false; onCommit(v); }}
+      onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
+      style={style} />
+  );
+}
+
 export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose, onMutated, onReplace }) {
   const sb = getSupabase();
   const { displayName } = useAuth();
@@ -328,36 +346,39 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
   const [dup, setDup] = useState(null);   // {name, qty, price} while the mini-form is open
   async function duplicateItem() {
     if (!detail?.parents.length || busy) return;
-    const name = (dup.name || "").trim();
     const qty = parseInt(dup.qty);
-    if (!name || !(qty > 0)) { window.alert("Give the new item a name and a quantity."); return; }
-    if (name.toUpperCase() === row.item.toUpperCase()) { window.alert("Pick a different name — that's the original's."); return; }
+    const names = (dup.names || "").split("\n").map(s => s.trim()).filter(Boolean);
+    const uniq = [...new Set(names)].filter(n => n.toUpperCase() !== row.item.toUpperCase());
+    if (!uniq.length || !(qty > 0)) { window.alert("Enter at least one new item name and a quantity."); return; }
     setBusy(true);
     try {
       const { data: tmpl, error: te } = await sb.from("scheduled_crops").select("*").eq("id", detail.parents[0].id).single();
       if (te || !tmpl) throw te || new Error("couldn't load the original");
       const { data: kids } = await sb.from("scheduled_crops").select("*").eq("combo_parent_id", tmpl.id);
-      const newId = crypto.randomUUID();
-      const parent = { ...tmpl, id: newId, item_name: name, qty_pots: qty, bench_id: null,
-        production_item_id: null, sale_price_per_pot: dup.price === "" ? tmpl.sale_price_per_pot : parseFloat(dup.price),
-        notes: `duplicated from ${row.item}` };
-      delete parent.created_at; delete parent.updated_at;
-      const { error } = await sb.from("scheduled_crops").insert(parent);
-      if (error) throw error;
-      for (const k of kids || []) {
-        const per = (+tmpl.qty_pots > 0) ? (+k.qty_plants_ordered || 0) / +tmpl.qty_pots : 0;
-        const child = { ...k, id: crypto.randomUUID(), combo_parent_id: newId, bench_id: null,
-          production_item_id: null, qty_plants_ordered: Math.round(per * qty) };
-        delete child.created_at; delete child.updated_at;
-        const { error: ce } = await sb.from("scheduled_crops").insert(child);
-        if (ce) throw ce;
+      const price = dup.price === "" ? tmpl.sale_price_per_pot : parseFloat(dup.price);
+      for (const name of uniq) {
+        const newId = crypto.randomUUID();
+        const parent = { ...tmpl, id: newId, item_name: name, qty_pots: qty, bench_id: null,
+          production_item_id: null, sale_price_per_pot: price, notes: `duplicated from ${row.item}` };
+        delete parent.created_at; delete parent.updated_at;
+        const { error } = await sb.from("scheduled_crops").insert(parent);
+        if (error) throw error;
+        for (const k of kids || []) {
+          const per = (+tmpl.qty_pots > 0) ? (+k.qty_plants_ordered || 0) / +tmpl.qty_pots : 0;
+          const child = { ...k, id: crypto.randomUUID(), combo_parent_id: newId, bench_id: null,
+            production_item_id: null, qty_plants_ordered: Math.round(per * qty) };
+          delete child.created_at; delete child.updated_at;
+          const { error: ce } = await sb.from("scheduled_crops").insert(child);
+          if (ce) throw ce;
+        }
+        await sb.from("item_change_log").insert({
+          plan_id: plan.id, item_name: name, change_type: "duplicated",
+          detail: { from: row.item, qty }, changed_by: displayName || null, source: "drill" });
       }
-      await sb.from("item_change_log").insert({
-        plan_id: plan.id, item_name: name, change_type: "duplicated",
-        detail: { from: row.item, qty }, changed_by: displayName || null, source: "drill" });
       setDup(null); setBusy(false);
-      // hand straight to the new item — it opens, the original closes
-      if (onReplace) onReplace(name, qty); else onMutated?.();
+      // one copy → open it; several → reload the table and let him drill into each
+      if (uniq.length === 1 && onReplace) onReplace(uniq[0], qty);
+      else { onMutated?.(); onClose(); window.alert(`Created ${uniq.length} items from ${row.item}. Open each from the table to set its plants.`); }
     } catch (e) { setBusy(false); window.alert("Couldn't duplicate: " + (e.message || e)); }
   }
 
@@ -537,7 +558,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
             </div>
           </div>
           <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
-            <button onClick={() => { setView("detail"); setDup(d => d ? null : { name: `${row.item} 2`, qty: String(row.planned || ""), price: "" }); }}
+            <button onClick={() => { setView("detail"); setDup(d => d ? null : { names: `${row.item} 2`, qty: String(row.planned || ""), price: "" }); }}
               title="copy this item as a new line — recipe, sourcing, weeks; no benches"
               style={{ padding: "5px 10px", borderRadius: 8, fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", border: `1.5px solid ${C.border}`, background: "#fff", color: C.text }}>⧉ Duplicate</button>
             <button onClick={renameItem} disabled={busy} title="rename this item everywhere"
@@ -654,13 +675,11 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
             <div style={{ display: "flex", gap: 5, alignItems: "center", flexWrap: "wrap" }}>
               <span style={{ fontSize: 12.5 }}>Target:</span>
-              <input
-                key={tgt?.target_units ?? "empty"}
-                defaultValue={tgt?.target_units ?? ""}
+              <NumInput
+                value={tgt?.target_units ?? ""}
                 placeholder={String(row.planned)}
-                inputMode="numeric"
-                onBlur={e => {
-                  const t = e.target.value.trim();
+                onCommit={raw => {
+                  const t = String(raw).trim();
                   if (t === String(tgt?.target_units ?? "")) return;          // untouched
                   if (t === "") {
                     if (tgt?.target_units == null) return;                    // empty→empty no-op
@@ -669,9 +688,8 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
                   const n = Math.max(0, Math.round(+t.replace(/[^0-9.]/g, "")));
                   if (!isNaN(n)) onSaveTarget({ target_units: n, decision: n === 0 ? "drop" : n > row.planned ? "grow" : n < row.planned ? "cut" : "hold" });
                 }}
-                onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
                 style={{ width: 84, padding: "6px 8px", textAlign: "right", borderRadius: 8, fontSize: 14, fontWeight: 700,
-                  fontFamily: "inherit", border: `1.5px solid ${tgt?.target_units != null ? C.light : C.border}` }} />
+                  fontFamily: "inherit", border: `1.5px solid ${tgt?.target_units != null ? C.light : C.border}`, boxSizing: "border-box" }} />
               {[-20, -10, 10, 20].map(pd => (
                 <button key={pd} style={{ ...chip, color: pd < 0 ? C.red : C.green }}
                   title={`${pd > 0 ? "+" : ""}${pd}% of planned (${row.planned.toLocaleString()})`}
@@ -910,20 +928,20 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
         <div onClick={() => setDup(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.5)", zIndex: 9300, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
           <div onClick={e => e.stopPropagation()} style={{ background: "#f6f9f3", borderRadius: 14, width: "100%", maxWidth: 460, padding: 18 }}>
             <div style={{ fontSize: 16.5, fontWeight: 800, color: C.dark, fontFamily: "'DM Serif Display',Georgia,serif", marginBottom: 2 }}>⧉ Duplicate {row.item}</div>
-            <div style={{ fontSize: 11.5, color: C.muted, marginBottom: 12 }}>Copies the recipe, sourcing, weeks and layout. Benches stay empty — that's the production session's call.</div>
-            <label style={{ display: "block", fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", marginBottom: 3 }}>New item name</label>
-            <input value={dup.name} onChange={e => setDup({ ...dup, name: e.target.value })} autoFocus
-              style={{ width: "100%", boxSizing: "border-box", padding: "8px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13.5, fontWeight: 700, fontFamily: "inherit", marginBottom: 10 }} />
+            <div style={{ fontSize: 11.5, color: C.muted, marginBottom: 12 }}>Copies the recipe, sourcing, weeks and layout. One new item per line — make several at once and set each one's plants later. Benches stay empty.</div>
+            <label style={{ display: "block", fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", marginBottom: 3 }}>New item name(s) — one per line</label>
+            <textarea value={dup.names} onChange={e => setDup({ ...dup, names: e.target.value })} autoFocus rows={Math.min(8, Math.max(2, (dup.names || "").split("\n").length + 1))}
+              style={{ width: "100%", boxSizing: "border-box", padding: "8px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13.5, fontWeight: 700, fontFamily: "inherit", marginBottom: 10, resize: "vertical" }} />
             <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
               <div>
                 <label style={{ display: "block", fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", marginBottom: 3 }}>Quantity</label>
-                <input value={dup.qty} onChange={e => setDup({ ...dup, qty: e.target.value })} inputMode="numeric"
-                  style={{ width: 100, padding: "8px 10px", textAlign: "right", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13.5, fontFamily: "inherit" }} />
+                <NumInput value={dup.qty} onCommit={v => setDup(d => ({ ...d, qty: v }))}
+                  style={{ width: 100, padding: "8px 10px", textAlign: "right", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13.5, fontFamily: "inherit", boxSizing: "border-box" }} />
               </div>
               <div>
                 <label style={{ display: "block", fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", marginBottom: 3 }}>Price (blank = same)</label>
-                <input value={dup.price} onChange={e => setDup({ ...dup, price: e.target.value })} inputMode="decimal" placeholder={agg?.planPrice ? `$${(+agg.planPrice).toFixed(2)}` : ""}
-                  style={{ width: 110, padding: "8px 10px", textAlign: "right", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13.5, fontFamily: "inherit" }} />
+                <NumInput value={dup.price} decimal onCommit={v => setDup(d => ({ ...d, price: v }))} placeholder={agg?.planPrice ? `$${(+agg.planPrice).toFixed(2)}` : ""}
+                  style={{ width: 110, padding: "8px 10px", textAlign: "right", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13.5, fontFamily: "inherit", boxSizing: "border-box" }} />
               </div>
             </div>
             <div style={{ display: "flex", gap: 8 }}>
