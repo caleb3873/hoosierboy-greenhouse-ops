@@ -2077,8 +2077,11 @@ function GroupBuilder({ rows, weeks, peakDefault, initialSel, supplierByItem, on
   const [brules, setBrules] = useState([]);
   const [expanded, setExpanded] = useState(null);   // color whose wave amounts are open
   const [waveOv, setWaveOv] = useState({});         // item -> hand-edited [units] per wave
+  const [templates, setTemplates] = useState([]);
   const INCR = 100, MIN_BREEDER = 2000;   // uniform defaults: 10 cases of 10; 2000/breeder
   useEffect(() => { if (sb) sb.from("breeder_rules").select("*").then(({ data }) => setBrules(data || [])); }, [sb]);
+  const loadTemplates = () => sb && sb.from("group_templates").select("*").order("name").then(({ data }) => setTemplates(data || []));
+  useEffect(() => { loadTemplates(); }, [sb]); // eslint-disable-line
   useEffect(() => { setWaveFinishes(f => Array.from({ length: nWaves }, (_, i) => f[i] ?? (peakDefault - (nWaves - 1 - i) * 2))); setWaveOv({}); }, [nWaves, peakDefault]);
   // breeder/supplier for a variety: matching series rule wins; else the supplier
   // ASSIGNED IN SOURCING (from the plan row once a quote was picked); else unassigned
@@ -2111,6 +2114,30 @@ function GroupBuilder({ rows, weeks, peakDefault, initialSel, supplierByItem, on
   const pctTotal = selRows.reduce((a, r) => a + pctOf(r.item), 0);
   const normalizePct = () => { const s = pctTotal || 1; setPct(p => { const n = {}; selRows.forEach(r => { n[r.item] = Math.round(pctOf(r.item) / s * 1000) / 10; }); return n; }); setCountOv({}); setWaveOv({}); };
   const setWaveFinish = (wi, delta) => setWaveFinishes(f => f.map((x, i) => i === wi ? x + delta : x));
+  // Templates: color mix + waves, reusable across years. Finish weeks stored as
+  // offsets from the peak (Mother's Day) so they translate to next year's calendar.
+  async function saveTemplate() {
+    if (!selRows.length) { window.alert("Select some colors first."); return; }
+    const name = window.prompt("Template name (e.g. '4.5\" Geranium program'):");
+    if (!name || !name.trim()) return;
+    const config = { items: selRows.map(r => ({ item: r.item, pct: pctOf(r.item) })), n_waves: nWaves, wave_offsets: waveFinishes.map(f => f - peakDefault) };
+    const { error } = await sb.from("group_templates").insert({ name: name.trim(), config, created_by: null });
+    if (error) { window.alert("Couldn't save: " + error.message); return; }
+    await loadTemplates();
+    window.alert(`Saved "${name.trim()}" — reuse it next year from the Template dropdown.`);
+  }
+  function applyTemplate(id) {
+    const t = templates.find(x => x.id === id); if (!t) return;
+    const cfg = t.config || {};
+    const items = (cfg.items || []).filter(x => core.some(r => r.item === x.item));
+    const missing = (cfg.items || []).length - items.length;
+    setSel(new Set(items.map(x => x.item)));
+    setPct(Object.fromEntries(items.map(x => [x.item, x.pct])));
+    setCountOv({}); setWaveOv({});
+    if (cfg.n_waves) setNWaves(cfg.n_waves);
+    if (cfg.wave_offsets) setWaveFinishes(cfg.wave_offsets.map(o => peakDefault + o));
+    if (missing) window.alert(`Applied "${t.name}". ${missing} item(s) from the template aren't in this plan and were skipped.`);
+  }
   const toggle = it => setSel(s => { const n = new Set(s); n.has(it) ? n.delete(it) : n.add(it); return n; });
   const shown = core.filter(r => !q || r.item.toLowerCase().includes(q.toLowerCase())).sort((a, b) => a.item.localeCompare(b.item));
   // pool totals by breeder for the 2000-minimum check
@@ -2132,9 +2159,17 @@ function GroupBuilder({ rows, weeks, peakDefault, initialSel, supplierByItem, on
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.5)", zIndex: 9300, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div onClick={e => e.stopPropagation()} style={{ background: "#f6f9f3", borderRadius: 14, width: "100%", maxWidth: 780, maxHeight: "90vh", overflow: "auto", padding: 18 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
           <div style={{ fontSize: 17, fontWeight: 800, color: COLORS.dark, fontFamily: "'DM Serif Display',Georgia,serif" }}>🎨 Group builder — colors → waves</div>
-          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, color: COLORS.muted, cursor: "pointer" }}>×</button>
+          <div style={{ display: "flex", gap: 6, alignItems: "center", marginLeft: "auto" }}>
+            <select value="" onChange={e => e.target.value && applyTemplate(e.target.value)} title="Load a saved template"
+              style={{ padding: "5px 8px", borderRadius: 7, border: `1px solid ${COLORS.border}`, fontSize: 12, fontFamily: "inherit", background: "#fff", cursor: "pointer" }}>
+              <option value="">📋 Template…</option>
+              {templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+            <button onClick={saveTemplate} style={{ padding: "5px 10px", borderRadius: 7, border: `1px solid ${COLORS.light}`, background: "#fff", color: COLORS.dark, fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>💾 Save</button>
+            <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, color: COLORS.muted, cursor: "pointer" }}>×</button>
+          </div>
         </div>
         <div style={{ fontSize: 11.5, color: COLORS.muted, marginBottom: 10 }}>Type a group total, set each color's % (counts follow, in 100s), and set the wave finish dates once — they apply to every color. Amounts split by each color's 2026 curve; adjust any color's waves individually below.</div>
 
@@ -2623,8 +2658,8 @@ function SalesVsPlanTab({ plan }) {
   const sb = getSupabase();
   const [rows, setRows] = useState(null);
   const [season, setSeason] = useState(null);
-  const [sortCol, setSortCol] = useState("lostEst");
-  const [sortDir, setSortDir] = useState("desc");
+  const [sortCol, setSortCol] = useState("item");
+  const [sortDir, setSortDir] = useState("asc");
   const [filt, setFilt] = useState("all");
   const [query, setQuery] = usePersistedState("gh_svp_query", "");
   const [sizeFilt, setSizeFilt] = usePersistedState("gh_svp_size", "all");
