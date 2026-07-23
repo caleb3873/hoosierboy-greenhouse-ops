@@ -301,6 +301,24 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
   // Arrange the basket right here — same drag-to-place designer as the combo
   // gallery, saved to every bench row of the item.
   const [arranging, setArranging] = useState(false);
+  const [copyLayout, setCopyLayout] = useState(null);   // arrangement copied from another item
+  const [copySearch, setCopySearch] = useState("");
+  const [copyHits, setCopyHits] = useState([]);
+  useEffect(() => { if (!arranging) { setCopyLayout(null); setCopySearch(""); setCopyHits([]); } }, [arranging]);
+  useEffect(() => {
+    if (!arranging || !copySearch.trim()) { setCopyHits([]); return; }
+    let live = true;
+    (async () => {
+      const { data } = await sb.from("scheduled_crops")
+        .select("item_name,planting_layout").eq("plan_id", plan.id)
+        .not("planting_layout", "is", null).ilike("item_name", `%${copySearch.trim()}%`).limit(40);
+      if (!live) return;
+      const seen = new Set(); const hits = [];
+      for (const r of data || []) { if (r.item_name === row.item || seen.has(r.item_name) || !r.planting_layout?.dots?.length) continue; seen.add(r.item_name); hits.push(r); }
+      setCopyHits(hits.slice(0, 12));
+    })();
+    return () => { live = false; };
+  }, [copySearch, arranging]); // eslint-disable-line
   async function saveLayout(l) {
     try {
       const { data } = await sb.from("scheduled_crops").update({ planting_layout: l })
@@ -670,12 +688,15 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
         <div style={{ background: "#eef6e8", border: `1.5px solid ${C.light}`, borderRadius: 10, padding: "11px 13px", marginTop: 12 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 7 }}>
             <span style={{ fontSize: 10.5, fontWeight: 800, color: "#3f6d33", textTransform: "uppercase" }}>2027 decisions</span>
-            {agg && (agg.comps.length > 0 || detail?.parents.some(p => +p.ppp > 1)) && (
+            {agg && (agg.comps.length > 0 || detail?.parents.some(p => +p.ppp > 1)) && (() => {
+              const arranged = detail?.parents.some(p => p.planting_layout);
+              return (
               <button onClick={() => setArranging(true)} title="drag-to-place planting layout"
-                style={{ marginLeft: "auto", padding: "5px 12px", borderRadius: 8, border: `1.5px solid ${C.light}`, background: "#fff", color: C.dark, fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
-                ✏️ Arrange{detail?.parents.some(p => p.planting_layout) ? "" : " (no layout yet)"}
+                style={{ marginLeft: "auto", padding: "5px 12px", borderRadius: 8, border: `1.5px solid ${arranged ? C.green : C.light}`, background: "#fff", color: C.dark, fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                ✏️ Arrange {arranged ? <span style={{ color: C.green }}>✓</span> : <span style={{ color: C.muted, fontWeight: 400 }}>(none yet)</span>}
               </button>
-            )}
+              );
+            })()}
             {agg && (
               <button onClick={setForSeason} style={{ marginLeft: agg.comps.length > 0 || detail?.parents.some(p => +p.ppp > 1) ? 0 : "auto", padding: "5px 12px", borderRadius: 8, border: "none", background: C.green, color: "#fff", fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
                 ✓ Set for {plan.name}
@@ -986,7 +1007,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
           ? agg.comps.map(c => Math.max(1, Math.round(c.per || 1)))
           : [Math.max(1, Math.max(...(detail?.parents.map(p => +p.ppp || 1) || [1])))];
         const saved = detail?.parents.find(p => p.planting_layout)?.planting_layout;
-        let seed = saved;
+        let seed = copyLayout || saved;
         if (!seed) {
           // seed real dots — interleave the plants around a ring so it opens ready to drag
           const order = []; const rem = perCounts.slice(); let any = true;
@@ -995,11 +1016,27 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
           const dots = order.map((pi, i) => { const a = -Math.PI / 2 + i * 2 * Math.PI / N; return { plant: pi, x: 0.5 + 0.34 * Math.cos(a), y: 0.5 + 0.34 * Math.sin(a) }; });
           seed = { plants: names, dots };
         }
+        const seedNames = copyLayout?.plants?.length ? copyLayout.plants : names;
         return (
           <div onClick={() => setArranging(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 9400, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
             <div onClick={e => e.stopPropagation()} style={{ background: "#f6f9f3", borderRadius: 14, width: "100%", maxWidth: 420, maxHeight: "90vh", overflow: "auto", padding: 16 }}>
-              <div style={{ fontSize: 15, fontWeight: 800, color: C.dark, fontFamily: "'DM Serif Display',Georgia,serif", marginBottom: 4 }}>✏️ Arrange {row.item}</div>
-              <BasketDesigner layout={seed} plantNames={names} onSave={saveLayout} onClose={() => setArranging(false)} />
+              <div style={{ fontSize: 15, fontWeight: 800, color: C.dark, fontFamily: "'DM Serif Display',Georgia,serif", marginBottom: 6 }}>✏️ Arrange {row.item}</div>
+              <div style={{ position: "relative", marginBottom: 8 }}>
+                <input value={copySearch} onChange={e => setCopySearch(e.target.value)} placeholder="📋 Copy an arrangement from another item — search name…"
+                  style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 12.5, fontFamily: "inherit" }} />
+                {copyHits.length > 0 && (
+                  <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 5, background: "#fff", border: `1px solid ${C.border}`, borderRadius: 8, marginTop: 3, maxHeight: 200, overflow: "auto", boxShadow: "0 6px 20px rgba(0,0,0,.15)" }}>
+                    {copyHits.map((h, i) => (
+                      <div key={i} onClick={() => { setCopyLayout(h.planting_layout); setCopySearch(""); setCopyHits([]); }}
+                        style={{ padding: "7px 10px", fontSize: 12.5, cursor: "pointer", borderBottom: `1px solid ${C.border}` }}>
+                        {h.item_name} <span style={{ color: C.muted, fontSize: 11 }}>— {h.planting_layout.dots.length} plants placed</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {copyLayout && <div style={{ fontSize: 11.5, color: C.green, marginBottom: 6 }}>✓ copied an arrangement — adjust and Lock &amp; save. <button onClick={() => setCopyLayout(null)} style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", textDecoration: "underline", fontSize: 11.5 }}>reset</button></div>}
+              <BasketDesigner key={copyLayout ? "copied" : "base"} layout={seed} plantNames={seedNames} onSave={saveLayout} onClose={() => setArranging(false)} />
             </div>
           </div>
         );
