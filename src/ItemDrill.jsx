@@ -966,14 +966,29 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
         onPick={addComponentFromQuote} onClose={() => setAddQuote(false)} />}
       {arranging && agg && (() => {
         const isCombo = agg.comps.length > 0;
-        const names = isCombo ? agg.comps.map(c => c.label)
-          : [agg.materials[0]?.variety || row.item];
-        const maxPpp = Math.max(...(detail?.parents.map(p => +p.ppp || 1) || [1]));
+        const names = isCombo ? agg.comps.map(c => c.label) : [agg.materials[0]?.variety || row.item];
+        // how many of each plant go in ONE basket: combo → per-basket count; mono → ppp
+        const perCounts = isCombo
+          ? agg.comps.map(c => Math.max(1, Math.round(c.per || 1)))
+          : [Math.max(1, Math.max(...(detail?.parents.map(p => +p.ppp || 1) || [1])))];
         const saved = detail?.parents.find(p => p.planting_layout)?.planting_layout;
-        // monoculture default: the item's ppp as an evenly spaced ring of the one variety
-        const seed = saved || (isCombo ? { plants: names } : { plants: names, edge: { plant: 0, count: maxPpp } });
-        return <BasketDesigner layout={seed} plantNames={names}
-          onSave={saveLayout} onClose={() => setArranging(false)} />;
+        let seed = saved;
+        if (!seed) {
+          // seed real dots — interleave the plants around a ring so it opens ready to drag
+          const order = []; const rem = perCounts.slice(); let any = true;
+          while (any) { any = false; for (let pi = 0; pi < rem.length; pi++) if (rem[pi] > 0) { order.push(pi); rem[pi]--; any = true; } }
+          const N = order.length || 1;
+          const dots = order.map((pi, i) => { const a = -Math.PI / 2 + i * 2 * Math.PI / N; return { plant: pi, x: 0.5 + 0.34 * Math.cos(a), y: 0.5 + 0.34 * Math.sin(a) }; });
+          seed = { plants: names, dots };
+        }
+        return (
+          <div onClick={() => setArranging(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 9400, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+            <div onClick={e => e.stopPropagation()} style={{ background: "#f6f9f3", borderRadius: 14, width: "100%", maxWidth: 420, maxHeight: "90vh", overflow: "auto", padding: 16 }}>
+              <div style={{ fontSize: 15, fontWeight: 800, color: C.dark, fontFamily: "'DM Serif Display',Georgia,serif", marginBottom: 4 }}>✏️ Arrange {row.item}</div>
+              <BasketDesigner layout={seed} plantNames={names} onSave={saveLayout} onClose={() => setArranging(false)} />
+            </div>
+          </div>
+        );
       })()}
     </div>
   );
