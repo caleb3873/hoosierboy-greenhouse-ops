@@ -2034,9 +2034,8 @@ function scorecardFrom(rows, targets, dismissed, missing) {
 // Split a color's total across N waves ending at the peak week, each wave sized
 // by how that color actually sold in the window it covers (2026 curve) — so
 // volume ramps toward Mother's Day, weighted by real demand. No history → even.
-function curveWaves(total, wkA, weeks, N, peakWk, spacing, incr) {
-  const sp = spacing || 2, step = incr || 1;
-  const finishes = Array.from({ length: N }, (_, i) => peakWk - (N - 1 - i) * sp);
+function curveWaves(total, wkA, weeks, finishes, incr) {
+  const N = finishes.length, step = incr || 1;
   const wIdx = Object.fromEntries(weeks.map((w, i) => [w, i]));
   const weights = finishes.map((f, i) => {
     const from = wIdx[f] ?? 0;
@@ -2070,18 +2069,17 @@ function GroupBuilder({ rows, weeks, peakDefault, initialSel, supplierByItem, on
   const [sel, setSel] = useState(() => new Set(initialSel || []));
   const [q, setQ] = useState("");
   const [total, setTotal] = useState("");
-  const [pct, setPct] = useState({});      // item -> %
-  const [count, setCount] = useState({});  // item -> committed count (editable)
+  const [pct, setPct] = useState({});       // item -> %  (live driver of each color's count)
+  const [countOv, setCountOv] = useState({});  // item -> hand-typed count (overrides %)
   const [nWaves, setNWaves] = useState(3);
-  const [peak, setPeak] = useState(peakDefault);
-  const [spacing, setSpacing] = useState(2);
+  const [waveFinishes, setWaveFinishes] = useState(() => Array.from({ length: 3 }, (_, i) => peakDefault - (3 - 1 - i) * 2));  // global ready weeks, one per wave
   const [busy, setBusy] = useState(false);
   const [brules, setBrules] = useState([]);
-  const [expanded, setExpanded] = useState(null);   // color whose waves are open for editing
-  const [waveOv, setWaveOv] = useState({});         // item -> hand-edited [{units, ready_week}]
+  const [expanded, setExpanded] = useState(null);   // color whose wave amounts are open
+  const [waveOv, setWaveOv] = useState({});         // item -> hand-edited [units] per wave
   const INCR = 100, MIN_BREEDER = 2000;   // uniform defaults: 10 cases of 10; 2000/breeder
   useEffect(() => { if (sb) sb.from("breeder_rules").select("*").then(({ data }) => setBrules(data || [])); }, [sb]);
-  useEffect(() => { setWaveOv({}); }, [nWaves, peak, spacing]);   // re-splitting resets hand edits
+  useEffect(() => { setWaveFinishes(f => Array.from({ length: nWaves }, (_, i) => f[i] ?? (peakDefault - (nWaves - 1 - i) * 2))); setWaveOv({}); }, [nWaves, peakDefault]);
   // breeder/supplier for a variety: matching series rule wins; else the supplier
   // ASSIGNED IN SOURCING (from the plan row once a quote was picked); else unassigned
   const breederOf = it => {
@@ -2094,19 +2092,25 @@ function GroupBuilder({ rows, weeks, peakDefault, initialSel, supplierByItem, on
   const selRows = core.filter(r => sel.has(r.item));
   const evenPct = selRows.length ? Math.round(1000 / selRows.length) / 10 : 0;
   const pctOf = it => pct[it] != null ? +pct[it] : evenPct;
-  const seed = () => {
-    const t = parseInt(total) || 0; const c = {};
-    selRows.forEach(r => { c[r.item] = roundUp(Math.round(t * pctOf(r.item) / 100), breederOf(r.item).incr); });
-    setCount(c);
-  };
   const rowByItemLocal = Object.fromEntries(core.map(r => [r.item, r]));
-  // a color's total: hand-edited waves win (sum them), else the seeded/typed count
-  const countOf = it => waveOv[it] ? waveOv[it].reduce((a, w) => a + (+w.units || 0), 0)
-    : count[it] != null ? +count[it] : (parseInt(total) ? roundUp(Math.round((parseInt(total)) * pctOf(it) / 100), breederOf(it).incr) : (rowByItemLocal[it]?.planned || 0));
-  // the waves for a color — hand-edited override, else the curve split (in 100s)
-  const wavesFor = it => waveOv[it] || curveWaves(countOf(it), rowByItemLocal[it]?.wk, weeks, Math.max(1, nWaves), peak, spacing, breederOf(it).incr);
-  const editWave = (it, wi, patch) => setWaveOv(o => { const cur = (o[it] || wavesFor(it)).map(w => ({ ...w })); cur[wi] = { ...cur[wi], ...patch }; return { ...o, [it]: cur }; });
+  // count from % of the group total, rounded to the breeder increment
+  const derivedCount = it => parseInt(total) ? roundUp(Math.round(parseInt(total) * pctOf(it) / 100), breederOf(it).incr) : (rowByItemLocal[it]?.planned || 0);
+  // a color's total: hand-edited waves win (sum), else a typed count, else % of total
+  const countOf = it => waveOv[it] ? waveOv[it].reduce((a, u) => a + (+u || 0), 0)
+    : countOv[it] != null ? +countOv[it] : derivedCount(it);
+  // waves: global finish weeks; amounts hand-edited or curve-split in 100s
+  const wavesFor = it => {
+    const auto = curveWaves(countOf(it), rowByItemLocal[it]?.wk, weeks, waveFinishes, breederOf(it).incr);
+    const ov = waveOv[it];
+    return waveFinishes.map((f, i) => ({ units: ov ? (ov[i] ?? auto[i]?.units ?? 0) : (auto[i]?.units || 0), ready_week: f }));
+  };
+  const editWave = (it, wi, units) => setWaveOv(o => { const cur = (o[it] || wavesFor(it).map(w => w.units)).slice(); cur[wi] = units; return { ...o, [it]: cur }; });
+  const setPctLive = (it, v) => { setPct(p => ({ ...p, [it]: v })); setCountOv(c => { const n = { ...c }; delete n[it]; return n; }); setWaveOv(o => { const n = { ...o }; delete n[it]; return n; }); };
+  const setCountManual = (it, v) => { setCountOv(c => ({ ...c, [it]: v })); if (parseInt(total)) setPct(p => ({ ...p, [it]: Math.round(v / parseInt(total) * 1000) / 10 })); setWaveOv(o => { const n = { ...o }; delete n[it]; return n; }); };
   const grand = selRows.reduce((a, r) => a + countOf(r.item), 0);
+  const pctTotal = selRows.reduce((a, r) => a + pctOf(r.item), 0);
+  const normalizePct = () => { const s = pctTotal || 1; setPct(p => { const n = {}; selRows.forEach(r => { n[r.item] = Math.round(pctOf(r.item) / s * 1000) / 10; }); return n; }); setCountOv({}); setWaveOv({}); };
+  const setWaveFinish = (wi, delta) => setWaveFinishes(f => f.map((x, i) => i === wi ? x + delta : x));
   const toggle = it => setSel(s => { const n = new Set(s); n.has(it) ? n.delete(it) : n.add(it); return n; });
   const shown = core.filter(r => !q || r.item.toLowerCase().includes(q.toLowerCase())).sort((a, b) => a.item.localeCompare(b.item));
   // pool totals by breeder for the 2000-minimum check
@@ -2132,15 +2136,28 @@ function GroupBuilder({ rows, weeks, peakDefault, initialSel, supplierByItem, on
           <div style={{ fontSize: 17, fontWeight: 800, color: COLORS.dark, fontFamily: "'DM Serif Display',Georgia,serif" }}>🎨 Group builder — colors → waves</div>
           <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, color: COLORS.muted, cursor: "pointer" }}>×</button>
         </div>
-        <div style={{ fontSize: 11.5, color: COLORS.muted, marginBottom: 10 }}>Seed a group total split by %, tweak any color, then split each into waves that ramp toward the peak on its 2026 curve. Writes a target + rounds on every selected color.</div>
+        <div style={{ fontSize: 11.5, color: COLORS.muted, marginBottom: 10 }}>Type a group total, set each color's % (counts follow, in 100s), and set the wave finish dates once — they apply to every color. Amounts split by each color's 2026 curve; adjust any color's waves individually below.</div>
 
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 10 }}>
+        <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 8 }}>
           <div><label style={lab}>Group total</label><input value={total} onChange={e => setTotal(e.target.value)} inputMode="numeric" placeholder="e.g. 12000" style={{ ...inp, width: 100 }} /></div>
-          <button onClick={seed} style={{ ...inp, cursor: "pointer", fontWeight: 800, background: COLORS.light, color: "#fff", border: "none" }}>Seed by % →</button>
-          <div><label style={lab}>Waves</label><input value={nWaves} onChange={e => setNWaves(Math.max(1, parseInt(e.target.value) || 1))} inputMode="numeric" style={{ ...inp, width: 54 }} /></div>
-          <div><label style={lab}>Peak finish wk</label><input value={peak} onChange={e => setPeak(parseInt(e.target.value) || peakDefault)} inputMode="numeric" style={{ ...inp, width: 54 }} /></div>
-          <div><label style={lab}>Wks apart</label><input value={spacing} onChange={e => setSpacing(Math.max(1, parseInt(e.target.value) || 1))} inputMode="numeric" style={{ ...inp, width: 54 }} /></div>
-          <div style={{ marginLeft: "auto", fontSize: 12.5, color: COLORS.text }}>{selRows.length} colors · <b>{grand.toLocaleString()}</b> total</div>
+          <div><label style={lab}>Waves</label><input value={nWaves} onChange={e => setNWaves(Math.max(1, parseInt(e.target.value) || 1))} inputMode="numeric" style={{ ...inp, width: 48 }} /></div>
+          <div>
+            <label style={lab}>Wave finish weeks — set once for all</label>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {waveFinishes.map((f, wi) => (
+                <div key={wi} style={{ display: "flex", alignItems: "center", gap: 3, border: `1px solid ${COLORS.border}`, borderRadius: 7, padding: "3px 5px", background: "#fff" }}>
+                  <span style={{ fontSize: 10, fontWeight: 800, color: COLORS.muted }}>W{wi + 1}</span>
+                  <button onClick={() => setWaveFinish(wi, -1)} style={{ padding: "0 4px", border: "none", background: "none", cursor: "pointer", color: COLORS.muted }}>◀</button>
+                  <b style={{ fontSize: 12.5 }}>wk{f}{f === peakDefault ? "★" : ""}</b>
+                  <button onClick={() => setWaveFinish(wi, 1)} style={{ padding: "0 4px", border: "none", background: "none", cursor: "pointer", color: COLORS.muted }}>▶</button>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div style={{ marginLeft: "auto", fontSize: 12.5, color: COLORS.text, textAlign: "right" }}>
+            {selRows.length} colors · <b>{grand.toLocaleString()}</b> total<br />
+            <span style={{ fontSize: 11, color: Math.abs(pctTotal - 100) < 0.5 ? "#2e7d32" : COLORS.amber }}>% sums to {Math.round(pctTotal * 10) / 10}%{Math.abs(pctTotal - 100) >= 0.5 && <button onClick={normalizePct} style={{ marginLeft: 5, fontSize: 10.5, color: COLORS.dark, background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}>normalize to 100</button>}</span>
+          </div>
         </div>
 
         <input value={q} onChange={e => setQ(e.target.value)} placeholder="🔍 filter colors to include…" style={{ ...inp, width: "100%", boxSizing: "border-box", marginBottom: 6 }} />
@@ -2162,9 +2179,9 @@ function GroupBuilder({ rows, weeks, peakDefault, initialSel, supplierByItem, on
                     <td style={{ ...td, fontWeight: 600 }}>{r.item}</td>
                     <td style={{ ...td, fontSize: 11, color: b.breeder.startsWith("—") ? COLORS.amber : COLORS.muted }}>{b.breeder}</td>
                     <td style={{ ...td, textAlign: "right", color: COLORS.muted }}>{r.sold.toLocaleString()}</td>
-                    <td style={{ ...td, textAlign: "right" }}>{on ? <input value={pct[r.item] ?? evenPct} onChange={e => setPct(p => ({ ...p, [r.item]: e.target.value }))} inputMode="decimal" style={{ ...inp, width: 48, textAlign: "right", padding: "3px 5px" }} /> : "—"}</td>
-                    <td style={{ ...td, textAlign: "right" }}>{on ? <input value={count[r.item] ?? c} onChange={e => { setWaveOv(o => { const n = { ...o }; delete n[r.item]; return n; }); setCount(x => ({ ...x, [r.item]: e.target.value })); }}
-                      onBlur={e => { const n = roundUp(parseInt(e.target.value) || 0, b.incr); setCount(x => ({ ...x, [r.item]: n })); }}
+                    <td style={{ ...td, textAlign: "right" }}>{on ? <input value={pct[r.item] ?? evenPct} onChange={e => setPctLive(r.item, e.target.value)} inputMode="decimal" style={{ ...inp, width: 48, textAlign: "right", padding: "3px 5px" }} /> : "—"}</td>
+                    <td style={{ ...td, textAlign: "right" }}>{on ? <input value={countOv[r.item] ?? c} onChange={e => setCountManual(r.item, parseInt(e.target.value.replace(/\D/g, "")) || 0)}
+                      onBlur={e => setCountManual(r.item, roundUp(parseInt(e.target.value.replace(/\D/g, "")) || 0, b.incr))}
                       inputMode="numeric" style={{ ...inp, width: 66, textAlign: "right", padding: "3px 5px", fontWeight: 700 }} /> : "—"}</td>
                     <td style={{ ...td, fontSize: 11.5, color: COLORS.dark, cursor: on ? "pointer" : "default" }} onClick={() => on && setExpanded(isOpen ? null : r.item)}>
                       {on ? <>{isOpen ? "▾ " : "▸ "}{waves.map(w => (+w.units).toLocaleString()).join(" · ")} <span style={{ color: COLORS.muted }}>({waves.length} wave{waves.length !== 1 ? "s" : ""}{edited ? ", edited" : ""})</span></> : ""}
@@ -2173,19 +2190,14 @@ function GroupBuilder({ rows, weeks, peakDefault, initialSel, supplierByItem, on
                   {on && isOpen && (
                     <tr style={{ background: "#f4f8f1", borderBottom: `1px solid ${COLORS.border}` }}>
                       <td colSpan={7} style={{ padding: "4px 14px 10px 40px" }}>
-                        <div style={{ fontSize: 11, color: COLORS.muted, marginBottom: 4 }}>Edit each wave's amount and finish week — the color total follows the sum. Latest waves finish nearest Mother's Day.</div>
+                        <div style={{ fontSize: 11, color: COLORS.muted, marginBottom: 4 }}>Adjust each wave's amount (in 100s) — the color total follows the sum. Finish weeks are the global ones set up top.</div>
                         <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
                           {waves.map((w, wi) => (
                             <div key={wi} style={{ display: "flex", flexDirection: "column", gap: 3, background: "#fff", border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "6px 9px" }}>
-                              <span style={{ fontSize: 10, fontWeight: 800, color: COLORS.muted, textTransform: "uppercase" }}>Wave {wi + 1}</span>
-                              <input value={w.units} onChange={e => editWave(r.item, wi, { units: parseInt(e.target.value.replace(/\D/g, "")) || 0 })}
-                                onBlur={e => editWave(r.item, wi, { units: roundUp(parseInt(e.target.value.replace(/\D/g, "")) || 0, b.incr) })}
+                              <span style={{ fontSize: 10, fontWeight: 800, color: COLORS.muted, textTransform: "uppercase" }}>Wave {wi + 1} · wk{w.ready_week}</span>
+                              <input value={w.units} onChange={e => editWave(r.item, wi, parseInt(e.target.value.replace(/\D/g, "")) || 0)}
+                                onBlur={e => editWave(r.item, wi, roundUp(parseInt(e.target.value.replace(/\D/g, "")) || 0, b.incr))}
                                 inputMode="numeric" style={{ ...inp, width: 76, textAlign: "right", fontWeight: 700, padding: "4px 6px" }} />
-                              <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11.5 }}>
-                                <button onClick={() => editWave(r.item, wi, { ready_week: (+w.ready_week || 0) - 1 })} style={{ padding: "0 5px", borderRadius: 5, border: `1px solid ${COLORS.border}`, background: "#fff", cursor: "pointer" }}>◀</button>
-                                <span style={{ color: COLORS.muted }}>finish <b style={{ color: COLORS.text }}>wk{w.ready_week}</b></span>
-                                <button onClick={() => editWave(r.item, wi, { ready_week: (+w.ready_week || 0) + 1 })} style={{ padding: "0 5px", borderRadius: 5, border: `1px solid ${COLORS.border}`, background: "#fff", cursor: "pointer" }}>▶</button>
-                              </div>
                             </div>
                           ))}
                           <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", gap: 4 }}>
@@ -2215,7 +2227,7 @@ function GroupBuilder({ rows, weeks, peakDefault, initialSel, supplierByItem, on
           </div>
         )}
         <div style={{ display: "flex", gap: 8, marginTop: 12, alignItems: "center" }}>
-          <span style={{ fontSize: 11.5, color: COLORS.muted }}>Increments of {INCR} (10 cases of 10) · min {MIN_BREEDER.toLocaleString()} per breeder/supplier · peak wk{peak} ≈ Mother's Day.</span>
+          <span style={{ fontSize: 11.5, color: COLORS.muted }}>Increments of {INCR} (10 cases of 10) · min {MIN_BREEDER.toLocaleString()} per breeder/supplier · ★ = Mother's Day (wk{peakDefault}).</span>
           <button onClick={onClose} style={{ marginLeft: "auto", padding: "9px 14px", borderRadius: 8, border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.muted, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
           <button onClick={commit} disabled={busy || !selRows.length} style={{ padding: "9px 16px", borderRadius: 8, border: "none", background: COLORS.dark, color: "#c8e6b8", fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>{busy ? "Saving…" : `✓ Set ${selRows.length} colors`}</button>
         </div>
