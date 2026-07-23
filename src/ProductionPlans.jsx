@@ -2083,7 +2083,9 @@ function GroupBuilder({ rows, weeks, peakDefault, initialSel, supplierByItem, on
   useEffect(() => { if (sb) sb.from("breeder_rules").select("*").then(({ data }) => setBrules(data || [])); }, [sb]);
   const loadTemplates = () => sb && sb.from("group_templates").select("*").order("name").then(({ data }) => setTemplates(data || []));
   useEffect(() => { loadTemplates(); }, [sb]); // eslint-disable-line
-  useEffect(() => { setWaveFinishes(f => Array.from({ length: nWaves }, (_, i) => f[i] ?? (peakDefault - (nWaves - 1 - i) * 2))); setWaveOv({}); }, [nWaves, peakDefault]);
+  // keep the finish-week row the right length; extra/short wave amounts degrade
+  // gracefully in wavesFor, so we DON'T wipe hand edits or a loaded template here
+  useEffect(() => { setWaveFinishes(f => Array.from({ length: nWaves }, (_, i) => f[i] ?? (peakDefault - (nWaves - 1 - i) * 2))); }, [nWaves, peakDefault]);
   // breeder/supplier for a variety: matching series rule wins; else the supplier
   // ASSIGNED IN SOURCING (from the plan row once a quote was picked); else unassigned
   const breederOf = it => {
@@ -2128,7 +2130,11 @@ function GroupBuilder({ rows, weeks, peakDefault, initialSel, supplierByItem, on
     if (!selRows.length) { window.alert("Select some colors first."); return; }
     const name = window.prompt("Template name (e.g. '4.5\" Geranium program'):");
     if (!name || !name.trim()) return;
-    const config = { items: selRows.map(r => ({ item: r.item, pct: pctOf(r.item) })), n_waves: nWaves, wave_offsets: waveFinishes.map(f => f - peakDefault) };
+    const config = {
+      total: parseInt(total) || null,
+      items: selRows.map(r => ({ item: r.item, pct: pctOf(r.item), waves: wavesFor(r.item).map(w => w.units) })),
+      n_waves: nWaves, wave_offsets: waveFinishes.map(f => f - peakDefault),
+    };
     const { error } = await sb.from("group_templates").insert({ name: name.trim(), config, created_by: null });
     if (error) { window.alert("Couldn't save: " + error.message); return; }
     await loadTemplates();
@@ -2141,9 +2147,13 @@ function GroupBuilder({ rows, weeks, peakDefault, initialSel, supplierByItem, on
     const missing = (cfg.items || []).length - items.length;
     setSel(new Set(items.map(x => x.item)));
     setPct(Object.fromEntries(items.map(x => [x.item, x.pct])));
-    setCountOv({}); setWaveOv({});
+    setCountOv({});
+    if (cfg.total) setTotal(String(cfg.total));
     if (cfg.n_waves) setNWaves(cfg.n_waves);
     if (cfg.wave_offsets) setWaveFinishes(cfg.wave_offsets.map(o => peakDefault + o).sort((a, b) => a - b));
+    // restore the exact wave amounts if the template captured them
+    const wov = {}; items.forEach(x => { if (Array.isArray(x.waves)) wov[x.item] = x.waves; });
+    setWaveOv(wov);
     if (missing) window.alert(`Applied "${t.name}". ${missing} item(s) from the template aren't in this plan and were skipped.`);
   }
   const toggle = it => setSel(s => { const n = new Set(s); n.has(it) ? n.delete(it) : n.add(it); return n; });
@@ -2230,8 +2240,9 @@ function GroupBuilder({ rows, weeks, peakDefault, initialSel, supplierByItem, on
                         <td style={{ padding: "4px 8px", borderBottom: `1px solid ${COLORS.border}`, fontWeight: 600, position: "sticky", left: 0, background: "#fff", whiteSpace: "nowrap" }} title={b.breeder}>{r.item}</td>
                         {waves.map((w, wi) => (
                           <td key={wi} style={cell}>
-                            <input value={w.units} onChange={e => editWave(r.item, wi, parseInt(e.target.value.replace(/\D/g, "")) || 0)}
+                            <input key={`${r.item}-${wi}-${w.units}`} defaultValue={w.units}
                               onBlur={e => editWave(r.item, wi, roundUp(parseInt(e.target.value.replace(/\D/g, "")) || 0, b.incr))}
+                              onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
                               inputMode="numeric" style={{ width: 62, textAlign: "right", padding: "3px 5px", borderRadius: 6, border: `1px solid ${COLORS.border}`, fontSize: 12, fontFamily: "inherit", fontWeight: 700 }} />
                           </td>
                         ))}
@@ -2283,8 +2294,9 @@ function GroupBuilder({ rows, weeks, peakDefault, initialSel, supplierByItem, on
                           {waves.map((w, wi) => (
                             <div key={wi} style={{ display: "flex", flexDirection: "column", gap: 3, background: "#fff", border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "6px 9px" }}>
                               <span style={{ fontSize: 10, fontWeight: 800, color: COLORS.muted, textTransform: "uppercase" }}>Wave {wi + 1} · wk{w.ready_week}</span>
-                              <input value={w.units} onChange={e => editWave(r.item, wi, parseInt(e.target.value.replace(/\D/g, "")) || 0)}
+                              <input key={`${r.item}-${wi}-${w.units}`} defaultValue={w.units}
                                 onBlur={e => editWave(r.item, wi, roundUp(parseInt(e.target.value.replace(/\D/g, "")) || 0, b.incr))}
+                                onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
                                 inputMode="numeric" style={{ ...inp, width: 76, textAlign: "right", fontWeight: 700, padding: "4px 6px" }} />
                             </div>
                           ))}
