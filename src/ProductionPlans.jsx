@@ -331,6 +331,7 @@ const PLAN_TABS = [
   { id: "plugs",     label: "🧮 Plug Orders" },
   { id: "sales",     label: "📈 Sales vs Plan" },
   { id: "yoy",       label: "⚖ Year over Year" },
+  { id: "readydates",label: "📆 Ready & Orders" },
   { id: "categories",label: "🏷 Categories" },
   { id: "orders",    label: "📋 Orders" },
   { id: "sourcing",  label: "🧭 Sourcing" },
@@ -475,6 +476,7 @@ function PlanDashboard({ plan, initialTab }) {
           {hasData && tab === "plugs"     && <PlugOrdersTab plan={plan} />}
           {hasData && tab === "sales"     && <SalesVsPlanTab plan={plan} />}
           {hasData && tab === "yoy"       && <YearOverYearTab plan={plan} />}
+          {hasData && tab === "readydates" && <ReadyDatesTab plan={plan} />}
           {hasData && tab === "categories" && <CategoryProfiles plan={plan} />}
           {hasData && tab === "baskets"    && <BasketPlanner plan={plan} onOpenCombos={() => setTab("combos")} />}
           {hasData && tab === "orders"    && <OrdersTab plan={plan} />}
@@ -491,7 +493,7 @@ function PlanDashboard({ plan, initialTab }) {
 }
 
 // ── Dashboard tab ───────────────────────────────────────────────────────────
-function ProjectionHandoffBadge({ planId }) {
+function ProjectionHandoffBadge({ planId, order }) {
   const sb = getSupabase();
   const [c, setC] = useState(null);
   useEffect(() => {
@@ -509,7 +511,9 @@ function ProjectionHandoffBadge({ planId }) {
   return (
     <div style={{ padding: "10px 14px", borderRadius: 10, border: `1.5px solid ${pending ? COLORS.amber : "#c2e0be"}`, background: pending ? "#fff8ee" : "#eef7ec", fontSize: 12.5 }}>
       <b style={{ color: COLORS.dark }}>Projection handoff:</b> {c.decided} decision{c.decided !== 1 ? "s" : ""} recorded · <b style={{ color: pending ? COLORS.amber : "#2e7d32" }}>{c.applied} applied to production</b>
-      {pending > 0 && <span style={{ color: COLORS.muted }}> · {pending} still projection-only — this dashboard shows the plan as production has built it, not the as-decided projection (that's Sales vs Plan).</span>}
+      {pending > 0 && (order
+        ? <span style={{ color: COLORS.muted }}> · {pending} still projection-only — this order schedule reflects the plan production has built, not those pending decisions. See the as-decided buy list on <b style={{ color: COLORS.dark }}>📆 Ready &amp; Orders</b>.</span>
+        : <span style={{ color: COLORS.muted }}> · {pending} still projection-only — this dashboard shows the plan as production has built it, not the as-decided projection (that's Sales vs Plan).</span>)}
     </div>
   );
 }
@@ -2273,6 +2277,190 @@ function FillStrip({ fill }) {
   );
 }
 
+// ── Ready & Orders tab — decided items, backfilled dates, as-decided buy list ──
+// The anchor is the finish (ready) week — coincides with first sale. Backfill:
+// ready − crop weeks = plant week; plant − prop lead = order/ship week. Crop
+// weeks and prop lead come from the plan's own inherited weeks, so no new data.
+function ReadyDatesTab({ plan }) {
+  const sb = getSupabase();
+  const [data, setData] = useState(null);
+  const [open, setOpen] = useState(null);
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    if (!sb) return;
+    const COMPONENT = /\bVINE\b|\bIVY\b|HEDERA|MU[EH]+LENBECKIA|CAREX/i;
+    (async () => {
+      const [xw, wk, sc, tgRes] = await Promise.all([
+        srcPageAll(sb, "sales_sku_map", "sku,plan_item_name"),
+        srcPageAll(sb, "sales_weekly", "sku,wk,units"),
+        srcPageAll(sb, "scheduled_crops", "id,item_name,variety_id,qty_pots,ppp,plants_per_unit,qty_plants_ordered,plant_week,ship_week,ready_week,combo_parent_id,is_combo_component,prop_method,broker,supplier,container_id", q => q.eq("plan_id", plan.id)),
+        sb.from("plan_targets").select("*").eq("plan_id", plan.id),
+      ]);
+      const skuToItem = {}; xw.forEach(x => { if (x.plan_item_name) skuToItem[x.sku] = x.plan_item_name; });
+      const firstSale = {};
+      for (const w of wk) { const it = skuToItem[w.sku]; if (!it || !(+w.units > 0)) continue; firstSale[it] = Math.min(firstSale[it] ?? 99, +w.wk); }
+      const parentIds = new Set(sc.map(r => r.combo_parent_id).filter(Boolean));
+      const itemsWithParents = new Set(sc.filter(r => parentIds.has(r.id)).map(r => r.item_name));
+      const parents = sc.filter(r => !r.is_combo_component && +r.qty_pots > 0 && !COMPONENT.test(r.item_name) && !(itemsWithParents.has(r.item_name) && !parentIds.has(r.id)));
+      const byItem = {};
+      for (const r of parents) (byItem[r.item_name] = byItem[r.item_name] || []).push(r);
+      const parentToItem = {}; parents.forEach(p => { parentToItem[p.id] = p.item_name; });
+      const compByItem = {};
+      for (const k of sc.filter(r => r.is_combo_component && r.combo_parent_id)) { const it = parentToItem[k.combo_parent_id]; if (!it) continue; (compByItem[it] = compByItem[it] || []).push(k); }
+      const vids = [...new Set(sc.map(r => r.variety_id).filter(Boolean))];
+      let vmap = {};
+      for (let i = 0; i < vids.length; i += 150) { const { data: vs } = await sb.from("variety_library").select("id,crop_name,variety").in("id", vids.slice(i, i + 150)); (vs || []).forEach(v => { vmap[v.id] = v; }); }
+      const tg = Object.fromEntries((tgRes.data || []).map(t => [t.item_name, t]));
+
+      const items = [];
+      for (const [it, rowsFor] of Object.entries(byItem)) {
+        const t = tg[it];
+        if (!t || (t.target_units == null && !t.decision)) continue;
+        if (t.decision === "drop" || t.target_units === 0) continue;
+        const rep = rowsFor[0];
+        const readyW = rowsFor.map(r => r.ready_week).filter(x => x != null);
+        const plantW = rowsFor.map(r => r.plant_week).filter(x => x != null);
+        const shipW = rowsFor.map(r => r.ship_week).filter(x => x != null);
+        const baseReady = readyW.length ? Math.min(...readyW) : null;
+        const basePlant = plantW.length ? Math.min(...plantW) : null;
+        const baseShip = shipW.length ? Math.min(...shipW) : null;
+        const cropWeeks = (baseReady != null && basePlant != null) ? Math.max(1, baseReady - basePlant) : 5;
+        const propLead = (basePlant != null && baseShip != null) ? Math.max(0, basePlant - baseShip) : 2;
+        const shift = +t.ready_shift || 0;
+        const target = t.target_units != null ? +t.target_units : plannedItems(rowsFor.reduce((a, r) => a + +r.qty_pots, 0), Math.max(...rowsFor.map(r => +r.ppp || 1)), Math.max(...rowsFor.map(r => +r.plants_per_unit || 1)));
+        const waves = (t.rounds && t.rounds.length) ? t.rounds.map(w => ({ units: +w.units || 0, ready: +w.ready_week }))
+          : [{ units: target, ready: baseReady != null ? baseReady + shift : null }];
+        const comps = (compByItem[it] || []).map(k => ({ v: vmap[k.variety_id], plants: +k.qty_plants_ordered || 0, broker: k.broker, supplier: k.supplier }));
+        items.push({ item: it, size: sizeLabelForItem(it), target, waves, cropWeeks, propLead,
+          variety: vmap[rep.variety_id], ppp: Math.max(...rowsFor.map(r => +r.ppp || 1)), prop: rep.prop_method,
+          broker: rep.broker, supplier: rep.supplier, firstSale: firstSale[it] ?? null,
+          comps, hasRounds: !!(t.rounds && t.rounds.length), shift });
+      }
+      items.sort((a, b) => (a.waves[0]?.ready ?? 99) - (b.waves[0]?.ready ?? 99));
+      setData({ items });
+    })();
+  }, [sb, plan.id, tick]); // eslint-disable-line
+
+  async function shiftWave(it, wi, delta) {
+    const t = data.items.find(x => x.item === it);
+    if (!t) return;
+    if (t.hasRounds) {
+      const { data: cur } = await sb.from("plan_targets").select("rounds").eq("plan_id", plan.id).eq("item_name", it).single();
+      const rounds = (cur?.rounds || t.waves.map(w => ({ units: w.units, ready_week: w.ready }))).map((w, i) => i === wi ? { ...w, ready_week: (+w.ready_week || 0) + delta } : w);
+      await sb.from("plan_targets").upsert({ plan_id: plan.id, item_name: it, rounds, updated_at: new Date().toISOString() }, { onConflict: "plan_id,item_name" });
+    } else {
+      await sb.from("plan_targets").upsert({ plan_id: plan.id, item_name: it, ready_shift: (t.shift + delta) || null, updated_at: new Date().toISOString() }, { onConflict: "plan_id,item_name" });
+    }
+    setTick(x => x + 1);
+  }
+
+  if (!data) return <div style={{ padding: 20, color: COLORS.muted }}>Loading ready & order dates…</div>;
+  if (!data.items.length) return <div style={{ padding: 20, color: COLORS.muted }}>No decided items yet — set targets in Sales vs Plan and they appear here with backfilled plant & order weeks.</div>;
+
+  const wkLabel = w => w == null ? "—" : `wk${w}`;
+  const buy = {};
+  for (const it of data.items) {
+    for (const w of it.waves) {
+      if (w.ready == null) continue;
+      const orderWk = w.ready - it.cropWeeks - it.propLead;
+      const key = `${it.variety ? (it.variety.crop_name + " " + it.variety.variety) : it.item}|${orderWk}`;
+      const b = buy[key] || (buy[key] = { name: it.variety ? `${it.variety.crop_name} ${it.variety.variety}` : it.item, orderWk, plants: 0, src: [it.broker, it.supplier].filter(Boolean).join("/"), prop: it.prop });
+      b.plants += Math.round(w.units * (it.ppp || 1));
+      if (it.comps.length) {
+        const baskets = it.target || 1;
+        for (const c of it.comps) {
+          const perBasket = baskets ? c.plants / baskets : 0;
+          const ck = `${c.v ? (c.v.crop_name + " " + c.v.variety) : "?"}|${orderWk}`;
+          const cb = buy[ck] || (buy[ck] = { name: c.v ? `${c.v.crop_name} ${c.v.variety}` : "?", orderWk, plants: 0, src: [c.broker, c.supplier].filter(Boolean).join("/"), prop: "" });
+          cb.plants += Math.round(perBasket * w.units);
+        }
+      }
+    }
+  }
+  const buyRows = Object.values(buy).filter(b => b.plants > 0).sort((a, b) => a.orderWk - b.orderWk || b.plants - a.plants);
+  const buyTotal = buyRows.reduce((a, b) => a + b.plants, 0);
+
+  const arrow = (it, wi, d) => (
+    <button onClick={e => { e.stopPropagation(); shiftWave(it, wi, d); }} style={{ padding: "0 5px", borderRadius: 5, border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.muted, cursor: "pointer", fontSize: 11 }}>{d < 0 ? "◀" : "▶"}</button>
+  );
+  return (
+    <div style={{ display: "grid", gap: 14 }}>
+      <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "11px 14px", fontSize: 12, color: COLORS.muted }}>
+        Decided items only. <b>Ready</b> (finish) week is the anchor — it should coincide with the 2026 <b>first-sale</b> week. <b>Plant</b> = ready − crop weeks; <b>Order</b> = plant − prop lead, from this plan's own inherited timing. Adjust ready with ◀▶ and plant/order follow. Amber ⚠ = finishing 2+ weeks after it first sold in 2026 (late).
+      </div>
+      <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, overflow: "auto", maxHeight: "60vh" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+          <thead><tr>{["Item", "Size", "2027", "Waves", "1st sale '26", "Order wk", "Plant wk", "Ready wk"].map((h, i) => (
+            <th key={i} style={{ ...th, position: "sticky", top: 0, background: "#eef3e8", textAlign: i >= 2 ? "right" : "left" }}>{h}</th>
+          ))}</tr></thead>
+          <tbody>
+            {data.items.map(it => {
+              const first = it.waves[0], last = it.waves[it.waves.length - 1];
+              const ordFirst = first.ready != null ? first.ready - it.cropWeeks - it.propLead : null;
+              const late = first.ready != null && it.firstSale != null && first.ready - it.firstSale >= 2;
+              const isOpen = open === it.item;
+              return (
+                <Fragment key={it.item}>
+                  <tr onClick={() => setOpen(isOpen ? null : it.item)} style={{ borderBottom: `1px solid ${COLORS.border}`, cursor: "pointer", background: isOpen ? "#f4f8f1" : "#fff" }}>
+                    <td style={{ ...td, fontWeight: 600 }}>{isOpen ? "▾ " : "▸ "}{it.item}</td>
+                    <td style={{ ...td, color: COLORS.muted }}>{it.size}</td>
+                    <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{it.target.toLocaleString()}</td>
+                    <td style={{ ...td, textAlign: "right" }}>{it.waves.length}{it.comps.length ? <span style={{ color: COLORS.muted }}> ·{it.comps.length}c</span> : ""}</td>
+                    <td style={{ ...td, textAlign: "right", color: COLORS.muted }}>{it.firstSale != null ? wkStartLabel(it.firstSale) : "—"}</td>
+                    <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{wkLabel(ordFirst)}{it.waves.length > 1 ? `–${last.ready - it.cropWeeks - it.propLead}` : ""}</td>
+                    <td style={{ ...td, textAlign: "right" }}>{wkLabel(first.ready != null ? first.ready - it.cropWeeks : null)}</td>
+                    <td style={{ ...td, textAlign: "right", fontWeight: 700, color: late ? COLORS.amber : COLORS.text }}>{wkLabel(first.ready)}{it.waves.length > 1 ? `–${last.ready}` : ""}{late ? " ⚠" : ""}</td>
+                  </tr>
+                  {isOpen && (
+                    <tr><td colSpan={8} style={{ padding: "6px 14px 12px 26px", background: "#f4f8f1", borderBottom: `1px solid ${COLORS.border}` }}>
+                      <div style={{ fontSize: 11, fontWeight: 800, color: COLORS.muted, textTransform: "uppercase", marginBottom: 4 }}>Waves — crop {it.cropWeeks}w · prop lead {it.propLead}w</div>
+                      {it.waves.map((w, wi) => (
+                        <div key={wi} style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 12.5, padding: "2px 0" }}>
+                          <span style={{ width: 34, color: COLORS.muted, fontWeight: 700 }}>W{wi + 1}</span>
+                          <span style={{ width: 84, textAlign: "right", fontWeight: 700 }}>{w.units.toLocaleString()}</span>
+                          <span style={{ color: COLORS.muted }}>order <b style={{ color: COLORS.text }}>{wkLabel(w.ready != null ? w.ready - it.cropWeeks - it.propLead : null)}</b> → plant <b style={{ color: COLORS.text }}>{wkLabel(w.ready != null ? w.ready - it.cropWeeks : null)}</b> → ready</span>
+                          {arrow(it.item, wi, -1)}<b>{wkLabel(w.ready)}</b>{arrow(it.item, wi, 1)}
+                        </div>
+                      ))}
+                      {it.comps.length > 0 && (
+                        <div style={{ marginTop: 6, fontSize: 12 }}>
+                          <span style={{ fontSize: 11, fontWeight: 800, color: COLORS.muted, textTransform: "uppercase" }}>Components: </span>
+                          {it.comps.map((c, i) => <span key={i} style={{ color: COLORS.text }}>{i ? " · " : ""}{c.v ? `${c.v.crop_name} ${c.v.variety}` : "?"} ({c.plants.toLocaleString()})</span>)}
+                        </div>
+                      )}
+                    </td></tr>
+                  )}
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <details style={{ background: COLORS.card, border: `1px solid ${COLORS.dark}`, borderRadius: 10 }}>
+        <summary style={{ cursor: "pointer", padding: "11px 14px", fontWeight: 800, color: COLORS.dark }}>
+          🛒 As-decided buy list — {buyRows.length} order lines · {buyTotal.toLocaleString()} plants
+          <span style={{ fontWeight: 500, color: COLORS.muted, fontSize: 12 }}> · what these decisions order, by week (preview — production's order tabs finalize)</span>
+        </summary>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+          <thead><tr>{["Order wk", "Variety", "Plants", "Source", "Form"].map((h, i) => <th key={i} style={{ ...th, textAlign: i === 2 ? "right" : "left" }}>{h}</th>)}</tr></thead>
+          <tbody>
+            {buyRows.map((b, i) => (
+              <tr key={i} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
+                <td style={{ ...td, fontWeight: 700 }}>wk{b.orderWk}{b.orderWk >= 1 && b.orderWk <= 52 ? ` · ${wkStartLabel(b.orderWk)}` : ""}</td>
+                <td style={td}>{b.name}</td>
+                <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{b.plants.toLocaleString()}</td>
+                <td style={{ ...td, color: COLORS.muted }}>{b.src || "—"}</td>
+                <td style={{ ...td, color: COLORS.muted }}>{b.prop || "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </details>
+    </div>
+  );
+}
+
 function SalesVsPlanTab({ plan }) {
   const sb = getSupabase();
   const [rows, setRows] = useState(null);
@@ -3235,6 +3423,7 @@ function PropagationTab({ plan }) {
 
   return (
     <div style={{ display: "grid", gap: 14 }}>
+      <ProjectionHandoffBadge planId={plan.id} order />
       <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "12px 14px", fontSize: 12, color: COLORS.muted }}>
         Sticking schedule — <strong>week ▸ cell size</strong> dropdowns, items in priority order (P1 = stick first, Ball/Selecta URC list). Callused (CALL) sticks like URC, just a shorter rooting window. Mist need + treatment recs come from the culture DB.
       </div>
