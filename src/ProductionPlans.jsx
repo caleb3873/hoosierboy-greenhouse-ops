@@ -2078,6 +2078,7 @@ function GroupBuilder({ rows, weeks, peakDefault, initialSel, supplierByItem, on
   const [expanded, setExpanded] = useState(null);   // color whose wave amounts are open
   const [waveOv, setWaveOv] = useState({});         // item -> hand-edited [units] per wave
   const [templates, setTemplates] = useState([]);
+  const [view, setView] = useState("list");   // list | grid (birds-eye wave matrix)
   const INCR = 100, MIN_BREEDER = 2000;   // uniform defaults: 10 cases of 10; 2000/breeder
   useEffect(() => { if (sb) sb.from("breeder_rules").select("*").then(({ data }) => setBrules(data || [])); }, [sb]);
   const loadTemplates = () => sb && sb.from("group_templates").select("*").order("name").then(({ data }) => setTemplates(data || []));
@@ -2202,7 +2203,52 @@ function GroupBuilder({ rows, weeks, peakDefault, initialSel, supplierByItem, on
           </div>
         </div>
 
-        <input value={q} onChange={e => setQ(e.target.value)} placeholder="🔍 filter colors to include…" style={{ ...inp, width: "100%", boxSizing: "border-box", marginBottom: 6 }} />
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="🔍 filter colors to include…" style={{ ...inp, flex: 1, boxSizing: "border-box" }} />
+          {[["list", "☰ List"], ["grid", "▦ Grid"]].map(([k, l]) => (
+            <button key={k} onClick={() => setView(k)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", border: `1.5px solid ${view === k ? COLORS.dark : COLORS.border}`, background: view === k ? COLORS.dark : "#fff", color: view === k ? "#fff" : COLORS.text }}>{l}</button>
+          ))}
+        </div>
+        {view === "grid" ? (() => {
+          const gridRows = selRows.filter(r => !q || r.item.toLowerCase().includes(q.toLowerCase())).sort((a, b) => a.item.localeCompare(b.item));
+          const colTotals = waveFinishes.map((f, wi) => gridRows.reduce((a, r) => a + (+wavesFor(r.item)[wi]?.units || 0), 0));
+          const gt = colTotals.reduce((a, b) => a + b, 0);
+          const cell = { padding: "4px 6px", borderBottom: `1px solid ${COLORS.border}`, textAlign: "right" };
+          return (
+            <div style={{ maxHeight: "48vh", overflow: "auto", border: `1px solid ${COLORS.border}`, borderRadius: 8, background: "#fff" }}>
+              <table style={{ borderCollapse: "collapse", fontSize: 12.5, minWidth: "100%" }}>
+                <thead><tr>
+                  <th style={{ ...th, position: "sticky", top: 0, left: 0, zIndex: 3, background: "#eef3e8", textAlign: "left" }}>Color</th>
+                  {waveFinishes.map((f, wi) => <th key={wi} style={{ ...th, position: "sticky", top: 0, background: "#eef3e8", textAlign: "right", whiteSpace: "nowrap" }}>W{wi + 1}<br /><span style={{ fontWeight: 400, color: COLORS.muted }}>wk{f}{f === peakDefault ? "★" : ""}</span></th>)}
+                  <th style={{ ...th, position: "sticky", top: 0, background: "#eef3e8", textAlign: "right" }}>Total</th>
+                </tr></thead>
+                <tbody>
+                  {gridRows.map(r => {
+                    const waves = wavesFor(r.item), b = breederOf(r.item);
+                    return (
+                      <tr key={r.item}>
+                        <td style={{ padding: "4px 8px", borderBottom: `1px solid ${COLORS.border}`, fontWeight: 600, position: "sticky", left: 0, background: "#fff", whiteSpace: "nowrap" }} title={b.breeder}>{r.item}</td>
+                        {waves.map((w, wi) => (
+                          <td key={wi} style={cell}>
+                            <input value={w.units} onChange={e => editWave(r.item, wi, parseInt(e.target.value.replace(/\D/g, "")) || 0)}
+                              onBlur={e => editWave(r.item, wi, roundUp(parseInt(e.target.value.replace(/\D/g, "")) || 0, b.incr))}
+                              inputMode="numeric" style={{ width: 62, textAlign: "right", padding: "3px 5px", borderRadius: 6, border: `1px solid ${COLORS.border}`, fontSize: 12, fontFamily: "inherit", fontWeight: 700 }} />
+                          </td>
+                        ))}
+                        <td style={{ ...cell, fontWeight: 800 }}>{countOf(r.item).toLocaleString()}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot><tr style={{ background: "#f4f8f1" }}>
+                  <td style={{ padding: "5px 8px", fontWeight: 800, position: "sticky", left: 0, background: "#f4f8f1" }}>Wave totals</td>
+                  {colTotals.map((c, wi) => <td key={wi} style={{ ...cell, fontWeight: 800, color: COLORS.dark }}>{c.toLocaleString()}</td>)}
+                  <td style={{ ...cell, fontWeight: 900, color: COLORS.dark }}>{gt.toLocaleString()}</td>
+                </tr></tfoot>
+              </table>
+            </div>
+          );
+        })() : (
         <div style={{ maxHeight: "42vh", overflow: "auto", border: `1px solid ${COLORS.border}`, borderRadius: 8, background: "#fff" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
             <thead><tr>{["", "Color", "Breeder", "2026 sold", "%", "2027 count", "Waves — click to adjust"].map((h, i) => <th key={i} style={{ ...th, position: "sticky", top: 0, background: "#eef3e8", textAlign: i >= 3 && i <= 5 ? "right" : "left" }}>{h}</th>)}</tr></thead>
@@ -2256,6 +2302,7 @@ function GroupBuilder({ rows, weeks, peakDefault, initialSel, supplierByItem, on
             </tbody>
           </table>
         </div>
+        )}
         {Object.keys(byBreeder).length > 0 && (
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
             {Object.entries(byBreeder).sort((a, b) => b[1].total - a[1].total).map(([bn, v]) => {
