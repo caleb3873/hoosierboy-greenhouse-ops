@@ -42,6 +42,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
   const [detail, setDetail] = useState(null);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState(tgt?.note || "");
+  useEffect(() => { setNote(tgt?.note || ""); }, [tgt?.note]);   // sync when a note is added/changed elsewhere
   const [addSearch, setAddSearch] = useState("");
   const [addHits, setAddHits] = useState([]);
   const [view, setView] = useState("detail");   // detail | history
@@ -794,10 +795,11 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
               );
             })}
           </div>
-          <div style={{ display: "flex", gap: 6, marginTop: 9 }}>
-            <input value={note} onChange={e => setNote(e.target.value)} onBlur={() => { if ((note.trim() || null) !== (tgt?.note ?? null)) onSaveTarget({ note: note.trim() || null }); }}
-              placeholder="note from the room — why this decision…"
-              style={{ flex: 1, padding: "7px 10px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 12.5, fontFamily: "inherit" }} />
+          <div style={{ marginTop: 9 }}>
+            <label style={{ display: "block", fontSize: 10, fontWeight: 800, color: "#3f6d33", textTransform: "uppercase", marginBottom: 3 }}>Note</label>
+            <textarea value={note} onChange={e => setNote(e.target.value)} onBlur={() => { if ((note.trim() || null) !== (tgt?.note ?? null)) onSaveTarget({ note: note.trim() || null }); }}
+              placeholder="note from the room — why this decision…" rows={Math.min(6, Math.max(2, note.split("\n").length))}
+              style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 12.5, fontFamily: "inherit", resize: "vertical", lineHeight: 1.4 }} />
           </div>
         </div>
 
