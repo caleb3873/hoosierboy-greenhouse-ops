@@ -1995,6 +1995,10 @@ function plannedItems(qtyPots, ppp, ppu) {
   return ppp >= ppu ? qtyPots : Math.max(1, Math.round(qtyPots / ppu));
 }
 const sizeTokenForItem = n => sizeLabelForItem(n);
+// rough crop/category from an item name — the genus keyword if present, else the
+// first real word. Used to track ordering progress by category.
+const CROP_KEYWORDS = ["GERANIUM", "CALIBRACHOA", "PETUNIA", "SUNPATIENS", "IMPATIENS", "BEGONIA", "VERBENA", "BACOPA", "LOBELIA", "COLEUS", "SALVIA", "MARIGOLD", "VINCA", "LANTANA", "DAHLIA", "OSTEOSPERMUM", "SCAEVOLA", "IPOMOEA", "DICHONDRA", "FUCHSIA", "ANGELONIA", "CELOSIA", "ZINNIA", "PORTULACA", "TORENIA", "NEMESIA", "DIASCIA", "PANSY", "VIOLA", "GERBERA", "SUNFLOWER", "ALYSSUM", "PENTAS", "SUCCULENT", "IVY", "GRASS", "FERN", "CANNA", "CALLA", "CALADIUM", "MUM", "COMBO"];
+const categoryOf = name => { const up = String(name).toUpperCase(); const hit = CROP_KEYWORDS.find(c => up.includes(c)); return hit || (up.replace(/^[^A-Z]*/, "").split(/\s+/)[0] || "OTHER"); };
 // Selling out before peak demand = a real lost sale; selling out as the season ends isn't.
 // Main-season items: cutoff at Mother's Day (wk 19). Early-spring items (pansy etc., which peak
 // by end of March) cut off ~2nd-to-last week of March (wk 13). (2026 sales data runs wk 9–24.)
@@ -2755,6 +2759,8 @@ function SalesVsPlanTab({ plan }) {
   const [query, setQuery] = usePersistedState("gh_svp_query", "");
   const [sizeFilt, setSizeFilt] = usePersistedState("gh_svp_size", "all");
   const [basis, setBasis] = usePersistedState("gh_svp_basis", "pots"); // "pots" = normalized finished pots · "raw" = as-entered units
+  const [cmpGroupBy, setCmpGroupBy] = usePersistedState("gh_cmp_groupby", "size");  // season comparison: by size or category
+  const [showOverLost, setShowOverLost] = usePersistedState("gh_svp_overlost", false);  // the Over$/Lost$ columns (off by default — noise)
   // Projection session: agreed 2027 targets live in plan_targets, keyed by item
   // name, so the sales conversation never has to answer bench questions.
   const [targets, setTargets] = useState({});   // item_name → row
@@ -3070,8 +3076,8 @@ function SalesVsPlanTab({ plan }) {
       </div>
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
         <RevStat label="Sell-through" value={tPlanned ? Math.round(tSold / tPlanned * 100) + "%" : "—"} accent={COLORS.dark} />
-        <RevStat label="Overplanned $" value={fmtMoney(tOver)} accent={COLORS.amber} />
-        <RevStat label={`Lost sales · ${soldOutCount} sold out`} value={fmtMoney(tLostEst)} accent={COLORS.red} />
+        {showOverLost && <RevStat label="Overplanned $" value={fmtMoney(tOver)} accent={COLORS.amber} />}
+        {showOverLost && <RevStat label={`Lost sales · ${soldOutCount} sold out`} value={fmtMoney(tLostEst)} accent={COLORS.red} />}
         <RevStat label="2026 sales · these items" value={fmtMoney(tRev)} accent={COLORS.light} />
         <RevStat label="Demand peak" value={"wk" + pkWk} accent={COLORS.dark} />
       </div>
@@ -3192,7 +3198,6 @@ function SalesVsPlanTab({ plan }) {
         const idxOf = Object.fromEntries(season.weeks.map((w, i) => [w, i]));
         const rev27wk = Array(nW).fill(0);
         let u26 = 0, r26 = 0, u27 = 0, r27 = 0, grows = 0, cuts = 0, drops = 0, news = 0;
-        const bySize = {};
         for (const r of core) {
           const t = targets[r.item] || {};
           const units27 = t.target_units != null ? +t.target_units : r.planned;
@@ -3201,8 +3206,6 @@ function SalesVsPlanTab({ plan }) {
           u26 += r.sold; r26 += r.rev; u27 += units27; r27 += rev27;
           if (r.isNew) news++;
           else if (t.target_units != null) { if (t.target_units === 0) drops++; else if (t.target_units > r.planned) grows++; else if (t.target_units < r.planned) cuts++; }
-          const s = bySize[r.size] || (bySize[r.size] = { rev26: 0, rev27: 0 });
-          s.rev26 += r.rev; s.rev27 += rev27;
           if (!(units27 > 0) || !price) continue;
           // weekly spread: rounds win; else last year's shape shifted by the timing move;
           // no history → everything lands on the finish week (honest, if lumpy)
@@ -3234,6 +3237,19 @@ function SalesVsPlanTab({ plan }) {
         }
         const maxB = Math.max(...season.seasonRev, ...rev27wk, 1);
         const pctd = (a, b) => b ? `${a >= b ? "+" : ""}${Math.round((a - b) / b * 100)}%` : "—";
+        // ordering-progress tracking: per size OR category, how much is decided
+        const groups = {};
+        for (const r of core) {
+          const key = cmpGroupBy === "cat" ? categoryOf(r.item) : r.size;
+          const g = groups[key] || (groups[key] = { rev26: 0, rev27: 0, items: 0, decided: 0, revDecided: 0 });
+          const t = targets[r.item] || {};
+          const dec = t.target_units != null || !!t.decision;
+          const price = +r.price || 0;
+          const u27 = dec ? (t.target_units != null ? +t.target_units : 0) : r.planned;
+          g.rev26 += r.rev; g.items++; g.rev27 += u27 * price;
+          if (dec) { g.decided++; g.revDecided += r.rev; }
+        }
+        const groupRows = Object.entries(groups).sort((a, b) => b[1].rev26 - a[1].rev26);
         return (
           <details style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "12px 16px" }}>
             <summary style={{ cursor: "pointer", fontWeight: 800, color: COLORS.dark, fontSize: 14 }}>
@@ -3265,19 +3281,38 @@ function SalesVsPlanTab({ plan }) {
               ))}
             </div>
             <div style={{ fontSize: 10.5, color: COLORS.muted, margin: "4px 0 10px" }}>tan = 2026 actual · dark = 2027 projection (targets + timing + rounds) · ★ Mother's Day</div>
-            <table style={{ borderCollapse: "collapse", fontSize: 12 }}>
-              <thead><tr>{["Size", "2026 rev", "2027 proj", "Δ"].map((h, i) => <th key={i} style={{ textAlign: i ? "right" : "left", padding: "3px 12px 3px 0", fontSize: 10, fontWeight: 800, color: COLORS.muted, textTransform: "uppercase", borderBottom: `1px solid ${COLORS.border}` }}>{h}</th>)}</tr></thead>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+              <span style={{ fontSize: 11, fontWeight: 800, color: COLORS.dark, textTransform: "uppercase" }}>Ordering progress — where you're at, by</span>
+              {[["size", "Size"], ["cat", "Category"]].map(([k, l]) => (
+                <button key={k} onClick={() => setCmpGroupBy(k)} style={{ padding: "3px 10px", borderRadius: 14, fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", border: `1px solid ${cmpGroupBy === k ? COLORS.dark : COLORS.border}`, background: cmpGroupBy === k ? COLORS.dark : "#fff", color: cmpGroupBy === k ? "#fff" : COLORS.text }}>{l}</button>
+              ))}
+            </div>
+            <table style={{ borderCollapse: "collapse", fontSize: 12, width: "100%", maxWidth: 640 }}>
+              <thead><tr>{[cmpGroupBy === "cat" ? "Category" : "Size", "Decided", "% $ done", "2026 rev", "2027 proj", "Δ"].map((h, i) => <th key={i} style={{ textAlign: i ? "right" : "left", padding: "3px 10px 3px 0", fontSize: 10, fontWeight: 800, color: COLORS.muted, textTransform: "uppercase", borderBottom: `1px solid ${COLORS.border}` }}>{h}</th>)}</tr></thead>
               <tbody>
-                {Object.entries(bySize).sort((a, b) => b[1].rev26 - a[1].rev26).map(([sz, v]) => (
-                  <tr key={sz}>
-                    <td style={{ padding: "3px 12px 3px 0", fontWeight: 700 }}>{sz}</td>
-                    <td style={{ padding: "3px 12px 3px 0", textAlign: "right" }}>{fmtMoney(v.rev26)}</td>
-                    <td style={{ padding: "3px 12px 3px 0", textAlign: "right", fontWeight: 700 }}>{fmtMoney(v.rev27)}</td>
-                    <td style={{ padding: "3px 0", textAlign: "right", fontWeight: 800, color: v.rev27 >= v.rev26 ? "#2e7d32" : COLORS.red }}>{pctd(v.rev27, v.rev26)}</td>
-                  </tr>
-                ))}
+                {groupRows.map(([key, v]) => {
+                  const pct = v.rev26 ? Math.round(v.revDecided / v.rev26 * 100) : (v.decided === v.items ? 100 : 0);
+                  return (
+                    <tr key={key}>
+                      <td style={{ padding: "3px 10px 3px 0", fontWeight: 700 }}>{key}</td>
+                      <td style={{ padding: "3px 10px 3px 0", textAlign: "right", color: v.decided === v.items ? "#2e7d32" : COLORS.text, fontWeight: 700 }}>{v.decided}/{v.items}</td>
+                      <td style={{ padding: "3px 10px 3px 0", textAlign: "right" }}>
+                        <div style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                          <div style={{ width: 54, height: 8, borderRadius: 5, background: "#e6ede1", overflow: "hidden" }}>
+                            <div style={{ height: "100%", width: `${pct}%`, background: pct >= 100 ? "#2e7d32" : COLORS.light }} />
+                          </div>
+                          <span style={{ fontWeight: 700, color: pct >= 100 ? "#2e7d32" : COLORS.amber, minWidth: 30, textAlign: "right" }}>{pct}%</span>
+                        </div>
+                      </td>
+                      <td style={{ padding: "3px 10px 3px 0", textAlign: "right", color: COLORS.muted }}>{fmtMoney(v.rev26)}</td>
+                      <td style={{ padding: "3px 10px 3px 0", textAlign: "right", fontWeight: 700 }}>{fmtMoney(v.rev27)}</td>
+                      <td style={{ padding: "3px 0", textAlign: "right", fontWeight: 800, color: v.rev27 >= v.rev26 ? "#2e7d32" : COLORS.red }}>{pctd(v.rev27, v.rev26)}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
+            <div style={{ fontSize: 10, color: COLORS.muted, marginTop: 4 }}>Decided = items with a 2027 call · % $ done = share of that group's 2026 revenue you've decided on (your ordering-progress gauge per {cmpGroupBy === "cat" ? "category" : "size"}).</div>
           </details>
         );
       })()}
@@ -3297,6 +3332,10 @@ function SalesVsPlanTab({ plan }) {
           title="Bulk-build waves across the SELECTED colors, ramping to the peak"
           style={{ padding: "6px 12px", borderRadius: 16, fontWeight: 800, cursor: "pointer", border: `1.5px solid ${COLORS.dark}`, background: selSet.size ? COLORS.dark : "#9fb096", color: "#c8e6b8" }}>🎨 Group builder{selSet.size ? ` (${selSet.size})` : ""}</button>
         <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
+          <button onClick={() => setShowOverLost(!showOverLost)} title="show/hide the Overplanned $ and Lost sales $ columns"
+            style={{ padding: "6px 10px", borderRadius: 16, fontSize: 11, fontWeight: 700, cursor: "pointer", border: `1px solid ${showOverLost ? COLORS.dark : COLORS.border}`, background: showOverLost ? COLORS.dark : "#fff", color: showOverLost ? "#fff" : COLORS.muted }}>
+            {showOverLost ? "− Over/Lost $" : "+ Over/Lost $"}
+          </button>
           <span style={{ color: COLORS.muted }} title="Item quantity = qty_pots (what sells). As-entered shows the raw plan number before pot→pack conversion.">units:</span>
           {[["pots", "Item qty"], ["raw", "As entered"]].map(([k, l]) => <button key={k} onClick={() => setBasis(k)} style={{ padding: "6px 10px", borderRadius: 16, fontSize: 11, fontWeight: 700, cursor: "pointer", border: `1px solid ${basis === k ? COLORS.dark : COLORS.border}`, background: basis === k ? COLORS.dark : "#fff", color: basis === k ? "#fff" : COLORS.text }}>{l}</button>)}
           <span style={{ color: COLORS.muted, marginLeft: 4 }}>{shown.length} items</span>
@@ -3386,8 +3425,8 @@ function SalesVsPlanTab({ plan }) {
             <SortHdr col="sold" label="Sold" align="right" />
             <SortHdr col="st" label="Sell-thru" align="right" />
             <SortHdr col="status" label="Status" />
-            <SortHdr col="over" label="Over $" align="right" />
-            <SortHdr col="lostEst" label="Lost $" align="right" />
+            {showOverLost && <SortHdr col="over" label="Over $" align="right" />}
+            {showOverLost && <SortHdr col="lostEst" label="Lost $" align="right" />}
             <SortHdr col="rev" label="2026 $" align="right" />
             <SortHdr col="price" label="Avg $" align="right" />
             <SortHdr col="firstWk" label="1st sold" align="right" />
@@ -3416,8 +3455,8 @@ function SalesVsPlanTab({ plan }) {
                   <td style={{ ...td, textAlign: "right" }}>{dSold(r).toLocaleString()}</td>
                   <td style={{ ...td, textAlign: "right", fontWeight: 700, color: r.st == null ? COLORS.muted : r.st >= 1 ? "#2e7d32" : r.st < 0.6 ? COLORS.red : COLORS.text }} title={r.st == null ? "Most of the planned volume goes into combos — a retail sell-through % would be misleading" : ""}>{r.st == null ? "—" : Math.round(r.st * 100) + "%"}</td>
                   <td style={td}><span title={r.status === "SOLDOUT" ? `sold out wk${r.lastWk} (before wk${r.cutoff} cutoff) — grow more` : ""} style={{ fontSize: 10, fontWeight: 800, padding: "1px 6px", borderRadius: 8, color: "#fff", background: badge.bg }}>{badge.t}</span></td>
-                  <td style={{ ...td, textAlign: "right", fontWeight: 700, color: r.over > 0 ? COLORS.amber : COLORS.muted }}>{r.over ? fmtMoney(r.over) : "—"}</td>
-                  <td style={{ ...td, textAlign: "right", fontWeight: 700, color: r.lostEst > 0 ? COLORS.red : COLORS.muted }}>{r.lostEst ? fmtMoney(r.lostEst) : "—"}</td>
+                  {showOverLost && <td style={{ ...td, textAlign: "right", fontWeight: 700, color: r.over > 0 ? COLORS.amber : COLORS.muted }}>{r.over ? fmtMoney(r.over) : "—"}</td>}
+                  {showOverLost && <td style={{ ...td, textAlign: "right", fontWeight: 700, color: r.lostEst > 0 ? COLORS.red : COLORS.muted }}>{r.lostEst ? fmtMoney(r.lostEst) : "—"}</td>}
                   <td style={{ ...td, textAlign: "right", color: COLORS.muted }}>{fmtMoney(r.rev)}</td>
                   <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{r.price != null && r.price > 0 ? "$" + (+r.price).toFixed(2) : "—"}</td>
                   <td style={{ ...td, textAlign: "right" }} title={r.peak ? `first sale — demand peaked wk${r.peak}` : ""}>{r.firstWk != null ? wkStartLabel(r.firstWk) : <span style={{ color: "#c8d0c0" }}>—</span>}</td>
