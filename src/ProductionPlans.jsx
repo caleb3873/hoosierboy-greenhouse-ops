@@ -1965,7 +1965,8 @@ function YearOverYearTab({ plan }) {
       {drill && (
         <ItemDrill plan={plan} row={drillRowOf(drill)} tgt={targets[drill.it]} weeks={base.weeks}
           onSaveTarget={patch => saveTarget(drillRowOf(drill), patch)} onClose={() => setDrill(null)}
-          onMutated={() => setTick(t => t + 1)} />
+          onMutated={() => setTick(t => t + 1)}
+          onReplace={(name, qty) => { setTick(t => t + 1); setDrill({ it: name, size: sizeLabelForItem(name), planItems: qty, units26: 0, rev26: 0, price: null, wkA: [], peak: null, ready: null, isNew: true, needsSrc: false, decided: false }); }} />
       )}
     </div>
   );
@@ -3332,7 +3333,8 @@ function SalesVsPlanTab({ plan }) {
       {drill && (
         <ItemDrill plan={plan} row={drill} tgt={targets[drill.item]} weeks={season.weeks}
           onSaveTarget={patch => saveTarget(drill, patch)} onClose={() => setDrill(null)}
-          onMutated={() => setReloadTick(t => t + 1)} />
+          onMutated={() => setReloadTick(t => t + 1)}
+          onReplace={(name, qty) => { setReloadTick(t => t + 1); setDrill({ item: name, size: sizeTokenForItem(name), planned: qty, planRaw: qty, sold: 0, st: 0, over: 0, lostEst: 0, soldOut: false, price: null, rev: 0, wk: [], peak: null, ship: null, firstWk: null, isNew: true, status: "NOSALE" }); }} />
       )}
       {showGroup && (
         <GroupBuilder rows={rows.filter(r => !r.dualUse && selSet.has(r.item))} weeks={season.weeks} peakDefault={mothersWk}

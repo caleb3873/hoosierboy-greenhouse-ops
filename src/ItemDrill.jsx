@@ -18,7 +18,7 @@ const money = n => n == null ? "—" : (Math.abs(n) >= 1000 ? `$${Math.round(n).
 const pct = n => n == null ? "—" : `${Math.round(n * 100)}%`;
 const FORM_MAP = { urc: "URC", callused: "CALL", plug: "PLUG", liner: "PLUG", rooted: "PLUG", bareroot: "BULB", seed: "SEED" };
 
-export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose, onMutated }) {
+export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose, onMutated, onReplace }) {
   const sb = getSupabase();
   const { displayName } = useAuth();
   const [detail, setDetail] = useState(null);
@@ -356,9 +356,47 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
         plan_id: plan.id, item_name: name, change_type: "duplicated",
         detail: { from: row.item, qty }, changed_by: displayName || null, source: "drill" });
       setDup(null); setBusy(false);
-      onMutated?.();   // the Sales vs Plan table reloads and the new line appears immediately
-      window.alert(`Created "${name}" (${qty.toLocaleString()} units, no benches yet).\n\nIt's in the Sales vs Plan table now — this popup stays on ${row.item}; close it and open the new line to work on it. The B2B catalog absorbs it automatically.`);
+      // hand straight to the new item — it opens, the original closes
+      if (onReplace) onReplace(name, qty); else onMutated?.();
     } catch (e) { setBusy(false); window.alert("Couldn't duplicate: " + (e.message || e)); }
+  }
+
+  // Rename this item everywhere it's referenced, then reopen under the new name.
+  async function renameItem() {
+    const nn = window.prompt("Rename this item:", row.item);
+    if (nn == null) return;
+    const name = nn.trim();
+    if (!name || name === row.item) return;
+    setBusy(true);
+    try {
+      await sb.from("scheduled_crops").update({ item_name: name }).eq("plan_id", plan.id).eq("item_name", row.item);
+      await sb.from("plan_targets").update({ item_name: name }).eq("plan_id", plan.id).eq("item_name", row.item);
+      await sb.from("item_change_log").update({ item_name: name }).eq("plan_id", plan.id).eq("item_name", row.item);
+      await sb.from("sales_sku_map").update({ plan_item_name: name }).eq("plan_item_name", row.item);  // keep sales linked
+      await logChange("renamed", { from: row.item, to: name });
+      setBusy(false);
+      if (onReplace) onReplace(name, row.planned); else onMutated?.();
+    } catch (e) { setBusy(false); window.alert("Couldn't rename: " + (e.message || e)); }
+  }
+
+  // Delete the item from the plan entirely (bench rows + decision). Drop keeps it.
+  async function deleteItem() {
+    if (!window.confirm(`Delete "${row.item}" from this plan entirely?\n\nRemoves its bench rows and its 2027 decision — it's gone. If you just don't want to grow it, use ✕ Drop instead (keeps the record so we can plan against it next year).`)) return;
+    setBusy(true);
+    try {
+      const { data: parents } = await sb.from("scheduled_crops").select("id").eq("plan_id", plan.id).eq("item_name", row.item);
+      const pids = (parents || []).map(p => p.id);
+      if (pids.length) for (let i = 0; i < pids.length; i += 100) await sb.from("scheduled_crops").delete().in("combo_parent_id", pids.slice(i, i + 100));
+      await sb.from("scheduled_crops").delete().eq("plan_id", plan.id).eq("item_name", row.item);
+      await sb.from("plan_targets").delete().eq("plan_id", plan.id).eq("item_name", row.item);
+      setBusy(false); onMutated?.(); onClose();
+    } catch (e) { setBusy(false); window.alert("Couldn't delete: " + (e.message || e)); }
+  }
+
+  // Drop = don't grow it in 2027, but keep the record (target 0, decision drop).
+  function dropItem() {
+    if (!window.confirm(`Drop "${row.item}" for ${plan.name}?\n\nSets it to grow 0 but keeps the item and its history — good when you're swapping a color for a new one.`)) return;
+    onSaveTarget({ target_units: 0, decision: "drop", note: (tgt?.note) || "dropped" });
   }
 
   // Which tray a cutting roots in — 105s by default, 50s for the heavy stuff.
@@ -498,14 +536,19 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
               {agg?.comps.length ? ` · combo, ${agg.comps.length} components` : ""}
             </div>
           </div>
-          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
             <button onClick={() => { setView("detail"); setDup(d => d ? null : { name: `${row.item} 2`, qty: String(row.planned || ""), price: "" }); }}
               title="copy this item as a new line — recipe, sourcing, weeks; no benches"
-              style={{ padding: "5px 12px", borderRadius: 8, fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit",
-                border: `1.5px solid ${C.border}`, background: "#fff", color: C.text }}>⧉ Duplicate</button>
+              style={{ padding: "5px 10px", borderRadius: 8, fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", border: `1.5px solid ${C.border}`, background: "#fff", color: C.text }}>⧉ Duplicate</button>
+            <button onClick={renameItem} disabled={busy} title="rename this item everywhere"
+              style={{ padding: "5px 10px", borderRadius: 8, fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", border: `1.5px solid ${C.border}`, background: "#fff", color: C.text }}>✎ Rename</button>
+            <button onClick={dropItem} title="don't grow it in 2027 but keep the record"
+              style={{ padding: "5px 10px", borderRadius: 8, fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", border: `1.5px solid ${C.amber}`, background: "#fff", color: C.amber }}>✕ Drop</button>
+            <button onClick={deleteItem} disabled={busy} title="remove it from the plan entirely"
+              style={{ padding: "5px 10px", borderRadius: 8, fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", border: `1.5px solid ${C.red}`, background: "#fff", color: C.red }}>🗑 Delete</button>
             {[["detail", "Details"], ["history", "🕘 History"]].map(([k, l]) => (
               <button key={k} onClick={() => setView(k)}
-                style={{ padding: "5px 12px", borderRadius: 8, fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit",
+                style={{ padding: "5px 10px", borderRadius: 8, fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit",
                   border: `1.5px solid ${view === k ? C.light : C.border}`, background: view === k ? C.light : "#fff", color: view === k ? "#fff" : C.muted }}>{l}</button>
             ))}
             <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 26, color: C.muted, cursor: "pointer" }}>×</button>
@@ -531,6 +574,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
                   : h.change_type === "combo_set" ? `✓ ${d.kind === "item" ? "item" : "combo"} SET for ${d.season} — ${(d.recipe || []).map(r => `${r.per_basket}× ${r.plant}`).join(", ")}${d.cost_per_basket != null ? ` (${money(d.cost_per_basket)}/unit)` : ""}`
                   : h.change_type === "layout_arranged" ? `planting layout arranged (${d.dots || "?"} plants placed${d.rows ? `, ${d.rows} bench rows` : ""})`
                   : h.change_type === "duplicated" ? `created as a duplicate of ${d.from} (${(+d.qty).toLocaleString()} units)`
+                  : h.change_type === "renamed" ? `renamed from "${d.from}" to "${d.to}"`
                   : h.change_type === "order_confirmation" ? `order confirmation: ${d.summary || JSON.stringify(d)}`
                   : JSON.stringify(d);
                 return (
