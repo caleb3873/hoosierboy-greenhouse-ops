@@ -688,8 +688,10 @@ export function QuotePicker({ sb, varietyKey, initialQuery, current, onPick, onC
     }
     const toks = String(term || "").trim().split(/\s+/).filter(t => t.length > 1).slice(0, 5);
     if (toks.length) {
-      let qq = sb.from("broker_prices").select(QUOTE_COLS).eq("season", QUOTE_SEASON).gt("landed", 0).limit(300);
-      toks.forEach(t => { qq = qq.or(`variety.ilike.*${t}*,crop.ilike.*${t}*`); });
+      let qq = sb.from("broker_prices").select(QUOTE_COLS).eq("season", QUOTE_SEASON).gt("landed", 0).limit(400);
+      // search the broker + supplier too, so "ball" finds Ball's quotes (broker name
+      // isn't in the variety text) and "ball geranium" narrows to Ball geraniums
+      toks.forEach(t => { const e = t.replace(/[%,()]/g, ""); qq = qq.or(`variety.ilike.*${e}*,crop.ilike.*${e}*,broker.ilike.*${e}*,supplier.ilike.*${e}*`); });
       const { data } = await qq;
       (data || []).forEach(r => { if (!out.has(r.id)) out.set(r.id, { ...r, exact: false }); });
     }
