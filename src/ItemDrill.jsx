@@ -346,17 +346,18 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
   const [dup, setDup] = useState(null);   // {name, qty, price} while the mini-form is open
   async function duplicateItem() {
     if (!detail?.parents.length || busy) return;
-    const qty = parseInt(dup.qty);
-    const names = (dup.names || "").split("\n").map(s => s.trim()).filter(Boolean);
-    const uniq = [...new Set(names)].filter(n => n.toUpperCase() !== row.item.toUpperCase());
-    if (!uniq.length || !(qty > 0)) { window.alert("Enter at least one new item name and a quantity."); return; }
+    const lines = (dup.rows || []).map(r => ({ name: (r.name || "").trim(), qty: parseInt(r.qty) }))
+      .filter(r => r.name && r.qty > 0 && r.name.toUpperCase() !== row.item.toUpperCase());
+    // de-dupe by name (first wins)
+    const seen = new Set(); const uniq = lines.filter(r => (seen.has(r.name.toUpperCase()) ? false : seen.add(r.name.toUpperCase())));
+    if (!uniq.length) { window.alert("Add at least one row with a name and a quantity."); return; }
     setBusy(true);
     try {
       const { data: tmpl, error: te } = await sb.from("scheduled_crops").select("*").eq("id", detail.parents[0].id).single();
       if (te || !tmpl) throw te || new Error("couldn't load the original");
       const { data: kids } = await sb.from("scheduled_crops").select("*").eq("combo_parent_id", tmpl.id);
       const price = dup.price === "" ? tmpl.sale_price_per_pot : parseFloat(dup.price);
-      for (const name of uniq) {
+      for (const { name, qty } of uniq) {
         const newId = crypto.randomUUID();
         const parent = { ...tmpl, id: newId, item_name: name, qty_pots: qty, bench_id: null,
           production_item_id: null, sale_price_per_pot: price, notes: `duplicated from ${row.item}` };
@@ -377,7 +378,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
       }
       setDup(null); setBusy(false);
       // one copy → open it; several → reload the table and let him drill into each
-      if (uniq.length === 1 && onReplace) onReplace(uniq[0], qty);
+      if (uniq.length === 1 && onReplace) onReplace(uniq[0].name, uniq[0].qty);
       else { onMutated?.(); onClose(); window.alert(`Created ${uniq.length} items from ${row.item}. Open each from the table to set its plants.`); }
     } catch (e) { setBusy(false); window.alert("Couldn't duplicate: " + (e.message || e)); }
   }
@@ -558,7 +559,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
             </div>
           </div>
           <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
-            <button onClick={() => { setView("detail"); setDup(d => d ? null : { names: `${row.item} 2`, qty: String(row.planned || ""), price: "" }); }}
+            <button onClick={() => { setView("detail"); setDup(d => d ? null : { rows: [{ name: `${row.item} 2`, qty: String(row.planned || "") }], price: "" }); }}
               title="copy this item as a new line — recipe, sourcing, weeks; no benches"
               style={{ padding: "5px 10px", borderRadius: 8, fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", border: `1.5px solid ${C.border}`, background: "#fff", color: C.text }}>⧉ Duplicate</button>
             <button onClick={renameItem} disabled={busy} title="rename this item everywhere"
@@ -928,27 +929,32 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
         <div onClick={() => setDup(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.5)", zIndex: 9300, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
           <div onClick={e => e.stopPropagation()} style={{ background: "#f6f9f3", borderRadius: 14, width: "100%", maxWidth: 460, padding: 18 }}>
             <div style={{ fontSize: 16.5, fontWeight: 800, color: C.dark, fontFamily: "'DM Serif Display',Georgia,serif", marginBottom: 2 }}>⧉ Duplicate {row.item}</div>
-            <div style={{ fontSize: 11.5, color: C.muted, marginBottom: 12 }}>Copies the recipe, sourcing, weeks and layout. One new item per line — make several at once and set each one's plants later. Benches stay empty.</div>
-            <label style={{ display: "block", fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", marginBottom: 3 }}>New item name(s) — one per line</label>
-            <textarea value={dup.names} onChange={e => setDup({ ...dup, names: e.target.value })} autoFocus rows={Math.min(8, Math.max(2, (dup.names || "").split("\n").length + 1))}
-              style={{ width: "100%", boxSizing: "border-box", padding: "8px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13.5, fontWeight: 700, fontFamily: "inherit", marginBottom: 10, resize: "vertical" }} />
-            <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
-              <div>
-                <label style={{ display: "block", fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", marginBottom: 3 }}>Quantity</label>
-                <NumInput value={dup.qty} onCommit={v => setDup(d => ({ ...d, qty: v }))}
-                  style={{ width: 100, padding: "8px 10px", textAlign: "right", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13.5, fontFamily: "inherit", boxSizing: "border-box" }} />
+            <div style={{ fontSize: 11.5, color: C.muted, marginBottom: 12 }}>Copies the recipe, sourcing, weeks and layout onto each new line. Add a row per color, set its quantity, and one price for all. Set each one's plants later; benches stay empty.</div>
+            <div style={{ display: "flex", gap: 8, fontSize: 10, fontWeight: 800, color: C.muted, textTransform: "uppercase", marginBottom: 3, paddingRight: 30 }}>
+              <span style={{ flex: 1 }}>New item name</span><span style={{ width: 78, textAlign: "right" }}>Quantity</span>
+            </div>
+            {(dup.rows || []).map((r, i) => (
+              <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
+                <input value={r.name} autoFocus={i === (dup.rows.length - 1)} onChange={e => setDup(d => ({ ...d, rows: d.rows.map((x, j) => j === i ? { ...x, name: e.target.value } : x) }))}
+                  style={{ flex: 1, boxSizing: "border-box", padding: "8px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13.5, fontWeight: 700, fontFamily: "inherit" }} />
+                <NumInput value={r.qty} onCommit={v => setDup(d => ({ ...d, rows: d.rows.map((x, j) => j === i ? { ...x, qty: v } : x) }))}
+                  style={{ width: 78, padding: "8px 8px", textAlign: "right", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13.5, fontFamily: "inherit", boxSizing: "border-box" }} />
+                <button onClick={() => setDup(d => ({ ...d, rows: d.rows.length > 1 ? d.rows.filter((_, j) => j !== i) : d.rows }))}
+                  title="remove this row" style={{ background: "none", border: "none", color: C.red, fontSize: 18, cursor: "pointer", width: 22 }}>×</button>
               </div>
-              <div>
-                <label style={{ display: "block", fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", marginBottom: 3 }}>Price (blank = same)</label>
-                <NumInput value={dup.price} decimal onCommit={v => setDup(d => ({ ...d, price: v }))} placeholder={agg?.planPrice ? `$${(+agg.planPrice).toFixed(2)}` : ""}
-                  style={{ width: 110, padding: "8px 10px", textAlign: "right", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13.5, fontFamily: "inherit", boxSizing: "border-box" }} />
-              </div>
+            ))}
+            <button onClick={() => setDup(d => ({ ...d, rows: [...d.rows, { name: "", qty: d.rows[d.rows.length - 1]?.qty || String(row.planned || "") }] }))}
+              style={{ padding: "6px 12px", borderRadius: 8, border: `1.5px dashed ${C.light}`, background: "#fff", color: C.dark, fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", marginBottom: 12 }}>＋ Add another</button>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+              <label style={{ fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase" }}>Price for all (blank = same)</label>
+              <NumInput value={dup.price} decimal onCommit={v => setDup(d => ({ ...d, price: v }))} placeholder={agg?.planPrice ? `$${(+agg.planPrice).toFixed(2)}` : ""}
+                style={{ width: 100, padding: "7px 10px", textAlign: "right", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13.5, fontFamily: "inherit", boxSizing: "border-box" }} />
             </div>
             <div style={{ display: "flex", gap: 8 }}>
               <button onClick={() => setDup(null)} style={{ padding: "9px 14px", borderRadius: 8, border: `1px solid ${C.border}`, background: "#fff", color: C.muted, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
               <button disabled={busy} onClick={duplicateItem}
                 style={{ flex: 1, padding: "9px 14px", borderRadius: 8, border: "none", background: C.dark, color: "#c8e6b8", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
-                {busy ? "Creating…" : "✓ Create duplicate"}
+                {busy ? "Creating…" : `✓ Create ${(dup.rows || []).filter(r => (r.name || "").trim()).length || ""} item${(dup.rows || []).filter(r => (r.name || "").trim()).length !== 1 ? "s" : ""}`}
               </button>
             </div>
           </div>

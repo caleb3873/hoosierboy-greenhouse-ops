@@ -1806,7 +1806,9 @@ function YearOverYearTab({ plan }) {
   useEffect(() => {
     if (!sb) return;
     (async () => {
-      const COMPONENT = /\bVINE\b|\bIVY\b|HEDERA|MU[EH]+LENBECKIA|CAREX/i;
+      // combo-input components (ivy vine, vinca vine, muehlenbeckia, carex) — but NOT
+    // ivy/vinca GERANIUMS, which are real sellable varieties, not the vine component
+    const COMPONENT = /^(?!.*\bgeranium\b).*(?:\bVINE\b|\bIVY\b|HEDERA|MU[EH]+LENBECKIA|CAREX)/i;
       const [xw, tot, wkRows, sc, tgRes] = await Promise.all([
         srcPageAll(sb, "sales_sku_map", "sku,plan_item_name"),
         srcPageAll(sb, "sales_totals", "sku,units,revenue"),
@@ -2556,7 +2558,9 @@ function ReadyDatesTab({ plan }) {
 
   useEffect(() => {
     if (!sb) return;
-    const COMPONENT = /\bVINE\b|\bIVY\b|HEDERA|MU[EH]+LENBECKIA|CAREX/i;
+    // combo-input components (ivy vine, vinca vine, muehlenbeckia, carex) — but NOT
+    // ivy/vinca GERANIUMS, which are real sellable varieties, not the vine component
+    const COMPONENT = /^(?!.*\bgeranium\b).*(?:\bVINE\b|\bIVY\b|HEDERA|MU[EH]+LENBECKIA|CAREX)/i;
     (async () => {
       const [xw, wk, sc, tgRes] = await Promise.all([
         srcPageAll(sb, "sales_sku_map", "sku,plan_item_name"),
@@ -2765,7 +2769,9 @@ function SalesVsPlanTab({ plan }) {
   const { displayName } = useAuth();
   useEffect(() => {
     if (!sb) return;
-    const COMPONENT = /\bVINE\b|\bIVY\b|HEDERA|MU[EH]+LENBECKIA|CAREX/i;
+    // combo-input components (ivy vine, vinca vine, muehlenbeckia, carex) — but NOT
+    // ivy/vinca GERANIUMS, which are real sellable varieties, not the vine component
+    const COMPONENT = /^(?!.*\bgeranium\b).*(?:\bVINE\b|\bIVY\b|HEDERA|MU[EH]+LENBECKIA|CAREX)/i;
     (async () => {
       const [xw, tot, wk, sc, tgRes, benchRows, gapRes] = await Promise.all([
         srcPageAll(sb, "sales_sku_map", "sku,plan_item_name"),
