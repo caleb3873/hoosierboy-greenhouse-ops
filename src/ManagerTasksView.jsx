@@ -23,6 +23,7 @@ import HotList from "./HotList";
 import TreatmentPlan from "./TreatmentPlan";
 import { NewWorkModal, ReiBanner, logWorkCompliance } from "./WorkHub";
 import PhotoLibrary from "./PhotoLibrary";
+import PropagationGuide from "./PropagationGuide";
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
 
@@ -404,7 +405,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
   // Remember the open module across a page refresh so reloading (e.g. inside Trade Show)
   // keeps you where you were instead of dumping you back to the hub. Only restore modules
   // that have a back-to-hub and aren't tightly role-gated, so a reload can't strand anyone.
-  const PERSISTABLE_VIEWS = ["tasks", "tradeshow", "photos", "hotlist", "treatment", "today", "week", "messages", "vacation", "evaluations", "receiving", "inventory", "reference-docs", "driver-schedule"];
+  const PERSISTABLE_VIEWS = ["tasks", "tradeshow", "photos", "hotlist", "treatment", "today", "week", "messages", "vacation", "evaluations", "receiving", "inventory", "reference-docs", "driver-schedule", "prop-guide"];
   const [currentView, setCurrentView] = useState(() => { try { const v = sessionStorage.getItem("mtv_view_v1"); return v && PERSISTABLE_VIEWS.includes(v) ? v : "hub"; } catch { return "hub"; } }); // hub | tasks | vacation | messages | today | week | hr-inbox
   useEffect(() => { try { sessionStorage.setItem("mtv_view_v1", currentView); } catch {} }, [currentView]); // sessionStorage → survives refresh, resets on fresh open
   useEffect(() => { try { localStorage.setItem("mtv_cat_v1", category); } catch {} }, [category]);
@@ -1317,6 +1318,13 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
                   <div className="hub-card-sub">Sakata, Takii, Syngenta PDFs</div>
                 </div>
 
+                {/* Propagation Guide — culture facts + our notes, SOPs and timing */}
+                <div className="hub-card" onClick={() => setCurrentView("prop-guide")} style={{ borderTopColor: "#7fb069", borderTopWidth: 4 }}>
+                  <div className="hub-card-emoji">🌱</div>
+                  <div className="hub-card-title">Prop Guide</div>
+                  <div className="hub-card-sub">Rooting, mist, timing + our SOPs</div>
+                </div>
+
                 {/* Trade Show — photo sessions (mobile trial; saves to this device) */}
                 <div className="hub-card" onClick={() => setCurrentView("tradeshow")} style={{ borderTopColor: "#7fb069", borderTopWidth: 4 }}>
                   <div className="hub-card-emoji">📸</div>
@@ -1868,6 +1876,9 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
         </div>
       )}
 
+      {currentView === "prop-guide" && (
+        <PropagationGuide mobile onBack={() => setCurrentView("hub")} />
+      )}
       {currentView === "photos" && (
         <PhotoLibrary onBack={() => setCurrentView("hub")} />
       )}

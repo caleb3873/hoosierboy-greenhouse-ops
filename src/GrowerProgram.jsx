@@ -17,6 +17,7 @@ import {
 import { useAuth } from "./Auth";
 import { RecordsTab, ProductsTab, PurdueTab } from "./WorkRecords";
 import { bucketToDate } from "./ManagerTasksView";
+import PropagationGuide from "./PropagationGuide";
 
 const FONT = "'DM Sans','Segoe UI',sans-serif";
 const DARK = "#1e2d1a";
@@ -28,6 +29,7 @@ const BLUE = "#3a6ea8";
 
 const TABS = [
   ["program", "📅 Program"], ["rotation", "🔄 Rotation"], ["beneficials", "🐞 Beneficials"],
+  ["propguide", "🌱 Prop Guide"],
   ["products", "🧪 Products"], ["equipment", "🔧 Equipment"], ["records", "📒 Records"], ["purdue", "🔬 Purdue"],
 ];
 
@@ -106,6 +108,7 @@ export default function GrowerProgram() {
       {tab === "program" && <ProgramTab />}
       {tab === "rotation" && <RotationTab />}
       {tab === "beneficials" && <BeneficialsTab />}
+      {tab === "propguide" && <PropagationGuide />}
       {tab === "products" && <ProductsTab />}
       {tab === "equipment" && <EquipmentTab />}
       {tab === "records" && <RecordsTab />}
