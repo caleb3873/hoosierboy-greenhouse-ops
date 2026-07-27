@@ -10,6 +10,7 @@ import CategoryProfiles from "./CategoryProfiles";
 import BasketPlanner from "./BasketPlanner";
 import ItemDrill from "./ItemDrill";
 import ProgramsPanel from "./ProgramBuilder";
+import PropagationGuide from "./PropagationGuide";
 
 const COLORS = {
   bg:        "#f7f8f5",
@@ -328,6 +329,7 @@ const PLAN_TABS = [
   { id: "tasks",     label: "✓ Tasks" },
   { id: "materials", label: "📦 Materials" },
   { id: "prop",      label: "🌱 Propagation" },
+  { id: "propguide", label: "🌱 Prop Guide" },
   { id: "plugs",     label: "🧮 Plug Orders" },
   { id: "sales",     label: "📈 Sales vs Plan" },
   { id: "yoy",       label: "⚖ Year over Year" },
@@ -456,7 +458,7 @@ function PlanDashboard({ plan, initialTab }) {
         </>
       ) : (
         <>
-          {!hasData && tab !== "tasks" && tab !== "sourcing" && (
+          {!hasData && tab !== "tasks" && tab !== "sourcing" && tab !== "propguide" && (
             <div style={{ background: COLORS.card, border: `1px dashed ${COLORS.border}`, borderRadius: 10, padding: 40, textAlign: "center", color: COLORS.muted }}>
               <div style={{ fontSize: 24, marginBottom: 8 }}>📋</div>
               <div>No scheduled crops yet for <strong>{plan.name}</strong>.</div>
@@ -473,6 +475,7 @@ function PlanDashboard({ plan, initialTab }) {
           {tab === "tasks"     && <PlanTasks planId={plan.id} />}
           {hasData && tab === "materials" && <MaterialsTab plan={plan} />}
           {hasData && tab === "prop"      && <PropagationTab plan={plan} />}
+          {tab === "propguide" && <PropagationGuide plan={plan} />}
           {hasData && tab === "plugs"     && <PlugOrdersTab plan={plan} />}
           {hasData && tab === "sales"     && <SalesVsPlanTab plan={plan} />}
           {hasData && tab === "yoy"       && <YearOverYearTab plan={plan} />}
