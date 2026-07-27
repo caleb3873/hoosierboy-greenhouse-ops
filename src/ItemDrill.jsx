@@ -7,6 +7,7 @@
 // quantity stay DECISIONS in plan_targets, applied by production later.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getSupabase } from "./supabase";
+import FamilyPage from "./FamilyPage";
 import { QuotePicker } from "./ProgramBuilder";
 import { BasketDesigner } from "./ProductionPlans";
 import { useAuth } from "./Auth";
@@ -47,6 +48,14 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
   const [addHits, setAddHits] = useState([]);
   const [view, setView] = useState("detail");   // detail | history
   const [history, setHistory] = useState(null);
+  const [familyId, setFamilyId] = useState(null);   // recipe_id → opens the crop-family page
+
+  async function openFamily() {
+    const { data } = await sb.from("scheduled_crops").select("recipe_id")
+      .eq("plan_id", plan.id).eq("item_name", row.item).not("recipe_id", "is", null).limit(1);
+    if (data && data[0]?.recipe_id) setFamilyId(data[0].recipe_id);
+    else window.alert("This item isn't linked to a crop recipe yet — run the recipe seed (scripts/seed_crop_recipes.js --apply).");
+  }
 
   // every change is a record — the History tab and the order-confirmation sync both read this
   async function logChange(change_type, detail_obj, variety_key = null) {
@@ -594,6 +603,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
 
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 9200, display: "flex", alignItems: "center", justifyContent: "center", padding: 18 }}>
+      {familyId && <FamilyPage plan={plan} recipeId={familyId} onClose={() => setFamilyId(null)} />}
       <div onClick={e => e.stopPropagation()} style={{ background: "#f6f9f3", width: "min(760px, 94vw)", maxHeight: "92vh", overflow: "auto", padding: 20, borderRadius: 14, boxShadow: "0 14px 48px rgba(0,0,0,.35)", fontFamily: "'DM Sans','Segoe UI',sans-serif" }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
           <div>
@@ -621,6 +631,8 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
             </div>
           </div>
           <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+            <button onClick={openFamily} title="the whole crop × size family — every color, planting groups, the recipe"
+              style={{ padding: "5px 10px", borderRadius: 8, fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", border: `1.5px solid ${C.light}`, background: "#fff", color: C.dark }}>🌿 Family</button>
             <button onClick={() => { setView("detail"); setDup(d => d ? null : { rows: [{ name: `${row.item} 2`, qty: String(row.planned || "") }], price: "" }); }}
               title="copy this item as a new line — recipe, sourcing, weeks; no benches"
               style={{ padding: "5px 10px", borderRadius: 8, fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", border: `1.5px solid ${C.border}`, background: "#fff", color: C.text }}>⧉ Duplicate</button>
