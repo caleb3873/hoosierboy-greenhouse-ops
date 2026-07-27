@@ -8,6 +8,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getSupabase } from "./supabase";
 import FamilyPage from "./FamilyPage";
+import ItemPhotos from "./ItemPhotos";
 import { QuotePicker } from "./ProgramBuilder";
 import { BasketDesigner } from "./ProductionPlans";
 import { useAuth } from "./Auth";
@@ -999,6 +1000,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
             </div>
           </div>
         )}
+        <ItemPhotos plan={plan} itemName={row.item} />
         </>}
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 16, paddingTop: 12, borderTop: `1px solid ${C.border}` }}>
           <span style={{ fontSize: 11.5, color: C.muted }}>Changes save automatically as you make them.</span>
