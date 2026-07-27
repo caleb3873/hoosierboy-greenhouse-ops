@@ -29,6 +29,7 @@ const JSONB_KEYS = new Set([
   "manager_ratings","managerRatings",
   "work_payload","workPayload",
   "form_data","formData",
+  "seeded_from","seededFrom",
   "employer_ratings","employerRatings",
   "employer_responses_en","employerResponsesEn",
   "manager_responses_translated","managerResponsesTranslated",
