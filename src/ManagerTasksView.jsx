@@ -898,6 +898,53 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
   function renderTaskCard(t, idx) {
     const isDone = t.status === "completed";
     const isOverdue = !!t.carriedOver && !isDone;
+
+    // ── COMPACT card for generator tasks with a structured payload ──
+    // One line: kind · zone · total pots (+ per-size chips). Tap → bench-by-bench detail.
+    const wp = t.workPayload;
+    if (wp && (wp.kind === "potfill" || wp.kind === "plant")) {
+      const zUp = String(wp.zone || "").toUpperCase();
+      const zColor = zUp.includes("BLUFF") ? "#1e2d1a" : zUp.includes("SPRAGUE") ? "#4a90d9" : zUp.includes("PAD") ? "#7d3c98" : "#7a8c74";
+      return (
+        <div key={t.id} style={{ background: "#fff", borderRadius: 12, marginBottom: 8, opacity: isDone ? 0.65 : 1,
+          border: `1.5px solid ${isOverdue ? "#d94f3d" : isDone ? "#c8d8c0" : "#e0ead8"}`,
+          boxShadow: isOverdue ? "0 0 0 2px rgba(217,79,61,0.15)" : "none" }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "9px 12px" }}>
+            <div style={{ display: "flex", flexDirection: "column" }}>
+              <button onClick={() => moveTask(t, "up")} disabled={idx === 0 || isDone}
+                style={{ background: "none", border: "none", color: idx === 0 || isDone ? "#d0d8cc" : "#7a8c74", fontSize: 13, cursor: idx === 0 || isDone ? "default" : "pointer", padding: "0 5px", lineHeight: 1.2 }}>&#9650;</button>
+              <button onClick={() => moveTask(t, "down")} disabled={idx === visibleTasks.length - 1 || isDone}
+                style={{ background: "none", border: "none", color: idx === visibleTasks.length - 1 || isDone ? "#d0d8cc" : "#7a8c74", fontSize: 13, cursor: idx === visibleTasks.length - 1 || isDone ? "default" : "pointer", padding: "0 5px", lineHeight: 1.2 }}>&#9660;</button>
+            </div>
+            <button onClick={() => toggleComplete(t)}
+              style={{ width: 26, height: 26, minWidth: 26, borderRadius: 7, border: "2px solid #7fb069",
+                background: isDone ? "#7fb069" : "#fff", color: "#1e2d1a", fontSize: 15, fontWeight: 800,
+                cursor: "pointer", padding: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>{isDone ? "✓" : ""}</button>
+            <div style={{ flex: 1, cursor: "pointer" }} onClick={() => setSelectedTask(t)}>
+              <div style={{ display: "flex", gap: 7, alignItems: "baseline", flexWrap: "wrap" }}>
+                <b style={{ fontSize: 14.5, color: isDone ? "#7a8c74" : "#1e2d1a", textDecoration: isDone ? "line-through" : "none" }}>
+                  {wp.kind === "potfill" ? "📦 Pot Fill" : "🌿 Planting"}
+                </b>
+                <span style={{ fontSize: 13, fontWeight: 800, color: zColor }}>{wp.zone}</span>
+                <b style={{ fontSize: 14, color: "#1e2d1a" }}>{(+wp.total_pots || 0).toLocaleString()} pots</b>
+                {isOverdue && <span style={{ background: "#d94f3d", color: "#fff", borderRadius: 999, padding: "1px 7px", fontSize: 10, fontWeight: 800 }}>OVERDUE</span>}
+                {t.claimedBy && !isDone && <span style={{ background: "#e89a3a", color: "#fff", borderRadius: 999, padding: "1px 7px", fontSize: 10, fontWeight: 800 }}>🔒 {t.claimedBy}</span>}
+                {wp.flagged_pots > 0 && <span title="pots on rows flagged as combo components — not in the count" style={{ background: "#fff3c4", color: "#7a5a00", borderRadius: 999, padding: "1px 7px", fontSize: 10, fontWeight: 800 }}>⚠</span>}
+              </div>
+              {Array.isArray(wp.by_size) && wp.by_size.length > 0 && (wp.kind === "plant" || wp.by_size.length > 1) && (
+                <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 3 }}>
+                  {wp.by_size.map((s, i) => (
+                    <span key={i} style={{ background: "#f2f5ef", border: "1px solid #c8d8c0", borderRadius: 999, padding: "1px 8px", fontSize: 11, fontWeight: 700, color: "#1e2d1a" }}>
+                      {(+s.pots).toLocaleString()} × {s.size}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
     // Pull " · ⚠ {text}" alerts out of the title so they render as a chip instead of inline text
     const alertMatch = (t.title || "").match(/\s·\s⚠\s(.+?)$/);
     const displayTitle = alertMatch ? t.title.replace(alertMatch[0], "") : t.title;
@@ -3237,12 +3284,62 @@ function TaskDetail({ task, onBack, onSave }) {
             </div>
           </div>
 
-          {/* Body / description */}
-          {bodyText && (
+          {/* Structured generator tasks: bench-by-bench (plant) / size table (pot fill) —
+              the prose description stays in the DB as the fallback + audit trail */}
+          {t.workPayload?.kind === "plant" && Array.isArray(t.workPayload.bench_detail) ? (
+            <Section title={`🌿 Plant ${(+t.workPayload.total_pots || 0).toLocaleString()} pots · ${(+t.workPayload.total_liners || 0).toLocaleString()} liners`}>
+              {Array.isArray(t.workPayload.by_size) && t.workPayload.by_size.length > 0 && (
+                <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 10 }}>
+                  {t.workPayload.by_size.map((s, i) => (
+                    <span key={i} style={{ background: "#f2f5ef", border: "1.5px solid #c8d8c0", borderRadius: 999, padding: "3px 10px", fontSize: 12, fontWeight: 800, color: "#1e2d1a" }}>
+                      {(+s.pots).toLocaleString()} × {s.size}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {t.workPayload.bench_detail.map((b, bi) => (
+                <div key={bi} style={{ border: "1.5px solid #e0ead8", borderRadius: 10, marginBottom: 8, overflow: "hidden" }}>
+                  <div style={{ background: "#1e2d1a", color: "#c8e6b8", padding: "7px 12px", fontSize: 13.5, fontWeight: 800, display: "flex", gap: 8 }}>
+                    <span>📍 {b.bench}</span>
+                    <span style={{ marginLeft: "auto", fontWeight: 700, color: "#9fc48a" }}>{(+b.pots).toLocaleString()} pots</span>
+                  </div>
+                  {b.items.map((it, ii) => (
+                    <div key={ii} style={{ padding: "8px 12px", borderTop: ii ? "1px solid #eef2ea" : "none" }}>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: "#1e2d1a" }}>{(+it.pots).toLocaleString()} × {it.name}</div>
+                      <div style={{ fontSize: 12, color: "#7a8c74", marginTop: 1 }}>each pot: <b style={{ color: "#2f3b2a" }}>{it.per_pot}</b> · {(+it.liners).toLocaleString()} liners</div>
+                    </div>
+                  ))}
+                </div>
+              ))}
+              {t.workPayload.flagged_pots > 0 && (
+                <div style={{ background: "#fff3c4", border: "1.5px solid #e89a3a", borderRadius: 10, padding: "9px 12px", fontSize: 12.5, color: "#7a5a00", fontWeight: 700 }}>
+                  ⚠ {(+t.workPayload.flagged_pots).toLocaleString()} pots sit on rows flagged as combo components and are NOT in the count — check with Caleb before planting them.
+                </div>
+              )}
+            </Section>
+          ) : t.workPayload?.kind === "potfill" ? (
+            <Section title={`📦 Fill ${(+t.workPayload.total_pots || 0).toLocaleString()} pots`}>
+              {(t.workPayload.by_size || []).map((s, i) => (
+                <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "7px 4px", borderBottom: "1px solid #eef2ea", fontSize: 14 }}>
+                  <b style={{ color: "#1e2d1a" }}>{s.label || s.size}</b>
+                  <b style={{ color: "#1e2d1a" }}>{(+s.pots).toLocaleString()}</b>
+                </div>
+              ))}
+              <div style={{ fontSize: 13, color: "#2f3b2a", marginTop: 10, lineHeight: 1.6 }}>
+                <b>Soil:</b> ~{t.workPayload.soil_bags} bag(s)<br />
+                <b>Stage on:</b> {(t.workPayload.stage_on || []).join(", ") || "—"}
+              </div>
+              {t.workPayload.flagged_pots > 0 && (
+                <div style={{ marginTop: 8, background: "#fff3c4", border: "1.5px solid #e89a3a", borderRadius: 10, padding: "9px 12px", fontSize: 12.5, color: "#7a5a00", fontWeight: 700 }}>
+                  ⚠ {(+t.workPayload.flagged_pots).toLocaleString()} pots flagged as combo structure — not in the count above.
+                </div>
+              )}
+            </Section>
+          ) : bodyText ? (
             <Section title="Details">
               <div style={{ fontSize: 14, color: "#1e2d1a", whiteSpace: "pre-wrap", lineHeight: 1.45 }}>{bodyText}</div>
             </Section>
-          )}
+          ) : null}
 
           {/* Notes added during claim / release / done */}
           {t.notes && (

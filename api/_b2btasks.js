@@ -196,7 +196,7 @@ async function syncProductionTasks(db) {
     }
 
     const { data: existing } = await db.from("manager_tasks")
-      .select("id,title,status,description").eq("plan_id", plan.id)
+      .select("id,title,status,description,work_payload").eq("plan_id", plan.id)
       .or("title.like.Pot fill*,title.like.PLANT*,title.like.Pre-plant bench prep*,title.like.Day *");
 
     for (const g of Object.values(groups)) {
@@ -228,6 +228,8 @@ async function syncProductionTasks(db) {
       // being planted, on what benches, and how many of what variety per pot" (Caleb)
       const fmtPer = n => (Math.round(n * 10) / 10).toLocaleString();
       const plantLines = [];
+      const benchDetail = [];   // structured mirror of plantLines — drives the compact card + bench drill-down UI
+      let curBench = null;
       let totalLiners = 0;
       const rowsSorted = [...g.plantRows].sort((a, b) => a.bench.localeCompare(b.bench) || String(a.color || "™").localeCompare(String(b.color || "™")) || a.name.localeCompare(b.name));
       let lastBench = null;
@@ -238,7 +240,12 @@ async function syncProductionTasks(db) {
         for (const k of kids) if (k.plants > 0 && pr.pots > 0) recipe.push(`${fmtPer(k.plants / pr.pots)} × ${k.variety}`);
         const liners = pr.pots * pr.ppp + kids.reduce((a, k) => a + k.plants, 0);
         totalLiners += liners;
-        if (pr.bench !== lastBench) { plantLines.push(""); plantLines.push(`📍 ${pr.bench}`); lastBench = pr.bench; }
+        if (pr.bench !== lastBench) {
+          plantLines.push(""); plantLines.push(`📍 ${pr.bench}`); lastBench = pr.bench;
+          curBench = { bench: pr.bench, pots: 0, items: [] }; benchDetail.push(curBench);
+        }
+        curBench.pots += pr.pots;
+        curBench.items.push({ name: pr.name, pots: pr.pots, per_pot: recipe.join(" + ") || "1 plant", liners });
         plantLines.push(`  ${pr.pots.toLocaleString()} × ${pr.name}`);
         plantLines.push(`      each pot: ${recipe.join(" + ") || "1 plant"}   (${liners.toLocaleString()} liners)`);
       }
@@ -252,9 +259,18 @@ async function syncProductionTasks(db) {
         "Water-in immediately after planting.",
       ].join("\n");
 
+      // structured payload — the mobile cards render these instead of parsing prose:
+      // collapsed = kind · zone · total pots (+ per-size); expanded = bench-by-bench
+      const bySize = Object.entries(g.pots)
+        .map(([k, v]) => ({ label: k, size: (k.match(/^[\d.]+"/) || [k])[0], pots: v }))
+        .sort((a, b) => parseFloat(a.size) - parseFloat(b.size));
+      const fillPayload = { kind: "potfill", zone: g.zone, wk: g.wk, total_pots: totalPots, by_size: bySize,
+        soil_bags: Math.max(1, Math.ceil(g.fillCuFt / 8)), stage_on: [...g.benches].sort(), flagged_pots: g.flaggedPots || 0 };
+      const plantPayload = { kind: "plant", zone: g.zone, wk: g.wk, total_pots: totalPots, by_size: bySize,
+        total_liners: totalLiners, bench_detail: benchDetail, flagged_pots: g.flaggedPots || 0 };
       const upserts = [
-        { title: fillTitle, match: t => t.title === fillTitle, desc: fillDesc, due: iso(friday) },
-        { title: plantTitle, match: t => new RegExp(`^PLANT.*— ${g.zone.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\(wk${g.wk}\\)`).test(t.title), desc: plantDesc, due: iso(g.mon) },
+        { title: fillTitle, match: t => t.title === fillTitle, desc: fillDesc, due: iso(friday), payload: fillPayload },
+        { title: plantTitle, match: t => new RegExp(`^PLANT.*— ${g.zone.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\(wk${g.wk}\\)`).test(t.title), desc: plantDesc, due: iso(g.mon), payload: plantPayload },
       ];
       // Bench prep + water-in/leech get the same summary-first clarity.
       // REWRITE ONLY — never created here: the leech protocol is a poinsettia
@@ -297,8 +313,8 @@ async function syncProductionTasks(db) {
       for (const u of upserts) {
         const hit = (existing || []).find(u.match);
         if (hit) {
-          if (hit.status === "pending" && hit.description !== u.desc) {
-            await db.from("manager_tasks").update({ description: u.desc, bench_numbers: [...g.benches].sort(), target_date: u.due }).eq("id", hit.id);
+          if (hit.status === "pending" && (hit.description !== u.desc || JSON.stringify(hit.work_payload || null) !== JSON.stringify(u.payload))) {
+            await db.from("manager_tasks").update({ description: u.desc, bench_numbers: [...g.benches].sort(), target_date: u.due, work_payload: u.payload }).eq("id", hit.id);
             out.updated++;
           }
         } else {
@@ -310,7 +326,7 @@ async function syncProductionTasks(db) {
             plan_id: plan.id, category: "production", location: g.zone,
             bench_numbers: [...g.benches].sort(), status: "pending",
             target_date: u.due, week_number: wkNum, year: due.getUTCFullYear(),
-            created_by: "system", priority: 50,
+            created_by: "system", priority: 50, work_payload: u.payload,
           });
           out.created++;
         }
