@@ -687,6 +687,11 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
         {/* sales story */}
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "12px 0" }}>
           <Stat l="Planned" v={row.planned.toLocaleString()} />
+          {tgt?.target_units != null && (
+            <Stat l="🎯 2027 target" v={(+tgt.target_units).toLocaleString()}
+              accent={+tgt.target_units === row.planned ? C.green : C.amber}
+              sub={+tgt.target_units === row.planned ? "matches plan rows" : `walkthrough call — plan rows still ${row.planned.toLocaleString()}`} />
+          )}
           <Stat l="Sold 2026" v={row.sold.toLocaleString()} sub={pace ? `~${pace}/wk over ${weeksSelling} wks` : null} />
           <Stat l="Sell-through" v={pct(row.st)} accent={row.st == null ? C.muted : row.st >= 0.95 ? C.green : row.st < 0.6 ? C.red : C.dark} />
           <Stat l="Avg price" v={row.sold && row.rev ? money(row.rev / row.sold) : "—"} />

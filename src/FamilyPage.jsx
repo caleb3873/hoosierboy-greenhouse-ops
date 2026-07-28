@@ -25,6 +25,7 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
   const [bmap, setBmap] = useState({});        // bench id -> code
   const [brokerStats, setBrokerStats] = useState({});   // series_name -> [{broker, supplier, min, cov, tot}]
   const [soldByItem, setSoldByItem] = useState({});   // plan item_name -> '26 units (via sku map)
+  const [tmap, setTmap] = useState({});               // plan item_name -> plan_targets row (walkthrough decisions)
   const [locked, setLocked] = useState(true);
   const [snap, setSnap] = useState(null);
   const [savedMsg, setSavedMsg] = useState("");
@@ -62,6 +63,9 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
       const itemNames = [...new Set((sc || []).map(r => r.item_name))];
       let soldMap = {};
       if (itemNames.length) {
+        // walkthrough decisions (Sales vs Plan 2027 targets) — the dig-in surface must greet you with them
+        const { data: tgs } = await sb.from("plan_targets").select("item_name,target_units,decision,decided_by").eq("plan_id", plan.id).in("item_name", itemNames);
+        setTmap(Object.fromEntries((tgs || []).map(t => [t.item_name, t])));
         const { data: maps } = await sb.from("sales_sku_map").select("sku,plan_item_name").in("plan_item_name", itemNames);
         const skuToItem = Object.fromEntries((maps || []).map(m => [m.sku, m.plan_item_name]));
         const skus = Object.keys(skuToItem);
@@ -396,6 +400,50 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
     setBusy(false); setSavedMsg(`✅ recipe saved + cascaded to ${patches.length} rows`); setTick(t => t + 1);
   }
 
+  // walkthrough targets vs plan rows: target_units are SELLABLE UNITS (SvP grain);
+  // rows are POTS — convert via the recipe's pots_per_unit. Combos excluded (their
+  // targets live on their own item pages).
+  const targetGaps = useMemo(() => {
+    if (!rows || !recipe) return [];
+    const ppu = Math.max(1, Math.round(+recipe.pots_per_unit || 1));
+    const potsByItem = {};
+    rows.forEach(r => { if (!r.is_combo_component) potsByItem[r.item_name] = (potsByItem[r.item_name] || 0) + (+r.qty_pots || 0); });
+    const out = [];
+    Object.entries(potsByItem).forEach(([it, pots]) => {
+      const t = tmap[it];
+      if (!t || (t.target_units == null && t.decision !== "drop")) return;
+      const wantU = t.target_units == null ? 0 : Math.max(0, Math.round(+t.target_units));
+      const wantPots = wantU * ppu;
+      out.push({ item: it, wantU, wantPots, pots, delta: wantPots - pots, by: t.decided_by,
+        drop: t.decision === "drop" || wantU === 0, ppu });
+    });
+    return out.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+  }, [rows, tmap, recipe]);
+  const pendingGaps = targetGaps.filter(g => g.delta !== 0);
+
+  // apply ONE item's walkthrough target to its rows (largest remainder), audit-logged.
+  // Explicit by design: the target is the decision record, rows are production — the
+  // bridge is a button, never magic.
+  async function applyTarget(g) {
+    const its = (rows || []).filter(r => r.item_name === g.item && !r.is_combo_component);
+    if (!its.length) return;
+    const cur = its.reduce((a, r) => a + (+r.qty_pots || 0), 0);
+    const exact = its.map(r => cur > 0 ? g.wantPots * (+r.qty_pots || 0) / cur : g.wantPots / its.length);
+    const flo = exact.map(Math.floor);
+    const rem = g.wantPots - flo.reduce((a, b) => a + b, 0);
+    exact.map((e, i) => ({ i, fr: e - flo[i] })).sort((a, b) => b.fr - a.fr).slice(0, Math.max(0, rem)).forEach(x => flo[x.i]++);
+    setBusy(true);
+    for (let i = 0; i < its.length; i++) {
+      if (flo[i] !== +its[i].qty_pots) await sb.from("scheduled_crops").update({ qty_pots: flo[i] }).eq("id", its[i].id);
+    }
+    try {
+      await sb.from("item_change_log").insert({ plan_id: plan.id, item_name: g.item,
+        change_type: "target_applied", detail: { target_units: g.wantU, pots_from: cur, pots_to: g.wantPots },
+        changed_by: displayName || null, source: "family-page" });
+    } catch { /* audit must not block */ }
+    setBusy(false); setTick(t => t + 1);
+  }
+
   // plan-qty edit: distribute a variety's new total across its bench rows (largest remainder)
   async function setVarQty(vr, newTotal) {
     const tot = Math.max(0, Math.round(newTotal));
@@ -557,6 +605,42 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
             </div>
           </div>
         </div>
+
+        {/* walkthrough targets not yet reflected in the rows — the SvP → dig-in bridge */}
+        {pendingGaps.length > 0 && (
+          <div style={{ ...card, border: `1.5px solid ${C.amber}` }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px", background: C.amberBg,
+              borderBottom: `1px solid ${C.border}`, borderRadius: "12px 12px 0 0", flexWrap: "wrap" }}>
+              <b style={{ fontSize: 12.5, color: C.amber }}>🎯 Walkthrough targets — set in Sales vs Plan, not yet in these rows</b>
+              <span style={{ flex: 1 }} />
+              {pendingGaps.length > 1 && (
+                <button disabled={busy} onClick={async () => { for (const g of pendingGaps) await applyTarget(g); }}
+                  style={{ padding: "5px 12px", borderRadius: 8, border: "none", background: C.amber, color: "#fff", fontWeight: 800, fontSize: 11.5, cursor: "pointer", fontFamily: FONT }}>
+                  Apply all ({pendingGaps.length})
+                </button>
+              )}
+            </div>
+            {pendingGaps.map(g => (
+              <div key={g.item} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 14px", borderBottom: `1px solid ${C.border}`, fontSize: 12.5, flexWrap: "wrap" }}>
+                <b style={{ minWidth: 180 }}>{g.item}</b>
+                {g.drop
+                  ? <span style={{ color: "#c0492b", fontWeight: 700 }}>✕ dropped in the walkthrough → rows go to 0 ({g.pots.toLocaleString()} pots today)</span>
+                  : <span>
+                      🎯 <b>{g.wantU.toLocaleString()}</b> units{g.ppu > 1 ? ` (= ${g.wantPots.toLocaleString()} pots)` : ""} · rows today <b>{g.pots.toLocaleString()}</b> pots ·{" "}
+                      <b style={{ color: g.delta > 0 ? "#2e7d32" : "#c0492b" }}>{g.delta > 0 ? "+" : ""}{g.delta.toLocaleString()}</b>
+                    </span>}
+                {g.by && <span style={{ fontSize: 10.5, color: C.muted }}>by {g.by}</span>}
+                <button disabled={busy} onClick={() => applyTarget(g)}
+                  style={{ marginLeft: "auto", padding: "4px 11px", borderRadius: 8, border: `1.5px solid ${C.amber}`, background: "#fff", color: C.amber, fontWeight: 800, fontSize: 11.5, cursor: "pointer", fontFamily: FONT }}>
+                  Apply → rows
+                </button>
+              </div>
+            ))}
+            <div style={{ padding: "6px 14px 9px", fontSize: 10.5, color: C.muted }}>
+              Applying redistributes that item's bench rows (largest remainder) and logs to its history. The target stays the decision record — rows are production.
+            </div>
+          </div>
+        )}
 
         {/* planting groups */}
         {groups.map(g => {
