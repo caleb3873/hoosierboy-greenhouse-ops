@@ -6,6 +6,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { getSupabase } from "./supabase";
 import { useAuth } from "./Auth";
+import { rippleTasks } from "./ripple";
 
 const C = { dark: "#1e2d1a", light: "#7fb069", cream: "#f3f8ee", creamBr: "#cfe3bd",
   muted: "#7a8c74", text: "#2f3b2a", amber: "#c9812a", amberBg: "#fbf1df", red: "#c0492b",
@@ -126,10 +127,17 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
     if (!rows) return [];
     const m = {};
     rows.forEach(r => {
-      const k = `${r.plant_week ?? "?"}|${r.ship_week ?? "?"}`;
-      (m[k] = m[k] || { key: k, plant: r.plant_week, ship: r.ship_week, plantYear: r.plant_year,
-        ready: r.ready_week, rows: [] }).rows.push(r);
-      if (r.ready_week != null) m[k].ready = Math.min(m[k].ready ?? 99, r.ready_week);
+      // a group's identity = when it PLANTS and FINISHES; arrival varies by series
+      // physiology (per-vr rooting) and displays as a range — it must not split groups
+      const k = `${r.plant_week ?? "?"}|${r.ready_week ?? r.ship_week ?? "?"}`;
+      const g = (m[k] = m[k] || { key: k, plant: r.plant_week, plantYear: r.plant_year,
+        ready: r.ready_week, shipMin: null, shipMax: null, rows: [] });
+      g.rows.push(r);
+      if (r.ready_week != null) g.ready = Math.min(g.ready ?? 99, r.ready_week);
+      if (r.ship_week != null) {
+        g.shipMin = g.shipMin == null ? r.ship_week : Math.min(g.shipMin, r.ship_week);
+        g.shipMax = g.shipMax == null ? r.ship_week : Math.max(g.shipMax, r.ship_week);
+      }
     });
     const gs = Object.values(m).sort((a, b) => (a.ready ?? 99) - (b.ready ?? 99) || (a.plant ?? 99) - (b.plant ?? 99));
     gs.forEach((g, i) => {
@@ -188,6 +196,8 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
 
   const [openG, setOpenG] = useState({});
   const [ctx, setCtx] = useState(null);   // {x, y, vr, gKey, newWk} — right-click action menu
+  const [flashKey, setFlashKey] = useState(null);   // follow the group you just edited across a re-sort
+  const [ripple, setRipple] = useState(null);       // {moved, flags[]} — last ripple result banner
 
   useEffect(() => {   // Escape closes; dismissal is handled by the backdrop layer, not window listeners
     const esc = e => { if (e.key === "Escape") setCtx(null); };
@@ -205,6 +215,7 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
     const readyYear = digits.length <= 2 ? (g.plantYear ?? plan.year ?? 2027) : 2000 + +digits.slice(0, 2);
     if (!ready || ready > 52) return;
     const wrap = (wk, yr) => wk <= 0 ? { wk: wk + 52, yr: yr - 1 } : { wk, yr };
+    const acc = { moved: 0, flags: [] };
     setBusy(true);
     for (const vr of g.vars) {
       const sSpec = seriesOf(vr.variety) || {};
@@ -217,6 +228,12 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
           plant_week: p.wk, plant_year: p.yr, ship_week: sh.wk, ship_year: sh.yr,
         }).eq("id", r.id);
       }
+      const its = [...new Set(vr.rows.map(r => r.item_name))];
+      const old = vr.rows[0];
+      const res = await rippleTasks(sb, plan.id, its,
+        { ship: sh.wk, shipYear: sh.yr, plant: p.wk, plantYear: p.yr },
+        { wk: old?.ship_week, yr: old?.ship_year ?? old?.plant_year }, displayName);
+      acc.moved += res.moved; acc.flags.push(...res.flags);
     }
     try {
       const items = [...new Set(g.rows.map(r => r.item_name))];
@@ -227,16 +244,39 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
           changed_by: displayName || null, source: "family-page" });
       }
     } catch { /* audit must not block */ }
+    const pNew = wrap(ready - Math.round(+recipe.crop_weeks), readyYear);
+    setFlashKey(`${pNew.wk}|${ready}`);
+    setRipple(acc.moved || acc.flags.length ? acc : null);
     setBusy(false); setTick(t => t + 1);
   }
+
+  useEffect(() => {   // after a re-sort, bring the edited group back under the cursor and glow it
+    if (!flashKey) return;
+    const el = document.getElementById(`fam-grp-${flashKey}`);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    const t = setTimeout(() => setFlashKey(null), 2200);
+    return () => clearTimeout(t);
+  }, [flashKey, groups]); // eslint-disable-line
 
   // move a variety's rows in one group onto another group's week chain (or a new one)
   async function moveToGroup(vr, target) {
     setBusy(true);
-    const patch = { plant_week: target.plant, plant_year: target.plantYear ?? plan.year ?? 2027,
-      ship_week: target.ship, ship_year: target.shipYear ?? target.plantYear ?? plan.year ?? 2027,
-      ready_week: target.ready ?? null, ready_year: target.readyYear ?? target.plantYear ?? plan.year ?? 2027 };
+    const wrapW = (wk, yr) => wk <= 0 ? { wk: wk + 52, yr: yr - 1 } : { wk, yr };
+    const sSpec = seriesOf(vr.variety) || {};
+    const rooted = /^(URC|CALL)/i.test(sSpec.form || "");
+    const pYr = target.plantYear ?? plan.year ?? 2027;
+    const sh = rooted && target.plant != null
+      ? wrapW(target.plant - Math.round(+(sSpec.rooting_weeks ?? 0)), pYr)
+      : { wk: target.plant, yr: pYr };
+    const patch = { plant_week: target.plant, plant_year: pYr,
+      ship_week: sh.wk, ship_year: sh.yr,
+      ready_week: target.ready ?? null, ready_year: target.readyYear ?? pYr };
     for (const r of vr.rows) await sb.from("scheduled_crops").update(patch).eq("id", r.id);
+    const mvRes = await rippleTasks(sb, plan.id, [...new Set(vr.rows.map(r => r.item_name))],
+      { ship: sh.wk, shipYear: sh.yr, plant: target.plant, plantYear: pYr },
+      { wk: vr.rows[0]?.ship_week, yr: vr.rows[0]?.ship_year ?? vr.rows[0]?.plant_year }, displayName);
+    setRipple(mvRes.moved || mvRes.flags.length ? mvRes : null);
+    setFlashKey(`${target.plant}|${target.ready ?? "?"}`);
     try {
       await sb.from("item_change_log").insert({ plan_id: plan.id, item_name: vr.rows[0]?.item_name || vr.variety,
         variety_key: vr.vkey || null, change_type: "group_move",
@@ -257,7 +297,7 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
     const rooted = /^(URC|CALL)/i.test(sSpec.form || "");
     const p = wrap(ready - Math.round(+recipe.crop_weeks), readyYear);
     const sh = rooted ? wrap(p.wk - Math.round(+(sSpec.rooting_weeks ?? 0)), p.yr) : p;
-    moveToGroup(vr, { plant: p.wk, plantYear: p.yr, ship: sh.wk, shipYear: sh.yr, ready, readyYear });
+    moveToGroup(vr, { plant: p.wk, plantYear: p.yr, ready, readyYear });
   }
   const totals = useMemo(() => {
     let pots = 0, plants = 0, liner = 0, traysN = 0;
@@ -342,6 +382,17 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
           changed_by: displayName || null, source: "family-page" });
       }
     } catch { /* audit must not block */ }
+    const casAcc = { moved: 0, flags: [] };
+    const byItem = {};
+    patches.forEach(x => { byItem[x.item] = x; });
+    for (const [it, x] of Object.entries(byItem)) {
+      const oldRow = (rows || []).find(r => r.item_name === it);
+      const res = await rippleTasks(sb, plan.id, [it],
+        { ship: x.ship_week, shipYear: x.ship_year, plant: x.plant_week, plantYear: x.plant_year },
+        { wk: oldRow?.ship_week, yr: oldRow?.ship_year ?? oldRow?.plant_year }, displayName);
+      casAcc.moved += res.moved; casAcc.flags.push(...res.flags);
+    }
+    setRipple(casAcc.moved || casAcc.flags.length ? casAcc : null);
     setBusy(false); setSavedMsg(`✅ recipe saved + cascaded to ${patches.length} rows`); setTick(t => t + 1);
   }
 
@@ -403,6 +454,18 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
             ))}
         </div>
 
+        {ripple && (
+          <div style={{ background: ripple.flags.length ? C.amberBg : C.chip, border: `1.5px solid ${ripple.flags.length ? "#ecd9b8" : C.border}`,
+            borderRadius: 10, padding: "9px 13px", marginBottom: 12, fontSize: 12, color: C.text }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
+              <b>{ripple.flags.length ? "⚠ Ripple" : "✓ Ripple"}</b>
+              <span>{ripple.moved} floor task{ripple.moved === 1 ? "" : "s"} moved with the chain{ripple.flags.length ? ` · ${ripple.flags.length} need${ripple.flags.length === 1 ? "s" : ""} your eyes:` : "."}</span>
+              <button onClick={() => setRipple(null)} style={{ marginLeft: "auto", background: "none", border: "none", color: C.muted, cursor: "pointer", fontSize: 13 }}>✕</button>
+            </div>
+            {ripple.flags.map((f, i) => <div key={i} style={{ marginTop: 4, fontSize: 11.5, color: C.amber }}>• {f}</div>)}
+          </div>
+        )}
+
         {/* recipe card — lock/save */}
         <div style={card}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", flexWrap: "wrap",
@@ -437,23 +500,26 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
                       <td style={{ ...td, fontWeight: 700 }}>{s.series_name}</td>
                       <td style={td}>
                         {(() => {
+                          if (locked) return <>{s.pinned_broker || "—"}{s.pinned_supplier ? ` · ${s.pinned_supplier}` : ""}</>;
                           const opts = brokerStats[s.series_name] || [];
-                          if (locked || !opts.length) return <>{s.pinned_broker || "—"}{s.pinned_supplier ? ` · ${s.pinned_supplier}` : ""}{!locked && !opts.length && <span style={{ color: C.muted, fontSize: 10 }}> (no quotes on file)</span>}</>;
+                          // pinning is ALWAYS allowed — quote coverage annotates, it doesn't gate
+                          const known = [...new Set([...opts.map(o => o.broker),
+                            ...(s.pinned_broker ? [s.pinned_broker] : []),
+                            "Ball", "EHR", "Express", "Foremost"])];
                           return (
                             <select value={s.pinned_broker || ""}
                               onChange={e => {
                                 const pick = opts.find(o => o.broker === e.target.value);
                                 setSeries(series.map(x => x.id === s.id ? { ...x, pinned_broker: e.target.value || null, pinned_supplier: pick?.supplier ?? x.pinned_supplier } : x));
                               }}
-                              style={{ padding: "3px 5px", borderRadius: 6, border: `1.5px solid ${C.creamBr}`, fontSize: 11.5, fontWeight: 700, fontFamily: FONT, maxWidth: 220, cursor: "pointer" }}>
+                              style={{ padding: "3px 5px", borderRadius: 6, border: `1.5px solid ${C.creamBr}`, fontSize: 11.5, fontWeight: 700, fontFamily: FONT, maxWidth: 230, cursor: "pointer" }}>
                               <option value="">— no pin —</option>
-                              {opts.map(o => (
-                                <option key={o.broker} value={o.broker}>
-                                  {o.broker}{o.supplier ? ` · ${o.supplier}` : ""} — from ${o.min.toFixed(3)} · {o.cov}/{o.tot} colors
-                                </option>
-                              ))}
-                              {s.pinned_broker && !opts.find(o => o.broker === s.pinned_broker) &&
-                                <option value={s.pinned_broker}>{s.pinned_broker} (current pin — no quotes found)</option>}
+                              {known.map(b => {
+                                const o = opts.find(x => x.broker === b);
+                                return <option key={b} value={b}>{o
+                                  ? `${b}${o.supplier ? ` · ${o.supplier}` : ""} — from $${o.min.toFixed(3)} · ${o.cov}/${o.tot} colors`
+                                  : `${b} — no ${s.form || ""} quotes on file`}</option>;
+                              })}
                             </select>
                           );
                         })()}
@@ -483,14 +549,17 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
           const open = openG[g.key] ?? true;
           const gPots = g.vars.reduce((a, v) => a + v.pots, 0);
           return (
-            <div key={g.key} style={card}>
+            <div key={g.key} id={`fam-grp-${g.key}`} style={{ ...card,
+              boxShadow: flashKey === g.key ? "0 0 0 3px #e8b53a66" : "none", transition: "box-shadow 1.2s" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px", cursor: "pointer",
-                background: C.cream, borderBottom: open ? `1px solid ${C.border}` : "none", borderRadius: open ? "12px 12px 0 0" : 12 }}
+                background: flashKey === g.key ? "#fdf3dc" : C.cream, transition: "background 1.2s",
+                borderBottom: open ? `1px solid ${C.border}` : "none", borderRadius: open ? "12px 12px 0 0" : 12 }}
                 onClick={() => setOpenG({ ...openG, [g.key]: !open })}>
                 <span style={{ color: C.muted, fontSize: 11, transform: open ? "rotate(90deg)" : "none", display: "inline-block", transition: "transform .15s" }}>▶</span>
                 <b style={{ fontSize: 12 }}>Group {g.n}</b>
+                {flashKey === g.key && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.amber, background: C.amberBg, borderRadius: 5, padding: "2px 7px" }}>you just edited this — groups number by finish order</span>}
                 <span style={{ fontSize: 11, color: C.muted }} onClick={e => e.stopPropagation()}>
-                  ship <b style={wkStyle}>{wkFmt(g.plantYear, g.ship)}</b> → plant <b style={wkStyle}>{wkFmt(g.plantYear, g.plant)}</b> → ready{" "}
+                  ship <b style={wkStyle}>{g.shipMin == null ? "—" : g.shipMin === g.shipMax ? wkFmt(g.plantYear, g.shipMin) : `${wkFmt(g.plantYear, g.shipMin)}–${wkFmt(g.plantYear, g.shipMax)}`}</b> → plant <b style={wkStyle}>{wkFmt(g.plantYear, g.plant)}</b> → ready{" "}
                   <GroupWkInput key={`${g.key}|${g.ready}`} value={g.ready != null ? wkFmt(g.plantYear, g.ready) : ""} disabled={busy}
                     onCommit={raw => applyGroupReady(g, raw)} />
                   <span title="edit the finish week — the whole group's chain re-derives from the recipe" style={{ marginLeft: 3, fontSize: 9, color: C.muted }}>✎</span>
@@ -567,10 +636,10 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
               </div>
               {groups.filter(g => g.key !== ctx.gKey).map(g => (
                 <button key={g.key} disabled={busy}
-                  onClick={() => moveToGroup(ctx.vr, { plant: g.plant, plantYear: g.plantYear, ship: g.ship, shipYear: g.plantYear, ready: g.ready, readyYear: g.plantYear })}
+                  onClick={() => moveToGroup(ctx.vr, { plant: g.plant, plantYear: g.plantYear, ready: g.ready, readyYear: g.plantYear })}
                   style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 12px", background: "#fff",
                     border: "none", borderBottom: `1px solid ${C.border}`, cursor: "pointer", fontFamily: FONT, fontSize: 12.5 }}>
-                  → Move to <b>Group {g.n}</b> <span style={{ color: C.muted, fontSize: 11 }}>ship {wkFmt(g.plantYear, g.ship)} · plant {wkFmt(g.plantYear, g.plant)} · ready {wkFmt(g.plantYear, g.ready)}</span>
+                  → Move to <b>Group {g.n}</b> <span style={{ color: C.muted, fontSize: 11 }}>plant {wkFmt(g.plantYear, g.plant)} · ready {wkFmt(g.plantYear, g.ready)}</span>
                 </button>
               ))}
               {ctx.newWk == null ? (
