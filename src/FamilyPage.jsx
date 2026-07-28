@@ -21,7 +21,8 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
   const [rows, setRows] = useState(null);
   const [vmap, setVmap] = useState({});
   const [trays, setTrays] = useState({});      // container id -> {name, cells_per_flat}
-  const [sales, setSales] = useState([]);      // matched '26 sales rows
+  const [bmap, setBmap] = useState({});        // bench id -> code
+  const [soldByItem, setSoldByItem] = useState({});   // plan item_name -> '26 units (via sku map)
   const [locked, setLocked] = useState(true);
   const [snap, setSnap] = useState(null);
   const [savedMsg, setSavedMsg] = useState("");
@@ -49,13 +50,25 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
         const { data: ts } = await sb.from("containers").select("id,name,cells_per_flat").in("id", trayIds);
         setTrays(Object.fromEntries((ts || []).map(t => [t.id, t])));
       }
-      // sales heuristic v1: match by crop token + size family (family page shows it as "matched '26 sales")
-      const sizeLike = /HB/i.test(rec.size_label) ? "%HB%" : /Fiber/i.test(rec.size_label) ? "%FIBER%"
-        : /Bowl/i.test(rec.size_label) ? "%BOWL%" : /Pan/i.test(rec.size_label) ? "%PAN%"
-        : `%${(rec.size_label.match(/^[\d.]+/) || [""])[0]}%`;
-      const { data: st } = await sb.from("sales_totals").select("sku,description,size,units,avg_price")
-        .ilike("description", `%${rec.crop_name}%`).ilike("size", sizeLike);
-      setSales(st || []);
+      const bids = [...new Set((sc || []).map(r => r.bench_id).filter(Boolean))];
+      if (bids.length) {
+        const { data: bs } = await sb.from("benches").select("id,code").in("id", bids);
+        setBmap(Object.fromEntries((bs || []).map(b => [b.id, b.code])));
+      }
+      // '26 sales via the CANONICAL join: item_name → sales_sku_map → sku → sales_totals
+      // (SKU is the durable match key — combo-modeled lines like "GERANIUM COMBO RED" attach correctly)
+      const itemNames = [...new Set((sc || []).map(r => r.item_name))];
+      let soldMap = {};
+      if (itemNames.length) {
+        const { data: maps } = await sb.from("sales_sku_map").select("sku,plan_item_name").in("plan_item_name", itemNames);
+        const skuToItem = Object.fromEntries((maps || []).map(m => [m.sku, m.plan_item_name]));
+        const skus = Object.keys(skuToItem);
+        if (skus.length) {
+          const { data: st } = await sb.from("sales_totals").select("sku,units").in("sku", skus);
+          (st || []).forEach(s => { const it = skuToItem[s.sku]; soldMap[it] = (soldMap[it] || 0) + (+s.units || 0); });
+        }
+      }
+      setSoldByItem(soldMap);
     })();
   }, [sb, plan.id, recipeId, tick]); // eslint-disable-line
 
@@ -70,18 +83,6 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
     };
   }, [series]);
 
-  // '26 sold per variety: longest-variety-name-wins matching over the sales rows
-  const soldByVariety = useMemo(() => {
-    const vars = Object.values(vmap).map(v => v.variety).sort((a, b) => b.length - a.length);
-    const out = {};
-    for (const s of sales) {
-      const d = (s.description || "").toUpperCase();
-      const hit = vars.find(v => d.includes(String(v).toUpperCase()));
-      if (hit) out[hit] = (out[hit] || 0) + (+s.units || 0);
-    }
-    return out;
-  }, [sales, vmap]);
-
   // planting groups: cluster parent rows by (plant_week | ship_week), finish order
   const groups = useMemo(() => {
     if (!rows) return [];
@@ -95,34 +96,57 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
     const gs = Object.values(m).sort((a, b) => (a.ready ?? 99) - (b.ready ?? 99) || (a.plant ?? 99) - (b.plant ?? 99));
     gs.forEach((g, i) => {
       g.n = i + 1;
-      // variety aggregation within the group
+      // variety aggregation within the group (a variety may span items — mono + combo lines)
       const byVar = {};
       g.rows.forEach(r => {
         const v = vmap[r.variety_id];
         const key = v?.variety || r.item_name;
-        (byVar[key] = byVar[key] || { variety: key, vkey: v?.variety_key, rows: [], pots: 0, liner: null, broker: null }).rows.push(r);
-        byVar[key].pots += +r.qty_pots || 0;
-        if (r.liner_unit_cost != null && r.liner_unit_cost !== 1) byVar[key].liner = +r.liner_unit_cost;
-        if (r.broker) byVar[key].broker = r.broker;
+        const o = byVar[key] || (byVar[key] = { variety: key, vkey: v?.variety_key, rows: [], pots: 0,
+          liner: null, broker: null, items: new Set(), benches: new Set() });
+        o.rows.push(r);
+        o.pots += +r.qty_pots || 0;
+        o.items.add(r.item_name);
+        if (r.bench_id && bmap[r.bench_id]) o.benches.add(bmap[r.bench_id]);
+        if (r.liner_unit_cost != null && r.liner_unit_cost !== 1) o.liner = +r.liner_unit_cost;
+        if (r.broker) o.broker = r.broker;
       });
       g.vars = Object.values(byVar).sort((a, b) => {
         const sa = seriesOf(a.variety)?.series_name || "~", sbn = seriesOf(b.variety)?.series_name || "~";
         return sa.localeCompare(sbn) || a.variety.localeCompare(b.variety);
       });
     });
-    // FIFO sold allocation: variety total → oldest group first
-    const remaining = { ...soldByVariety };
-    gs.forEach(g => g.vars.forEach(vr => {
-      const rem = remaining[vr.variety] || 0;
-      vr.sold = Math.min(rem, vr.pots || rem);
-      remaining[vr.variety] = rem - vr.sold;
-    }));
-    // leftover (sold beyond all grew) piles on the last group holding that variety
-    gs.slice().reverse().forEach(g => g.vars.forEach(vr => {
-      if ((remaining[vr.variety] || 0) > 0) { vr.sold += remaining[vr.variety]; remaining[vr.variety] = 0; }
-    }));
+    // '26 sold: allocate each ITEM's sales FIFO across the groups that grew it (sku-map join),
+    // then spread within a group across that item's varieties by pot share.
+    const remaining = { ...soldByItem };
+    gs.forEach(g => {
+      const itemPots = {};
+      g.rows.forEach(r => { itemPots[r.item_name] = (itemPots[r.item_name] || 0) + (+r.qty_pots || 0); });
+      g.itemSold = {};
+      Object.entries(itemPots).forEach(([it, pots]) => {
+        const take = Math.min(remaining[it] || 0, pots > 0 ? pots : (remaining[it] || 0));
+        g.itemSold[it] = take; remaining[it] = (remaining[it] || 0) - take;
+      });
+    });
+    gs.slice().reverse().forEach(g => {   // oversell lands on the last round that grew the item
+      Object.keys(g.itemSold || {}).forEach(it => {
+        if ((remaining[it] || 0) > 0) { g.itemSold[it] += remaining[it]; remaining[it] = 0; }
+      });
+    });
+    gs.forEach(g => {
+      const itemPots = {};
+      g.rows.forEach(r => { itemPots[r.item_name] = (itemPots[r.item_name] || 0) + (+r.qty_pots || 0); });
+      g.vars.forEach(vr => {
+        vr.sold = 0;
+        const mine = {};
+        vr.rows.forEach(r => { mine[r.item_name] = (mine[r.item_name] || 0) + (+r.qty_pots || 0); });
+        Object.entries(mine).forEach(([it, p]) => {
+          const tot = itemPots[it] || 1;
+          vr.sold += Math.round((g.itemSold[it] || 0) * (tot > 0 ? p / tot : 1));
+        });
+      });
+    });
     return gs;
-  }, [rows, vmap, soldByVariety, seriesOf]);
+  }, [rows, vmap, soldByItem, seriesOf, bmap]);
 
   const [openG, setOpenG] = useState({});
   const totals = useMemo(() => {
@@ -295,6 +319,14 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
                   ship <b style={wkStyle}>{wkFmt(g.plantYear, g.ship)}</b> → plant <b style={wkStyle}>{wkFmt(g.plantYear, g.plant)}</b> → ready <b style={{ ...wkStyle, color: C.green }}>{wkFmt(g.plantYear, g.ready)}</b>
                 </span>
                 <span style={{ flex: 1 }} />
+                {(() => {   // drift referee: does the actual plant week agree with ready − recipe crop weeks?
+                  const exp = g.ready != null && recipe?.crop_weeks != null ? g.ready - recipe.crop_weeks : null;
+                  return exp != null && g.plant != null && exp !== g.plant
+                    ? <span title={`recipe says plant = ready − ${recipe.crop_weeks} crop wks = wk${exp}; plan says wk${g.plant}`}
+                        style={{ fontSize: 9.5, fontWeight: 800, color: C.amber, background: C.amberBg, borderRadius: 5, padding: "2px 7px" }}>
+                        ⚠ recipe drift {g.plant > exp ? "+" : ""}{g.plant - exp}wk</span>
+                    : null;
+                })()}
                 <span style={{ fontSize: 11, color: C.muted }}>{g.vars.length} varieties · {gPots.toLocaleString()} pots</span>
               </div>
               {open && (
@@ -307,7 +339,10 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
                         const pct = vr.pots > 0 && vr.sold != null ? Math.round(vr.sold * 100 / vr.pots) : null;
                         return (
                           <tr key={vr.variety}>
-                            <td style={{ ...td, fontWeight: 700 }}>{vr.variety}</td>
+                            <td style={{ ...td, fontWeight: 700 }}>{vr.variety}
+                              {vr.items.size > 1 && <span title={[...vr.items].join(" · ")} style={{ marginLeft: 5, fontSize: 9, fontWeight: 800, color: C.amber, background: C.amberBg, borderRadius: 5, padding: "1px 5px" }}>{vr.items.size} lines</span>}
+                              {!!vr.benches.size && <div style={{ fontSize: 9.5, fontWeight: 500, color: C.muted, fontFamily: "ui-monospace,Menlo,monospace" }}>{[...vr.benches].sort().join(" ")}</div>}
+                            </td>
                             <td style={{ ...td, color: C.muted, fontSize: 11 }}>{s?.series_name || "—"}</td>
                             <td style={td}><span style={{ fontFamily: "ui-monospace,Menlo,monospace", fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 5, background: /CALL/.test(s?.form || "") ? C.amberBg : C.chip, color: /CALL/.test(s?.form || "") ? C.amber : C.green }}>{s?.form || "—"}</span></td>
                             <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{vr.sold ? vr.sold.toLocaleString() : "—"}</td>
@@ -339,7 +374,7 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
         {!groups.length && <div style={{ ...card, padding: 24, textAlign: "center", color: C.muted, fontSize: 13 }}>No plan rows linked to this recipe in {plan.name}.</div>}
 
         <div style={{ fontSize: 10.5, color: C.muted, textAlign: "center", marginTop: 4 }}>
-          Sold figures are a v1 heuristic match on '26 sales by name + size, allocated FIFO across groups. Qty edits redistribute across bench rows (largest remainder) and log to the item history.
+          Sold figures come from the canonical SKU map (item → sku → sales), allocated FIFO across the groups that grew each item — combo-modeled lines included. Qty edits redistribute across bench rows (largest remainder) and log to the item history. ⚠ drift badges = plan weeks disagree with the recipe's chain.
         </div>
       </div>
     </Overlay>
