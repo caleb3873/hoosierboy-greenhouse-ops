@@ -474,6 +474,20 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
               {locked ? "🔒 Family recipe — source of truth; edits cascade everywhere" : "✏️ EDITING THE RECIPE — nothing commits until you save"}
             </b>
             {savedMsg && <span style={{ fontSize: 11.5, color: C.green }}>{savedMsg}</span>}
+            {recipe && (
+              <button onClick={async () => {
+                  const next = recipe.plant_class === "perennial" ? null : "perennial";
+                  setRecipe({ ...recipe, plant_class: next });
+                  await sb.from("crop_recipes").update({ plant_class: next }).eq("id", recipe.id);
+                }}
+                title="Tag the whole family — 🌲 perennial families get their own filter in Sales vs Plan (works even while locked; it's a tag, not a chain parameter)"
+                style={{ padding: "4px 10px", borderRadius: 14, fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+                  border: `1.5px solid ${recipe.plant_class === "perennial" ? "#2e7d32" : C.border}`,
+                  background: recipe.plant_class === "perennial" ? "#eaf5e9" : "#fff",
+                  color: recipe.plant_class === "perennial" ? "#2e7d32" : C.muted }}>
+                {recipe.plant_class === "perennial" ? "🌲 Perennial" : "tag 🌲 perennial"}
+              </button>
+            )}
             <span style={{ flex: 1 }} />
             {locked
               ? <button onClick={unlock} style={{ background: C.dark, color: C.cream, border: 0, borderRadius: 8, padding: "6px 12px", fontWeight: 800, fontSize: 12, cursor: "pointer", fontFamily: FONT }}>Unlock to edit</button>

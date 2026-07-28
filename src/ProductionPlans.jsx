@@ -2572,24 +2572,6 @@ function ReadyDatesTab({ plan }) {
     setApplying(false);
   }
 
-  useEffect(() => {   // crop-family browser list: recipes present in this plan, by row count
-    if (!sb) return;
-    (async () => {
-      const rids = await srcPageAll(sb, "scheduled_crops", "recipe_id", q => q.eq("plan_id", plan.id).not("recipe_id", "is", null));
-      const counts = {};
-      rids.forEach(r => { counts[r.recipe_id] = (counts[r.recipe_id] || 0) + 1; });
-      const ids = Object.keys(counts);
-      if (!ids.length) { setFamList([]); return; }
-      const recs = [];
-      for (let i = 0; i < ids.length; i += 200) {
-        const { data } = await sb.from("crop_recipes").select("id,crop_name,size_label").in("id", ids.slice(i, i + 200));
-        recs.push(...(data || []));
-      }
-      setFamList(recs.map(r => ({ id: r.id, label: `${r.size_label} ${r.crop_name}`, n: counts[r.id] }))
-        .sort((a, b) => a.label.localeCompare(b.label)));
-    })();
-  }, [sb, plan.id, reloadTick]); // eslint-disable-line
-
   useEffect(() => {
     if (!sb) return;
     // combo-input components (ivy vine, vinca vine, muehlenbeckia, carex) — but NOT
@@ -2805,6 +2787,28 @@ function SalesVsPlanTab({ plan }) {
   const [showAddDoor, setShowAddDoor] = useState(false);   // THE one door: add a plant via its recipe
   const [famList, setFamList] = useState([]);          // crop-family browser: [{id, label, n}]
   const [showFamily, setShowFamily] = useState(null);  // recipe_id → FamilyPage overlay
+  const [perItems, setPerItems] = useState(new Set()); // item names whose family recipe is tagged 🌲 perennial
+  const [perOnly, setPerOnly] = usePersistedState("gh_svp_perennials", false);
+
+  useEffect(() => {   // crop-family browser + perennial tag map: recipes present in this plan
+    if (!sb) return;
+    (async () => {
+      const rids = await srcPageAll(sb, "scheduled_crops", "item_name,recipe_id", q => q.eq("plan_id", plan.id).not("recipe_id", "is", null));
+      const counts = {}, itemRec = {};
+      rids.forEach(r => { counts[r.recipe_id] = (counts[r.recipe_id] || 0) + 1; itemRec[r.item_name] = r.recipe_id; });
+      const ids = Object.keys(counts);
+      if (!ids.length) { setFamList([]); setPerItems(new Set()); return; }
+      const recs = [];
+      for (let i = 0; i < ids.length; i += 200) {
+        const { data } = await sb.from("crop_recipes").select("id,crop_name,size_label,plant_class").in("id", ids.slice(i, i + 200));
+        recs.push(...(data || []));
+      }
+      setFamList(recs.map(r => ({ id: r.id, label: `${r.size_label} ${r.crop_name}`, n: counts[r.id] }))
+        .sort((a, b) => a.label.localeCompare(b.label)));
+      const perRec = new Set(recs.filter(r => r.plant_class === "perennial").map(r => r.id));
+      setPerItems(new Set(Object.entries(itemRec).filter(([, rid]) => perRec.has(rid)).map(([n]) => n)));
+    })();
+  }, [sb, plan.id, reloadTick]); // eslint-disable-line
   const [supplierMap, setSupplierMap] = useState({});  // item -> assigned supplier (from sourcing)
   const { displayName } = useAuth();
   useEffect(() => {
@@ -3095,6 +3099,7 @@ function SalesVsPlanTab({ plan }) {
       : filt === "dropped" ? (targets[r.item]?.decision === "drop" || targets[r.item]?.target_units === 0)
       : r.status === "HIT")
       && (sizeFilt === "all" || r.size === sizeFilt)
+      && (!perOnly || perItems.has(r.item))
       && (!q || r.item.toLowerCase().includes(q)))
     .sort((a, b) => { const va = (sortVal[sortCol] || sortVal.lostEst)(a), vb = (sortVal[sortCol] || sortVal.lostEst)(b); const c = typeof va === "string" ? va.localeCompare(vb) : (va - vb); return sortDir === "asc" ? c : -c; });
   return (
@@ -3376,13 +3381,12 @@ function SalesVsPlanTab({ plan }) {
           style={{ padding: "7px 10px", borderRadius: 16, border: `1px solid ${sizeFilt !== "all" ? COLORS.light : COLORS.border}`, fontSize: 12, fontFamily: "inherit", background: "#fff", color: COLORS.text, cursor: "pointer" }}>
           {sizes.map(s => <option key={s} value={s}>{s === "all" ? "All sizes" : s}</option>)}
         </select>
+        <button onClick={() => setPerOnly(!perOnly)} title="Only families tagged perennial — tag on the family page, or when adding a family"
+          style={{ padding: "6px 12px", borderRadius: 16, fontWeight: 700, cursor: "pointer", border: `1px solid ${perOnly ? COLORS.light : COLORS.border}`, background: perOnly ? COLORS.light : "#fff", color: perOnly ? "#fff" : COLORS.text }}>🌲 Perennials</button>
         {[["all", "All"], ["over", "🟠 Overplanned"], ["soldout", "🔴 Sold out early"], ["hit", "🟢 Hit"], ["todo", "◻ Undecided"], ["done", "✓ Decided"], ["dropped", "✕ Dropped"]].map(([f, l]) => <button key={f} onClick={() => setFilt(f)} style={{ padding: "6px 12px", borderRadius: 16, fontWeight: 700, cursor: "pointer", border: `1px solid ${filt === f ? COLORS.light : COLORS.border}`, background: filt === f ? COLORS.light : "#fff", color: filt === f ? "#fff" : COLORS.text }}>{l}</button>)}
         <button onClick={() => setSelSet(new Set(shown.map(r => r.item)))} title="Select every item currently shown"
           style={{ padding: "6px 12px", borderRadius: 16, fontWeight: 700, cursor: "pointer", border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.text }}>☑ Select all{shown.length !== rows.length ? " shown" : ""}</button>
         {selSet.size > 0 && <button onClick={() => setSelSet(new Set())} style={{ padding: "6px 12px", borderRadius: 16, fontWeight: 700, cursor: "pointer", border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.muted }}>clear ({selSet.size})</button>}
-        <button onClick={() => selSet.size ? setShowGroup(true) : window.alert("Select the items first — tick their checkboxes or use ☑ Select all — then open the group builder.")}
-          title="Bulk-build waves across the SELECTED colors, ramping to the peak"
-          style={{ padding: "6px 12px", borderRadius: 16, fontWeight: 800, cursor: "pointer", border: `1.5px solid ${COLORS.dark}`, background: selSet.size ? COLORS.dark : "#9fb096", color: "#c8e6b8" }}>🎨 Group builder{selSet.size ? ` (${selSet.size})` : ""}</button>
         <button onClick={() => setShowAddDoor(true)} title="Add a plant — pick variety, size, ready-by and quantity; the recipe fills the rest"
           style={{ padding: "6px 12px", borderRadius: 16, fontWeight: 800, cursor: "pointer", border: `1.5px solid ${COLORS.light}`, background: COLORS.light, color: "#fff" }}>＋ Add a plant</button>
         <select value="" onChange={e => { if (e.target.value) setShowFamily(e.target.value); }}
@@ -3461,7 +3465,8 @@ function SalesVsPlanTab({ plan }) {
         );
       })()}
 
-      {showAddDoor && <AddPlantDoor plan={plan} onClose={() => setShowAddDoor(false)} onCreated={() => setReloadTick(t => t + 1)} />}
+      {showAddDoor && <AddPlantDoor plan={plan} onClose={() => setShowAddDoor(false)} onCreated={() => setReloadTick(t => t + 1)}
+        onOpenFamily={id => setShowFamily(id)} />}
       {showFamily && <FamilyPage plan={plan} recipeId={showFamily} onClose={() => { setShowFamily(null); setReloadTick(t => t + 1); }} />}
       {drill && (
         <ItemDrill plan={plan} row={drill} tgt={targets[drill.item]} weeks={season.weeks}

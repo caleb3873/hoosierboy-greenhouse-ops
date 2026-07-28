@@ -106,26 +106,18 @@ export default function ProgramsPanel({ plan, onAddPlant }) {
     window.alert(`${ready.length} item(s) are now in the plan and the B2B catalog (as drafts). Benches + plant weeks are the production session's job.`);
   }
 
-  if (!programs.length && !naming) {
-    return (
-      <div style={{ background: C.card, border: `1px dashed ${C.border}`, borderRadius: 10, padding: "11px 14px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        <span style={{ fontSize: 12.5, color: C.muted }}>Planning a line with no history — a perennial program, a new size, a new category?</span>
-        <button onClick={() => setNaming(true)} style={{ marginLeft: "auto", padding: "7px 14px", borderRadius: 9, border: "none", background: C.dark, color: "#c8e6b8", fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
-          ＋ Start a new program
-        </button>
-      </div>
-    );
-  }
+  // RETIRED 7/28: new lines start at ＋ Add a plant (family add) + the 🌲 perennial tag.
+  // Existing programs stay — the team's entered work is preserved, approve → convert still works.
+  if (!programs.length) return null;
 
   return (
     <div style={{ background: C.card, border: `1.5px solid ${C.light}`, borderRadius: 10, padding: "12px 14px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
         <span style={{ fontSize: 13, fontWeight: 800, color: C.dark }}>🌱 New programs</span>
-        <span style={{ fontSize: 11.5, color: C.muted }}>lines with no history — invented here, handed to production when approved</span>
+        <span style={{ fontSize: 11.5, color: C.muted }}>the team's workspace — preserved as entered; new material goes through ＋ Add a plant</span>
         {onAddPlant && <button onClick={onAddPlant}
-          title="The one door: searches your library AND all broker catalogs (new imports included) — recipe fills timing, sourcing, tasks"
-          style={{ padding: "5px 11px", borderRadius: 8, border: `1.5px solid ${C.light}`, background: C.light, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>＋ Add a plant instead</button>}
-        {!naming && <button onClick={() => setNaming(true)} style={{ marginLeft: "auto", padding: "5px 11px", borderRadius: 8, border: `1px solid ${C.border}`, background: "#fff", color: C.text, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>＋ New program</button>}
+          title="The one door: searches the broker catalogs — check off several colors to add a whole family"
+          style={{ padding: "5px 11px", borderRadius: 8, border: `1.5px solid ${C.light}`, background: C.light, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>＋ Add a plant</button>}
       </div>
       {naming && (
         <div style={{ display: "flex", gap: 7, marginBottom: 10 }}>
@@ -217,8 +209,8 @@ function ProgramDetail({ sb, program, items, onChange, onConvert }) {
       {adding
         ? <AddProgramItem sb={sb} program={program} itemCount={items.length} onDone={() => { setAdding(false); onChange(); }} onCancel={() => setAdding(false)} />
         : (
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button onClick={() => setAdding(true)} style={{ padding: "7px 13px", borderRadius: 8, border: "none", background: C.light, color: "#fff", fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>＋ Add item</button>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <span style={{ fontSize: 11.5, color: C.muted }}>to add material, use ＋ Add a plant — it lands in the plan directly (tag the family 🌲 perennial to keep it filterable)</span>
             {program.status === "planning" && <button onClick={() => setStatus("approved")} style={{ padding: "7px 13px", borderRadius: 8, border: `1px solid ${C.green}`, background: "#fff", color: C.green, fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>✓ Approve — hand to production</button>}
             {program.status === "approved" && <button onClick={onConvert} style={{ padding: "7px 13px", borderRadius: 8, border: "none", background: C.dark, color: "#c8e6b8", fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>→ Create plan items ({items.filter(i => !i.scheduled_crop_id && i.container_id && +i.target_units > 0).length})</button>}
             {program.status === "approved" && <button onClick={() => setStatus("planning")} style={{ padding: "7px 13px", borderRadius: 8, border: `1px solid ${C.border}`, background: "#fff", color: C.muted, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>↩ Back to planning</button>}
