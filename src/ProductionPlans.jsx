@@ -3590,16 +3590,18 @@ function TargetCell({ r, tgt, draft, saving, onDraft, onSave }) {
         {r.sold > 0 && quick("=sold", r.sold, `Match 2026 sales (${r.sold.toLocaleString()})`)}
         {quick("drop", 0, "Do not grow this in 2027")}
       </div>
-      {(() => {   // what IS this number? — and the target-vs-actual read-back.
-        // pack rides on the row (plants_per_unit) — flat-ENTERED rows are flats too,
-        // not just pot-entered-converted ones (review finding: 4.5" naturals said "pots")
+      {(() => {   // pots ⇄ cases, the B2B convention: production talks POTS, sales sells CASES.
+        // One stored fact (pot totals on the rows) — this footnote echoes the typed case
+        // number as pots LIVE, so nobody ever wonders whether 160 meant 1,600.
         const pack = Math.max(1, Math.round(+r.pack || (r.converted && r.planned > 0 ? (r.planRaw || 0) / r.planned : 1)));
-        const unit = pack > 1 ? `flats of ${pack}` : /HB/i.test(r.size || "") ? "baskets" : "pots";
+        const typed = draft !== undefined ? (Math.round(+String(draft).replace(/[^0-9.]/g, "")) || null) : t;
         return (
-          <div style={{ fontSize: 9, color: COLORS.muted, marginTop: 2, textAlign: "right" }}
-            title="The target is the walkthrough agreement and never auto-changes; production may deliberately differ (space calls) — compare the two at season end.">
-            units = {unit}
-            {t != null && t !== r.planned && <> · in production: <b style={{ color: COLORS.text }}>{r.planned.toLocaleString()}</b></>}
+          <div style={{ fontSize: 9, color: COLORS.muted, marginTop: 2, textAlign: "right", lineHeight: 1.5 }}
+            title="You enter CASES (how it sells); the pot total production talks in echoes here — same convention as the B2B system. The target never auto-changes; production may deliberately differ (space calls) — compare the two at season end.">
+            {pack > 1
+              ? <>cases of {pack}{typed != null && typed > 0 && <> · <b style={{ color: COLORS.dark }}>{typed.toLocaleString()} cases = {(typed * pack).toLocaleString()} pots</b></>}</>
+              : <>units = {/HB/i.test(r.size || "") ? "baskets" : "pots"}</>}
+            {t != null && t !== r.planned && <> · in production: <b style={{ color: COLORS.text }}>{r.planned.toLocaleString()}{pack > 1 ? ` cases (${(r.planned * pack).toLocaleString()} pots)` : ""}</b></>}
           </div>
         );
       })()}

@@ -831,8 +831,8 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
                 {g.drop
                   ? <span style={{ color: "#c0492b", fontWeight: 700 }}>✕ dropped in the walkthrough → rows go to 0 ({g.pots.toLocaleString()} pots today)</span>
                   : <span>
-                      🎯 <b>{g.wantU.toLocaleString()}</b> units{g.ppu > 1 ? ` (= ${g.wantPots.toLocaleString()} pots)` : ""} · rows today <b>{g.pots.toLocaleString()}</b> pots ·{" "}
-                      <b style={{ color: g.delta > 0 ? "#2e7d32" : "#c0492b" }}>{g.delta > 0 ? "+" : ""}{g.delta.toLocaleString()}</b>
+                      🎯 <b>{g.wantU.toLocaleString()}</b> {g.ppu > 1 ? `cases (= ${g.wantPots.toLocaleString()} pots)` : "units"} · rows today <b>{g.pots.toLocaleString()}</b> pots ·{" "}
+                      <b style={{ color: g.delta > 0 ? "#2e7d32" : "#c0492b" }}>{g.delta > 0 ? "+" : ""}{g.delta.toLocaleString()} pots</b>
                     </span>}
                 {g.by && <span style={{ fontSize: 10.5, color: C.muted }}>by {g.by}</span>}
                 <button disabled={busy} onClick={() => applyTarget(g)}
