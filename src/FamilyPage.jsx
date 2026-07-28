@@ -187,16 +187,13 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
   }, [rows, vmap, soldByItem, seriesOf, bmap]);
 
   const [openG, setOpenG] = useState({});
-  const [ctx, setCtx] = useState(null);   // {x, y, vr, gKey} — right-click action menu
+  const [ctx, setCtx] = useState(null);   // {x, y, vr, gKey, newWk} — right-click action menu
 
-  useEffect(() => {
-    if (!ctx) return;
-    const close = () => setCtx(null);
+  useEffect(() => {   // Escape closes; dismissal is handled by the backdrop layer, not window listeners
     const esc = e => { if (e.key === "Escape") setCtx(null); };
-    window.addEventListener("click", close);
     window.addEventListener("keydown", esc);
-    return () => { window.removeEventListener("click", close); window.removeEventListener("keydown", esc); };
-  }, [ctx]);
+    return () => window.removeEventListener("keydown", esc);
+  }, []);
 
   // move a variety's rows in one group onto another group's week chain (or a new one)
   async function moveToGroup(vr, target) {
@@ -214,14 +211,12 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
     setBusy(false); setCtx(null); setTick(t => t + 1);
   }
 
-  function moveToNewGroup(vr) {
-    const raw = window.prompt("New group — ready week (e.g. 18 or 2718):");
-    if (!raw) return;
-    const digits = String(raw).replace(/\D/g, "");
+  function moveToNewGroup(vr, raw) {   // inline input, no browser dialogs (they can wedge the page)
+    const digits = String(raw || "").replace(/\D/g, "");
     if (!digits) return;
     const ready = digits.length <= 2 ? +digits : +digits.slice(2);
     const readyYear = digits.length <= 2 ? (plan.year ?? 2027) : 2000 + +digits.slice(0, 2);
-    if (!ready || ready > 52 || recipe?.crop_weeks == null) { window.alert("Need a valid week and a recipe with crop weeks."); return; }
+    if (!ready || ready > 52 || recipe?.crop_weeks == null) return;
     const wrap = (wk, yr) => wk <= 0 ? { wk: wk + 52, yr: yr - 1 } : { wk, yr };
     const sSpec = seriesOf(vr.variety) || {};
     const rooted = /^(URC|CALL)/i.test(sSpec.form || "");
@@ -519,27 +514,45 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
         {!groups.length && <div style={{ ...card, padding: 24, textAlign: "center", color: C.muted, fontSize: 13 }}>No plan rows linked to this recipe in {plan.name}.</div>}
 
         {ctx && (
-          <div style={{ position: "fixed", left: ctx.x, top: ctx.y, zIndex: 9500, background: "#fff",
-            border: `1px solid ${C.creamBr}`, borderRadius: 10, boxShadow: "0 10px 30px rgba(0,0,0,.3)",
-            minWidth: 220, overflow: "hidden", fontFamily: FONT }} onClick={e => e.stopPropagation()}>
-            <div style={{ padding: "7px 12px", fontSize: 10, fontWeight: 800, textTransform: "uppercase",
-              letterSpacing: ".5px", color: C.muted, background: C.cream, borderBottom: `1px solid ${C.border}` }}>
-              {ctx.vr.variety} · {ctx.vr.pots.toLocaleString()} pots
+          <>
+            {/* backdrop owns dismissal — any click OR right-click outside closes, nothing global */}
+            <div onClick={() => setCtx(null)} onContextMenu={e => { e.preventDefault(); setCtx(null); }}
+              style={{ position: "fixed", inset: 0, zIndex: 9490, background: "transparent" }} />
+            <div style={{ position: "fixed", left: Math.min(ctx.x, window.innerWidth - 250), top: Math.min(ctx.y, window.innerHeight - 220),
+              zIndex: 9500, background: "#fff", border: `1px solid ${C.creamBr}`, borderRadius: 10,
+              boxShadow: "0 10px 30px rgba(0,0,0,.3)", minWidth: 230, overflow: "hidden", fontFamily: FONT }}>
+              <div style={{ padding: "7px 12px", fontSize: 10, fontWeight: 800, textTransform: "uppercase",
+                letterSpacing: ".5px", color: C.muted, background: C.cream, borderBottom: `1px solid ${C.border}`,
+                display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ flex: 1 }}>{ctx.vr.variety} · {ctx.vr.pots.toLocaleString()} pots</span>
+                <button onClick={() => setCtx(null)} style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", fontSize: 12 }}>✕</button>
+              </div>
+              {groups.filter(g => g.key !== ctx.gKey).map(g => (
+                <button key={g.key} disabled={busy}
+                  onClick={() => moveToGroup(ctx.vr, { plant: g.plant, plantYear: g.plantYear, ship: g.ship, shipYear: g.plantYear, ready: g.ready, readyYear: g.plantYear })}
+                  style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 12px", background: "#fff",
+                    border: "none", borderBottom: `1px solid ${C.border}`, cursor: "pointer", fontFamily: FONT, fontSize: 12.5 }}>
+                  → Move to <b>Group {g.n}</b> <span style={{ color: C.muted, fontSize: 11 }}>ship {wkFmt(g.plantYear, g.ship)} · plant {wkFmt(g.plantYear, g.plant)} · ready {wkFmt(g.plantYear, g.ready)}</span>
+                </button>
+              ))}
+              {ctx.newWk == null ? (
+                <button disabled={busy} onClick={() => setCtx({ ...ctx, newWk: "" })}
+                  style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 12px", background: "#fff",
+                    border: "none", cursor: "pointer", fontFamily: FONT, fontSize: 12.5, color: C.green, fontWeight: 700 }}>
+                  ＋ New group — pick a ready week…
+                </button>
+              ) : (
+                <div style={{ display: "flex", gap: 6, alignItems: "center", padding: "8px 12px" }}>
+                  <input autoFocus value={ctx.newWk} onChange={e => setCtx({ ...ctx, newWk: e.target.value })}
+                    onKeyDown={e => { if (e.key === "Enter" && ctx.newWk.trim()) { const vr = ctx.vr, wk = ctx.newWk; setCtx(null); moveToNewGroup(vr, wk); } }}
+                    placeholder="ready wk (18 or 2718)" inputMode="numeric"
+                    style={{ flex: 1, padding: "6px 8px", borderRadius: 7, border: `1.5px solid ${C.creamBr}`, fontSize: 12, fontFamily: "ui-monospace,Menlo,monospace", fontWeight: 700 }} />
+                  <button disabled={busy || !ctx.newWk.trim()} onClick={() => { const vr = ctx.vr, wk = ctx.newWk; setCtx(null); moveToNewGroup(vr, wk); }}
+                    style={{ padding: "6px 11px", borderRadius: 7, border: "none", background: C.light, color: "#fff", fontWeight: 800, fontSize: 11.5, cursor: "pointer", fontFamily: FONT }}>Go</button>
+                </div>
+              )}
             </div>
-            {groups.filter(g => g.key !== ctx.gKey).map(g => (
-              <button key={g.key} disabled={busy}
-                onClick={() => moveToGroup(ctx.vr, { plant: g.plant, plantYear: g.plantYear, ship: g.ship, shipYear: g.plantYear, ready: g.ready, readyYear: g.plantYear })}
-                style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 12px", background: "#fff",
-                  border: "none", borderBottom: `1px solid ${C.border}`, cursor: "pointer", fontFamily: FONT, fontSize: 12.5 }}>
-                → Move to <b>Group {g.n}</b> <span style={{ color: C.muted, fontSize: 11 }}>ship {wkFmt(g.plantYear, g.ship)} · plant {wkFmt(g.plantYear, g.plant)} · ready {wkFmt(g.plantYear, g.ready)}</span>
-              </button>
-            ))}
-            <button disabled={busy} onClick={() => { setCtx(null); moveToNewGroup(ctx.vr); }}
-              style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 12px", background: "#fff",
-                border: "none", cursor: "pointer", fontFamily: FONT, fontSize: 12.5, color: C.green, fontWeight: 700 }}>
-              ＋ New group — pick a ready week (chain derives from the recipe)
-            </button>
-          </div>
+          </>
         )}
 
         <div style={{ fontSize: 10.5, color: C.muted, textAlign: "center", marginTop: 4 }}>
