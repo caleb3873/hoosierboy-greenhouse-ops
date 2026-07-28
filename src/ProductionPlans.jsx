@@ -3548,7 +3548,6 @@ function TargetCell({ r, tgt, draft, saving, onDraft, onSave }) {
   const val = draft !== undefined ? draft : (tgt?.decision === "drop" ? "0" : (tgt?.target_units ?? ""));
   const committed = tgt?.target_units != null || tgt?.decision === "drop";
   const t = tgt?.decision === "drop" ? 0 : (tgt?.target_units != null ? +tgt.target_units : null);
-  const delta = t == null ? null : t - r.planned;
   const commit = raw => {
     const s = String(raw).trim();
     if (s === "") { onSave({ target_units: null, decision: null }); return; }
@@ -3564,11 +3563,6 @@ function TargetCell({ r, tgt, draft, saving, onDraft, onSave }) {
   return (
     <td style={{ ...td, textAlign: "right", background: committed ? "#eef6e8" : "#fbfdfa", borderLeft: `2px solid ${COLORS.light}`, whiteSpace: "nowrap", position: "sticky", right: 0, zIndex: 1, minWidth: 128 }}>
       <div style={{ display: "flex", gap: 4, alignItems: "center", justifyContent: "flex-end" }}>
-        {delta != null && delta !== 0 && (
-          <span style={{ fontSize: 10, fontWeight: 800, color: delta > 0 ? COLORS.red : "#2e7d32" }}>
-            {delta > 0 ? "+" : ""}{delta.toLocaleString()}
-          </span>
-        )}
         <input
           value={val}
           onChange={e => onDraft(e.target.value)}
@@ -3590,18 +3584,36 @@ function TargetCell({ r, tgt, draft, saving, onDraft, onSave }) {
         {r.sold > 0 && quick("=sold", r.sold, `Match 2026 sales (${r.sold.toLocaleString()})`)}
         {quick("drop", 0, "Do not grow this in 2027")}
       </div>
-      {(() => {   // pots ⇄ cases, the B2B convention: production talks POTS, sales sells CASES.
-        // One stored fact (pot totals on the rows) — this footnote echoes the typed case
-        // number as pots LIVE, so nobody ever wonders whether 160 meant 1,600.
+      {(() => {   // pots ⇄ cases (B2B convention: production talks POTS, sales sells CASES)
+        // and an EXPLICIT target-vs-production read-back — labeled numbers and words,
+        // never a bare signed delta ("−20" told nobody anything).
         const pack = Math.max(1, Math.round(+r.pack || (r.converted && r.planned > 0 ? (r.planRaw || 0) / r.planned : 1)));
-        const typed = draft !== undefined ? (Math.round(+String(draft).replace(/[^0-9.]/g, "")) || null) : t;
+        const unitWord = pack > 1 ? "cases" : /HB/i.test(r.size || "") ? "baskets" : "pots";
+        const typed = draft !== undefined ? (Math.round(+String(draft).replace(/[^0-9.]/g, "")) || null) : null;
+        if (typed != null && typed > 0) return (   // typing: live translation, nothing else
+          <div style={{ fontSize: 9.5, color: COLORS.dark, marginTop: 2, textAlign: "right", fontWeight: 700 }}>
+            {typed.toLocaleString()} {unitWord}{pack > 1 ? ` = ${(typed * pack).toLocaleString()} pots` : ""}
+          </div>
+        );
+        if (t == null) return (   // undecided: just say what the number will mean
+          <div style={{ fontSize: 9, color: COLORS.muted, marginTop: 2, textAlign: "right" }}>
+            enter {unitWord}{pack > 1 ? ` of ${pack}` : ""}
+          </div>
+        );
+        const diff = r.planned - t;   // production minus target
+        const box = diff === 0 ? { bg: "#eaf5e9", bd: "#c2e0be", c: "#2e7d32" }
+          : diff > 0 ? { bg: "#fbf1df", bd: "#ecd9b8", c: "#b57718" }
+          : { bg: "#fdecea", bd: "#f3c6c0", c: COLORS.red };
         return (
-          <div style={{ fontSize: 9, color: COLORS.muted, marginTop: 2, textAlign: "right", lineHeight: 1.5 }}
-            title="You enter CASES (how it sells); the pot total production talks in echoes here — same convention as the B2B system. The target never auto-changes; production may deliberately differ (space calls) — compare the two at season end.">
-            {pack > 1
-              ? <>cases of {pack}{typed != null && typed > 0 && <> · <b style={{ color: COLORS.dark }}>{typed.toLocaleString()} cases = {(typed * pack).toLocaleString()} pots</b></>}</>
-              : <>units = {/HB/i.test(r.size || "") ? "baskets" : "pots"}</>}
-            {t != null && t !== r.planned && <> · in production: <b style={{ color: COLORS.text }}>{r.planned.toLocaleString()}{pack > 1 ? ` cases (${(r.planned * pack).toLocaleString()} pots)` : ""}</b></>}
+          <div style={{ marginTop: 3, borderRadius: 6, padding: "2px 7px", background: box.bg, border: `1px solid ${box.bd}`, fontSize: 9.5, textAlign: "right", lineHeight: 1.6, color: COLORS.text }}
+            title={`Target = the walkthrough agreement (never auto-changes) · in production = what the plan rows hold today${pack > 1 ? `. In pots: target ${(t * pack).toLocaleString()} vs ${(r.planned * pack).toLocaleString()} in production.` : "."} Compare the two at season end.`}>
+            🎯 target <b>{t.toLocaleString()}</b> · in production <b>{r.planned.toLocaleString()}</b> {unitWord}
+            <div style={{ fontWeight: 800, color: box.c }}>
+              {diff === 0 ? "✓ production matches target"
+                : t === 0 ? `✕ dropped — ${r.planned.toLocaleString()} ${unitWord} still in production`
+                : diff > 0 ? `${diff.toLocaleString()} ${unitWord} over target`
+                : `${(-diff).toLocaleString()} ${unitWord} short of target`}
+            </div>
           </div>
         );
       })()}
