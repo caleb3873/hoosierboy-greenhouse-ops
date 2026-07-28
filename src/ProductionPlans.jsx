@@ -2877,7 +2877,7 @@ function SalesVsPlanTab({ plan }) {
         const cutoff = (peak != null && peak <= EARLY_PEAK_WK) ? EARLY_CUTOFF_WK : MD_CUTOFF_WK;
         const soldOut = s >= pItems && pItems > 0 && lastWk != null && lastWk < cutoff;
         const lostEst = soldOut ? Math.round((s / Math.max(1, lastWk - firstWk + 1)) * (cutoff - lastWk) * price) : 0;
-        out.push({ item: it, isNew: newItems.has(it), needsSourcing: needsSrc.has(it), size: sizeTokenForItem(it), converted: pItems !== planned, planRaw: planned, planned: pItems, sold: s, st: pItems ? s / pItems : 0, over, lostEst, soldOut, cutoff, lastWk, firstWk, price: s > 0 ? (rev[it] || 0) / s : (price || null), rev: Math.round(rev[it] || 0), wk: wkA, peak, ship: readyByItem[it] ?? shipByItem[it] ?? null, status: soldOut ? "SOLDOUT" : s >= pItems ? "HIT" : (s === 0 ? "NOSALE" : "SHORT") });
+        out.push({ item: it, isNew: newItems.has(it), needsSourcing: needsSrc.has(it), size: sizeTokenForItem(it), converted: pItems !== planned, pack: Math.max(1, Math.round(+ppuByItem[it] || 1)), planRaw: planned, planned: pItems, sold: s, st: pItems ? s / pItems : 0, over, lostEst, soldOut, cutoff, lastWk, firstWk, price: s > 0 ? (rev[it] || 0) / s : (price || null), rev: Math.round(rev[it] || 0), wk: wkA, peak, ship: readyByItem[it] ?? shipByItem[it] ?? null, status: soldOut ? "SOLDOUT" : s >= pItems ? "HIT" : (s === 0 ? "NOSALE" : "SHORT") });
       }
       // Dual-use rows: real retail sales, but planned volume mostly feeds combos,
       // so sell-through / over / lost are meaningless and deliberately left null.
@@ -3590,6 +3590,19 @@ function TargetCell({ r, tgt, draft, saving, onDraft, onSave }) {
         {r.sold > 0 && quick("=sold", r.sold, `Match 2026 sales (${r.sold.toLocaleString()})`)}
         {quick("drop", 0, "Do not grow this in 2027")}
       </div>
+      {(() => {   // what IS this number? — and the target-vs-actual read-back.
+        // pack rides on the row (plants_per_unit) — flat-ENTERED rows are flats too,
+        // not just pot-entered-converted ones (review finding: 4.5" naturals said "pots")
+        const pack = Math.max(1, Math.round(+r.pack || (r.converted && r.planned > 0 ? (r.planRaw || 0) / r.planned : 1)));
+        const unit = pack > 1 ? `flats of ${pack}` : /HB/i.test(r.size || "") ? "baskets" : "pots";
+        return (
+          <div style={{ fontSize: 9, color: COLORS.muted, marginTop: 2, textAlign: "right" }}
+            title="The target is the walkthrough agreement and never auto-changes; production may deliberately differ (space calls) — compare the two at season end.">
+            units = {unit}
+            {t != null && t !== r.planned && <> · in production: <b style={{ color: COLORS.text }}>{r.planned.toLocaleString()}</b></>}
+          </div>
+        );
+      })()}
     </td>
   );
 }

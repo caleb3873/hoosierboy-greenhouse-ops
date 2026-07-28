@@ -3,7 +3,7 @@
 // variety roster with sold-vs-planned, and the RECIPE editor (lock/save) writing the
 // live spine (crop_recipes + crop_recipe_series). The page is a VIEW over the spine —
 // recipe + plan rows + sales — never a second place to enter a fact.
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { getSupabase } from "./supabase";
 import { useAuth } from "./Auth";
 import { rippleTasks } from "./ripple";
@@ -36,6 +36,7 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
   const [tmap, setTmap] = useState({});               // plan item_name -> plan_targets row (walkthrough decisions)
   const [famSold, setFamSold] = useState(null);       // whole-family 2026 sales incl. removed varieties (name-matched)
   const [confirmRm, setConfirmRm] = useState(null);   // variety pending delete in the "not returning" strip
+  const addedSeries = useRef([]);                     // placeholder series rows created this edit session — Cancel takes them back
   const [trayOpts, setTrayOpts] = useState([]);       // plug-tray containers (105/72/50/38…) for the recipe's Tray select
   const [locked, setLocked] = useState(true);
   const [snap, setSnap] = useState(null);
@@ -75,7 +76,7 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
       let soldMap = {};
       if (itemNames.length) {
         // walkthrough decisions (Sales vs Plan 2027 targets) — the dig-in surface must greet you with them
-        const { data: tgs } = await sb.from("plan_targets").select("item_name,target_units,decision,decided_by").eq("plan_id", plan.id).in("item_name", itemNames);
+        const { data: tgs } = await sb.from("plan_targets").select("item_name,target_units,decision,decided_by,applied_at,applied_units").eq("plan_id", plan.id).in("item_name", itemNames);
         setTmap(Object.fromEntries((tgs || []).map(t => [t.item_name, t])));
         const { data: maps } = await sb.from("sales_sku_map").select("sku,plan_item_name").in("plan_item_name", itemNames);
         const skuToItem = Object.fromEntries((maps || []).map(m => [m.sku, m.plan_item_name]));
@@ -460,7 +461,13 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
 
   // ── recipe lock/save ──
   function unlock() { setSnap(JSON.stringify({ r: recipe, s: series })); setLocked(false); setSavedMsg(""); }
-  function cancel() {
+  async function cancel() {
+    // Add-series writes its placeholder row instantly (it needs an id to edit against) —
+    // Cancel must take those back or "reverted — nothing changed" is a lie (review finding).
+    for (const id of addedSeries.current) {
+      await sb.from("crop_recipe_series").delete().eq("id", id).eq("series_name", "New series");
+    }
+    addedSeries.current = [];
     const a = JSON.parse(snap); setRecipe(a.r); setSeries(a.s); setLocked(true); setSavedMsg("reverted — nothing changed");
   }
   async function save() {
@@ -494,6 +501,7 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
           updated_at: new Date().toISOString() }).eq("id", s.id);
       }
     }
+    addedSeries.current = [];   // saved rows are legit now — Cancel must not touch them later
     setBusy(false); setLocked(true); setSavedMsg(`✅ saved — ${ch.length} change${ch.length > 1 ? "s" : ""} (crop_recipes)`);
 
     // ── the ripple, first slice: recipe saved → offer to re-derive the plan's chain.
@@ -561,12 +569,17 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
       if (!t || (t.target_units == null && t.decision !== "drop")) return;
       const wantU = t.target_units == null ? 0 : Math.max(0, Math.round(+t.target_units));
       const wantPots = wantU * ppu;
+      // acknowledgment gate is VALUE-based: the line shows only when the walkthrough
+      // NUMBER differs from the last number applied. Timestamps deliberately ignored —
+      // notes, timing arrows and rounds edits bump updated_at and must not re-nag
+      // (review finding), and deliberate production drift stays quiet.
+      const stale = t.applied_at == null || (t.applied_units ?? null) !== wantU;
       out.push({ item: it, wantU, wantPots, pots, delta: wantPots - pots, by: t.decided_by,
-        drop: t.decision === "drop" || wantU === 0, ppu });
+        drop: t.decision === "drop" || wantU === 0, ppu, stale });
     });
     return out.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
   }, [rows, tmap, recipe]);
-  const pendingGaps = targetGaps.filter(g => g.delta !== 0);
+  const pendingGaps = targetGaps.filter(g => g.delta !== 0 && g.stale);
 
   // apply ONE item's walkthrough target to its rows (largest remainder), audit-logged.
   // Explicit by design: the target is the decision record, rows are production — the
@@ -580,14 +593,25 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
     const rem = g.wantPots - flo.reduce((a, b) => a + b, 0);
     exact.map((e, i) => ({ i, fr: e - flo[i] })).sort((a, b) => b.fr - a.fr).slice(0, Math.max(0, rem)).forEach(x => flo[x.i]++);
     setBusy(true);
+    let failed = 0;
     for (let i = 0; i < its.length; i++) {
-      if (flo[i] !== +its[i].qty_pots) await sb.from("scheduled_crops").update({ qty_pots: flo[i] }).eq("id", its[i].id);
+      if (flo[i] === +its[i].qty_pots) continue;
+      // .select() so a 0-row match (deleted/RLS) counts as a failure, not silent success
+      const { data: ok, error } = await sb.from("scheduled_crops").update({ qty_pots: flo[i] }).eq("id", its[i].id).select("id");
+      if (error || !ok?.length) failed++;
     }
     try {
       await sb.from("item_change_log").insert({ plan_id: plan.id, item_name: g.item,
-        change_type: "target_applied", detail: { target_units: g.wantU, pots_from: cur, pots_to: g.wantPots },
+        change_type: "target_applied", detail: { target_units: g.wantU, pots_from: cur, pots_to: g.wantPots, ...(failed ? { rows_failed: failed } : {}) },
         changed_by: displayName || null, source: "family-page" });
     } catch { /* audit must not block */ }
+    if (!failed) {
+      // acknowledge ONLY a clean apply: value snapshot + stamp. A partial apply leaves
+      // the line in the banner so it self-heals (review finding).
+      await sb.from("plan_targets").update({ applied_at: new Date().toISOString(), applied_units: g.wantU }).eq("plan_id", plan.id).eq("item_name", g.item);
+    } else {
+      window.alert(`${g.item}: ${failed} row update${failed > 1 ? "s" : ""} didn't stick — the target stays in the banner. Try Apply again.`);
+    }
     setBusy(false); setTick(t => t + 1);
   }
 
@@ -671,19 +695,21 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
             <b style={{ fontSize: 12.5, color: locked ? C.text : C.amber }}>
               {locked ? "🔒 Family recipe — source of truth; edits cascade everywhere" : "✏️ EDITING THE RECIPE — nothing commits until you save"}
             </b>
-            {savedMsg && <span style={{ fontSize: 11.5, color: C.green }}>{savedMsg}</span>}
+            {savedMsg && <span style={{ fontSize: 11.5, color: /^(⚠|couldn't)/i.test(savedMsg) ? C.red : C.green }}>{savedMsg}</span>}
             {recipe && (
               <button onClick={async () => {
                   const next = recipe.plant_class === "perennial" ? null : "perennial";
                   setRecipe({ ...recipe, plant_class: next });
                   await sb.from("crop_recipes").update({ plant_class: next }).eq("id", recipe.id);
                 }}
-                title="Tag the whole family — 🌲 perennial families get their own filter in Sales vs Plan (works even while locked; it's a tag, not a chain parameter)"
+                title={recipe.plant_class === "perennial"
+                  ? "This family IS tagged perennial — click to remove the tag"
+                  : "Not tagged — click to mark this family perennial (filters in Sales vs Plan)"}
                 style={{ padding: "4px 10px", borderRadius: 14, fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
                   border: `1.5px solid ${recipe.plant_class === "perennial" ? "#2e7d32" : C.border}`,
-                  background: recipe.plant_class === "perennial" ? "#eaf5e9" : "#fff",
-                  color: recipe.plant_class === "perennial" ? "#2e7d32" : C.muted }}>
-                {recipe.plant_class === "perennial" ? "🌲 Perennial" : "tag 🌲 perennial"}
+                  background: recipe.plant_class === "perennial" ? "#2e7d32" : "#fff",
+                  color: recipe.plant_class === "perennial" ? "#fff" : C.muted }}>
+                {recipe.plant_class === "perennial" ? "🌲 Perennial ✓" : "🌲 Mark as perennial"}
               </button>
             )}
             <span style={{ flex: 1 }} />
@@ -761,9 +787,26 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
                       </td>
                     </tr>
                   ))}
-                  {!series.length && <tr><td style={td} colSpan={5}>No series yet — the seed derives them from variety names; add via re-seed or SQL.</td></tr>}
+                  {!series.length && <tr><td style={td} colSpan={5}>No series yet — add one below; new door-adds fall back to "(unassigned)" until their series exists.</td></tr>}
                 </tbody>
               </table>
+              <button disabled={busy} onClick={async () => {
+                  // one placeholder at a time — a second upsert would land on the SAME
+                  // (recipe_id,'New series') row and clobber unsaved local edits
+                  if (series.some(x => x.series_name.trim().toLowerCase() === "new series")) {
+                    setSavedMsg("⚠ rename the 'New series' row first (then 💾 Save) before adding another"); return;
+                  }
+                  const { data: ins, error } = await sb.from("crop_recipe_series")
+                    .upsert({ recipe_id: recipeId, series_name: "New series", form: "URC" }, { onConflict: "recipe_id,series_name" })
+                    .select("*").single();
+                  if (error) { setSavedMsg("⚠ couldn't add: " + error.message); return; }
+                  addedSeries.current.push(ins.id);   // Cancel deletes untouched placeholders
+                  setSeries(s => s.some(x => x.id === ins.id) ? s : [...s, ins]);   // never clobber local edits
+                }}
+                title="new varieties added from the catalog don't create their series row — add it here, rename it, set form/root/tray, save"
+                style={{ marginTop: 8, padding: "6px 12px", borderRadius: 8, border: `1.5px dashed ${C.light}`, background: "#fff", color: C.dark, fontWeight: 800, fontSize: 11.5, cursor: "pointer", fontFamily: FONT }}>
+                ＋ Add series
+              </button>
             </div>
           </div>
         </div>
@@ -799,7 +842,7 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
               </div>
             ))}
             <div style={{ padding: "6px 14px 9px", fontSize: 10.5, color: C.muted }}>
-              Applying redistributes that item's bench rows (largest remainder) and logs to its history. The target stays the decision record — rows are production.
+              Applying redistributes that item's bench rows (largest remainder), logs to its history, and clears the line — it returns only if the walkthrough number changes again. Production drifting on purpose afterwards (space calls) stays quiet; target vs actual reads back in Sales vs Plan and the item drill.
             </div>
           </div>
         )}
@@ -1008,6 +1051,21 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
 
         <div style={{ fontSize: 10.5, color: C.muted, textAlign: "center", marginTop: 4 }}>
           Sold figures come from the canonical SKU map (item → sku → sales), allocated FIFO across the groups that grew each item — combo-modeled lines included. Qty edits redistribute across bench rows (largest remainder) and log to the item history. ⚠ drift badges = plan weeks disagree with the recipe's chain.
+        </div>
+
+        {/* closure button — everything already saved live; humans still deserve a "done".
+            EXCEPT an unlocked recipe: those drafts only commit on 💾 Save, so don't lie. */}
+        <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 12, margin: "10px 0 4px" }}>
+          <span style={{ fontSize: 11, color: C.muted }}>
+            {locked ? "every change on this page saves the moment you make it — this just closes it out"
+              : "the recipe is unlocked — 💾 Save or Cancel it up top before closing out"}
+          </span>
+          <button onClick={onClose} disabled={!locked}
+            style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: locked ? C.green : "#9fb096",
+              color: "#fff", fontWeight: 800, fontSize: 13.5, cursor: locked ? "pointer" : "default", fontFamily: FONT,
+              boxShadow: locked ? "0 3px 10px rgba(46,125,50,.3)" : "none" }}>
+            {locked ? "✓ Done — everything's saved" : "recipe edits pending…"}
+          </button>
         </div>
       </div>
     </Overlay>
