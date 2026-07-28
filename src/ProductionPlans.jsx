@@ -2783,6 +2783,7 @@ function SalesVsPlanTab({ plan }) {
   const [sortDir, setSortDir] = useState("asc");
   const [filt, setFilt] = useState("all");
   const [query, setQuery] = usePersistedState("gh_svp_query", "");
+  const [insightsOpen, setInsightsOpen] = usePersistedState("gh_svp_insights_open", false);
   const [sizeFilt, setSizeFilt] = usePersistedState("gh_svp_size", "all");
   const [basis, setBasis] = usePersistedState("gh_svp_basis", "pots"); // "pots" = normalized finished pots · "raw" = as-entered units
   const [cmpGroupBy, setCmpGroupBy] = usePersistedState("gh_cmp_groupby", "size");  // season comparison: by size or category
@@ -3098,6 +3099,26 @@ function SalesVsPlanTab({ plan }) {
     .sort((a, b) => { const va = (sortVal[sortCol] || sortVal.lostEst)(a), vb = (sortVal[sortCol] || sortVal.lostEst)(b); const c = typeof va === "string" ? va.localeCompare(vb) : (va - vb); return sortDir === "asc" ? c : -c; });
   return (
     <div style={{ display: "grid", gap: 14 }}>
+      {/* ── Season insights shelf — the analytics live HERE, one click deep, so the
+          items table + Add-a-plant are the first thing on the page. Pulse stays visible. ── */}
+      <details open={insightsOpen} onToggle={e => { if (e.target === e.currentTarget) setInsightsOpen(e.currentTarget.open); }}
+        style={{ background: COLORS.card, border: `1.5px solid ${insightsOpen ? COLORS.light : COLORS.border}`, borderRadius: 10 }}>
+        <summary style={{ cursor: "pointer", padding: "11px 14px", display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center", fontSize: 12.5, listStyle: "none" }}>
+          <span style={{ fontWeight: 800, color: COLORS.dark, fontSize: 13.5 }}>{insightsOpen ? "▾" : "▸"} 📊 Season insights</span>
+          <span title="Items with a 2027 call — count and share of 2026 revenue decided">
+            🎯 <b style={{ color: scorecard.decidedCount === scorecard.coreCount ? "#2e7d32" : COLORS.dark }}>{scorecard.decidedCount}/{scorecard.coreCount}</b> decided · <b>{Math.round((scorecard.decidedPct || 0) * 100)}%</b> of $
+          </span>
+          <span title="2027 projection as decided vs 2026 actual revenue">
+            2027 <b style={{ color: projRev >= scorecard.totalRev ? "#2e7d32" : COLORS.red }}>{fmtMoney(projRev)}</b>
+            <span style={{ color: COLORS.muted }}> vs 2026 {fmtMoney(scorecard.totalRev)}</span>
+          </span>
+          {scorecard.missOpen > 0 && (
+            <span style={{ color: COLORS.amber, fontWeight: 700 }} title="Sold in 2026 but not in this plan — unresolved">⚠ {scorecard.missOpen} gaps · {fmtMoney(scorecard.missOpenRev)}</span>
+          )}
+          <span style={{ color: COLORS.muted }} title="2026 sold ÷ planned across these items">sell-through {tPlanned ? Math.round(tSold / tPlanned * 100) + "%" : "—"}</span>
+          <span style={{ marginLeft: "auto", color: COLORS.muted, fontSize: 11 }}>{insightsOpen ? "collapse" : "scorecard · programs · gaps · revenue curve · season comparison"}</span>
+        </summary>
+        <div style={{ display: "grid", gap: 14, padding: "0 12px 12px" }}>
       <ProjectionScorecard sc={scorecard} plan={{ growth_goal_pct: goal }} projRev={projRev}
         onGoal={saveGoal} onFilter={onScorecardFilter} burndown={burndown} fill={fill} />
       <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "12px 14px", fontSize: 12, color: COLORS.muted }}>
@@ -3345,6 +3366,8 @@ function SalesVsPlanTab({ plan }) {
           </details>
         );
       })()}
+        </div>
+      </details>
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", fontSize: 12 }}>
         <input value={query} onChange={e => setQuery(e.target.value)} placeholder="🔍 Search item…"
