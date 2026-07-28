@@ -3498,7 +3498,7 @@ function SalesVsPlanTab({ plan }) {
             <SortHdr col="price" label="Avg $" align="right" />
             <SortHdr col="firstWk" label="1st sold" align="right" />
             <th style={stickyTh} title="Finish (ready) week vs demand peak. ◀ ▶ record a decision to bring it in earlier or later — production applies it by moving the plant week; the finish follows automatically.">Timing</th>
-            <th style={{ ...stickyTh, textAlign: "right", right: 0, zIndex: 12, background: "#e4eedd", borderLeft: `2px solid ${COLORS.light}`, minWidth: 128 }} title="Agreed 2027 target in sellable units. Saved to plan_targets — production distributes it across benches later.">2027 target</th>
+            <th style={{ ...stickyTh, textAlign: "right", right: 0, zIndex: 12, background: "#e4eedd", borderLeft: `2px solid ${COLORS.light}`, minWidth: 154 }} title="Left box = the walkthrough agreement (editable, in sellable cases/baskets/pots — never auto-changes). Right box = what production rows hold today (read-only here; edit on the family page). Compare the two at season end.">2027 target</th>
           </tr></thead>
           <tbody>
             {shown.slice(0, 500).map((r, i) => {
@@ -3560,60 +3560,68 @@ function TargetCell({ r, tgt, draft, saving, onDraft, onSave }) {
       style={{ padding: "1px 6px", borderRadius: 6, fontSize: 10, fontWeight: 700, cursor: "pointer",
         border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.muted }}>{label}</button>
   );
+  const pack = Math.max(1, Math.round(+r.pack || (r.converted && r.planned > 0 ? (r.planRaw || 0) / r.planned : 1)));
+  const unitWord = pack > 1 ? "cases" : /HB/i.test(r.size || "") ? "baskets" : "pots";
+  const boxLbl = { fontSize: 8, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: COLORS.muted, marginBottom: 2, textAlign: "right" };
   return (
-    <td style={{ ...td, textAlign: "right", background: committed ? "#eef6e8" : "#fbfdfa", borderLeft: `2px solid ${COLORS.light}`, whiteSpace: "nowrap", position: "sticky", right: 0, zIndex: 1, minWidth: 128 }}>
-      <div style={{ display: "flex", gap: 4, alignItems: "center", justifyContent: "flex-end" }}>
-        <input
-          value={val}
-          onChange={e => onDraft(e.target.value)}
-          onBlur={e => {
-            const touched = draft !== undefined;       // only write if the user actually edited
-            onDraft(undefined);
-            if (!touched) return;
-            if (e.target.value.trim() === "" && tgt?.target_units == null) return;  // empty-over-empty no-op
-            commit(e.target.value);
-          }}
-          onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
-          placeholder={String(r.planned)}
-          style={{ width: 62, padding: "3px 6px", textAlign: "right", borderRadius: 6, fontSize: 12.5,
-            fontFamily: "inherit", border: `1px solid ${committed ? COLORS.light : COLORS.border}`,
-            background: saving ? "#f0f0e8" : "#fff", fontWeight: committed ? 700 : 400 }} />
+    <td style={{ ...td, textAlign: "right", background: committed ? "#eef6e8" : "#fbfdfa", borderLeft: `2px solid ${COLORS.light}`, whiteSpace: "nowrap", position: "sticky", right: 0, zIndex: 1, minWidth: 154 }}>
+      {/* twin boxes: 🎯 target (editable) beside in-production (read-only) — same visual weight */}
+      <div style={{ display: "flex", gap: 5, justifyContent: "flex-end", alignItems: "flex-end" }}>
+        <div>
+          <div style={boxLbl}>🎯 target</div>
+          <input
+            value={val}
+            onChange={e => onDraft(e.target.value)}
+            onBlur={e => {
+              const touched = draft !== undefined;       // only write if the user actually edited
+              onDraft(undefined);
+              if (!touched) return;
+              if (e.target.value.trim() === "" && tgt?.target_units == null) return;  // empty-over-empty no-op
+              commit(e.target.value);
+            }}
+            onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
+            placeholder="—"
+            title={`the walkthrough agreement, in ${unitWord}${pack > 1 ? ` of ${pack}` : ""} — never auto-changes`}
+            style={{ width: 60, padding: "3px 6px", textAlign: "right", borderRadius: 6, fontSize: 12.5, boxSizing: "border-box",
+              fontFamily: "inherit", border: `1.5px solid ${committed ? COLORS.light : COLORS.border}`,
+              background: saving ? "#f0f0e8" : "#fff", fontWeight: committed ? 700 : 400 }} />
+        </div>
+        <div>
+          <div style={boxLbl}>in production</div>
+          <div title={`what the plan rows hold today — ${r.planned.toLocaleString()} ${unitWord}${pack > 1 ? ` = ${(r.planned * pack).toLocaleString()} pots` : ""}. Edit it on the family page or in the drill, not here.`}
+            style={{ width: 60, padding: "3px 6px", textAlign: "right", borderRadius: 6, fontSize: 12.5, boxSizing: "border-box",
+              border: `1.5px solid ${COLORS.border}`, background: "#eef1ea", color: COLORS.text, fontWeight: 700, cursor: "default" }}>
+            {r.planned.toLocaleString()}
+          </div>
+        </div>
       </div>
       <div style={{ display: "flex", gap: 3, justifyContent: "flex-end", marginTop: 3 }}>
         {quick("same", r.planned, "Keep the current plan quantity")}
         {r.sold > 0 && quick("=sold", r.sold, `Match 2026 sales (${r.sold.toLocaleString()})`)}
         {quick("drop", 0, "Do not grow this in 2027")}
       </div>
-      {(() => {   // pots ⇄ cases (B2B convention: production talks POTS, sales sells CASES)
-        // and an EXPLICIT target-vs-production read-back — labeled numbers and words,
-        // never a bare signed delta ("−20" told nobody anything).
-        const pack = Math.max(1, Math.round(+r.pack || (r.converted && r.planned > 0 ? (r.planRaw || 0) / r.planned : 1)));
-        const unitWord = pack > 1 ? "cases" : /HB/i.test(r.size || "") ? "baskets" : "pots";
+      {(() => {   // one quiet line under the boxes: live pot echo while typing,
+        // unit hint while undecided, a worded verdict once committed. Numbers
+        // themselves live in the twin boxes above — never a bare signed delta.
         const typed = draft !== undefined ? (Math.round(+String(draft).replace(/[^0-9.]/g, "")) || null) : null;
-        if (typed != null && typed > 0) return (   // typing: live translation, nothing else
+        if (typed != null && typed > 0) return (
           <div style={{ fontSize: 9.5, color: COLORS.dark, marginTop: 2, textAlign: "right", fontWeight: 700 }}>
             {typed.toLocaleString()} {unitWord}{pack > 1 ? ` = ${(typed * pack).toLocaleString()} pots` : ""}
           </div>
         );
-        if (t == null) return (   // undecided: just say what the number will mean
+        if (t == null) return (
           <div style={{ fontSize: 9, color: COLORS.muted, marginTop: 2, textAlign: "right" }}>
             enter {unitWord}{pack > 1 ? ` of ${pack}` : ""}
           </div>
         );
         const diff = r.planned - t;   // production minus target
-        const box = diff === 0 ? { bg: "#eaf5e9", bd: "#c2e0be", c: "#2e7d32" }
-          : diff > 0 ? { bg: "#fbf1df", bd: "#ecd9b8", c: "#b57718" }
-          : { bg: "#fdecea", bd: "#f3c6c0", c: COLORS.red };
         return (
-          <div style={{ marginTop: 3, borderRadius: 6, padding: "2px 7px", background: box.bg, border: `1px solid ${box.bd}`, fontSize: 9.5, textAlign: "right", lineHeight: 1.6, color: COLORS.text }}
-            title={`Target = the walkthrough agreement (never auto-changes) · in production = what the plan rows hold today${pack > 1 ? `. In pots: target ${(t * pack).toLocaleString()} vs ${(r.planned * pack).toLocaleString()} in production.` : "."} Compare the two at season end.`}>
-            🎯 target <b>{t.toLocaleString()}</b> · in production <b>{r.planned.toLocaleString()}</b> {unitWord}
-            <div style={{ fontWeight: 800, color: box.c }}>
-              {diff === 0 ? "✓ production matches target"
-                : t === 0 ? `✕ dropped — ${r.planned.toLocaleString()} ${unitWord} still in production`
-                : diff > 0 ? `${diff.toLocaleString()} ${unitWord} over target`
-                : `${(-diff).toLocaleString()} ${unitWord} short of target`}
-            </div>
+          <div style={{ fontSize: 9.5, fontWeight: 800, marginTop: 2, textAlign: "right",
+            color: diff === 0 ? "#2e7d32" : diff > 0 ? "#b57718" : COLORS.red }}>
+            {diff === 0 ? "✓ production matches target"
+              : t === 0 ? `✕ dropped — ${r.planned.toLocaleString()} ${unitWord} still in production`
+              : diff > 0 ? `${diff.toLocaleString()} ${unitWord} over target`
+              : `${(-diff).toLocaleString()} ${unitWord} short of target`}
           </div>
         );
       })()}
