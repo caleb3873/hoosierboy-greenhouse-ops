@@ -26,6 +26,7 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
   const [brokerStats, setBrokerStats] = useState({});   // series_name -> [{broker, supplier, min, cov, tot}]
   const [soldByItem, setSoldByItem] = useState({});   // plan item_name -> '26 units (via sku map)
   const [tmap, setTmap] = useState({});               // plan item_name -> plan_targets row (walkthrough decisions)
+  const [trayOpts, setTrayOpts] = useState([]);       // plug-tray containers (105/72/50/38…) for the recipe's Tray select
   const [locked, setLocked] = useState(true);
   const [snap, setSnap] = useState(null);
   const [savedMsg, setSavedMsg] = useState("");
@@ -201,7 +202,15 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
   const [openG, setOpenG] = useState({});
   const [ctx, setCtx] = useState(null);   // {x, y, vr, gKey, newWk} — right-click action menu
   const [flashKey, setFlashKey] = useState(null);   // follow the group you just edited across a re-sort
+  const [dupG, setDupG] = useState(null);           // {key, wk} — inline "⧉ New round" week input per group
   const [ripple, setRipple] = useState(null);       // {moved, flags[]} — last ripple result banner
+
+  useEffect(() => {   // plug-tray options for the recipe's Tray select (105 / 72 / 50 / 38 Spikes…)
+    (async () => {
+      const { data } = await sb.from("containers").select("id,name,cells_per_flat").ilike("name", "%plug tray%").order("name");
+      setTrayOpts(data || []);
+    })();
+  }, [sb]);
 
   useEffect(() => {   // Escape closes; dismissal is handled by the backdrop layer, not window listeners
     const esc = e => { if (e.key === "Escape") setCtx(null); };
@@ -303,6 +312,46 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
     const sh = rooted ? wrap(p.wk - Math.round(+(sSpec.rooting_weeks ?? 0)), p.yr) : p;
     moveToGroup(vr, { plant: p.wk, plantYear: p.yr, ready, readyYear });
   }
+
+  // ⧉ New round: clone every color of a group into a NEW planting group at a chosen
+  // finish week — the family page's way to ADD groups (the right-click menu only MOVES).
+  // Quantities copy as-is (adjust after — the 🎯 target banner will show any overage);
+  // benches unassigned, supply unordered: a new round is a new decision downstream.
+  async function duplicateGroup(g, raw) {
+    const digits = String(raw || "").replace(/\D/g, "");
+    if (!digits || recipe?.crop_weeks == null) return;
+    const ready = digits.length <= 2 ? +digits : +digits.slice(2);
+    const readyYear = digits.length <= 2 ? (g.plantYear ?? plan.year ?? 2027) : 2000 + +digits.slice(0, 2);
+    if (!ready || ready > 52) return;
+    const wrap = (wk, yr) => wk <= 0 ? { wk: wk + 52, yr: yr - 1 } : { wk, yr };
+    setBusy(true);
+    const { data: full } = await sb.from("scheduled_crops").select("*").in("id", g.rows.map(r => r.id));
+    const p = wrap(ready - Math.round(+recipe.crop_weeks), readyYear);
+    let made = 0;
+    for (const src of full || []) {
+      const v = vmap[src.variety_id];
+      const sSpec = seriesOf(v?.variety || "") || {};
+      const rooted = /^(URC|CALL)/i.test(sSpec.form || "");
+      const sh = rooted ? wrap(p.wk - Math.round(+(sSpec.rooting_weeks ?? 0)), p.yr) : p;
+      const row = { ...src, id: crypto.randomUUID(),
+        ready_week: ready, ready_year: readyYear,
+        plant_week: p.wk, plant_year: p.yr, ship_week: sh.wk, ship_year: sh.yr,
+        bench_id: null, qty_plants_ordered: null,
+        notes: `round added on the family page (from Group ${g.n})` };
+      delete row.created_at; delete row.updated_at;
+      const { error } = await sb.from("scheduled_crops").insert(row);
+      if (!error) made++;
+    }
+    try {
+      for (const it of [...new Set(g.rows.map(r => r.item_name))]) {
+        await sb.from("item_change_log").insert({ plan_id: plan.id, item_name: it, change_type: "group_duplicated",
+          detail: { from_group: g.n, ready_week: ready, rows_cloned: made },
+          changed_by: displayName || null, source: "family-page" });
+      }
+    } catch { /* audit must not block */ }
+    setFlashKey(`${p.wk}|${ready}`);   // follow the new round after the re-sort
+    setBusy(false); setDupG(null); setTick(t => t + 1);
+  }
   const totals = useMemo(() => {
     let pots = 0, plants = 0, liner = 0, traysN = 0;
     const ov = +(recipe?.overage_pct || 0), ppp = +(recipe?.ppp || 1);
@@ -330,9 +379,11 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
     });
     series.forEach(s => {
       const o = a.s.find(x => x.id === s.id) || {};
+      if ((o.series_name || "") !== s.series_name && s.series_name.trim()) ch.push(`series renamed "${o.series_name || "—"}" → "${s.series_name.trim()}"`);
       if (o.form !== s.form) ch.push(`${s.series_name} form ${o.form || "—"} → ${s.form}`);
       if (String(o.rooting_weeks ?? "") !== String(s.rooting_weeks ?? "")) ch.push(`${s.series_name} root ${o.rooting_weeks ?? "—"} → ${s.rooting_weeks ?? "—"}w`);
       if ((o.pinned_broker || null) !== (s.pinned_broker || null)) ch.push(`${s.series_name} broker 📌 ${o.pinned_broker || "—"} → ${s.pinned_broker || "—"} (one material, one broker; existing row costs unchanged — re-quote applies them)`);
+      if ((o.prop_tray_id || null) !== (s.prop_tray_id || null)) ch.push(`${s.series_name} tray → ${trayOpts.find(t => t.id === s.prop_tray_id)?.name || "—"}`);
     });
     if (!ch.length) { setLocked(true); setSavedMsg("no changes"); return; }
     if (!window.confirm(`Save the ${recipe.crop_name} ${recipe.size_label} recipe?\n\n• ${ch.join("\n• ")}\n\nCascades to every color, group and task using this recipe.`)) return;
@@ -341,8 +392,13 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
     await sb.from("crop_recipes").update({ ...rec, updated_by: displayName || "planner", updated_at: new Date().toISOString() }).eq("id", recipeId);
     for (const s of series) {
       const o = a.s.find(x => x.id === s.id) || {};
-      if (o.form !== s.form || String(o.rooting_weeks ?? "") !== String(s.rooting_weeks ?? "") || (o.pinned_broker || null) !== (s.pinned_broker || null)) {
+      if (o.form !== s.form || String(o.rooting_weeks ?? "") !== String(s.rooting_weeks ?? "")
+        || (o.pinned_broker || null) !== (s.pinned_broker || null)
+        || (o.series_name || "") !== s.series_name
+        || (o.prop_tray_id || null) !== (s.prop_tray_id || null)) {
         await sb.from("crop_recipe_series").update({ form: s.form, rooting_weeks: s.rooting_weeks,
+          series_name: s.series_name.trim() || o.series_name,   // blank rename falls back to the old name
+          prop_tray_id: s.prop_tray_id || null,
           pinned_broker: s.pinned_broker || null, pinned_supplier: s.pinned_supplier || null,
           updated_at: new Date().toISOString() }).eq("id", s.id);
       }
@@ -559,7 +615,12 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
                 <tbody>
                   {series.map(s => (
                     <tr key={s.id}>
-                      <td style={{ ...td, fontWeight: 700 }}>{s.series_name}</td>
+                      <td style={{ ...td, fontWeight: 700 }}>
+                        <input value={s.series_name}
+                          onChange={e => setSeries(series.map(x => x.id === s.id ? { ...x, series_name: e.target.value } : x))}
+                          title={`rename the series — "(unassigned)" just means the seed couldn't derive it from the variety names`}
+                          style={{ width: 130, padding: "3px 6px", borderRadius: 6, border: `1.5px solid ${C.creamBr}`, fontSize: 12, fontWeight: 700, fontFamily: FONT }} />
+                      </td>
                       <td style={td}>
                         {(() => {
                           if (locked) return <>{s.pinned_broker || "—"}{s.pinned_supplier ? ` · ${s.pinned_supplier}` : ""}</>;
@@ -596,7 +657,14 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
                         <input type="number" value={s.rooting_weeks ?? ""} onChange={e => setSeries(series.map(x => x.id === s.id ? { ...x, rooting_weeks: e.target.value === "" ? null : +e.target.value } : x))}
                           style={{ width: 48, padding: "3px 5px", borderRadius: 6, border: `1.5px solid ${C.creamBr}`, fontFamily: "ui-monospace,Menlo,monospace", fontSize: 12, fontWeight: 700 }} />
                       </td>
-                      <td style={td}>{s.prop_tray_id ? (trays[s.prop_tray_id]?.name || "…") : "—"}</td>
+                      <td style={td}>
+                        <select value={s.prop_tray_id || ""}
+                          onChange={e => setSeries(series.map(x => x.id === s.id ? { ...x, prop_tray_id: e.target.value || null } : x))}
+                          style={{ padding: "3px 5px", borderRadius: 6, border: `1.5px solid ${C.creamBr}`, fontSize: 11.5, fontWeight: 700, fontFamily: FONT, maxWidth: 170 }}>
+                          <option value="">—</option>
+                          {trayOpts.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                        </select>
+                      </td>
                     </tr>
                   ))}
                   {!series.length && <tr><td style={td} colSpan={5}>No series yet — the seed derives them from variety names; add via re-seed or SQL.</td></tr>}
@@ -672,6 +740,25 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
                     : null;
                 })()}
                 <span style={{ fontSize: 11, color: C.muted }}>{g.vars.length} varieties · {gPots.toLocaleString()} pots</span>
+                <span onClick={e => e.stopPropagation()} style={{ display: "inline-flex", gap: 5, alignItems: "center" }}>
+                  {dupG?.key === g.key ? (
+                    <>
+                      <input autoFocus value={dupG.wk} onChange={e => setDupG({ key: g.key, wk: e.target.value })}
+                        onKeyDown={e => { if (e.key === "Enter" && dupG.wk.trim()) duplicateGroup(g, dupG.wk); if (e.key === "Escape") setDupG(null); }}
+                        placeholder="ready wk (18 or 2718)" inputMode="numeric"
+                        style={{ width: 118, padding: "4px 7px", borderRadius: 7, border: `1.5px solid ${C.light}`, fontSize: 11.5, fontFamily: "ui-monospace,Menlo,monospace", fontWeight: 700 }} />
+                      <button disabled={busy || !dupG.wk.trim()} onClick={() => duplicateGroup(g, dupG.wk)}
+                        style={{ padding: "4px 10px", borderRadius: 7, border: "none", background: C.light, color: "#fff", fontWeight: 800, fontSize: 11, cursor: "pointer", fontFamily: FONT }}>Go</button>
+                      <button onClick={() => setDupG(null)} style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", fontSize: 12, padding: 0 }}>✕</button>
+                    </>
+                  ) : (
+                    <button disabled={busy} onClick={() => setDupG({ key: g.key, wk: "" })}
+                      title="ADD a planting group: clone this group's colors into a NEW round at a different finish week — quantities copy as-is, benches unassigned, supply unordered"
+                      style={{ padding: "4px 10px", borderRadius: 7, border: `1.5px solid ${C.light}`, background: "#fff", color: C.dark, fontWeight: 800, fontSize: 11, cursor: "pointer", fontFamily: FONT }}>
+                      ⧉ New round
+                    </button>
+                  )}
+                </span>
               </div>
               {open && (
                 <div style={{ padding: "4px 10px 10px", overflowX: "auto" }}>
