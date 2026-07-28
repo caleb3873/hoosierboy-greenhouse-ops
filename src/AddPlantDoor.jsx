@@ -122,17 +122,21 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily })
 
   // material search — the broker catalogs ONLY (39k quote lines, by cultivar/series).
   // If nobody quotes it, it doesn't appear: you can't buy a plant with no supplier.
+  // Ordered breeder → series → variety (variety names lead with the series, so
+  // supplier + name A-Z clusters exactly that way). Full list, paged 30 at a time.
   const [catHits, setCatHits] = useState([]);
-  const [catTotal, setCatTotal] = useState(0);
+  const [catShow, setCatShow] = useState(30);
+  const [supFilt, setSupFilt] = useState("");
+  const [rawCap, setRawCap] = useState(false);
   useEffect(() => {
     const t = setTimeout(async () => {
       const s = q.trim().replace(/[%,()]/g, "");
-      if (s.length < 2) { setCatHits([]); setCatTotal(0); return; }
+      if (s.length < 2) { setCatHits([]); setRawCap(false); return; }
       const toks = s.split(/\s+/).filter(Boolean);
-      // wide net, NOT cheapest-first — a $0.125 legacy quote must not crowd out a new line
-      let cq = sb.from("broker_prices").select("variety_key,crop,variety,broker,supplier,form_class,landed").limit(500);
+      let cq = sb.from("broker_prices").select("variety_key,crop,variety,broker,supplier,form_class,landed").limit(1000);
       toks.forEach(t => { cq = cq.or(`variety.ilike.%${t}%,crop.ilike.%${t}%`); });
       const { data } = await cq;
+      setRawCap((data || []).length === 1000);   // hit the fetch cap — the list may be partial
       const byKey = {};
       (data || []).forEach(r => {
         const o = byKey[r.variety_key] || (byKey[r.variety_key] = { key: r.variety_key, crop: r.crop, name: r.variety, quotes: [] });
@@ -145,21 +149,34 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily })
         brokers: [...new Set(o.quotes.map(x => x.broker))],
         best: o.quotes.reduce((a, b) => a.landed <= b.landed ? a : b),
       }));
-      // rank: name relevance first (all tokens in the VARIETY name beats crop-only), then A-Z
-      const score = o => (toks.every(t => o.name.toLowerCase().includes(t.toLowerCase())) ? 0 : 1);
-      all.sort((a, b) => score(a) - score(b) || a.name.localeCompare(b.name));
-      setCatTotal(all.length);
-      const top = all.slice(0, 14);
-      // badge the ones already in the library — grown (or at least planned) before
-      let ks = new Set();
-      if (top.length) {
-        const { data: known } = await sb.from("variety_library").select("variety_key").in("variety_key", top.map(x => x.key));
-        ks = new Set((known || []).map(k => k.variety_key));
+      all.sort((a, b) => (a.best.supplier || "~").localeCompare(b.best.supplier || "~") || a.name.localeCompare(b.name));
+      // grown-before badges for the WHOLE list (chunked lookups)
+      const keys = all.map(x => x.key); const ks = new Set();
+      for (let i = 0; i < keys.length; i += 200) {
+        const { data: kn } = await sb.from("variety_library").select("variety_key").in("variety_key", keys.slice(i, i + 200));
+        (kn || []).forEach(k => ks.add(k.variety_key));
       }
-      setCatHits(top.map(x => ({ ...x, known: ks.has(x.key) })));
+      setCatHits(all.map(x => ({ ...x, known: ks.has(x.key) })));
+      setCatShow(30); setSupFilt("");
     }, 250);
     return () => clearTimeout(t);
   }, [q, sb]);
+
+  // supplier (breeder) filter options — how many varieties each supplier covers in this search
+  const suppliers = useMemo(() => {
+    const m = {};
+    catHits.forEach(h => [...new Set(h.quotes.map(x => x.supplier).filter(Boolean))].forEach(s => { m[s] = (m[s] || 0) + 1; }));
+    return Object.entries(m).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [catHits]);
+  // filtered view: with a supplier picked, each hit shows THAT supplier's quotes/price
+  const catView = useMemo(() => {
+    if (!supFilt) return catHits;
+    return catHits.filter(h => h.quotes.some(x => x.supplier === supFilt)).map(h => {
+      const qs = h.quotes.filter(x => x.supplier === supFilt);
+      return { ...h, quotes: qs, min: Math.min(...qs.map(x => x.landed)),
+        brokers: [...new Set(qs.map(x => x.broker))], best: qs.reduce((a, b) => a.landed <= b.landed ? a : b) };
+    });
+  }, [catHits, supFilt]);
 
   async function pickCatalog(c) {
     setBusy(true); setErr("");
@@ -440,10 +457,16 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily })
               <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="🔍 Search the broker catalogs — cultivar or series…" style={ctl} />
               {!!catHits.length && (
                 <div style={{ border: `1px solid ${C.creamBr}`, borderRadius: 10, marginTop: 6, overflow: "hidden", background: "#fff" }}>
-                  <div style={{ padding: "4px 11px", fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".5px", color: C.muted, background: C.chip }}>
-                    Broker catalogs · click = add one · ☑ several colors = add a family
+                  <div style={{ padding: "4px 11px", fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".5px", color: C.muted, background: C.chip, display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ flex: 1 }}>Broker catalogs · {catView.length} match{catView.length === 1 ? "" : "es"} · click = add one · ☑ = family</span>
+                    <select value={supFilt} onChange={e => { setSupFilt(e.target.value); setCatShow(30); }}
+                      title="filter by supplier (breeder)"
+                      style={{ padding: "2px 5px", borderRadius: 6, border: `1px solid ${C.creamBr}`, fontSize: 10, fontWeight: 700, fontFamily: FONT, maxWidth: 190, background: supFilt ? C.amberBg : "#fff" }}>
+                      <option value="">All suppliers</option>
+                      {suppliers.map(([s, n]) => <option key={s} value={s}>{s} ({n})</option>)}
+                    </select>
                   </div>
-                  {catHits.map(c => {
+                  {catView.slice(0, catShow).map(c => {
                     const checked = sel.some(x => x.key === c.key);
                     const cropBlock = selCrop && String(c.crop || "").toLowerCase() !== selCrop;
                     return (
@@ -457,16 +480,27 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily })
                           <b>{c.name}</b> <span style={{ color: C.muted, fontSize: 11.5 }}>{c.crop}</span>
                           {c.known && <span style={{ marginLeft: 6, fontSize: 9.5, fontWeight: 800, color: C.green, background: "#eaf5e9", borderRadius: 6, padding: "1px 6px" }}>in library</span>}
                           <div style={{ fontSize: 10.5, color: C.muted, marginTop: 1 }}>
-                            {c.best.broker}{c.best.supplier ? ` · ${c.best.supplier}` : ""} · {c.best.form || "?"} from <b style={{ color: C.dark }}>${c.min.toFixed(3)}</b>
+                            {c.best.supplier ? <><b style={{ color: C.text }}>{c.best.supplier}</b> · </> : null}
+                            {c.best.broker} · {c.best.form || "?"} from <b style={{ color: C.dark }}>${c.min.toFixed(3)}</b>
                             {c.brokers.length > 1 ? ` · +${c.brokers.length - 1} more broker${c.brokers.length > 2 ? "s" : ""}` : ""}
                           </div>
                         </button>
                       </div>
                     );
                   })}
-                  {catTotal > catHits.length && (
-                    <div style={{ padding: "6px 11px", fontSize: 10.5, color: C.muted, background: "#fbfdf8" }}>
-                      showing {catHits.length} of {catTotal} catalog matches — add a word to narrow (e.g. the series)
+                  {catView.length > catShow && (
+                    <button onClick={() => setCatShow(n => n + 30)}
+                      style={{ display: "block", width: "100%", padding: "8px 11px", border: "none", background: "#fbfdf8",
+                        color: C.dark, fontWeight: 800, fontSize: 11.5, cursor: "pointer", fontFamily: FONT }}>
+                      ↓ Show 30 more — {catView.length - catShow} remaining
+                    </button>
+                  )}
+                  {supFilt && !catView.length && (
+                    <div style={{ padding: "8px 11px", fontSize: 11.5, color: C.muted }}>no matches from {supFilt} — clear the supplier filter to see everyone</div>
+                  )}
+                  {rawCap && (
+                    <div style={{ padding: "5px 11px", fontSize: 10, color: C.muted, background: "#fbfdf8", borderTop: `1px solid ${C.border}` }}>
+                      broad search — first 1,000 quote lines shown; add a word (series, color) to be sure nothing's cut off
                     </div>
                   )}
                 </div>
