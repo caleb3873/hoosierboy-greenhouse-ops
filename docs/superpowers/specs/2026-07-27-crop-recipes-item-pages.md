@@ -64,6 +64,29 @@ Derivation chain (never stored twice): `ready − crop_weeks = plant` · `plant 
     small in parens; sell-through as color-coded bar/badge with history in hover;
     week inputs accept shorthand ("15" → 2715); Ship (arrive) is the column name.
 
+## Stock crops / banks (added 7/28, from the dracaena-spike reconciliation)
+
+Some items exist to SUPPLY components of other items — e.g. `38 CELL DRACAENA INDIVISA
+SPIKES`: spikes arrive **wk39** (September!), sow into 38-cell trays, grow ~20 weeks, then
+transplant into fiber geranium combos + 11" Fancy Boys the following spring.
+
+Decoded two-source supply rule (the plan already executes it perfectly):
+- **Early rounds (plant wk3–7)** draw from the bank → spike component rows with
+  `qty_plants_ordered = 0` (nothing extra to buy).
+- **Late rounds (wk9–10)** order their own spikes → component rows with real counts,
+  matching their round's pots 1:1.
+
+Model requirements:
+1. A component row is either **bank-drawn** (plants=0 + supply link to the bank item) or
+   **fresh-ordered**. The buy list must never double-order bank-drawn components.
+2. **Bank sizing is DERIVED from its draws** (Σ pots drawing × spikes/pot) — surplus and
+   shortage surface automatically. 2027 actual: bank 5,700 vs ~3,479 draws → ≈2,200
+   surplus; flagged TRIM (🚩 on the item + plan_targets note), decide at season review.
+3. The bank runs on its **own chain** (wk39 arrival, own bench, ~20-wk grow) — the extreme
+   case of per-component recipe timelines.
+4. Combo **parents** never carry arrival weeks (ship=plant convention); arrivals live on
+   component rows. (3 parents violating this were fixed 7/28.)
+
 ## Build phases
 
 0. Spec (this doc) + data fixes (phantom `Shamrock Passionfruit` merge; stale liner costs:
