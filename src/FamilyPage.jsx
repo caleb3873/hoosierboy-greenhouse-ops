@@ -13,6 +13,14 @@ const C = { dark: "#1e2d1a", light: "#7fb069", cream: "#f3f8ee", creamBr: "#cfe3
   redBg: "#fae9e5", border: "#e4ecdd", chip: "#eaf2e0", green: "#2e7d32" };
 const FONT = "'DM Sans','Segoe UI',sans-serif";
 const wkFmt = (yr, wk) => (yr == null || wk == null) ? "—" : `${String(yr).slice(2)}${String(wk).padStart(2, "0")}`;
+// size label → item-name prefix, same convention the Add-a-plant door writes with
+function famSizePrefix(sizeLabel) {
+  let m;
+  if ((m = String(sizeLabel || "").match(/^([\d.]+)" HB$/))) return `HB ${m[1]}"`;
+  if ((m = String(sizeLabel || "").match(/^([\d.]+)" Fiber$/))) return +m[1] >= 10 ? "FIBER LG." : "FIBER SM.";
+  if ((m = String(sizeLabel || "").match(/^([\d.]+)" (Pot|Pan|Bowl)$/))) return +m[1] <= 6.5 ? `${m[1]}"` : `POT ${m[1]}"`;
+  return String(sizeLabel || "").toUpperCase();
+}
 
 export default function FamilyPage({ plan, recipeId, onClose }) {
   const sb = getSupabase();
@@ -26,6 +34,8 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
   const [brokerStats, setBrokerStats] = useState({});   // series_name -> [{broker, supplier, min, cov, tot}]
   const [soldByItem, setSoldByItem] = useState({});   // plan item_name -> '26 units (via sku map)
   const [tmap, setTmap] = useState({});               // plan item_name -> plan_targets row (walkthrough decisions)
+  const [famSold, setFamSold] = useState(null);       // whole-family 2026 sales incl. removed varieties (name-matched)
+  const [confirmRm, setConfirmRm] = useState(null);   // variety pending delete in the "not returning" strip
   const [trayOpts, setTrayOpts] = useState([]);       // plug-tray containers (105/72/50/38…) for the recipe's Tray select
   const [locked, setLocked] = useState(true);
   const [snap, setSnap] = useState(null);
@@ -199,11 +209,45 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
     return gs;
   }, [rows, vmap, soldByItem, seriesOf, bmap]);
 
+  // "not returning" tuck: a variety with ZERO pots family-wide and no grow intent
+  // (no positive target, no grow decision) leaves the roster — the 2027 view shows
+  // only what you're doing. History stays in the hero + past seasons.
+  const growIntent = vr => [...vr.items].some(it => { const t = tmap[it]; return t && (t.decision === "grow" || (+t.target_units || 0) > 0); });
+  const tucked = useMemo(() => {
+    const by = {};
+    groups.forEach(g => g.vars.forEach(vr => {
+      const o = by[vr.variety] || (by[vr.variety] = { variety: vr.variety, vkey: vr.vkey, rows: [], pots: 0, sold: 0, items: new Set() });
+      o.rows.push(...vr.rows); o.pots += vr.pots; o.sold += vr.sold || 0; vr.items.forEach(i => o.items.add(i));
+    }));
+    return Object.values(by).filter(v => v.pots === 0 && !growIntent(v)).sort((a, b) => b.sold - a.sold);
+  }, [groups, tmap]); // eslint-disable-line
+  const tuckedNames = useMemo(() => new Set(tucked.map(t => t.variety)), [tucked]);
+
   const [openG, setOpenG] = useState({});
   const [ctx, setCtx] = useState(null);   // {x, y, vr, gKey, newWk} — right-click action menu
   const [flashKey, setFlashKey] = useState(null);   // follow the group you just edited across a re-sort
   const [dupG, setDupG] = useState(null);           // {key, wk} — inline "⧉ New round" week input per group
   const [ripple, setRipple] = useState(null);       // {moved, flags[]} — last ripple result banner
+
+  // whole-family 2026 sales by NAME match (size prefix + crop), independent of the
+  // plan's current rows — so deleting a variety never erases the family's history.
+  useEffect(() => {
+    if (!recipe) return;
+    (async () => {
+      const crop = String(recipe.crop_name || "").toUpperCase();
+      const pref = famSizePrefix(recipe.size_label).toUpperCase();
+      const { data: maps } = await sb.from("sales_sku_map").select("sku,plan_item_name").ilike("plan_item_name", `%${crop}%`);
+      const mine = (maps || []).filter(m => String(m.plan_item_name || "").toUpperCase().startsWith(pref));
+      const skuToItem = Object.fromEntries(mine.map(m => [m.sku, m.plan_item_name]));
+      const skus = Object.keys(skuToItem);
+      let units = 0, rev = 0; const items = new Set();
+      for (let i = 0; i < skus.length; i += 200) {
+        const { data: st } = await sb.from("sales_totals").select("sku,units,revenue").in("sku", skus.slice(i, i + 200));
+        (st || []).forEach(s => { units += +s.units || 0; rev += +s.revenue || 0; items.add(skuToItem[s.sku]); });
+      }
+      setFamSold({ units, rev, items: items.size });
+    })();
+  }, [recipe, sb]); // eslint-disable-line
 
   useEffect(() => {   // plug-tray options for the recipe's Tray select (105 / 72 / 50 / 38 Spikes…)
     (async () => {
@@ -352,6 +396,53 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
     setFlashKey(`${p.wk}|${ready}`);   // follow the new round after the re-sort
     setBusy(false); setDupG(null); setTick(t => t + 1);
   }
+  // ✕ Discontinue: remove a color from THIS plan — history lives in past seasons
+  // (season lens, same as combos). Bookkeeping so it leaves quietly: drop decision
+  // recorded (walkthrough shows ✕, not a mystery), its 2026 sales pre-dismissed from
+  // the sold-not-in-plan gap list, pending auto floor tasks cleaned (completed stay).
+  async function removeVariety(vr) {
+    setBusy(true);
+    const del = vr.rows.filter(r => !r.is_combo_component);
+    const comboKept = vr.rows.length - del.length;
+    const delIds = del.map(r => r.id);
+    const idSet = new Set(delIds);
+    const items = [...new Set(del.map(r => r.item_name))];
+    // combo children of removed parents go first (FK order, same as the drill's delete)
+    for (let i = 0; i < delIds.length; i += 100) await sb.from("scheduled_crops").delete().in("combo_parent_id", delIds.slice(i, i + 100));
+    for (const it of items) {
+      const remains = (rows || []).some(r => r.item_name === it && !idSet.has(r.id) && !r.is_combo_component);
+      if (!remains) {
+        await sb.from("plan_targets").upsert({
+          plan_id: plan.id, item_name: it, target_units: 0, decision: "drop",
+          note: "discontinued on the family page", decided_by: displayName || null,
+          decided_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+        }, { onConflict: "plan_id,item_name" });
+        try {
+          await sb.from("plan_gap_decisions").upsert({
+            plan_id: plan.id, gap_key: it, status: "dismissed",
+            note: `${it} — discontinued on the family page`, decided_by: displayName || "planner",
+          }, { onConflict: "plan_id,gap_key" });
+        } catch { /* gap table may not know this item — fine */ }
+        try {
+          const { data: ts } = await sb.from("manager_tasks").select("id").eq("plan_id", plan.id)
+            .ilike("created_by", "auto:%").ilike("title", `%${it}%`).neq("status", "completed");
+          for (const t of ts || []) await sb.from("manager_tasks").delete().eq("id", t.id);
+        } catch { /* task cleanup must not block */ }
+      }
+      try {
+        await sb.from("item_change_log").insert({
+          plan_id: plan.id, item_name: it, variety_key: vr.vkey || null, change_type: "removed_from_plan",
+          detail: { variety: vr.variety, rows: del.filter(r => r.item_name === it).length,
+            pots: del.filter(r => r.item_name === it).reduce((a, r) => a + (+r.qty_pots || 0), 0),
+            ...(comboKept ? { combo_rows_kept: comboKept } : {}) },
+          changed_by: displayName || null, source: "family-page",
+        });
+      } catch { /* audit must not block */ }
+    }
+    for (let i = 0; i < delIds.length; i += 100) await sb.from("scheduled_crops").delete().in("id", delIds.slice(i, i + 100));
+    setBusy(false); setTick(t => t + 1);
+  }
+
   const totals = useMemo(() => {
     let pots = 0, plants = 0, liner = 0, traysN = 0;
     const ov = +(recipe?.overage_pct || 0), ppp = +(recipe?.ppp || 1);
@@ -549,7 +640,10 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
           {[[totals.pots.toLocaleString(), "planned (pots/flats)"],
             [totals.plants.toLocaleString(), `plants to order${recipe.overage_pct ? ` (+${recipe.overage_pct}% ov)` : ""}`],
             [totals.traysN.toFixed(1), "prop trays to stick"],
-            [`$${Math.round(totals.liner).toLocaleString()}`, "liner spend (priced rows)"]]
+            [`$${Math.round(totals.liner).toLocaleString()}`, "liner spend (priced rows)"],
+            ...(famSold && famSold.units > 0
+              ? [[famSold.units.toLocaleString(), `2026 family sold · $${Math.round(famSold.rev).toLocaleString()} — all ${famSold.items} item${famSold.items === 1 ? "" : "s"}, incl. removed`]]
+              : [])]
             .map(([v, k], i) => (
               <div key={i} style={{ background: C.cream, border: `1px solid ${C.creamBr}`, borderRadius: 10, padding: "9px 12px" }}>
                 <div style={{ ...wkStyle, fontSize: 17, color: C.dark }}>{v}</div>
@@ -713,6 +807,8 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
         {/* planting groups */}
         {groups.map(g => {
           const open = openG[g.key] ?? true;
+          const liveVars = g.vars.filter(vr => !tuckedNames.has(vr.variety));
+          if (!liveVars.length) return null;   // a round of only not-returning varieties has nothing to say
           const gPots = g.vars.reduce((a, v) => a + v.pots, 0);
           return (
             <div key={g.key} id={`fam-grp-${g.key}`} style={{ ...card,
@@ -739,7 +835,7 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
                         ⚠ recipe drift {g.plant > exp ? "+" : ""}{g.plant - exp}wk</span>
                     : null;
                 })()}
-                <span style={{ fontSize: 11, color: C.muted }}>{g.vars.length} varieties · {gPots.toLocaleString()} pots</span>
+                <span style={{ fontSize: 11, color: C.muted }}>{liveVars.length} varieties · {gPots.toLocaleString()} pots</span>
                 <span onClick={e => e.stopPropagation()} style={{ display: "inline-flex", gap: 5, alignItems: "center" }}>
                   {dupG?.key === g.key ? (
                     <>
@@ -765,7 +861,7 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
                   <table style={{ borderCollapse: "collapse", width: "100%" }}>
                     <thead><tr>{["Variety", "Series", "Form", "'26 sold", "Sell-thru", "Planned (pots)", "$/liner", "Broker"].map(h => <th key={h} style={th}>{h}</th>)}</tr></thead>
                     <tbody>
-                      {g.vars.map(vr => {
+                      {liveVars.map(vr => {
                         const s = seriesOf(vr.variety);
                         const pct = vr.pots > 0 && vr.sold != null ? Math.round(vr.sold * 100 / vr.pots) : null;
                         return (
@@ -805,6 +901,48 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
         })}
         {!groups.length && <div style={{ ...card, padding: 24, textAlign: "center", color: C.muted, fontSize: 13 }}>No plan rows linked to this recipe in {plan.name}.</div>}
 
+        {/* the not-returning shelf: zero-quantity varieties with no grow intent live here,
+            out of the roster — their sold history still counts in the hero above */}
+        {tucked.length > 0 && (
+          <div style={{ ...card, background: "#fafbf7" }}>
+            <div style={{ padding: "8px 14px", fontSize: 11, color: C.muted, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+              <b style={{ color: C.text, fontSize: 11.5 }}>Not returning for {plan.name}</b>
+              <span>— zero quantity, kept out of the roster:</span>
+              {tucked.map(t => (
+                <span key={t.variety} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#fff", border: `1px solid ${C.border}`, borderRadius: 12, padding: "2px 9px", fontSize: 11, fontWeight: 700 }}>
+                  {t.variety}
+                  {t.sold > 0 && <span style={{ color: C.muted, fontWeight: 500 }}>'26 sold {t.sold.toLocaleString()}</span>}
+                  {confirmRm === t.variety ? (
+                    <>
+                      <button disabled={busy} onClick={() => { setConfirmRm(null); removeVariety(t); }}
+                        style={{ background: C.red, border: "none", color: "#fff", borderRadius: 8, padding: "1px 8px", cursor: "pointer", fontWeight: 800, fontSize: 10.5, fontFamily: FONT }}>✓ delete</button>
+                      <button onClick={() => setConfirmRm(null)}
+                        style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", fontWeight: 700, fontSize: 10.5, padding: 0, fontFamily: FONT }}>keep</button>
+                    </>
+                  ) : (
+                    <>
+                      <button disabled={busy} onClick={async () => {
+                          setBusy(true);
+                          for (const it of [...t.items]) {
+                            await sb.from("plan_targets").upsert({ plan_id: plan.id, item_name: it, decision: "grow",
+                              note: "restored on the family page", decided_by: displayName || null,
+                              decided_at: new Date().toISOString(), updated_at: new Date().toISOString() }, { onConflict: "plan_id,item_name" });
+                          }
+                          setBusy(false); setTick(x => x + 1);
+                        }}
+                        title="bring it back into the roster (grow intent, quantity 0 — set the number there)"
+                        style={{ background: "none", border: "none", color: C.green, cursor: "pointer", fontWeight: 800, fontSize: 11.5, padding: 0 }}>↩</button>
+                      <button onClick={() => setConfirmRm(t.variety)}
+                        title="delete its rows from this plan — past seasons keep the history, the hero total still counts it"
+                        style={{ background: "none", border: "none", color: C.red, cursor: "pointer", fontWeight: 800, fontSize: 11.5, padding: 0 }}>✕</button>
+                    </>
+                  )}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
         {ctx && (
           <>
             {/* backdrop owns dismissal — any click OR right-click outside closes, nothing global */}
@@ -841,6 +979,27 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
                     style={{ flex: 1, padding: "6px 8px", borderRadius: 7, border: `1.5px solid ${C.creamBr}`, fontSize: 12, fontFamily: "ui-monospace,Menlo,monospace", fontWeight: 700 }} />
                   <button disabled={busy || !ctx.newWk.trim()} onClick={() => { const vr = ctx.vr, wk = ctx.newWk; setCtx(null); moveToNewGroup(vr, wk); }}
                     style={{ padding: "6px 11px", borderRadius: 7, border: "none", background: C.light, color: "#fff", fontWeight: 800, fontSize: 11.5, cursor: "pointer", fontFamily: FONT }}>Go</button>
+                </div>
+              )}
+              {!ctx.confirmRemove ? (
+                <button disabled={busy} onClick={() => setCtx({ ...ctx, confirmRemove: true })}
+                  style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 12px", background: "#fff",
+                    border: "none", borderTop: `1px solid ${C.border}`, cursor: "pointer", fontFamily: FONT, fontSize: 12.5, color: "#c0492b", fontWeight: 700 }}>
+                  ✕ Discontinue — remove from {plan.name}…
+                </button>
+              ) : (
+                <div style={{ padding: "9px 12px", background: "#fdf2f0", borderTop: `1px solid ${C.border}` }}>
+                  <div style={{ fontSize: 11.5, color: "#c0492b", fontWeight: 700, marginBottom: 7, lineHeight: 1.4 }}>
+                    Remove {ctx.vr.variety} from {plan.name}?<br />
+                    <span style={{ fontWeight: 500 }}>{ctx.vr.rows.filter(r => !r.is_combo_component).length} row{ctx.vr.rows.filter(r => !r.is_combo_component).length === 1 ? "" : "s"} · {ctx.vr.pots.toLocaleString()} pots go away. Past seasons keep the history; the drop is recorded so it won't nag as a gap.
+                    {ctx.vr.rows.some(r => r.is_combo_component) ? " Its combo appearances stay — edit those on the combo's page." : ""}</span>
+                  </div>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <button disabled={busy} onClick={() => { const vr = ctx.vr; setCtx(null); removeVariety(vr); }}
+                      style={{ padding: "5px 12px", borderRadius: 7, border: "none", background: "#c0492b", color: "#fff", fontWeight: 800, fontSize: 11.5, cursor: "pointer", fontFamily: FONT }}>✓ Remove</button>
+                    <button onClick={() => setCtx({ ...ctx, confirmRemove: false })}
+                      style={{ padding: "5px 12px", borderRadius: 7, border: `1.5px solid ${C.border}`, background: "#fff", color: C.muted, fontWeight: 700, fontSize: 11.5, cursor: "pointer", fontFamily: FONT }}>keep</button>
+                  </div>
                 </div>
               )}
             </div>
