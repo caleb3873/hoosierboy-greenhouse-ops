@@ -112,17 +112,56 @@ export default function AddPlantDoor({ plan, onClose, onCreated }) {
     })();
   }, [newRec, sb]); // eslint-disable-line
 
-  // variety search
+  // variety search — your library AND the broker catalogs (39k quote lines, by cultivar/series)
+  const [catHits, setCatHits] = useState([]);
   useEffect(() => {
     const t = setTimeout(async () => {
-      const s = q.trim();
-      if (s.length < 2) { setHits([]); return; }
-      const { data } = await sb.from("variety_library").select("id,crop_name,variety,variety_key")
-        .or(`variety.ilike.%${s}%,crop_name.ilike.%${s}%`).order("crop_name").limit(14);
-      setHits(data || []);
+      const s = q.trim().replace(/[%,()]/g, "");
+      if (s.length < 2) { setHits([]); setCatHits([]); return; }
+      const [lib, cat] = await Promise.all([
+        sb.from("variety_library").select("id,crop_name,variety,variety_key")
+          .or(`variety.ilike.%${s}%,crop_name.ilike.%${s}%`).order("crop_name").limit(10),
+        sb.from("broker_prices").select("variety_key,crop,variety,broker,supplier,form_class,landed")
+          .or(`variety.ilike.%${s}%,crop.ilike.%${s}%`).order("landed").limit(80),
+      ]);
+      const libRows = lib.data || [];
+      setHits(libRows);
+      const libKeys = new Set(libRows.map(h => h.variety_key));
+      const byKey = {};
+      (cat.data || []).forEach(r => {
+        if (libKeys.has(r.variety_key)) return;   // already in the library — shown above
+        const o = byKey[r.variety_key] || (byKey[r.variety_key] = { key: r.variety_key, crop: r.crop, name: r.variety, quotes: [] });
+        if (r.variety && r.variety.length < o.name.length) o.name = r.variety;   // shortest = cleanest label
+        o.quotes.push({ broker: r.broker, supplier: r.supplier, form: r.form_class, landed: +r.landed });
+      });
+      setCatHits(Object.values(byKey).slice(0, 10).map(o => ({
+        ...o,
+        min: Math.min(...o.quotes.map(x => x.landed)),
+        brokers: [...new Set(o.quotes.map(x => x.broker))],
+        best: o.quotes.reduce((a, b) => a.landed <= b.landed ? a : b),
+      })));
     }, 250);
     return () => clearTimeout(t);
   }, [q, sb]);
+
+  // pick a catalog hit: reuse the library row if the key exists, else mint it from the quote
+  async function pickCatalog(c) {
+    setBusy(true); setErr("");
+    try {
+      const { data: dupe } = await sb.from("variety_library").select("id,crop_name,variety,variety_key").eq("variety_key", c.key).limit(1);
+      if (dupe?.length) { setVariety(dupe[0]); setBusy(false); return; }
+      const crop = String(c.crop || "").replace(/\b\w/g, ch => ch.toUpperCase());
+      let vname = String(c.name || "").trim();
+      if (vname.toLowerCase().startsWith(crop.toLowerCase() + " ")) vname = vname.slice(crop.length + 1);   // library convention: no crop prefix
+      const id = crypto.randomUUID();
+      const { error } = await sb.from("variety_library").insert({
+        id, crop_name: crop, variety: vname, variety_key: c.key, notes: "created from the broker catalog (Add a plant)" });
+      if (error) throw new Error(error.message);
+      setVariety({ id, crop_name: crop, variety: vname, variety_key: c.key });
+      setQ("");
+    } catch (e) { setErr(e.message); }
+    setBusy(false);
+  }
 
   // variety chosen → its crop's recipes
   useEffect(() => {
@@ -282,19 +321,32 @@ export default function AddPlantDoor({ plan, onClose, onCreated }) {
           <label style={lbl}>Variety</label>
           {!variety ? (
             <>
-              <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="🔍 Search the variety library…" style={ctl} />
-              {!!hits.length && (
+              <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="🔍 Search your library + the broker catalogs…" style={ctl} />
+              {(!!hits.length || !!catHits.length) && (
                 <div style={{ border: `1px solid ${C.creamBr}`, borderRadius: 10, marginTop: 6, overflow: "hidden", background: "#fff" }}>
+                  {!!hits.length && <div style={{ padding: "4px 11px", fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".5px", color: C.muted, background: C.chip }}>Your library — grown before</div>}
                   {hits.map(h => (
-                    <button key={h.id} onClick={() => { setVariety(h); setHits([]); }}
+                    <button key={h.id} onClick={() => { setVariety(h); setHits([]); setCatHits([]); }}
                       style={{ display: "flex", gap: 8, width: "100%", textAlign: "left", padding: "8px 11px", background: "#fff",
                         border: "none", borderBottom: `1px solid ${C.border}`, cursor: "pointer", fontFamily: FONT, fontSize: 13 }}>
                       <b>{h.variety}</b><span style={{ color: C.muted }}>{h.crop_name}</span>
                     </button>
                   ))}
+                  {!!catHits.length && <div style={{ padding: "4px 11px", fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".5px", color: C.amber, background: C.amberBg }}>Broker catalogs — first time growing</div>}
+                  {catHits.map(c => (
+                    <button key={c.key} disabled={busy} onClick={() => pickCatalog(c)}
+                      style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 11px", background: "#fff",
+                        border: "none", borderBottom: `1px solid ${C.border}`, cursor: "pointer", fontFamily: FONT, fontSize: 13 }}>
+                      <b>{c.name}</b> <span style={{ color: C.muted, fontSize: 11.5 }}>{c.crop}</span>
+                      <div style={{ fontSize: 10.5, color: C.muted, marginTop: 1 }}>
+                        {c.best.broker}{c.best.supplier ? ` · ${c.best.supplier}` : ""} · {c.best.form || "?"} from <b style={{ color: C.dark }}>${c.min.toFixed(3)}</b>
+                        {c.brokers.length > 1 ? ` · +${c.brokers.length - 1} more broker${c.brokers.length > 2 ? "s" : ""}` : ""}
+                      </div>
+                    </button>
+                  ))}
                 </div>
               )}
-              {q.trim().length >= 2 && !hits.length && !newVar && (
+              {q.trim().length >= 2 && !hits.length && !catHits.length && !newVar && (
                 <button onClick={() => setNewVar({ crop: "", variety: q.trim().replace(/\b\w/g, c => c.toUpperCase()) })}
                   style={{ display: "block", width: "100%", marginTop: 6, padding: "9px 12px", borderRadius: 10, textAlign: "left",
                     border: `1.5px dashed ${C.light}`, background: "#fff", color: C.dark, fontWeight: 800, fontSize: 12.5, cursor: "pointer", fontFamily: FONT }}>
