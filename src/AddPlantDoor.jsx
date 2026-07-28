@@ -114,16 +114,19 @@ export default function AddPlantDoor({ plan, onClose, onCreated }) {
 
   // variety search — your library AND the broker catalogs (39k quote lines, by cultivar/series)
   const [catHits, setCatHits] = useState([]);
+  const [catTotal, setCatTotal] = useState(0);
   useEffect(() => {
     const t = setTimeout(async () => {
       const s = q.trim().replace(/[%,()]/g, "");
       if (s.length < 2) { setHits([]); setCatHits([]); return; }
-      const [lib, cat] = await Promise.all([
-        sb.from("variety_library").select("id,crop_name,variety,variety_key")
-          .or(`variety.ilike.%${s}%,crop_name.ilike.%${s}%`).order("crop_name").limit(10),
-        sb.from("broker_prices").select("variety_key,crop,variety,broker,supplier,form_class,landed")
-          .or(`variety.ilike.%${s}%,crop.ilike.%${s}%`).order("landed").limit(80),
-      ]);
+      const toks = s.split(/\s+/).filter(Boolean);
+      // token-AND search ("ajuga best" = ajuga AND best) — chained .or()s AND together
+      let lq = sb.from("variety_library").select("id,crop_name,variety,variety_key").order("crop_name").limit(10);
+      toks.forEach(t => { lq = lq.or(`variety.ilike.%${t}%,crop_name.ilike.%${t}%`); });
+      // wide net, NOT cheapest-first — a $0.125 legacy quote must not crowd out a new line
+      let cq = sb.from("broker_prices").select("variety_key,crop,variety,broker,supplier,form_class,landed").limit(500);
+      toks.forEach(t => { cq = cq.or(`variety.ilike.%${t}%,crop.ilike.%${t}%`); });
+      const [lib, cat] = await Promise.all([lq, cq]);
       const libRows = lib.data || [];
       setHits(libRows);
       const libKeys = new Set(libRows.map(h => h.variety_key));
@@ -134,12 +137,17 @@ export default function AddPlantDoor({ plan, onClose, onCreated }) {
         if (r.variety && r.variety.length < o.name.length) o.name = r.variety;   // shortest = cleanest label
         o.quotes.push({ broker: r.broker, supplier: r.supplier, form: r.form_class, landed: +r.landed });
       });
-      setCatHits(Object.values(byKey).slice(0, 10).map(o => ({
+      const all = Object.values(byKey).map(o => ({
         ...o,
         min: Math.min(...o.quotes.map(x => x.landed)),
         brokers: [...new Set(o.quotes.map(x => x.broker))],
         best: o.quotes.reduce((a, b) => a.landed <= b.landed ? a : b),
-      })));
+      }));
+      // rank: name relevance first (all tokens in the VARIETY name beats crop-only), then A-Z
+      const score = o => (toks.every(t => o.name.toLowerCase().includes(t.toLowerCase())) ? 0 : 1);
+      all.sort((a, b) => score(a) - score(b) || a.name.localeCompare(b.name));
+      setCatTotal(all.length);
+      setCatHits(all.slice(0, 14));
     }, 250);
     return () => clearTimeout(t);
   }, [q, sb]);
@@ -344,6 +352,11 @@ export default function AddPlantDoor({ plan, onClose, onCreated }) {
                       </div>
                     </button>
                   ))}
+                  {catTotal > catHits.length && (
+                    <div style={{ padding: "6px 11px", fontSize: 10.5, color: C.muted, background: "#fbfdf8" }}>
+                      showing {catHits.length} of {catTotal} catalog matches — add a word to narrow (e.g. the series)
+                    </div>
+                  )}
                 </div>
               )}
               {q.trim().length >= 2 && !hits.length && !catHits.length && !newVar && (
