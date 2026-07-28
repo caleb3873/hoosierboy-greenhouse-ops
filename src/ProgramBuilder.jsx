@@ -9,6 +9,7 @@ import { useEffect, useMemo, useState } from "react";
 import { getSupabase, getCultureClient } from "./supabase";
 import { useAuth } from "./Auth";
 import { makeKey, GENUS_SYN } from "./brokerKey";
+import { resolveRecipeId } from "./recipeResolve";
 
 // One genus, one name. The culture db and the brokers disagree on botanical vs
 // common ("Sage" at Danziger, "Salvia" everywhere else) — makeKey already
@@ -83,9 +84,10 @@ export default function ProgramsPanel({ plan }) {
         if (ve) { window.alert(`Variety for ${it.item_name}: ${ve.message}`); continue; }
       }
       const rowId = crypto.randomUUID();
+      const recipeId = await resolveRecipeId(sb, cropName, it.container_id);   // inherit the family
       const { error } = await sb.from("scheduled_crops").insert({
         id: rowId, plan_id: plan.id, item_name: it.item_name,
-        variety_id: varietyId, container_id: it.container_id,
+        variety_id: varietyId, container_id: it.container_id, recipe_id: recipeId,
         qty_pots: +it.target_units, ppp: +it.ppp || 1, pack_size: 1,
         sale_price_per_pot: it.target_price ?? null,
         liner_unit_cost: it.material?.landed ?? null,
