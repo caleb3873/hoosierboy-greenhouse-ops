@@ -37,7 +37,7 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
       const { data: ser } = await sb.from("crop_recipe_series").select("*").eq("recipe_id", recipeId).order("series_name");
       setSeries(ser || []);
       const { data: sc } = await sb.from("scheduled_crops")
-        .select("id,item_name,variety_id,qty_pots,ppp,qty_plants_ordered,plant_week,plant_year,ship_week,ready_week,broker,supplier,liner_unit_cost,prop_method,bench_id,is_combo_component")
+        .select("id,item_name,variety_id,qty_pots,ppp,qty_plants_ordered,plant_week,plant_year,ship_week,ship_year,ready_week,ready_year,broker,supplier,liner_unit_cost,prop_method,bench_id,is_combo_component")
         .eq("plan_id", plan.id).eq("recipe_id", recipeId).not("is_combo_component", "is", true).limit(2000);
       setRows(sc || []);
       const vids = [...new Set((sc || []).map(r => r.variety_id).filter(Boolean))];
@@ -191,6 +191,45 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
       }
     }
     setBusy(false); setLocked(true); setSavedMsg(`✅ saved — ${ch.length} change${ch.length > 1 ? "s" : ""} (crop_recipes)`);
+
+    // ── the ripple, first slice: recipe saved → offer to re-derive the plan's chain.
+    // Ready stays the anchor (it's the sales commitment); plant = ready − crop weeks;
+    // ship = plant − series rooting (URC/CALL) else plant. Year-wrapped.
+    const wrap = (wk, yr) => wk <= 0 ? { wk: wk + 52, yr: (yr ?? plan.year ?? 2027) - 1 } : { wk, yr: yr ?? plan.year ?? 2027 };
+    const cw = Math.round(+recipe.crop_weeks || 0);
+    const patches = [];
+    (rows || []).forEach(r => {
+      if (r.ready_week == null || !cw) return;
+      const v = vmap[r.variety_id];
+      const sSpec = seriesOf(v?.variety) || {};
+      const rooted = /^(URC|CALL)/i.test(sSpec.form || r.prop_method || "");
+      const root = rooted ? Math.round(+(sSpec.rooting_weeks ?? 0)) : 0;
+      const ry = r.ready_year ?? r.plant_year ?? plan.year ?? 2027;
+      const p = wrap(r.ready_week - cw, ry);
+      const sh = wrap(p.wk - root, p.yr);
+      if (p.wk !== r.plant_week || sh.wk !== r.ship_week || cw !== r.crop_weeks) {
+        patches.push({ id: r.id, item: r.item_name, plant_week: p.wk, plant_year: p.yr, ship_week: sh.wk, ship_year: sh.yr, crop_weeks: cw,
+          was: `plant ${r.plant_week ?? "—"}/ship ${r.ship_week ?? "—"}`, now: `plant ${p.wk}/ship ${sh.wk}` });
+      }
+    });
+    if (!patches.length) return;
+    const sample = [...new Set(patches.map(x => `${x.was} → ${x.now}`))].slice(0, 4).join("\n• ");
+    if (!window.confirm(`Cascade the recipe to the plan?\n\n${patches.length} row${patches.length > 1 ? "s" : ""} re-derive from their READY week (the anchor):\n• ${sample}${patches.length > 4 ? "\n• …" : ""}\n\nFloor tasks don't move yet (ripple engine phase) — skip if this plan is already in motion.`)) {
+      setSavedMsg(`✅ recipe saved — plan NOT cascaded (drift badges will show the gap)`); return;
+    }
+    setBusy(true);
+    for (const x of patches) {
+      await sb.from("scheduled_crops").update({ plant_week: x.plant_week, plant_year: x.plant_year, ship_week: x.ship_week, ship_year: x.ship_year, crop_weeks: x.crop_weeks }).eq("id", x.id);
+    }
+    try {
+      const items = [...new Set(patches.map(x => x.item))];
+      for (const it of items) {
+        await sb.from("item_change_log").insert({ plan_id: plan.id, item_name: it, change_type: "recipe_cascade",
+          detail: { rows: patches.filter(x => x.item === it).length, crop_weeks: cw, note: "chain re-derived from ready after recipe save" },
+          changed_by: displayName || null, source: "family-page" });
+      }
+    } catch { /* audit must not block */ }
+    setBusy(false); setSavedMsg(`✅ recipe saved + cascaded to ${patches.length} rows`); setTick(t => t + 1);
   }
 
   // plan-qty edit: distribute a variety's new total across its bench rows (largest remainder)

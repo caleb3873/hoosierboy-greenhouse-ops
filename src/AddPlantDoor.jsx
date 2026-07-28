@@ -8,6 +8,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { getSupabase } from "./supabase";
 import { useAuth } from "./Auth";
+import { makeKey } from "./brokerKey";
 
 const C = { dark: "#1e2d1a", light: "#7fb069", cream: "#f3f8ee", creamBr: "#cfe3bd",
   muted: "#7a8c74", text: "#2f3b2a", amber: "#c9812a", amberBg: "#fbf1df",
@@ -52,6 +53,64 @@ export default function AddPlantDoor({ plan, onClose, onCreated }) {
   const [itemName, setItemName] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [newVar, setNewVar] = useState(null);   // {crop, variety} — the Jamesbrittenia path
+  const [newRec, setNewRec] = useState(null);   // {size_label, crop_weeks, pots_per_unit, ppp, form, rooting_weeks}
+  const [sizeOptions, setSizeOptions] = useState([]);
+
+  useEffect(() => {   // Escape always exits, no matter what state the door is in
+    const h = e => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [onClose]);
+
+  async function createVariety() {
+    const crop = (newVar?.crop || "").trim(), vname = (newVar?.variety || "").trim();
+    if (!crop || !vname) return;
+    setBusy(true); setErr("");
+    try {
+      const vkey = makeKey(crop, "", vname);
+      const { data: dupe } = await sb.from("variety_library").select("id,crop_name,variety").eq("variety_key", vkey).limit(1);
+      if (dupe?.length) { setVariety({ ...dupe[0], variety_key: vkey }); setNewVar(null); setBusy(false); return; }  // same genetics already known
+      const id = crypto.randomUUID();
+      const { error } = await sb.from("variety_library").insert({
+        id, crop_name: crop, variety: vname, variety_key: vkey, notes: "created via Add a plant (new crop)" });
+      if (error) throw new Error(error.message);
+      setVariety({ id, crop_name: crop, variety: vname, variety_key: vkey });
+      setNewVar(null); setQ("");
+    } catch (e) { setErr(e.message); }
+    setBusy(false);
+  }
+
+  async function createRecipe() {
+    if (!variety || !newRec?.size_label?.trim() || !newRec?.crop_weeks) return;
+    setBusy(true); setErr("");
+    try {
+      const rec = {
+        crop_name: variety.crop_name, size_label: newRec.size_label.trim(),
+        crop_weeks: +newRec.crop_weeks, pots_per_unit: Math.max(1, +newRec.pots_per_unit || 1),
+        ppp: Math.max(1, +newRec.ppp || 1), updated_by: displayName || "planner",
+        seeded_from: { source: "add-door", note: "starter recipe — refine on the family page" },
+      };
+      const { data: ins, error } = await sb.from("crop_recipes")
+        .upsert(rec, { onConflict: "crop_name,size_label" }).select("*").single();
+      if (error) throw new Error(error.message);
+      await sb.from("crop_recipe_series").upsert({
+        recipe_id: ins.id, series_name: "(unassigned)", form: newRec.form || null,
+        rooting_weeks: /^(URC|CALL)/i.test(newRec.form || "") && newRec.rooting_weeks ? +newRec.rooting_weeks : null,
+      }, { onConflict: "recipe_id,series_name" });
+      setRecipes(rs => [...rs.filter(r => r.id !== ins.id), ins]);
+      setRecipeId(ins.id); setNewRec(null);
+    } catch (e) { setErr(e.message); }
+    setBusy(false);
+  }
+
+  useEffect(() => {   // distinct size labels across all recipes — suggestions for a starter recipe
+    if (!newRec) return;
+    (async () => {
+      const { data } = await sb.from("crop_recipes").select("size_label").limit(400);
+      setSizeOptions([...new Set((data || []).map(r => r.size_label))].sort());
+    })();
+  }, [newRec, sb]); // eslint-disable-line
 
   // variety search
   useEffect(() => {
@@ -235,6 +294,29 @@ export default function AddPlantDoor({ plan, onClose, onCreated }) {
                   ))}
                 </div>
               )}
+              {q.trim().length >= 2 && !hits.length && !newVar && (
+                <button onClick={() => setNewVar({ crop: "", variety: q.trim().replace(/\b\w/g, c => c.toUpperCase()) })}
+                  style={{ display: "block", width: "100%", marginTop: 6, padding: "9px 12px", borderRadius: 10, textAlign: "left",
+                    border: `1.5px dashed ${C.light}`, background: "#fff", color: C.dark, fontWeight: 800, fontSize: 12.5, cursor: "pointer", fontFamily: FONT }}>
+                  🆕 Nothing on file — create “{q.trim()}” as a new variety
+                </button>
+              )}
+              {newVar && (
+                <div style={{ marginTop: 8, background: C.amberBg, border: `1.5px solid #ecd9b8`, borderRadius: 10, padding: "10px 12px" }}>
+                  <div style={{ fontSize: 11, fontWeight: 800, color: C.amber, marginBottom: 8 }}>🆕 NEW VARIETY — first time growing it (the Jamesbrittenia moment)</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                    <div><label style={{ fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", color: C.muted }}>Crop (genus)</label>
+                      <input value={newVar.crop} onChange={e => setNewVar({ ...newVar, crop: e.target.value })} placeholder="e.g. Jamesbrittenia" style={{ ...ctl, padding: "7px 9px", fontSize: 13 }} /></div>
+                    <div><label style={{ fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", color: C.muted }}>Variety</label>
+                      <input value={newVar.variety} onChange={e => setNewVar({ ...newVar, variety: e.target.value })} placeholder="series + color" style={{ ...ctl, padding: "7px 9px", fontSize: 13 }} /></div>
+                  </div>
+                  <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                    <button disabled={busy || !newVar.crop.trim() || !newVar.variety.trim()} onClick={createVariety}
+                      style={{ padding: "7px 13px", borderRadius: 8, border: "none", background: C.light, color: "#fff", fontWeight: 800, fontSize: 12, cursor: "pointer", fontFamily: FONT }}>Create variety →</button>
+                    <button onClick={() => setNewVar(null)} style={{ padding: "7px 13px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: "#fff", color: C.muted, fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: FONT }}>back</button>
+                  </div>
+                </div>
+              )}
             </>
           ) : (
             <div style={{ display: "flex", alignItems: "center", gap: 8, background: C.cream, border: `1.5px solid ${C.creamBr}`, borderRadius: 10, padding: "8px 12px" }}>
@@ -257,9 +339,42 @@ export default function AddPlantDoor({ plan, onClose, onCreated }) {
                 </select>
               ) : (
                 <div style={{ fontSize: 12, color: C.amber, background: C.amberBg, border: `1px solid #ecd9b8`, borderRadius: 9, padding: "9px 11px" }}>
-                  No recipes for {variety.crop_name} yet — seed them (scripts/seed_crop_recipes.js) or grow this crop once first.
+                  No recipes for {variety.crop_name} yet — a new crop needs its recipe set ONCE, then every future add fills itself.
                 </div>
               )}
+              {!newRec
+                ? <button onClick={() => setNewRec({ size_label: "", crop_weeks: "", pots_per_unit: 1, ppp: 1, form: "URC", rooting_weeks: "" })}
+                    style={{ marginTop: 6, padding: "7px 12px", borderRadius: 9, border: `1.5px dashed ${C.light}`, background: "#fff", color: C.dark, fontWeight: 800, fontSize: 11.5, cursor: "pointer", fontFamily: FONT }}>
+                    ＋ Create a starter recipe for {variety.crop_name}</button>
+                : (
+                  <div style={{ marginTop: 8, background: C.amberBg, border: "1.5px solid #ecd9b8", borderRadius: 10, padding: "10px 12px" }}>
+                    <div style={{ fontSize: 11, fontWeight: 800, color: C.amber, marginBottom: 8 }}>STARTER RECIPE — set once, refine on the family page later</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                      <div style={{ gridColumn: "1 / -1" }}><label style={{ fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", color: C.muted }}>Size label</label>
+                        <input list="apd-sizes" value={newRec.size_label} onChange={e => setNewRec({ ...newRec, size_label: e.target.value })} placeholder={`e.g. 4.5" Pot · 10" HB`} style={{ ...ctl, padding: "7px 9px", fontSize: 13 }} />
+                        <datalist id="apd-sizes">{sizeOptions.map(s => <option key={s} value={s} />)}</datalist></div>
+                      <div><label style={{ fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", color: C.muted }}>Crop wks</label>
+                        <input value={newRec.crop_weeks} onChange={e => setNewRec({ ...newRec, crop_weeks: e.target.value })} inputMode="numeric" style={{ ...ctl, padding: "7px 9px", fontSize: 13 }} /></div>
+                      <div><label style={{ fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", color: C.muted }}>Pots / unit</label>
+                        <input value={newRec.pots_per_unit} onChange={e => setNewRec({ ...newRec, pots_per_unit: e.target.value })} inputMode="numeric" style={{ ...ctl, padding: "7px 9px", fontSize: 13 }} /></div>
+                      <div><label style={{ fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", color: C.muted }}>PPP</label>
+                        <input value={newRec.ppp} onChange={e => setNewRec({ ...newRec, ppp: e.target.value })} inputMode="numeric" style={{ ...ctl, padding: "7px 9px", fontSize: 13 }} /></div>
+                      <div><label style={{ fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", color: C.muted }}>Form</label>
+                        <select value={newRec.form} onChange={e => setNewRec({ ...newRec, form: e.target.value })} style={{ ...ctl, padding: "7px 9px", fontSize: 13, cursor: "pointer" }}>
+                          {["URC", "CALL", "PLUG", "SEED", "BULB", "LINER"].map(f => <option key={f}>{f}</option>)}
+                        </select></div>
+                      {/^(URC|CALL)$/.test(newRec.form) && (
+                        <div><label style={{ fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", color: C.muted }}>Root wks</label>
+                          <input value={newRec.rooting_weeks} onChange={e => setNewRec({ ...newRec, rooting_weeks: e.target.value })} inputMode="numeric" style={{ ...ctl, padding: "7px 9px", fontSize: 13 }} /></div>
+                      )}
+                    </div>
+                    <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                      <button disabled={busy || !newRec.size_label.trim() || !newRec.crop_weeks} onClick={createRecipe}
+                        style={{ padding: "7px 13px", borderRadius: 8, border: "none", background: C.light, color: "#fff", fontWeight: 800, fontSize: 12, cursor: "pointer", fontFamily: FONT }}>Create recipe →</button>
+                      <button onClick={() => setNewRec(null)} style={{ padding: "7px 13px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: "#fff", color: C.muted, fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: FONT }}>back</button>
+                    </div>
+                  </div>
+                )}
             </div>
             <div>
               <label style={lbl}>Quantity (units)</label>

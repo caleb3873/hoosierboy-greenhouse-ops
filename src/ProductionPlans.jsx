@@ -12,6 +12,7 @@ import ItemDrill from "./ItemDrill";
 import ProgramsPanel from "./ProgramBuilder";
 import PropagationGuide from "./PropagationGuide";
 import AddPlantDoor from "./AddPlantDoor";
+import FamilyPage from "./FamilyPage";
 
 const COLORS = {
   bg:        "#f7f8f5",
@@ -2568,6 +2569,24 @@ function ReadyDatesTab({ plan }) {
     setApplying(false);
   }
 
+  useEffect(() => {   // crop-family browser list: recipes present in this plan, by row count
+    if (!sb) return;
+    (async () => {
+      const rids = await srcPageAll(sb, "scheduled_crops", "recipe_id", q => q.eq("plan_id", plan.id).not("recipe_id", "is", null));
+      const counts = {};
+      rids.forEach(r => { counts[r.recipe_id] = (counts[r.recipe_id] || 0) + 1; });
+      const ids = Object.keys(counts);
+      if (!ids.length) { setFamList([]); return; }
+      const recs = [];
+      for (let i = 0; i < ids.length; i += 200) {
+        const { data } = await sb.from("crop_recipes").select("id,crop_name,size_label").in("id", ids.slice(i, i + 200));
+        recs.push(...(data || []));
+      }
+      setFamList(recs.map(r => ({ id: r.id, label: `${r.size_label} ${r.crop_name}`, n: counts[r.id] }))
+        .sort((a, b) => a.label.localeCompare(b.label)));
+    })();
+  }, [sb, plan.id, reloadTick]); // eslint-disable-line
+
   useEffect(() => {
     if (!sb) return;
     // combo-input components (ivy vine, vinca vine, muehlenbeckia, carex) — but NOT
@@ -2780,6 +2799,8 @@ function SalesVsPlanTab({ plan }) {
   const [goal, setGoal] = useState(plan.growth_goal_pct ?? null);
   const [showGroup, setShowGroup] = useState(false);   // group/wave builder modal
   const [showAddDoor, setShowAddDoor] = useState(false);   // THE one door: add a plant via its recipe
+  const [famList, setFamList] = useState([]);          // crop-family browser: [{id, label, n}]
+  const [showFamily, setShowFamily] = useState(null);  // recipe_id → FamilyPage overlay
   const [supplierMap, setSupplierMap] = useState({});  // item -> assigned supplier (from sourcing)
   const { displayName } = useAuth();
   useEffect(() => {
@@ -3338,6 +3359,12 @@ function SalesVsPlanTab({ plan }) {
           style={{ padding: "6px 12px", borderRadius: 16, fontWeight: 800, cursor: "pointer", border: `1.5px solid ${COLORS.dark}`, background: selSet.size ? COLORS.dark : "#9fb096", color: "#c8e6b8" }}>🎨 Group builder{selSet.size ? ` (${selSet.size})` : ""}</button>
         <button onClick={() => setShowAddDoor(true)} title="Add a plant — pick variety, size, ready-by and quantity; the recipe fills the rest"
           style={{ padding: "6px 12px", borderRadius: 16, fontWeight: 800, cursor: "pointer", border: `1.5px solid ${COLORS.light}`, background: COLORS.light, color: "#fff" }}>＋ Add a plant</button>
+        <select value="" onChange={e => { if (e.target.value) setShowFamily(e.target.value); }}
+          title="Open a crop family — every color and planting group at one size"
+          style={{ padding: "6px 10px", borderRadius: 16, fontWeight: 700, fontSize: 12, cursor: "pointer", border: `1.5px solid ${COLORS.light}`, background: "#fff", color: COLORS.dark, maxWidth: 210 }}>
+          <option value="">🌿 Families…</option>
+          {famList.map(f => <option key={f.id} value={f.id}>{f.label} ({f.n})</option>)}
+        </select>
         <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
           <button onClick={() => setShowOverLost(!showOverLost)} title="show/hide the Overplanned $ and Lost sales $ columns"
             style={{ padding: "6px 10px", borderRadius: 16, fontSize: 11, fontWeight: 700, cursor: "pointer", border: `1px solid ${showOverLost ? COLORS.dark : COLORS.border}`, background: showOverLost ? COLORS.dark : "#fff", color: showOverLost ? "#fff" : COLORS.muted }}>
@@ -3409,6 +3436,7 @@ function SalesVsPlanTab({ plan }) {
       })()}
 
       {showAddDoor && <AddPlantDoor plan={plan} onClose={() => setShowAddDoor(false)} onCreated={() => setReloadTick(t => t + 1)} />}
+      {showFamily && <FamilyPage plan={plan} recipeId={showFamily} onClose={() => { setShowFamily(null); setReloadTick(t => t + 1); }} />}
       {drill && (
         <ItemDrill plan={plan} row={drill} tgt={targets[drill.item]} weeks={season.weeks}
           onSaveTarget={patch => saveTarget(drill, patch)} onClose={() => setDrill(null)}
