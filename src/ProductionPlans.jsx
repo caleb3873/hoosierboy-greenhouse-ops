@@ -11,6 +11,7 @@ import BasketPlanner from "./BasketPlanner";
 import ItemDrill from "./ItemDrill";
 import ProgramsPanel from "./ProgramBuilder";
 import PropagationGuide from "./PropagationGuide";
+import AddPlantDoor from "./AddPlantDoor";
 
 const COLORS = {
   bg:        "#f7f8f5",
@@ -2778,6 +2779,7 @@ function SalesVsPlanTab({ plan }) {
   const [gapDismissed, setGapDismissed] = useState(new Set());  // gap keys decided-not-to-chase
   const [goal, setGoal] = useState(plan.growth_goal_pct ?? null);
   const [showGroup, setShowGroup] = useState(false);   // group/wave builder modal
+  const [showAddDoor, setShowAddDoor] = useState(false);   // THE one door: add a plant via its recipe
   const [supplierMap, setSupplierMap] = useState({});  // item -> assigned supplier (from sourcing)
   const { displayName } = useAuth();
   useEffect(() => {
@@ -3334,6 +3336,8 @@ function SalesVsPlanTab({ plan }) {
         <button onClick={() => selSet.size ? setShowGroup(true) : window.alert("Select the items first — tick their checkboxes or use ☑ Select all — then open the group builder.")}
           title="Bulk-build waves across the SELECTED colors, ramping to the peak"
           style={{ padding: "6px 12px", borderRadius: 16, fontWeight: 800, cursor: "pointer", border: `1.5px solid ${COLORS.dark}`, background: selSet.size ? COLORS.dark : "#9fb096", color: "#c8e6b8" }}>🎨 Group builder{selSet.size ? ` (${selSet.size})` : ""}</button>
+        <button onClick={() => setShowAddDoor(true)} title="Add a plant — pick variety, size, ready-by and quantity; the recipe fills the rest"
+          style={{ padding: "6px 12px", borderRadius: 16, fontWeight: 800, cursor: "pointer", border: `1.5px solid ${COLORS.light}`, background: COLORS.light, color: "#fff" }}>＋ Add a plant</button>
         <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
           <button onClick={() => setShowOverLost(!showOverLost)} title="show/hide the Overplanned $ and Lost sales $ columns"
             style={{ padding: "6px 10px", borderRadius: 16, fontSize: 11, fontWeight: 700, cursor: "pointer", border: `1px solid ${showOverLost ? COLORS.dark : COLORS.border}`, background: showOverLost ? COLORS.dark : "#fff", color: showOverLost ? "#fff" : COLORS.muted }}>
@@ -3404,6 +3408,7 @@ function SalesVsPlanTab({ plan }) {
         );
       })()}
 
+      {showAddDoor && <AddPlantDoor plan={plan} onClose={() => setShowAddDoor(false)} onCreated={() => setReloadTick(t => t + 1)} />}
       {drill && (
         <ItemDrill plan={plan} row={drill} tgt={targets[drill.item]} weeks={season.weeks}
           onSaveTarget={patch => saveTarget(drill, patch)} onClose={() => setDrill(null)}
