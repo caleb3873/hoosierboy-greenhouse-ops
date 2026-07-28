@@ -176,6 +176,11 @@ function getProdType(title) {
   if (title.includes("📦")) return "potfill";
   if (title.includes("🌿")) return "planting";
   if (title.includes("🏷")) return "tags";
+  // emoji-less system tasks ("PLANT poinsettia liners — …", "Transplant …") must not
+  // fall to "other" — that hides them from the sub-tabs entirely
+  if (/^(PLANT|Transplant|Pot up)\b/i.test(title)) return "planting";
+  if (/^(Sow)\b/i.test(title)) return "sow";
+  if (/^(Stick|Receive & stick)\b/i.test(title)) return "stick";
   return "other";
 }
 
@@ -605,7 +610,9 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
     // Sales tasks are site-agnostic (office work, not floor work) — they
     // should always show regardless of the Bluff/Sprague location filter.
     if (locationFilter !== "all" && category !== "sales") {
-      r = r.filter(t => (t.location || "").toLowerCase() === locationFilter);
+      // prefix match: system tasks carry full range names ("Bluff Main Range"),
+      // manual tasks carry bare "bluff"/"sprague" — both must answer the chip
+      r = r.filter(t => (t.location || "").toLowerCase().startsWith(locationFilter));
     }
     if (category === "production" && prodTypeFilter !== "all") {
       r = r.filter(t => getProdType(t.title) === prodTypeFilter);
@@ -1696,7 +1703,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
           t.weekNumber === selectedWeek.week &&
           (t.category || "production") === "production" &&
           (statusFilter === "all" || (statusFilter === "pending" ? t.status !== "completed" : t.status === "completed")) &&
-          (locationFilter === "all" || (t.location || "").toLowerCase() === locationFilter)
+          (locationFilter === "all" || (t.location || "").toLowerCase().startsWith(locationFilter))
         );
         const counts = baseTasks.reduce((acc, t) => {
           const k = getProdType(t.title);
