@@ -195,6 +195,41 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
     return () => window.removeEventListener("keydown", esc);
   }, []);
 
+  // ripple slice 2 — the group READY knob: set a new finish week and every row in the
+  // group re-derives its chain from the recipe (plant = ready − crop · ship = plant − its
+  // series' rooting), year-wrapped. Audit-logged per item. Floor tasks still don't move.
+  async function applyGroupReady(g, raw) {
+    const digits = String(raw || "").replace(/\D/g, "");
+    if (!digits || recipe?.crop_weeks == null) return;
+    const ready = digits.length <= 2 ? +digits : +digits.slice(2);
+    const readyYear = digits.length <= 2 ? (g.plantYear ?? plan.year ?? 2027) : 2000 + +digits.slice(0, 2);
+    if (!ready || ready > 52) return;
+    const wrap = (wk, yr) => wk <= 0 ? { wk: wk + 52, yr: yr - 1 } : { wk, yr };
+    setBusy(true);
+    for (const vr of g.vars) {
+      const sSpec = seriesOf(vr.variety) || {};
+      const rooted = /^(URC|CALL)/i.test(sSpec.form || "");
+      const p = wrap(ready - Math.round(+recipe.crop_weeks), readyYear);
+      const sh = rooted ? wrap(p.wk - Math.round(+(sSpec.rooting_weeks ?? 0)), p.yr) : p;
+      for (const r of vr.rows) {
+        await sb.from("scheduled_crops").update({
+          ready_week: ready, ready_year: readyYear,
+          plant_week: p.wk, plant_year: p.yr, ship_week: sh.wk, ship_year: sh.yr,
+        }).eq("id", r.id);
+      }
+    }
+    try {
+      const items = [...new Set(g.rows.map(r => r.item_name))];
+      for (const it of items) {
+        await sb.from("item_change_log").insert({ plan_id: plan.id, item_name: it,
+          change_type: "group_ready_change",
+          detail: { group: g.n, ready: `${readyYear}w${ready}`, note: "chain re-derived from recipe (family page group knob)" },
+          changed_by: displayName || null, source: "family-page" });
+      }
+    } catch { /* audit must not block */ }
+    setBusy(false); setTick(t => t + 1);
+  }
+
   // move a variety's rows in one group onto another group's week chain (or a new one)
   async function moveToGroup(vr, target) {
     setBusy(true);
@@ -454,8 +489,11 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
                 onClick={() => setOpenG({ ...openG, [g.key]: !open })}>
                 <span style={{ color: C.muted, fontSize: 11, transform: open ? "rotate(90deg)" : "none", display: "inline-block", transition: "transform .15s" }}>▶</span>
                 <b style={{ fontSize: 12 }}>Group {g.n}</b>
-                <span style={{ fontSize: 11, color: C.muted }}>
-                  ship <b style={wkStyle}>{wkFmt(g.plantYear, g.ship)}</b> → plant <b style={wkStyle}>{wkFmt(g.plantYear, g.plant)}</b> → ready <b style={{ ...wkStyle, color: C.green }}>{wkFmt(g.plantYear, g.ready)}</b>
+                <span style={{ fontSize: 11, color: C.muted }} onClick={e => e.stopPropagation()}>
+                  ship <b style={wkStyle}>{wkFmt(g.plantYear, g.ship)}</b> → plant <b style={wkStyle}>{wkFmt(g.plantYear, g.plant)}</b> → ready{" "}
+                  <GroupWkInput key={`${g.key}|${g.ready}`} value={g.ready != null ? wkFmt(g.plantYear, g.ready) : ""} disabled={busy}
+                    onCommit={raw => applyGroupReady(g, raw)} />
+                  <span title="edit the finish week — the whole group's chain re-derives from the recipe" style={{ marginLeft: 3, fontSize: 9, color: C.muted }}>✎</span>
                 </span>
                 <span style={{ flex: 1 }} />
                 {(() => {   // drift referee: does the actual plant week agree with ready − recipe crop weeks?
@@ -560,6 +598,23 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
         </div>
       </div>
     </Overlay>
+  );
+}
+
+// group ready-week input: shorthand ok ("18" or "2718"), commits on blur/Enter
+function GroupWkInput({ value, onCommit, disabled }) {
+  const [draft, setDraft] = useState(String(value));
+  const [focus, setFocus] = useState(false);
+  useEffect(() => { if (!focus) setDraft(String(value)); }, [value, focus]);
+  return (
+    <input value={draft} disabled={disabled} inputMode="numeric"
+      onClick={e => e.stopPropagation()}
+      onFocus={() => setFocus(true)}
+      onChange={e => setDraft(e.target.value)}
+      onBlur={() => { setFocus(false); if (draft.trim() && draft !== String(value)) onCommit(draft); else setDraft(String(value)); }}
+      onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
+      style={{ width: 52, padding: "2px 5px", textAlign: "center", borderRadius: 6, border: "1.5px solid #cfe3bd",
+        fontFamily: "ui-monospace,Menlo,monospace", fontSize: 11.5, fontWeight: 700, color: "#2e7d32", background: "#fff" }} />
   );
 }
 
