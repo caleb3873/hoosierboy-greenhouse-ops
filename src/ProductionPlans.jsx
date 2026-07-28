@@ -12,6 +12,7 @@ import ItemDrill from "./ItemDrill";
 import ProgramsPanel from "./ProgramBuilder";
 import PropagationGuide from "./PropagationGuide";
 import AddPlantDoor from "./AddPlantDoor";
+import OrderReconciliation from "./OrderReconciliation";
 import FamilyPage from "./FamilyPage";
 
 const COLORS = {
@@ -336,6 +337,7 @@ const PLAN_TABS = [
   { id: "sales",     label: "📈 Sales vs Plan" },
   { id: "yoy",       label: "⚖ Year over Year" },
   { id: "readydates",label: "📆 Ready & Orders" },
+  { id: "reconcile", label: "🧾 Reconcile" },
   { id: "categories",label: "🏷 Categories" },
   { id: "orders",    label: "📋 Orders" },
   { id: "sourcing",  label: "🧭 Sourcing" },
@@ -482,6 +484,7 @@ function PlanDashboard({ plan, initialTab }) {
           {hasData && tab === "sales"     && <SalesVsPlanTab plan={plan} />}
           {hasData && tab === "yoy"       && <YearOverYearTab plan={plan} />}
           {hasData && tab === "readydates" && <ReadyDatesTab plan={plan} />}
+          {hasData && tab === "reconcile" && <OrderReconciliation plan={plan} />}
           {hasData && tab === "categories" && <CategoryProfiles plan={plan} />}
           {hasData && tab === "baskets"    && <BasketPlanner plan={plan} onOpenCombos={() => setTab("combos")} />}
           {hasData && tab === "orders"    && <OrdersTab plan={plan} />}
