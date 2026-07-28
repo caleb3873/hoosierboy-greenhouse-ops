@@ -2789,6 +2789,14 @@ function SalesVsPlanTab({ plan }) {
   const [showFamily, setShowFamily] = useState(null);  // recipe_id → FamilyPage overlay
   const [perItems, setPerItems] = useState(new Set()); // item names whose family recipe is tagged 🌲 perennial
   const [perOnly, setPerOnly] = usePersistedState("gh_svp_perennials", false);
+  const [rowCtx, setRowCtx] = useState(null);          // {x, y, r} — right-click action menu on a row
+  const [itemRecipe, setItemRecipe] = useState({});    // item_name -> recipe_id (🌿 open family from the menu)
+
+  useEffect(() => {   // Escape closes the row menu; dismissal itself is the backdrop's job
+    const esc = e => { if (e.key === "Escape") setRowCtx(null); };
+    window.addEventListener("keydown", esc);
+    return () => window.removeEventListener("keydown", esc);
+  }, []);
 
   useEffect(() => {   // crop-family browser + perennial tag map: recipes present in this plan
     if (!sb) return;
@@ -2796,6 +2804,7 @@ function SalesVsPlanTab({ plan }) {
       const rids = await srcPageAll(sb, "scheduled_crops", "item_name,recipe_id", q => q.eq("plan_id", plan.id).not("recipe_id", "is", null));
       const counts = {}, itemRec = {};
       rids.forEach(r => { counts[r.recipe_id] = (counts[r.recipe_id] || 0) + 1; itemRec[r.item_name] = r.recipe_id; });
+      setItemRecipe(itemRec);
       const ids = Object.keys(counts);
       if (!ids.length) { setFamList([]); setPerItems(new Set()); return; }
       const recs = [];
@@ -3091,7 +3100,12 @@ function SalesVsPlanTab({ plan }) {
     setBulkBusy(false);
   }
 
-  const shown = rows.filter(r => (filt === "all" ? true
+  const shown = rows.filter(r => {
+      // retired items are INVISIBLE everywhere except their own filter — that's the tier
+      const arch = targets[r.item]?.archived_at != null;
+      return (filt === "retired" ? arch
+      : arch ? false
+      : filt === "all" ? true
       : filt === "over" ? r.status === "SHORT"
       : filt === "soldout" ? r.soldOut
       : filt === "todo" ? targetOf(r) == null
@@ -3100,7 +3114,7 @@ function SalesVsPlanTab({ plan }) {
       : r.status === "HIT")
       && (sizeFilt === "all" || r.size === sizeFilt)
       && (!perOnly || perItems.has(r.item))
-      && (!q || r.item.toLowerCase().includes(q)))
+      && (!q || r.item.toLowerCase().includes(q)); })
     .sort((a, b) => { const va = (sortVal[sortCol] || sortVal.lostEst)(a), vb = (sortVal[sortCol] || sortVal.lostEst)(b); const c = typeof va === "string" ? va.localeCompare(vb) : (va - vb); return sortDir === "asc" ? c : -c; });
   return (
     <div style={{ display: "grid", gap: 14 }}>
@@ -3383,7 +3397,7 @@ function SalesVsPlanTab({ plan }) {
         </select>
         <button onClick={() => setPerOnly(!perOnly)} title="Only families tagged perennial — tag on the family page, or when adding a family"
           style={{ padding: "6px 12px", borderRadius: 16, fontWeight: 700, cursor: "pointer", border: `1px solid ${perOnly ? COLORS.light : COLORS.border}`, background: perOnly ? COLORS.light : "#fff", color: perOnly ? "#fff" : COLORS.text }}>🌲 Perennials</button>
-        {[["all", "All"], ["over", "🟠 Overplanned"], ["soldout", "🔴 Sold out early"], ["hit", "🟢 Hit"], ["todo", "◻ Undecided"], ["done", "✓ Decided"], ["dropped", "✕ Dropped"]].map(([f, l]) => <button key={f} onClick={() => setFilt(f)} style={{ padding: "6px 12px", borderRadius: 16, fontWeight: 700, cursor: "pointer", border: `1px solid ${filt === f ? COLORS.light : COLORS.border}`, background: filt === f ? COLORS.light : "#fff", color: filt === f ? "#fff" : COLORS.text }}>{l}</button>)}
+        {[["all", "All"], ["over", "🟠 Overplanned"], ["soldout", "🔴 Sold out early"], ["hit", "🟢 Hit"], ["todo", "◻ Undecided"], ["done", "✓ Decided"], ["dropped", "✕ Dropped"], ["retired", "📦 Retired"]].map(([f, l]) => <button key={f} onClick={() => setFilt(f)} style={{ padding: "6px 12px", borderRadius: 16, fontWeight: 700, cursor: "pointer", border: `1px solid ${filt === f ? COLORS.light : COLORS.border}`, background: filt === f ? COLORS.light : "#fff", color: filt === f ? "#fff" : COLORS.text }}>{l}</button>)}
         <button onClick={() => setSelSet(new Set(shown.map(r => r.item)))} title="Select every item currently shown"
           style={{ padding: "6px 12px", borderRadius: 16, fontWeight: 700, cursor: "pointer", border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.text }}>☑ Select all{shown.length !== rows.length ? " shown" : ""}</button>
         {selSet.size > 0 && <button onClick={() => setSelSet(new Set())} style={{ padding: "6px 12px", borderRadius: 16, fontWeight: 700, cursor: "pointer", border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.muted }}>clear ({selSet.size})</button>}
@@ -3465,6 +3479,47 @@ function SalesVsPlanTab({ plan }) {
         );
       })()}
 
+      {rowCtx && (() => {
+        const r = rowCtx.r, tg = targets[r.item] || {};
+        const arch = tg.archived_at != null;
+        const mi = { display: "block", width: "100%", textAlign: "left", padding: "8px 12px", background: "#fff",
+          border: "none", borderBottom: `1px solid ${COLORS.border}`, cursor: "pointer", fontFamily: "inherit", fontSize: 12.5, color: COLORS.text };
+        return (
+          <>
+            {/* backdrop owns dismissal — click OR right-click anywhere outside closes */}
+            <div onClick={() => setRowCtx(null)} onContextMenu={e => { e.preventDefault(); setRowCtx(null); }}
+              style={{ position: "fixed", inset: 0, zIndex: 9490, background: "transparent" }} />
+            <div style={{ position: "fixed", left: rowCtx.x, top: rowCtx.y, zIndex: 9500, background: "#fff",
+              border: `1px solid ${COLORS.border}`, borderRadius: 10, boxShadow: "0 10px 30px rgba(0,0,0,.3)", minWidth: 240, overflow: "hidden" }}>
+              <div style={{ padding: "7px 12px", fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".5px",
+                color: COLORS.muted, background: "#f2f6ee", borderBottom: `1px solid ${COLORS.border}`, display: "flex", gap: 8, alignItems: "center" }}>
+                <span style={{ flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 220 }}>{r.item}</span>
+                <button onClick={() => setRowCtx(null)} style={{ background: "none", border: "none", color: COLORS.muted, cursor: "pointer", fontSize: 12 }}>✕</button>
+              </div>
+              <button style={mi} onClick={() => { setRowCtx(null); setDrill(r); }}>🔍 Open the item</button>
+              {itemRecipe[r.item]
+                ? <button style={mi} onClick={() => { setRowCtx(null); setShowFamily(itemRecipe[r.item]); }}>🌿 Open the family</button>
+                : <div style={{ ...mi, color: COLORS.muted, cursor: "default" }}>🌿 no family recipe linked</div>}
+              {!arch && tg.decision !== "drop" && (
+                <button style={mi} onClick={() => { setRowCtx(null); saveTarget(r, { target_units: 0, decision: "drop", note: tg.note || "dropped" }); }}>
+                  ✕ Drop for 2027 <span style={{ fontSize: 10.5, color: COLORS.muted }}>— stays visible as a decision</span>
+                </button>
+              )}
+              {!arch ? (
+                <button style={{ ...mi, borderBottom: "none", color: COLORS.red, fontWeight: 700 }}
+                  onClick={() => { setRowCtx(null); saveTarget(r, { archived_at: new Date().toISOString(), target_units: 0, decision: "drop", note: tg.note || "retired — not repeating" }); }}>
+                  📦 Retire — won't repeat <span style={{ fontSize: 10.5, color: COLORS.muted, fontWeight: 500 }}>hidden unless 📦 filter</span>
+                </button>
+              ) : (
+                <button style={{ ...mi, borderBottom: "none", color: "#2e7d32", fontWeight: 700 }}
+                  onClick={() => { setRowCtx(null); saveTarget(r, { archived_at: null, target_units: null, decision: null, note: "reactivated" }); }}>
+                  ↩ Reactivate — back into the walkthrough
+                </button>
+              )}
+            </div>
+          </>
+        );
+      })()}
       {showAddDoor && <AddPlantDoor plan={plan} onClose={() => setShowAddDoor(false)} onCreated={() => setReloadTick(t => t + 1)}
         onOpenFamily={id => setShowFamily(id)} />}
       {showFamily && <FamilyPage plan={plan} recipeId={showFamily} onClose={() => { setShowFamily(null); setReloadTick(t => t + 1); }} />}
@@ -3504,7 +3559,9 @@ function SalesVsPlanTab({ plan }) {
             {shown.slice(0, 500).map((r, i) => {
               const badge = r.status === "SOLDOUT" ? { bg: COLORS.red, t: "SOLD OUT" } : r.status === "HIT" ? { bg: "#5e9c4a", t: "HIT" } : r.status === "NOSALE" ? { bg: "#c8d0c0", t: "NOSALE" } : r.status === "DUAL" ? { bg: "#4a7ba8", t: "DUAL USE" } : { bg: COLORS.amber, t: "OVER" };
               return (
-                <tr key={i} style={{ borderBottom: `1px solid ${COLORS.border}`, background: selSet.has(r.item) ? "#f2f8ec" : undefined }}>
+                <tr key={i} title="right-click for actions (retire, drop, open family…)"
+                  onContextMenu={e => { e.preventDefault(); setRowCtx({ x: Math.min(e.clientX, window.innerWidth - 250), y: Math.min(e.clientY, window.innerHeight - 230), r }); }}
+                  style={{ borderBottom: `1px solid ${COLORS.border}`, background: selSet.has(r.item) ? "#f2f8ec" : undefined }}>
                   <td style={td}>
                     <input type="checkbox" checked={selSet.has(r.item)}
                       onChange={() => setSelSet(prev => { const n = new Set(prev); n.has(r.item) ? n.delete(r.item) : n.add(r.item); return n; })} />
@@ -3563,6 +3620,15 @@ function TargetCell({ r, tgt, draft, saving, onDraft, onSave }) {
   const pack = Math.max(1, Math.round(+r.pack || (r.converted && r.planned > 0 ? (r.planRaw || 0) / r.planned : 1)));
   const unitWord = pack > 1 ? "cases" : /HB/i.test(r.size || "") ? "baskets" : "pots";
   const boxLbl = { fontSize: 8, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: COLORS.muted, marginBottom: 2, textAlign: "right" };
+  if (tgt?.archived_at) return (   // retired: no inputs — just the state and the way back
+    <td style={{ ...td, textAlign: "right", background: "#f2f2ec", borderLeft: `2px solid ${COLORS.border}`, whiteSpace: "nowrap", position: "sticky", right: 0, zIndex: 1, minWidth: 154 }}>
+      <div style={{ fontSize: 11.5, fontWeight: 800, color: COLORS.muted }}>📦 retired</div>
+      <div style={{ fontSize: 9, color: COLORS.muted }}>{new Date(tgt.archived_at).toLocaleDateString([], { month: "short", day: "numeric" })}{tgt.decided_by ? ` · ${tgt.decided_by}` : ""}</div>
+      <button onClick={() => onSave({ archived_at: null, target_units: null, decision: null, note: "reactivated" })}
+        title="bring it back into the walkthrough list, undecided"
+        style={{ marginTop: 3, padding: "3px 10px", borderRadius: 7, border: `1px solid ${COLORS.light}`, background: "#fff", color: COLORS.dark, fontSize: 10.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>↩ bring back</button>
+    </td>
+  );
   return (
     <td style={{ ...td, textAlign: "right", background: committed ? "#eef6e8" : "#fbfdfa", borderLeft: `2px solid ${COLORS.light}`, whiteSpace: "nowrap", position: "sticky", right: 0, zIndex: 1, minWidth: 154 }}>
       {/* twin boxes: 🎯 target (editable) beside in-production (read-only) — same visual weight */}
