@@ -22,6 +22,7 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
   const [vmap, setVmap] = useState({});
   const [trays, setTrays] = useState({});      // container id -> {name, cells_per_flat}
   const [bmap, setBmap] = useState({});        // bench id -> code
+  const [brokerStats, setBrokerStats] = useState({});   // series_name -> [{broker, supplier, min, cov, tot}]
   const [soldByItem, setSoldByItem] = useState({});   // plan item_name -> '26 units (via sku map)
   const [locked, setLocked] = useState(true);
   const [snap, setSnap] = useState(null);
@@ -71,6 +72,43 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
       setSoldByItem(soldMap);
     })();
   }, [sb, plan.id, recipeId, tick]); // eslint-disable-line
+
+  // broker coverage per series: who quotes this series' colors, at what floor price
+  useEffect(() => {
+    if (!series.length || !rows?.length || !Object.keys(vmap).length) return;
+    (async () => {
+      const named = series.map(s => s.series_name).filter(n => n !== "(unassigned)").sort((a, b) => b.length - a.length);
+      const keyToSeries = {};
+      Object.values(vmap).forEach(v => {
+        const hit = named.find(n => v.variety.toLowerCase().startsWith(n.toLowerCase())) || "(unassigned)";
+        keyToSeries[v.variety_key] = hit;
+      });
+      const keys = Object.keys(keyToSeries);
+      if (!keys.length) return;
+      const quotes = [];
+      for (let i = 0; i < keys.length; i += 100) {
+        const { data } = await sb.from("broker_prices").select("variety_key,broker,supplier,form_class,landed").in("variety_key", keys.slice(i, i + 100));
+        quotes.push(...(data || []));
+      }
+      const FORM_TO_CLASS = f => /^URC/i.test(f || "") ? "urc" : /^(CALL|DIRECT)/i.test(f || "") ? "callused" : /^PLUG/i.test(f || "") ? "plug" : /^SEED/i.test(f || "") ? "seed" : null;
+      const stats = {};
+      series.forEach(s => {
+        const fc = FORM_TO_CLASS(s.form);
+        const sKeys = keys.filter(k => keyToSeries[k] === s.series_name);
+        const byBroker = {};
+        quotes.filter(q => sKeys.includes(q.variety_key) && (!fc || q.form_class === fc)).forEach(q => {
+          const b = byBroker[q.broker] || (byBroker[q.broker] = { broker: q.broker, supplier: q.supplier, min: +q.landed, covered: new Set() });
+          b.min = Math.min(b.min, +q.landed);
+          b.covered.add(q.variety_key);
+          if (!b.supplier && q.supplier) b.supplier = q.supplier;
+        });
+        stats[s.series_name] = Object.values(byBroker)
+          .map(b => ({ broker: b.broker, supplier: b.supplier, min: b.min, cov: b.covered.size, tot: sKeys.length }))
+          .sort((a, b) => b.cov - a.cov || a.min - b.min);
+      });
+      setBrokerStats(stats);
+    })();
+  }, [series, vmap, rows, sb]); // eslint-disable-line
 
   // series lookup for a variety (same name-prefix derivation the seed used, vs stored series names)
   const seriesOf = useMemo(() => {
@@ -220,6 +258,7 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
       const o = a.s.find(x => x.id === s.id) || {};
       if (o.form !== s.form) ch.push(`${s.series_name} form ${o.form || "—"} → ${s.form}`);
       if (String(o.rooting_weeks ?? "") !== String(s.rooting_weeks ?? "")) ch.push(`${s.series_name} root ${o.rooting_weeks ?? "—"} → ${s.rooting_weeks ?? "—"}w`);
+      if ((o.pinned_broker || null) !== (s.pinned_broker || null)) ch.push(`${s.series_name} broker 📌 ${o.pinned_broker || "—"} → ${s.pinned_broker || "—"} (one material, one broker; existing row costs unchanged — re-quote applies them)`);
     });
     if (!ch.length) { setLocked(true); setSavedMsg("no changes"); return; }
     if (!window.confirm(`Save the ${recipe.crop_name} ${recipe.size_label} recipe?\n\n• ${ch.join("\n• ")}\n\nCascades to every color, group and task using this recipe.`)) return;
@@ -228,8 +267,10 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
     await sb.from("crop_recipes").update({ ...rec, updated_by: displayName || "planner", updated_at: new Date().toISOString() }).eq("id", recipeId);
     for (const s of series) {
       const o = a.s.find(x => x.id === s.id) || {};
-      if (o.form !== s.form || String(o.rooting_weeks ?? "") !== String(s.rooting_weeks ?? "")) {
-        await sb.from("crop_recipe_series").update({ form: s.form, rooting_weeks: s.rooting_weeks, updated_at: new Date().toISOString() }).eq("id", s.id);
+      if (o.form !== s.form || String(o.rooting_weeks ?? "") !== String(s.rooting_weeks ?? "") || (o.pinned_broker || null) !== (s.pinned_broker || null)) {
+        await sb.from("crop_recipe_series").update({ form: s.form, rooting_weeks: s.rooting_weeks,
+          pinned_broker: s.pinned_broker || null, pinned_supplier: s.pinned_supplier || null,
+          updated_at: new Date().toISOString() }).eq("id", s.id);
       }
     }
     setBusy(false); setLocked(true); setSavedMsg(`✅ saved — ${ch.length} change${ch.length > 1 ? "s" : ""} (crop_recipes)`);
@@ -364,7 +405,29 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
                   {series.map(s => (
                     <tr key={s.id}>
                       <td style={{ ...td, fontWeight: 700 }}>{s.series_name}</td>
-                      <td style={td}>{s.pinned_broker || "—"}{s.pinned_supplier ? ` · ${s.pinned_supplier}` : ""}</td>
+                      <td style={td}>
+                        {(() => {
+                          const opts = brokerStats[s.series_name] || [];
+                          if (locked || !opts.length) return <>{s.pinned_broker || "—"}{s.pinned_supplier ? ` · ${s.pinned_supplier}` : ""}{!locked && !opts.length && <span style={{ color: C.muted, fontSize: 10 }}> (no quotes on file)</span>}</>;
+                          return (
+                            <select value={s.pinned_broker || ""}
+                              onChange={e => {
+                                const pick = opts.find(o => o.broker === e.target.value);
+                                setSeries(series.map(x => x.id === s.id ? { ...x, pinned_broker: e.target.value || null, pinned_supplier: pick?.supplier ?? x.pinned_supplier } : x));
+                              }}
+                              style={{ padding: "3px 5px", borderRadius: 6, border: `1.5px solid ${C.creamBr}`, fontSize: 11.5, fontWeight: 700, fontFamily: FONT, maxWidth: 220, cursor: "pointer" }}>
+                              <option value="">— no pin —</option>
+                              {opts.map(o => (
+                                <option key={o.broker} value={o.broker}>
+                                  {o.broker}{o.supplier ? ` · ${o.supplier}` : ""} — from ${o.min.toFixed(3)} · {o.cov}/{o.tot} colors
+                                </option>
+                              ))}
+                              {s.pinned_broker && !opts.find(o => o.broker === s.pinned_broker) &&
+                                <option value={s.pinned_broker}>{s.pinned_broker} (current pin — no quotes found)</option>}
+                            </select>
+                          );
+                        })()}
+                      </td>
                       <td style={td}>
                         <select value={s.form || ""} onChange={e => setSeries(series.map(x => x.id === s.id ? { ...x, form: e.target.value || null } : x))}
                           style={{ padding: "3px 5px", borderRadius: 6, border: `1.5px solid ${C.creamBr}`, fontSize: 11.5, fontWeight: 700, fontFamily: "ui-monospace,Menlo,monospace" }}>
