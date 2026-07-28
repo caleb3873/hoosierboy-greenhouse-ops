@@ -762,10 +762,14 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       if (t.status === "completed" || t.status === "requested") return;
       const stale = t.year < today.year || (t.year === today.year && t.weekNumber < today.week);
       const needsTargetDate = !t.targetDate;
-      const staleDate = t.targetDate && t.targetDate < todayISO && (t.bucket === "today" || t.bucket === "tomorrow" || t.bucket === "check_tomorrow");
+      // null-bucket tasks (the system-generated weekly ones) must roll too — a Monday-dated
+      // PLANT task otherwise goes invisible from Tuesday on: current week (no carryover)
+      // but past-dated (fails the today filter). The 7/28 poinsettia disappearance.
+      const staleDate = t.targetDate && t.targetDate < todayISO && (!t.bucket || t.bucket === "today" || t.bucket === "tomorrow" || t.bucket === "check_tomorrow");
       if (stale || needsTargetDate || staleDate) {
         const patch = { ...t };
         if (stale) { patch.year = today.year; patch.weekNumber = today.week; patch.carriedOver = true; }
+        if (staleDate) patch.carriedOver = true;   // same-week roll still deserves the OVERDUE badge
         if (needsTargetDate || staleDate) patch.targetDate = bucketToDate(t.bucket || "today");
         upsert(patch).catch(err => console.warn("Carryover upsert failed:", err));
       }
