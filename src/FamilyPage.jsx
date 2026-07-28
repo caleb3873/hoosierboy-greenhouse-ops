@@ -149,6 +149,48 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
   }, [rows, vmap, soldByItem, seriesOf, bmap]);
 
   const [openG, setOpenG] = useState({});
+  const [ctx, setCtx] = useState(null);   // {x, y, vr, gKey} — right-click action menu
+
+  useEffect(() => {
+    if (!ctx) return;
+    const close = () => setCtx(null);
+    const esc = e => { if (e.key === "Escape") setCtx(null); };
+    window.addEventListener("click", close);
+    window.addEventListener("keydown", esc);
+    return () => { window.removeEventListener("click", close); window.removeEventListener("keydown", esc); };
+  }, [ctx]);
+
+  // move a variety's rows in one group onto another group's week chain (or a new one)
+  async function moveToGroup(vr, target) {
+    setBusy(true);
+    const patch = { plant_week: target.plant, plant_year: target.plantYear ?? plan.year ?? 2027,
+      ship_week: target.ship, ship_year: target.shipYear ?? target.plantYear ?? plan.year ?? 2027,
+      ready_week: target.ready ?? null, ready_year: target.readyYear ?? target.plantYear ?? plan.year ?? 2027 };
+    for (const r of vr.rows) await sb.from("scheduled_crops").update(patch).eq("id", r.id);
+    try {
+      await sb.from("item_change_log").insert({ plan_id: plan.id, item_name: vr.rows[0]?.item_name || vr.variety,
+        variety_key: vr.vkey || null, change_type: "group_move",
+        detail: { variety: vr.variety, rows: vr.rows.length, to: { plant: target.plant, ship: target.ship, ready: target.ready } },
+        changed_by: displayName || null, source: "family-page" });
+    } catch { /* audit must not block */ }
+    setBusy(false); setCtx(null); setTick(t => t + 1);
+  }
+
+  function moveToNewGroup(vr) {
+    const raw = window.prompt("New group — ready week (e.g. 18 or 2718):");
+    if (!raw) return;
+    const digits = String(raw).replace(/\D/g, "");
+    if (!digits) return;
+    const ready = digits.length <= 2 ? +digits : +digits.slice(2);
+    const readyYear = digits.length <= 2 ? (plan.year ?? 2027) : 2000 + +digits.slice(0, 2);
+    if (!ready || ready > 52 || recipe?.crop_weeks == null) { window.alert("Need a valid week and a recipe with crop weeks."); return; }
+    const wrap = (wk, yr) => wk <= 0 ? { wk: wk + 52, yr: yr - 1 } : { wk, yr };
+    const sSpec = seriesOf(vr.variety) || {};
+    const rooted = /^(URC|CALL)/i.test(sSpec.form || "");
+    const p = wrap(ready - Math.round(+recipe.crop_weeks), readyYear);
+    const sh = rooted ? wrap(p.wk - Math.round(+(sSpec.rooting_weeks ?? 0)), p.yr) : p;
+    moveToGroup(vr, { plant: p.wk, plantYear: p.yr, ship: sh.wk, shipYear: sh.yr, ready, readyYear });
+  }
   const totals = useMemo(() => {
     let pots = 0, plants = 0, liner = 0, traysN = 0;
     const ov = +(recipe?.overage_pct || 0), ppp = +(recipe?.ppp || 1);
@@ -377,7 +419,8 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
                         const s = seriesOf(vr.variety);
                         const pct = vr.pots > 0 && vr.sold != null ? Math.round(vr.sold * 100 / vr.pots) : null;
                         return (
-                          <tr key={vr.variety}>
+                          <tr key={vr.variety} onContextMenu={e => { e.preventDefault(); setCtx({ x: Math.min(e.clientX, window.innerWidth - 240), y: e.clientY, vr, gKey: g.key }); }}
+                            title="right-click for actions">
                             <td style={{ ...td, fontWeight: 700 }}>{vr.variety}
                               {vr.items.size > 1 && <span title={[...vr.items].join(" · ")} style={{ marginLeft: 5, fontSize: 9, fontWeight: 800, color: C.amber, background: C.amberBg, borderRadius: 5, padding: "1px 5px" }}>{vr.items.size} lines</span>}
                               {!!vr.benches.size && <div style={{ fontSize: 9.5, fontWeight: 500, color: C.muted, fontFamily: "ui-monospace,Menlo,monospace" }}>{[...vr.benches].sort().join(" ")}</div>}
@@ -411,6 +454,30 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
           );
         })}
         {!groups.length && <div style={{ ...card, padding: 24, textAlign: "center", color: C.muted, fontSize: 13 }}>No plan rows linked to this recipe in {plan.name}.</div>}
+
+        {ctx && (
+          <div style={{ position: "fixed", left: ctx.x, top: ctx.y, zIndex: 9500, background: "#fff",
+            border: `1px solid ${C.creamBr}`, borderRadius: 10, boxShadow: "0 10px 30px rgba(0,0,0,.3)",
+            minWidth: 220, overflow: "hidden", fontFamily: FONT }} onClick={e => e.stopPropagation()}>
+            <div style={{ padding: "7px 12px", fontSize: 10, fontWeight: 800, textTransform: "uppercase",
+              letterSpacing: ".5px", color: C.muted, background: C.cream, borderBottom: `1px solid ${C.border}` }}>
+              {ctx.vr.variety} · {ctx.vr.pots.toLocaleString()} pots
+            </div>
+            {groups.filter(g => g.key !== ctx.gKey).map(g => (
+              <button key={g.key} disabled={busy}
+                onClick={() => moveToGroup(ctx.vr, { plant: g.plant, plantYear: g.plantYear, ship: g.ship, shipYear: g.plantYear, ready: g.ready, readyYear: g.plantYear })}
+                style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 12px", background: "#fff",
+                  border: "none", borderBottom: `1px solid ${C.border}`, cursor: "pointer", fontFamily: FONT, fontSize: 12.5 }}>
+                → Move to <b>Group {g.n}</b> <span style={{ color: C.muted, fontSize: 11 }}>ship {wkFmt(g.plantYear, g.ship)} · plant {wkFmt(g.plantYear, g.plant)} · ready {wkFmt(g.plantYear, g.ready)}</span>
+              </button>
+            ))}
+            <button disabled={busy} onClick={() => { setCtx(null); moveToNewGroup(ctx.vr); }}
+              style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 12px", background: "#fff",
+                border: "none", cursor: "pointer", fontFamily: FONT, fontSize: 12.5, color: C.green, fontWeight: 700 }}>
+              ＋ New group — pick a ready week (chain derives from the recipe)
+            </button>
+          </div>
+        )}
 
         <div style={{ fontSize: 10.5, color: C.muted, textAlign: "center", marginTop: 4 }}>
           Sold figures come from the canonical SKU map (item → sku → sales), allocated FIFO across the groups that grew each item — combo-modeled lines included. Qty edits redistribute across bench rows (largest remainder) and log to the item history. ⚠ drift badges = plan weeks disagree with the recipe's chain.

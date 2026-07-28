@@ -121,7 +121,10 @@ const VOLUME_BACKFILL = [
     return n => {
       const t = String(n || "").trim().split(/\s+/);
       const p2 = t.slice(0, 2).join(" ");
-      if (t.length > 2 && two[p2] >= 2) return p2;
+      // a two-word series must be a REAL sub-family: >=2 varieties AND at least half of
+      // its one-word family (keeps Kong Jr / Main Street; merges Compact Hot → Compact,
+      // Megawatt Pink → Megawatt — Caleb 7/28: "it's all just Compact")
+      if (t.length > 2 && two[p2] >= 2 && two[p2] * 2 >= (one[t[0]] || 0)) return p2;
       if (t.length > 1 && one[t[0]] >= 2) return t[0];
       return "(unassigned)";
     };
@@ -335,6 +338,16 @@ const VOLUME_BACKFILL = [
     row.updated_at = nowIso;
     const { error } = await sb.from("crop_recipe_series").upsert(row, { onConflict: "recipe_id,series_name" });
     if (error) throw new Error(`series ${sx.series_name}: ${error.message}`);
+  }
+  // stale-series cleanup: seed-owned recipes drop series names no longer derived
+  const byRecipe = {};
+  allSeries.forEach(sx => { (byRecipe[sx._recipeKey] = byRecipe[sx._recipeKey] || []).push(sx.series_name); });
+  for (const [key, names] of Object.entries(byRecipe)) {
+    if (humanEdited.has(key) && !FORCE) continue;
+    const rid = idByKey[key]; if (!rid) continue;
+    const { data: existing } = await sb.from("crop_recipe_series").select("id,series_name").eq("recipe_id", rid);
+    const stale = (existing || []).filter(x => !names.includes(x.series_name));
+    for (const x of stale) await sb.from("crop_recipe_series").delete().eq("id", x.id);
   }
   for (const o of allOverrides) {
     const { _recipeKey, _label, ...row } = o;
