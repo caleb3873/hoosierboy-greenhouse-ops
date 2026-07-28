@@ -3587,11 +3587,17 @@ function TargetCell({ r, tgt, draft, saving, onDraft, onSave }) {
               background: saving ? "#f0f0e8" : "#fff", fontWeight: committed ? 700 : 400 }} />
         </div>
         <div>
-          <div style={boxLbl}>in production</div>
-          <div title={`what the plan rows hold today — ${r.planned.toLocaleString()} ${unitWord}${pack > 1 ? ` = ${(r.planned * pack).toLocaleString()} pots` : ""}. Edit it on the family page or in the drill, not here.`}
-            style={{ width: 60, padding: "3px 6px", textAlign: "right", borderRadius: 6, fontSize: 12.5, boxSizing: "border-box",
-              border: `1.5px solid ${COLORS.border}`, background: "#eef1ea", color: COLORS.text, fontWeight: 700, cursor: "default" }}>
-            {r.planned.toLocaleString()}
+          {/* before a decision the rows are just last year's replay — render it as a
+              ghost (dashed, faint, parenthesized) so it can't be mistaken for a call */}
+          <div style={{ ...boxLbl, color: committed ? COLORS.muted : "#b3bfab" }}>{committed ? "in production" : "'26 replay"}</div>
+          <div title={committed
+              ? `what the plan rows hold today — ${r.planned.toLocaleString()} ${unitWord}${pack > 1 ? ` = ${(r.planned * pack).toLocaleString()} pots` : ""}. Edit it on the family page or in the drill, not here.`
+              : `no decision yet — the rows just carry last year forward (${r.planned.toLocaleString()} ${unitWord}). This firms up once you set a target.`}
+            style={{ width: 60, padding: "3px 6px", textAlign: "right", borderRadius: 6, fontSize: 12.5, boxSizing: "border-box", cursor: "default",
+              ...(committed
+                ? { border: `1.5px solid ${COLORS.border}`, background: "#eef1ea", color: COLORS.text, fontWeight: 700 }
+                : { border: `1.5px dashed #dfe6d8`, background: "transparent", color: "#b3bfab", fontWeight: 400, fontStyle: "italic" }) }}>
+            {committed ? r.planned.toLocaleString() : `(${r.planned.toLocaleString()})`}
           </div>
         </div>
       </div>
