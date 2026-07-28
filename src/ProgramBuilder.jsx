@@ -23,7 +23,7 @@ const C = { dark: "#1e2d1a", light: "#7fb069", border: "#dfe7d8", muted: "#7a8c7
   text: "#2f3b2a", red: "#c0392b", amber: "#c98a2e", green: "#2e7d32", card: "#fff" };
 const money = n => n == null ? "—" : (Math.abs(n) >= 1000 ? `$${Math.round(n).toLocaleString()}` : `$${(+n).toFixed(2)}`);
 
-export default function ProgramsPanel({ plan }) {
+export default function ProgramsPanel({ plan, onAddPlant }) {
   const sb = getSupabase();
   const { displayName } = useAuth();
   const [programs, setPrograms] = useState([]);
@@ -122,6 +122,9 @@ export default function ProgramsPanel({ plan }) {
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
         <span style={{ fontSize: 13, fontWeight: 800, color: C.dark }}>🌱 New programs</span>
         <span style={{ fontSize: 11.5, color: C.muted }}>lines with no history — invented here, handed to production when approved</span>
+        {onAddPlant && <button onClick={onAddPlant}
+          title="The one door: searches your library AND all broker catalogs (new imports included) — recipe fills timing, sourcing, tasks"
+          style={{ padding: "5px 11px", borderRadius: 8, border: `1.5px solid ${C.light}`, background: C.light, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>＋ Add a plant instead</button>}
         {!naming && <button onClick={() => setNaming(true)} style={{ marginLeft: "auto", padding: "5px 11px", borderRadius: 8, border: `1px solid ${C.border}`, background: "#fff", color: C.text, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>＋ New program</button>}
       </div>
       {naming && (

@@ -3156,7 +3156,7 @@ function SalesVsPlanTab({ plan }) {
           </div>
         )}
       </div>
-      <ProgramsPanel plan={plan} />
+      <ProgramsPanel plan={plan} onAddPlant={() => setShowAddDoor(true)} />
 
       {missing.length > 0 && (() => {
         const openMiss = missing.filter(m => !gapDismissed.has(m.key));
