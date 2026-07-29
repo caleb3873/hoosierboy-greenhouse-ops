@@ -184,8 +184,12 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
       g.rows.push(r);
       if (r.ready_week != null) g.ready = Math.min(g.ready ?? 99, r.ready_week);
       if (r.ship_week != null) {
-        g.shipMin = g.shipMin == null ? r.ship_week : Math.min(g.shipMin, r.ship_week);
-        g.shipMax = g.shipMax == null ? r.ship_week : Math.max(g.shipMax, r.ship_week);
+        // compare as absolute (year, week) — a wk-50 arrival that wrapped into the PRIOR
+        // year must not read as later than a wk-3 arrival ("2703–2750" bug, Caleb 7/29)
+        const shipYr = r.ship_year ?? r.plant_year ?? g.plantYear;
+        const abs = shipYr * 100 + r.ship_week;
+        if (g.shipMinAbs == null || abs < g.shipMinAbs) { g.shipMinAbs = abs; g.shipMin = r.ship_week; g.shipMinYr = shipYr; }
+        if (g.shipMaxAbs == null || abs > g.shipMaxAbs) { g.shipMaxAbs = abs; g.shipMax = r.ship_week; g.shipMaxYr = shipYr; }
       }
     });
     const gs = Object.values(m).sort((a, b) => (a.ready ?? 99) - (b.ready ?? 99) || (a.plant ?? 99) - (b.plant ?? 99));
@@ -771,7 +775,7 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
           </div>
           <div style={{ padding: "10px 14px", opacity: locked ? .65 : 1, pointerEvents: locked ? "none" : "auto" }}>
             <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 12.5, marginBottom: 8 }}>
-              {[["crop_weeks", "crop wks"], ["ppp", "ppp"], ["pots_per_unit", "pots/unit"], ["overage_pct", "overage %"], ["hold_tolerance_wks", "hold tol. wks"]].map(([k, l]) => (
+              {[["crop_weeks", "finish wks (plant→ready)"], ["ppp", "ppp"], ["pots_per_unit", "pots/unit"], ["overage_pct", "overage %"], ["hold_tolerance_wks", "hold tol. wks"]].map(([k, l]) => (
                 <label key={k} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: C.muted }}>
                   {l}<input type="number" value={recipe[k] ?? ""} onChange={e => setRecipe({ ...recipe, [k]: e.target.value === "" ? null : +e.target.value })}
                     style={{ width: 52, padding: "4px 6px", borderRadius: 7, border: `1.5px solid ${C.creamBr}`, fontFamily: "ui-monospace,Menlo,monospace", fontSize: 12, fontWeight: 700 }} />
@@ -780,7 +784,7 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
             </div>
             <div style={{ overflowX: "auto" }}>
               <table style={{ borderCollapse: "collapse", width: "100%" }}>
-                <thead><tr>{["Series", "Broker 📌", "Form", "Root (wks)", "Tray"].map(h => <th key={h} style={th}>{h}</th>)}</tr></thead>
+                <thead><tr>{["Series", "Broker 📌", "Form", "Prop (wks)", "Tray", "Total wks"].map(h => <th key={h} style={th}>{h}</th>)}</tr></thead>
                 <tbody>
                   {series.map(s => (
                     <tr key={s.id}>
@@ -834,9 +838,15 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
                           {trayOpts.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
                         </select>
                       </td>
+                      <td style={{ ...td, fontFamily: "ui-monospace,Menlo,monospace", fontWeight: 800, color: C.dark }}
+                        title="the static total — prop weeks (arrive→transplant) + finish weeks (transplant→ready). Edit the parts; this adds itself up.">
+                        {recipe?.crop_weeks != null
+                          ? `${Math.round(+recipe.crop_weeks) + (/^(URC|CALL)/i.test(s.form || "") && s.rooting_weeks != null ? Math.round(+s.rooting_weeks) : 0)}w`
+                          : "—"}
+                      </td>
                     </tr>
                   ))}
-                  {!series.length && <tr><td style={td} colSpan={5}>No series yet — add one below; new door-adds fall back to "(unassigned)" until their series exists.</td></tr>}
+                  {!series.length && <tr><td style={td} colSpan={6}>No series yet — add one below; new door-adds fall back to "(unassigned)" until their series exists.</td></tr>}
                 </tbody>
               </table>
               <button disabled={busy} onClick={async () => {
@@ -913,7 +923,7 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
                 <b style={{ fontSize: 12 }}>Group {g.n}</b>
                 {flashKey === g.key && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.amber, background: C.amberBg, borderRadius: 5, padding: "2px 7px" }}>you just edited this — groups number by finish order</span>}
                 <span style={{ fontSize: 11, color: C.muted }} onClick={e => e.stopPropagation()}>
-                  ship <b style={wkStyle}>{g.shipMin == null ? "—" : g.shipMin === g.shipMax ? wkFmt(g.plantYear, g.shipMin) : `${wkFmt(g.plantYear, g.shipMin)}–${wkFmt(g.plantYear, g.shipMax)}`}</b> → plant <b style={wkStyle}>{wkFmt(g.plantYear, g.plant)}</b> → ready{" "}
+                  ship <b style={wkStyle}>{g.shipMin == null ? "—" : g.shipMinAbs === g.shipMaxAbs ? wkFmt(g.shipMinYr, g.shipMin) : `${wkFmt(g.shipMinYr, g.shipMin)}–${wkFmt(g.shipMaxYr, g.shipMax)}`}</b> → plant <b style={wkStyle}>{wkFmt(g.plantYear, g.plant)}</b> → ready{" "}
                   <GroupWkInput key={`${g.key}|${g.ready}`} value={g.ready != null ? wkFmt(g.plantYear, g.ready) : ""} disabled={busy}
                     onCommit={raw => applyGroupReady(g, raw)} />
                   <span title="edit the finish week — the whole group's chain re-derives from the recipe" style={{ marginLeft: 3, fontSize: 9, color: C.muted }}>✎</span>
