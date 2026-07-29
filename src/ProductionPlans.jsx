@@ -5,7 +5,7 @@
 import { useState, useEffect, useMemo, useRef, Fragment } from "react";
 import { getSupabase, getCultureClient } from "./supabase";
 import { useAuth } from "./Auth";
-import { sizeLabelForItem, wrapWk } from "./shared";
+import { sizeLabelForItem, wrapWk, weeksInYear } from "./shared";
 import CategoryProfiles from "./CategoryProfiles";
 import BasketPlanner from "./BasketPlanner";
 import ItemDrill from "./ItemDrill";
@@ -2526,27 +2526,40 @@ function ReadyDatesTab({ plan }) {
   async function applyDecisions() {
     const [{ data: tgs }, sc] = await Promise.all([
       sb.from("plan_targets").select("*").eq("plan_id", plan.id),
-      srcPageAll(sb, "scheduled_crops", "id,item_name,qty_pots,ppp,plants_per_unit,ready_week,ready_year,plant_week,plant_year,ship_week,ship_year,combo_parent_id,is_combo_component", q => q.eq("plan_id", plan.id)),
+      srcPageAll(sb, "scheduled_crops", "id,item_name,qty_pots,ppp,plants_per_unit,pack_size,ready_week,ready_year,plant_week,plant_year,ship_week,ship_year,combo_parent_id,is_combo_component", q => q.eq("plan_id", plan.id)),
     ]);
-    const decided = (tgs || []).filter(t => t.target_units != null || t.decision);
+    const decided = (tgs || []).filter(t => t.target_units != null || t.decision || (t.rounds && t.rounds.length));
     const parents = {}; const kids = {};
     for (const r of sc) {
       if (r.is_combo_component && r.combo_parent_id) (kids[r.combo_parent_id] = kids[r.combo_parent_id] || []).push(r);
       else if (+r.qty_pots > 0) (parents[r.item_name] = parents[r.item_name] || []).push(r);
     }
-    let qChanged = 0, dropped = 0, timed = 0, skipped = 0, rowsTouched = 0;
+    // all math in POTS — rows arrive in two native encodings (pot-entered vs flat-entered)
+    // and targets arrive in sellable units (cases for 4.5"). Mixing the grains silently
+    // scaled pot-native items by a cases number (same class as the family-page fix).
+    const potFacOf = r => { const ppp = Math.max(1, +r.ppp || 1); const ppu = Math.max(1, +r.plants_per_unit || +r.pack_size || 1); return ppp >= ppu && ppu > 1 ? ppu : 1; };
+    const potsOfR = r => (+r.qty_pots || 0) * potFacOf(r);
+    let qChanged = 0, dropped = 0, timed = 0, waved = 0, skipped = 0, rowsTouched = 0, rowsAdded = 0;
     const plan27 = decided.map(t => {
       const rows = parents[t.item_name];
       if (!rows || !rows.length) { skipped++; return null; }
-      const totalCur = rows.reduce((a, r) => a + +r.qty_pots, 0);
+      const totalPots = rows.reduce((a, r) => a + potsOfR(r), 0);
+      const pack = Math.max(1, ...rows.map(r => Math.round(+r.plants_per_unit || +r.pack_size || 1)));
       const isDrop = t.decision === "drop" || t.target_units === 0;
-      const target = isDrop ? 0 : (t.target_units != null ? +t.target_units : totalCur);
-      const shift = +t.ready_shift || 0;
-      return { t, rows, totalCur, target, shift, isDrop, factor: totalCur > 0 ? target / totalCur : 0 };
+      const rounds = (!isDrop && t.rounds && t.rounds.length)
+        ? t.rounds.map(w => ({ pots: Math.round((+w.units || 0) * pack), ready: +w.ready_week || null }))
+            .filter(w => w.pots > 0).sort((a, b) => (a.ready ?? 99) - (b.ready ?? 99))
+        : null;
+      const targetPots = isDrop ? 0
+        : rounds ? rounds.reduce((a, w) => a + w.pots, 0)
+        : (t.target_units != null ? Math.round(+t.target_units * pack) : totalPots);
+      // rounds carry their own ready weeks — the plain shift only applies without them
+      const shift = rounds ? 0 : (+t.ready_shift || 0);
+      return { t, rows, totalPots, targetPots, pack, shift, rounds, isDrop };
     }).filter(Boolean);
-    plan27.forEach(g => { if (g.isDrop) dropped++; else if (g.target !== g.totalCur) qChanged++; if (g.shift) timed++; });
+    plan27.forEach(g => { if (g.isDrop) dropped++; else if (g.targetPots !== g.totalPots) qChanged++; if (g.shift) timed++; if (g.rounds && g.rounds.length > 1) waved++; });
     if (!plan27.length) { window.alert("Nothing to apply — no decided items have bench rows yet. New items need a plant week/bench in production first."); return; }
-    if (!window.confirm(`Apply ${plan27.length} decision${plan27.length !== 1 ? "s" : ""} to the production plan?\n\n• ${qChanged} quantity change${qChanged !== 1 ? "s" : ""}\n• ${dropped} drop${dropped !== 1 ? "s" : ""} (set to 0)\n• ${timed} timing shift${timed !== 1 ? "s" : ""}\n${skipped ? `• ${skipped} new item(s) skipped — need a bench/plant week in production first\n` : ""}\nThis rewrites the bench-row quantities the order tabs read. Wave splitting onto separate benches stays a production step.`)) return;
+    if (!window.confirm(`Apply ${plan27.length} decision${plan27.length !== 1 ? "s" : ""} to the production plan?\n\n• ${qChanged} quantity change${qChanged !== 1 ? "s" : ""}\n• ${dropped} drop${dropped !== 1 ? "s" : ""} (set to 0)\n• ${timed} timing shift${timed !== 1 ? "s" : ""}\n• ${waved} item${waved !== 1 ? "s" : ""} split into rounds (extra rounds land as new rows, bench TBD)\n${skipped ? `• ${skipped} new item(s) skipped — need a bench/plant week in production first\n` : ""}\nThis rewrites the bench-row quantities the order tabs read. Assigning benches to new rounds stays a production step.`)) return;
     setApplying(true);
     const stamp = new Date().toISOString();
     // timing shifts must wrap across the year boundary (53-week years included) —
@@ -2559,25 +2572,77 @@ function ReadyDatesTab({ plan }) {
       if (row.ship_week != null) { const w = wrapWk(row.ship_week + shift, row.ship_year ?? row.plant_year ?? plan.year ?? 2027); p.ship_week = w.wk; p.ship_year = w.yr; }
       return p;
     };
+    // rows minted by a previous rounds apply carry a "round N" tag in notes — on
+    // re-apply they ARE that round's rows (rescaled/re-timed), never cloned twice
+    const roundTag = r => { const m = /^round (\d+) — split from Sales vs Plan apply/.exec(String(r.notes || "")); return m ? +m[1] : 1; };
+    // scale a set of rows to a pot total (largest remainder, native units) and slide
+    // their chains — readyTo re-times to an absolute week, shiftBy slides uniformly
+    const scaleAndTime = async (rowsArr, potsWant, { isDrop = false, shiftBy = 0, readyTo = null } = {}) => {
+      const tot = rowsArr.reduce((a, r) => a + potsOfR(r), 0);
+      const factor = tot > 0 ? potsWant / tot : 0;
+      let assigned = 0;
+      for (let i = 0; i < rowsArr.length; i++) {
+        const r = rowsArr[i]; const pf = potFacOf(r);
+        const nq = isDrop ? 0
+          : (i === rowsArr.length - 1 ? Math.max(0, Math.round((potsWant - assigned) / pf)) : Math.round(+r.qty_pots * factor));
+        assigned += nq * pf;
+        const delta = (readyTo != null && r.ready_week != null) ? readyTo - r.ready_week : shiftBy;
+        await sb.from("scheduled_crops").update({ qty_pots: Math.max(0, nq), ...shiftedWeeks(r, delta) }).eq("id", r.id);
+        rowsTouched++;
+        // this parent's combo components ride along
+        for (const k of (kids[r.id] || [])) {
+          await sb.from("scheduled_crops").update({ qty_plants_ordered: isDrop ? 0 : Math.round((+k.qty_plants_ordered || 0) * factor), ...shiftedWeeks(k, delta) }).eq("id", k.id);
+          rowsTouched++;
+        }
+      }
+    };
     try {
       for (const g of plan27) {
-        let assigned = 0;
-        for (let i = 0; i < g.rows.length; i++) {
-          const r = g.rows[i];
-          const nq = g.isDrop ? 0 : (i === g.rows.length - 1 ? g.target - assigned : Math.round(+r.qty_pots * g.factor));
-          assigned += nq;
-          const patch = { qty_pots: Math.max(0, nq), ...shiftedWeeks(r, g.shift) };
-          await sb.from("scheduled_crops").update(patch).eq("id", r.id);
-          rowsTouched++;
-          // scale this parent's components
-          for (const k of (kids[r.id] || [])) {
-            await sb.from("scheduled_crops").update({ qty_plants_ordered: g.isDrop ? 0 : Math.round((+k.qty_plants_ordered || 0) * g.factor), ...shiftedWeeks(k, g.shift) }).eq("id", k.id);
-            rowsTouched++;
+        if (!g.rounds) {
+          await scaleAndTime(g.rows, g.targetPots, { isDrop: g.isDrop, shiftBy: g.shift });
+        } else {
+          // tagged rows belong to their tagged round; untagged rows (incl. family-page
+          // ⧉ New round splits) go to the round whose ready week is CLOSEST — never
+          // collapse an existing stagger onto round 1's timing
+          const roundIdxFor = r => {
+            const m = roundTag(r);
+            if (m > 1) return m - 1;   // may exceed the current rounds — zeroed below
+            if (r.ready_week == null || g.rounds.length === 1) return 0;
+            let best = 0, bd = Infinity;
+            g.rounds.forEach((w, i) => { const d = Math.abs((w.ready ?? 1e9) - r.ready_week); if (d < bd) { bd = d; best = i; } });
+            return best;
+          };
+          const byRound = {};
+          g.rows.forEach(r => { const n = roundIdxFor(r); (byRound[n] = byRound[n] || []).push(r); });
+          for (let wi = 0; wi < g.rounds.length; wi++) {
+            const w = g.rounds[wi];
+            const wRows = byRound[wi];
+            if (wRows && wRows.length) {
+              await scaleAndTime(wRows, w.pots, { readyTo: w.ready });
+            } else {
+              // brand-new round: clone from a round-1 row (bench TBD, supply unordered)
+              const srcId = (byRound[0] || g.rows)[0].id;
+              const { data: src } = await sb.from("scheduled_crops").select("*").eq("id", srcId).single();
+              const pf = potFacOf(src);
+              const delta = (w.ready != null && src.ready_week != null) ? w.ready - src.ready_week : 0;
+              const row = { ...src, id: crypto.randomUUID(),
+                qty_pots: Math.max(1, Math.round(w.pots / pf)), ...shiftedWeeks(src, delta),
+                bench_id: null, qty_plants_ordered: null,
+                notes: `round ${wi + 1} — split from Sales vs Plan apply` };
+              delete row.created_at; delete row.updated_at;
+              const { error } = await sb.from("scheduled_crops").insert(row);
+              if (!error) rowsAdded++;
+            }
+          }
+          // rounds that were removed since the last apply: zero their rows so they
+          // leave the order tabs (a returning round mints a fresh row later)
+          for (const [n, wRows] of Object.entries(byRound)) {
+            if (+n >= g.rounds.length) await scaleAndTime(wRows, 0, { isDrop: true });
           }
         }
-        await sb.from("plan_targets").update({ applied_at: stamp, applied_by: displayName || "planner" }).eq("plan_id", plan.id).eq("item_name", g.t.item_name);
+        await sb.from("plan_targets").update({ applied_at: stamp, applied_by: displayName || "planner", applied_units: g.t.target_units != null ? +g.t.target_units : null }).eq("plan_id", plan.id).eq("item_name", g.t.item_name);
       }
-      window.alert(`Applied ${plan27.length} decisions · ${rowsTouched} bench rows updated. The order tabs (Propagation, Materials) and dashboard now reflect them.`);
+      window.alert(`Applied ${plan27.length} decisions · ${rowsTouched} bench rows updated${rowsAdded ? ` · ${rowsAdded} new round row${rowsAdded !== 1 ? "s" : ""} (bench TBD)` : ""}. The order tabs (Propagation, Materials) and dashboard now reflect them.`);
       setTick(x => x + 1);
     } catch (e) { window.alert("Apply stopped partway: " + (e.message || e)); }
     setApplying(false);
@@ -2592,7 +2657,7 @@ function ReadyDatesTab({ plan }) {
       const [xw, wk, sc, tgRes] = await Promise.all([
         srcPageAll(sb, "sales_sku_map", "sku,plan_item_name"),
         srcPageAll(sb, "sales_weekly", "sku,wk,units"),
-        srcPageAll(sb, "scheduled_crops", "id,item_name,variety_id,qty_pots,ppp,plants_per_unit,qty_plants_ordered,plant_week,ship_week,ready_week,combo_parent_id,is_combo_component,prop_method,broker,supplier,container_id", q => q.eq("plan_id", plan.id)),
+        srcPageAll(sb, "scheduled_crops", "id,item_name,variety_id,qty_pots,ppp,plants_per_unit,qty_plants_ordered,plant_week,plant_year,ship_week,ship_year,ready_week,ready_year,combo_parent_id,is_combo_component,prop_method,broker,supplier,container_id", q => q.eq("plan_id", plan.id)),
         sb.from("plan_targets").select("*").eq("plan_id", plan.id),
       ]);
       const skuToItem = {}; xw.forEach(x => { if (x.plan_item_name) skuToItem[x.sku] = x.plan_item_name; });
@@ -2617,14 +2682,22 @@ function ReadyDatesTab({ plan }) {
         if (!t || (t.target_units == null && !t.decision)) continue;
         if (t.decision === "drop" || t.target_units === 0) continue;
         const rep = rowsFor[0];
-        const readyW = rowsFor.map(r => r.ready_week).filter(x => x != null);
-        const plantW = rowsFor.map(r => r.plant_week).filter(x => x != null);
-        const shipW = rowsFor.map(r => r.ship_week).filter(x => x != null);
-        const baseReady = readyW.length ? Math.min(...readyW) : null;
-        const basePlant = plantW.length ? Math.min(...plantW) : null;
-        const baseShip = shipW.length ? Math.min(...shipW) : null;
-        const cropWeeks = (baseReady != null && basePlant != null) ? Math.max(1, baseReady - basePlant) : 5;
-        const propLead = (basePlant != null && baseShip != null) ? Math.max(0, basePlant - baseShip) : 2;
+        // gaps must compute in absolute weeks — a wk-49 2026 arrival before a wk-5 2027
+        // plant is a 9-week prop lead, not "negative, clamp to 0" (the wk49 URC batch)
+        const absW = (yr, wkN) => { let n = +wkN || 0; for (let y = 2024; y < (+yr || plan.year || 2027); y++) n += weeksInYear(y); return n; };
+        const minBy = (wkF, yrF) => {
+          let best = null;
+          for (const r of rowsFor) {
+            const wkN = r[wkF]; if (wkN == null) continue;
+            const abs = absW(r[yrF] ?? r.plant_year ?? plan.year, wkN);
+            if (!best || abs < best.abs) best = { abs, wk: wkN };
+          }
+          return best;
+        };
+        const bReady = minBy("ready_week", "ready_year"), bPlant = minBy("plant_week", "plant_year"), bShip = minBy("ship_week", "ship_year");
+        const baseReady = bReady?.wk ?? null;
+        const cropWeeks = (bReady && bPlant) ? Math.max(1, bReady.abs - bPlant.abs) : 5;
+        const propLead = (bPlant && bShip) ? Math.max(0, bPlant.abs - bShip.abs) : 2;
         const shift = +t.ready_shift || 0;
         const target = t.target_units != null ? +t.target_units : plannedItems(rowsFor.reduce((a, r) => a + +r.qty_pots, 0), Math.max(...rowsFor.map(r => +r.ppp || 1)), Math.max(...rowsFor.map(r => +r.plants_per_unit || 1)));
         const waves = (t.rounds && t.rounds.length) ? t.rounds.map(w => ({ units: +w.units || 0, ready: +w.ready_week }))
@@ -2656,7 +2729,8 @@ function ReadyDatesTab({ plan }) {
   if (!data) return <div style={{ padding: 20, color: COLORS.muted }}>Loading ready & order dates…</div>;
   if (!data.items.length) return <div style={{ padding: 20, color: COLORS.muted }}>No decided items yet — set targets in Sales vs Plan and they appear here with backfilled plant & order weeks.</div>;
 
-  const wkLabel = w => w == null ? "—" : `wk${w}`;
+  // order weeks can back up across New Year's (wk −3 = wk 50 of the prior year) — label them honestly
+  const wkLabel = w => { if (w == null) return "—"; if (w >= 1) return `wk${w}`; const x = wrapWk(w, plan.year ?? 2027); return `wk${x.wk} '${String(x.yr).slice(2)}`; };
   const buy = {};
   for (const it of data.items) {
     for (const w of it.waves) {
@@ -3535,7 +3609,10 @@ function SalesVsPlanTab({ plan }) {
       })()}
       {showAddDoor && <AddPlantDoor plan={plan} onClose={() => setShowAddDoor(false)} onCreated={() => setReloadTick(t => t + 1)}
         onOpenFamily={id => setShowFamily(id)} />}
-      {showFamily && <FamilyPage plan={plan} recipeId={showFamily} onClose={() => { setShowFamily(null); setReloadTick(t => t + 1); }} />}
+      {showFamily && <FamilyPage plan={plan} recipeId={showFamily} onClose={() => { setShowFamily(null); setReloadTick(t => t + 1); }}
+        onOpenItem={name => { setShowFamily(null); setReloadTick(t => t + 1);
+          const hit = rows.find(x => x.item === name);
+          setDrill(hit || { item: name, size: sizeTokenForItem(name), planned: 0, planRaw: 0, sold: 0, st: 0, over: 0, lostEst: 0, soldOut: false, price: null, rev: 0, wk: [], peak: null, ship: null, firstWk: null, isNew: true, status: "NOSALE" }); }} />}
       {showFamAdmin && <FamilyAdmin plan={plan} onClose={() => setShowFamAdmin(false)} onChanged={() => setReloadTick(t => t + 1)} />}
       {drill && (
         <ItemDrill plan={plan} row={drill} tgt={targets[drill.item]} weeks={season.weeks}

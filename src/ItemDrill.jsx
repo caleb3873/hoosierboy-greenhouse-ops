@@ -604,7 +604,8 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
 
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 9200, display: "flex", alignItems: "center", justifyContent: "center", padding: 18 }}>
-      {familyId && <FamilyPage plan={plan} recipeId={familyId} onClose={() => setFamilyId(null)} />}
+      {familyId && <FamilyPage plan={plan} recipeId={familyId} onClose={() => setFamilyId(null)}
+        onOpenItem={name => { setFamilyId(null); if (name !== row.item && onReplace) onReplace(name, 0); }} />}
       <div onClick={e => e.stopPropagation()} style={{ background: "#f6f9f3", width: "min(760px, 94vw)", maxHeight: "92vh", overflow: "auto", padding: 20, borderRadius: 14, boxShadow: "0 14px 48px rgba(0,0,0,.35)", fontFamily: "'DM Sans','Segoe UI',sans-serif" }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
           <div>

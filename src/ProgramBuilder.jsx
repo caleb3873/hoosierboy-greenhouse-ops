@@ -92,10 +92,18 @@ export default function ProgramsPanel({ plan, onAddPlant }) {
       }
       const rowId = crypto.randomUUID();
       const recipeId = await resolveRecipeId(sb, cropName, it.container_id);   // inherit the family
+      // sellable-unit encoding: the recipe knows the pack (4.5" = flat of 10). Rows
+      // without it read as bare pots and desync every cases surface (Caleb 7/29).
+      let ppu = 0;
+      if (recipeId) {
+        const { data: rec } = await sb.from("crop_recipes").select("pots_per_unit").eq("id", recipeId).single();
+        ppu = Math.round(+rec?.pots_per_unit || 0);
+      }
+      if (ppu <= 1) ppu = /^4\.5"/.test(it.item_name) ? 10 : 1;
       const { error } = await sb.from("scheduled_crops").insert({
         id: rowId, plan_id: plan.id, item_name: it.item_name,
         variety_id: varietyId, container_id: it.container_id, recipe_id: recipeId,
-        qty_pots: +it.target_units, ppp: +it.ppp || 1, pack_size: 1,
+        qty_pots: +it.target_units, ppp: +it.ppp || 1, pack_size: ppu, plants_per_unit: ppu,
         sale_price_per_pot: it.target_price ?? null,
         liner_unit_cost: it.material?.landed ?? null,
         broker: it.material?.broker ?? null, supplier: it.material?.supplier ?? null,

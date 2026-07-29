@@ -67,7 +67,7 @@ function famSizePrefix(sizeLabel) {
   return String(sizeLabel || "").toUpperCase();
 }
 
-export default function FamilyPage({ plan, recipeId, onClose }) {
+export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
   const sb = getSupabase();
   const { displayName } = useAuth();
   const [recipe, setRecipe] = useState(null);
@@ -1025,7 +1025,11 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
                         return (
                           <tr key={vr.variety} onContextMenu={e => { e.preventDefault(); setCtx({ x: Math.min(e.clientX, window.innerWidth - 240), y: e.clientY, vr, gKey: g.key }); }}
                             title="right-click for actions">
-                            <td style={{ ...td, fontWeight: 700 }}>{vr.variety}
+                            <td style={{ ...td, fontWeight: 700 }}>
+                              {/* the name IS the door to the item page — variety edits live there, not here */}
+                              <span onClick={onOpenItem ? (e => { e.stopPropagation(); onOpenItem([...vr.items][0]); }) : undefined}
+                                title={onOpenItem ? "open the item page" : undefined}
+                                style={onOpenItem ? { cursor: "pointer", textDecoration: "underline dotted", textUnderlineOffset: 3 } : undefined}>{vr.variety}</span>
                               {vr.items.size > 1 && <span title={[...vr.items].join(" · ")} style={{ marginLeft: 5, fontSize: 9, fontWeight: 800, color: C.amber, background: C.amberBg, borderRadius: 5, padding: "1px 5px" }}>{vr.items.size} lines</span>}
                               {!!vr.benches.size && <div style={{ fontSize: 9.5, fontWeight: 500, color: C.muted, fontFamily: "ui-monospace,Menlo,monospace" }}>{[...vr.benches].sort().join(" ")}</div>}
                             </td>
@@ -1115,6 +1119,13 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
                 <span style={{ flex: 1 }}>{ctx.vr.variety} · {ctx.vr.pots.toLocaleString()} pots</span>
                 <button onClick={() => setCtx(null)} style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", fontSize: 12 }}>✕</button>
               </div>
+              {onOpenItem && (
+                <button disabled={busy} onClick={() => { const it = [...ctx.vr.items][0]; setCtx(null); onOpenItem(it); }}
+                  style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 12px", background: "#fff",
+                    border: "none", borderBottom: `1px solid ${C.border}`, cursor: "pointer", fontFamily: FONT, fontSize: 12.5, fontWeight: 700 }}>
+                  🔍 Open the item page
+                </button>
+              )}
               {groups.filter(g => g.key !== ctx.gKey).map(g => (
                 <button key={g.key} disabled={busy}
                   onClick={() => moveToGroup(ctx.vr, { plant: g.plant, plantYear: g.plantYear, ready: g.ready, readyYear: g.readyYear ?? g.plantYear })}
