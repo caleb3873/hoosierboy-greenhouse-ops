@@ -160,8 +160,13 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
     setBusy(false);
   }
 
-  // family-add selection: colors of ONE crop travel together (a family = crop × size)
-  const selCrop = sel.length ? String(sel[0].crop || "").toLowerCase() : null;
+  // family-add selection: colors of ONE crop travel together (a family = crop × size).
+  // Match by NORMALIZED GENUS (the variety_key's first token), NOT the raw crop string —
+  // brokers label the same genus three ways ("SALVIA" / "SALVIA SPECIES" / "SAGE"), and a
+  // raw-string compare greyed out every color that wasn't labeled like the first pick
+  // (Caleb 7/29). Genus token keeps all Salvia selectable while still blocking a true
+  // different crop (Russian/Perovskia keys to "russian", not "sage").
+  const selGenus = sel.length ? String(sel[0].key || "").split(" ")[0] : null;
   const toggleSel = c => setSel(cur => cur.some(x => x.key === c.key)
     ? cur.filter(x => x.key !== c.key) : [...cur, c]);
 
@@ -475,7 +480,7 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
                   </div>
                   {catView.slice(0, catShow).map(c => {
                     const checked = sel.some(x => x.key === c.key);
-                    const cropBlock = selCrop && String(c.crop || "").toLowerCase() !== selCrop;
+                    const cropBlock = selGenus && String(c.key || "").split(" ")[0] !== selGenus;
                     return (
                       <div key={c.key} style={{ display: "flex", alignItems: "center", borderBottom: `1px solid ${C.border}`, background: checked ? C.cream : "#fff" }}>
                         <input type="checkbox" checked={checked} disabled={cropBlock}
