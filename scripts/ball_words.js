@@ -10,7 +10,8 @@ const BALL_WORD = {
   Tumblna: "Tumbelina", Grandaisy: "Grandaisy", Headlnr: "Headliner", Headlne: "Headliner",
   Elec: "Electric", Purp: "Purple", Prp: "Purple", Vn: "Vein", Grn: "Green", Bl: "Blue",
   Rd: "Red", Rn: "Rain", Frst: "Frost", Evergrn: "Evergreen", Strawb: "Strawberry",
-  Choc: "Chocolate", Carml: "Caramel",
+  Choc: "Chocolate", Carml: "Caramel", Brt: "Bright", Gldn: "Golden", Snst: "Sunset",
+  Brst: "Burst", Lav: "Lavender", Mag: "Magenta",
 };
 // CamelCase / known crop-echo lead tokens the price lists prepend
 const BALL_ABBREV = new Set(["geris", "gerzon", "geriv", "petveg", "calib", "impng", "impaex", "verbeveg"]);

@@ -257,8 +257,11 @@ function parseFile(broker, file) {
           // strict prefix of the crop word is a crop echo, not a series name
           || (t0l.length >= 5 && cropLetters.startsWith(t0l) && t0l !== cropLetters);
         if (btoks.length > 1 && t0l.length >= 4 && cropLetters.startsWith(t0l.slice(0, 3)) && cropEcho) btoks = btoks.slice(1);
-        cleanVariety = btoks.map(w => BALL_WORD[w] || w).join(' ');
+        cleanVariety = btoks.join(' ');
       }
+      // truncation expansions apply to EVERY broker — EHR's AED files carry the same
+      // shorthand ("Gldn Sphere") the Ball systems emit (Caleb 7/29, Solanna case)
+      cleanVariety = cleanVariety.split(/\s+/).map(w => BALL_WORD[w] || w).join(' ');
       // Express Raker lines carry a cell-size suffix ("Chenille-51c") — not part of the name
       cleanVariety = cleanVariety.replace(/\s*-\s*\d+c\b/gi, '').replace(/\s+/g, ' ').trim();
       cleanVariety = ALIASES[cleanVariety.toLowerCase()] || cleanVariety;
