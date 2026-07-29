@@ -180,9 +180,10 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
       // physiology (per-vr rooting) and displays as a range — it must not split groups
       const k = `${r.plant_week ?? "?"}|${r.ready_week ?? r.ship_week ?? "?"}`;
       const g = (m[k] = m[k] || { key: k, plant: r.plant_week, plantYear: r.plant_year,
-        ready: r.ready_week, shipMin: null, shipMax: null, rows: [] });
+        ready: r.ready_week, readyYear: r.ready_year, shipMin: null, shipMax: null, rows: [] });
       g.rows.push(r);
       if (r.ready_week != null) g.ready = Math.min(g.ready ?? 99, r.ready_week);
+      if (r.ready_year != null && g.readyYear == null) g.readyYear = r.ready_year;
       if (r.ship_week != null) {
         // compare as absolute (year, week) — a wk-50 arrival that wrapped into the PRIOR
         // year must not read as later than a wk-3 arrival ("2703–2750" bug, Caleb 7/29)
@@ -308,7 +309,7 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
     const digits = String(raw || "").replace(/\D/g, "");
     if (!digits || recipe?.crop_weeks == null) return;
     const ready = digits.length <= 2 ? +digits : +digits.slice(2);
-    const readyYear = digits.length <= 2 ? (g.plantYear ?? plan.year ?? 2027) : 2000 + +digits.slice(0, 2);
+    const readyYear = digits.length <= 2 ? (g.readyYear ?? plan.year ?? 2027) : 2000 + +digits.slice(0, 2);
     if (!ready || ready > 52) return;
     if (readyInPast(readyYear, ready)) return;
     const wrap = (wk, yr) => wk <= 0 ? { wk: wk + 52, yr: yr - 1 } : { wk, yr };
@@ -406,7 +407,7 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
     const digits = String(raw || "").replace(/\D/g, "");
     if (!digits || recipe?.crop_weeks == null) return;
     const ready = digits.length <= 2 ? +digits : +digits.slice(2);
-    const readyYear = digits.length <= 2 ? (g.plantYear ?? plan.year ?? 2027) : 2000 + +digits.slice(0, 2);
+    const readyYear = digits.length <= 2 ? (g.readyYear ?? plan.year ?? 2027) : 2000 + +digits.slice(0, 2);
     if (!ready || ready > 52) return;
     if (readyInPast(readyYear, ready)) return;
     const wrap = (wk, yr) => wk <= 0 ? { wk: wk + 52, yr: yr - 1 } : { wk, yr };
@@ -941,13 +942,14 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
                 {flashKey === g.key && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.amber, background: C.amberBg, borderRadius: 5, padding: "2px 7px" }}>you just edited this — groups number by finish order</span>}
                 <span style={{ fontSize: 11, color: C.muted }} onClick={e => e.stopPropagation()}>
                   ship <b style={wkStyle}>{g.shipMin == null ? "—" : g.shipMinAbs === g.shipMaxAbs ? wkFmt(g.shipMinYr, g.shipMin) : `${wkFmt(g.shipMinYr, g.shipMin)}–${wkFmt(g.shipMaxYr, g.shipMax)}`}</b> → plant <b style={wkStyle}>{wkFmt(g.plantYear, g.plant)}</b> → ready{" "}
-                  <GroupWkInput key={`${g.key}|${g.ready}`} value={g.ready != null ? wkFmt(g.plantYear, g.ready) : ""} disabled={busy}
+                  <GroupWkInput key={`${g.key}|${g.ready}`} value={g.ready != null ? wkFmt(g.readyYear ?? g.plantYear, g.ready) : ""} disabled={busy}
                     onCommit={raw => applyGroupReady(g, raw)} />
                   <span title="edit the finish week — the whole group's chain re-derives from the recipe" style={{ marginLeft: 3, fontSize: 9, color: C.muted }}>✎</span>
                 </span>
                 <span style={{ flex: 1 }} />
-                {(() => {   // drift referee: does the actual plant week agree with ready − recipe crop weeks?
-                  const exp = g.ready != null && recipe?.crop_weeks != null ? g.ready - recipe.crop_weeks : null;
+                {(() => {   // drift referee: does the actual plant week agree with ready − recipe crop weeks? (year-wrap aware)
+                  const expRaw = g.ready != null && recipe?.crop_weeks != null ? g.ready - Math.round(+recipe.crop_weeks) : null;
+                  const exp = expRaw == null ? null : (expRaw <= 0 ? expRaw + 52 : expRaw);
                   return exp != null && g.plant != null && exp !== g.plant
                     ? <span title={`recipe says plant = ready − ${recipe.crop_weeks} crop wks = wk${exp}; plan says wk${g.plant}`}
                         style={{ fontSize: 9.5, fontWeight: 800, color: C.amber, background: C.amberBg, borderRadius: 5, padding: "2px 7px" }}>
@@ -1085,7 +1087,7 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
               </div>
               {groups.filter(g => g.key !== ctx.gKey).map(g => (
                 <button key={g.key} disabled={busy}
-                  onClick={() => moveToGroup(ctx.vr, { plant: g.plant, plantYear: g.plantYear, ready: g.ready, readyYear: g.plantYear })}
+                  onClick={() => moveToGroup(ctx.vr, { plant: g.plant, plantYear: g.plantYear, ready: g.ready, readyYear: g.readyYear ?? g.plantYear })}
                   style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 12px", background: "#fff",
                     border: "none", borderBottom: `1px solid ${C.border}`, cursor: "pointer", fontFamily: FONT, fontSize: 12.5 }}>
                   → Move to <b>Group {g.n}</b> <span style={{ color: C.muted, fontSize: 11 }}>plant {wkFmt(g.plantYear, g.plant)} · ready {wkFmt(g.plantYear, g.ready)}</span>
