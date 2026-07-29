@@ -1561,7 +1561,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
         <div style={{ textAlign: "center" }}>
           <div style={{ fontSize: 14, fontWeight: 800, color: "#c8e6b8" }}>Week {selectedWeek.week}, {selectedWeek.year}</div>
           {!isCurrentWeek && <div style={{ fontSize: 10, color: "#7a9a6a" }}>Historical</div>}
-          {isCurrentWeek && <div style={{ fontSize: 10, color: "#7fb069" }}>Current week</div>}
+          {isCurrentWeek && <div style={{ fontSize: 10, color: "#7fb069" }}>Current week · v7.28d</div>}
         </div>
         <button onClick={() => changeWeek(1)} style={{ background: "none", border: "none", color: "#c8e6b8", fontSize: 18, cursor: "pointer", padding: 6 }}>&rarr;</button>
       </div>
