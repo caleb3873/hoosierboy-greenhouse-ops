@@ -12,8 +12,15 @@ const XLSX = require("xlsx");
 const { createClient } = require(path.join(__dirname, "..", "node_modules", "@supabase", "supabase-js"));
 const { makeKey } = require(path.join(__dirname, "..", "src", "brokerKey.js"));
 
-const FILE = process.argv.slice(2).find(a => !a.startsWith("--")) || "/Users/caleb/Desktop/PRODUCT_SEARCH_RESULTS_20260728074957.xlsx";
-const APPLY = process.argv.includes("--apply");
+const args = process.argv.slice(2);
+const FILE = args.find(a => !a.startsWith("--") && /\.xls[xb]?$/i.test(a)) || "/Users/caleb/Desktop/PRODUCT_SEARCH_RESULTS_20260728074957.xlsx";
+const APPLY = args.includes("--apply");
+// Generalized 7/29: any Ball WebTrack "Download" export imports through here.
+//   --supplier "Danziger"   (default Innovaplant/Kientzler)
+//   --freight 0.04          per-plant freight to fold into landed (borrowed rate)
+const SUPPLIER = args.includes("--supplier") ? args[args.indexOf("--supplier") + 1] : "Innovaplant/Kientzler";
+const FREIGHT = args.includes("--freight") ? (+args[args.indexOf("--freight") + 1] || 0) : 0;
+const IS_KZ = /kientzler/i.test(SUPPLIER);
 const SOURCE = path.basename(FILE);
 
 const env = {};
@@ -29,7 +36,7 @@ const CROP = {
   Delosp: "Delosperma", Argyr: "Argyranthemum", Osteosp: "Osteospermum", Dahl: "Dahlia",
   Jamesbrit: "Jamesbrittenia", HE: "Herb", Helio: "Heliotrope", Chrysoc: "Chrysocephalum",
   Strept: "Streptocarpus", Portul: "Portulaca", Scaev: "Scaevola", Sanvit: "Sanvitalia",
-  Osteo: "Osteospermum", NGI: "New Guinea Impatiens",
+  Osteo: "Osteospermum", NGI: "New Guinea Impatiens", BegVEG: "Begonia", ImpaDB: "Impatiens",
 };
 // word-level truncations inside descriptions (applied before keying)
 const WORD = {
@@ -65,20 +72,25 @@ function canonical(desc) {
     const t0 = String(r.Description).trim().split(/\s+/)[0];
     if (!CROP[t0] && t0 !== "FO" && /[A-Z]{2}/.test(t0.slice(1)) && t0.length <= 6) unmapped[t0] = (unmapped[t0] || 0) + 1;
     const royalty = num(r.Royalty);
-    const origin = /Guatemala/i.test(r["Supplier Name"]) ? "GT" : "CR";
+    const origin = IS_KZ ? (/Guatemala/i.test(r["Supplier Name"]) ? "GT" : "CR") : null;
+    const fc = /callus/i.test(r.Size || "") ? "callused" : /liner|strip|cell/i.test(r.Size || "") ? "liner" : "urc";
     const key = makeKey("", "", name);
-    if (seen.has(key)) {   // CR + GT farms quote the same price — one line, both origins noted
-      const prev = out.find(o => o.variety_key === key);
-      if (prev && !prev.origin.includes(origin)) { prev.origin = "CR/GT"; prev.form_raw = prev.form_raw.replace(/InnovaPlant \w+/, "InnovaPlant CR/GT"); }
+    const seenKey = key + "|" + fc;
+    if (seen.has(seenKey)) {
+      if (IS_KZ) {   // CR + GT farms quote the same price — one line, both origins noted
+        const prev = out.find(o => o.variety_key === key && o.form_class === fc);
+        if (prev && prev.origin && !prev.origin.includes(origin)) { prev.origin = "CR/GT"; prev.form_raw = prev.form_raw.replace(/InnovaPlant \w+/, "InnovaPlant CR/GT"); }
+      }
       continue;
     }
-    seen.add(key);
+    seen.add(seenKey);
     out.push({
-      broker: "Ball", supplier: "Innovaplant/Kientzler", origin,   // one company, one label (Caleb 7/29)
+      broker: "Ball", supplier: SUPPLIER, origin,
       crop: name.split(" ")[0], variety: name, variety_key: key, match_key: key,
-      form_class: "urc", form_raw: `${r.Size} (Ball/InnovaPlant ${origin}; freight n/i)`,
+      form_class: fc, form_raw: `${r.Size} (Ball WebTrack${origin ? ` ${origin}` : ""}${FREIGHT ? "" : "; freight n/i"})`,
       list_price: +(price / 100).toFixed(4), royalty: +(royalty / 100).toFixed(4),
-      landed: +((price + royalty) / 100).toFixed(4),
+      freight: FREIGHT || null,
+      landed: +((price + royalty) / 100 + FREIGHT).toFixed(4),
       season: "2026-2027", source_file: SOURCE, item_min: 100,
     });
   }
@@ -111,17 +123,18 @@ function canonical(desc) {
     const { error } = await sb.from("broker_prices").insert(out.slice(i, i + 400));
     if (error) throw new Error(error.message);
   }
-  // Recency law across loaders (Caleb 7/29): innovaplant.xlsx (Jul 6, parse pipeline)
-  // and this WebTrack export (Jul 28) are the SAME channel — retire the older file's
-  // rows for every key this newer file quotes.
+  // Recency law across loaders (Caleb 7/29): this export supersedes ANY older file's
+  // rows for the same broker+supplier+form+variety, whichever pipeline loaded them.
   let retired = 0;
-  const impKeys = out.map(o => o.variety_key);
-  for (let i = 0; i < impKeys.length; i += 100) {
-    const { data: gone } = await sb.from("broker_prices").delete()
-      .eq("broker", "Ball").eq("supplier", "Innovaplant/Kientzler").eq("source_file", "innovaplant.xlsx")
-      .eq("form_class", "urc").in("variety_key", impKeys.slice(i, i + 100)).select("id");
-    retired += (gone || []).length;
+  for (const fc of [...new Set(out.map(o => o.form_class))]) {
+    const impKeys = out.filter(o => o.form_class === fc).map(o => o.variety_key);
+    for (let i = 0; i < impKeys.length; i += 100) {
+      const { data: gone } = await sb.from("broker_prices").delete()
+        .eq("broker", "Ball").eq("supplier", SUPPLIER).neq("source_file", SOURCE)
+        .eq("form_class", fc).in("variety_key", impKeys.slice(i, i + 100)).select("id");
+      retired += (gone || []).length;
+    }
   }
-  if (retired) console.log(`recency: retired ${retired} innovaplant.xlsx rows superseded by this newer export`);
+  if (retired) console.log(`recency: retired ${retired} older rows superseded by this export`);
   console.log(`\nAPPLIED: ${out.length} rows inserted (idempotent by source_file).`);
 })().catch(e => { console.error("FAILED:", e.message); process.exit(1); });
