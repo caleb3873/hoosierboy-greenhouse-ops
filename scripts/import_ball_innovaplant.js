@@ -36,7 +36,7 @@ const CROP = {
   Delosp: "Delosperma", Argyr: "Argyranthemum", Osteosp: "Osteospermum", Dahl: "Dahlia",
   Jamesbrit: "Jamesbrittenia", HE: "Herb", Helio: "Heliotrope", Chrysoc: "Chrysocephalum",
   Strept: "Streptocarpus", Portul: "Portulaca", Scaev: "Scaevola", Sanvit: "Sanvitalia",
-  Osteo: "Osteospermum", NGI: "New Guinea Impatiens", BegVEG: "Begonia", ImpaDB: "Impatiens",
+  Osteo: "Osteospermum", NGI: "New Guinea Impatiens", BegVEG: "Begonia", ImpaDB: "Impatiens", Dian: "Dianthus",
 };
 // word-level truncations — shared dictionary (scripts/ball_words.js)
 const { expandWord } = require(path.join(__dirname, "ball_words"));

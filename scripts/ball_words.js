@@ -10,7 +10,7 @@ const BALL_WORD = {
   Tumblna: "Tumbelina", Grandaisy: "Grandaisy", Headlnr: "Headliner", Headlne: "Headliner",
   Elec: "Electric", Purp: "Purple", Prp: "Purple", Vn: "Vein", Grn: "Green", Bl: "Blue",
   Rd: "Red", Rn: "Rain", Frst: "Forest", Evergrn: "Evergreen", Strawb: "Strawberry",
-  Choc: "Chocolate", Carml: "Caramel", Brt: "Bright", Gldn: "Golden", Snst: "Sunset",
+  Choc: "Chocolate", Carml: "Caramel", Strwberry: "Strawberry", Brt: "Bright", Gldn: "Golden", Snst: "Sunset",
   Brst: "Burst", Lav: "Lavender", Mag: "Magenta",
   // 7/29 full-file audit of ball danziger.xlsx (vowel-less token sweep + near-miss keys):
   Cmp: "Compact", Pk: "Pink", Dk: "Dark", Dp: "Deep", Wh: "White", Yl: "Yellow",

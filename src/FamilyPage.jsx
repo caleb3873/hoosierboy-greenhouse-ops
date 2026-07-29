@@ -1236,21 +1236,26 @@ function CultureCard({ recipe, series, locked, setRecipe, setSeries }) {
 
   if (!cc || !recipe) return null;
   const sizeWant = parseFloat(recipe.size_label) || 4.5;
-  const propOf = g => { const m = String(g.propagation_weeks || "").match(/(\d+)/); return m ? +m[1] : null; };
+  // propagation_weeks is TEXT ("4-5"); the details + finish matrix are JSONB — real
+  // objects off the wire, which is why the regex version showed an empty "full guide"
+  const propOf = g => {
+    const m = String(g.propagation_weeks || "").match(/(\d+)(?:\s*-\s*(\d+))?/);
+    return m ? { lo: +m[1], hi: +(m[2] || m[1]) } : null;
+  };
   const finishOf = g => {
-    const out = [];
-    const re = /'size_([\d_]+)_inch':\s*\{'lower':\s*(\d+),\s*'upper':\s*(\d+)/g;
-    let x; while ((x = re.exec(String(g.finish_time_matrix || "")))) out.push({ size: parseFloat(x[1].replace(/_/g, ".")), lo: +x[2], hi: +x[3] });
+    const m = g.finish_time_matrix;
+    let out = [];
+    if (m && typeof m === "object") {
+      out = Object.entries(m).map(([k, v]) => ({
+        size: parseFloat(String(k).replace(/^size_/, "").replace(/_inch$/, "").replace(/_/g, ".")),
+        lo: +((v || {}).lower), hi: +((v || {}).upper),
+      })).filter(e => e.size && e.lo);
+    }
     if (!out.length) return null;
     out.sort((a, b) => Math.abs(a.size - sizeWant) - Math.abs(b.size - sizeWant));
     return out[0];
   };
-  const proseOf = txt => {
-    const out = [];
-    const re = /'([^']+)':\s*'([^']*)'/g;
-    let x; while ((x = re.exec(String(txt || "")))) out.push([x[1], x[2]]);
-    return out;
-  };
+
   // one line per series (dedupe guides by series_name)
   const bySeries = {};
   (rows || []).forEach(g => {
@@ -1284,9 +1289,9 @@ function CultureCard({ recipe, series, locked, setRecipe, setSeries }) {
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 12.5 }}>
                   <b>{name}</b>
                   <span style={{ fontSize: 10.5, color: C.muted }}>{g.breeder_name}</span>
-                  {p != null && <span>prop <b>{p} wk</b> {btn(`→ prop ${p}`, () => setSeries(series.map(x =>
+                  {p != null && <span>prop <b>{p.lo === p.hi ? p.lo : `${p.lo}–${p.hi}`} wk</b> {btn(`→ prop ${p.hi}`, () => setSeries(series.map(x =>
                     (x.series_name !== "(unassigned)" && name.toLowerCase().startsWith(x.series_name.toLowerCase())) || /^(URC|CALL)/i.test(x.form || "")
-                      ? { ...x, rooting_weeks: p } : x)), `set ${p} prop weeks on this family's rooted series`)}</span>}
+                      ? { ...x, rooting_weeks: p.hi } : x)), `set ${p.hi} prop weeks (range upper) on this family's rooted series`)}</span>}
                   {f && <span>finish <b>{f.lo}–{f.hi} wk</b> <span style={{ color: C.muted, fontSize: 10.5 }}>@{f.size}"</span>{" "}
                     {btn(`→ finish ${mid}`, () => setRecipe({ ...recipe, crop_weeks: mid }), `set finish weeks to the midpoint (${mid})`)}</span>}
                   {String(g.requires_heat) === "True" && <span style={{ fontSize: 10, color: C.amber, fontWeight: 800 }}>🔥 bottom heat</span>}
@@ -1295,12 +1300,33 @@ function CultureCard({ recipe, series, locked, setRecipe, setSeries }) {
                     {detail === g.id ? "hide details" : "full guide ▸"}
                   </button>
                 </div>
-                {detail === g.id && (
-                  <div style={{ marginTop: 6, background: "#fbfdf8", border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 11px", fontSize: 11.5, lineHeight: 1.55 }}>
-                    {proseOf(g.propagation_details).map(([k, v]) => <div key={"p" + k}><b style={{ color: C.dark }}>{k}:</b> {v}</div>)}
-                    {proseOf(g.culture_details).map(([k, v]) => <div key={"c" + k}><b style={{ color: C.dark }}>{k}:</b> {v}</div>)}
-                  </div>
-                )}
+                {detail === g.id && (() => {
+                  // planning trio only (Caleb 7/29): prop time · finish times by size · temps
+                  const fm = g.finish_time_matrix && typeof g.finish_time_matrix === "object"
+                    ? Object.entries(g.finish_time_matrix).map(([k, v]) => ({
+                        label: String(k).replace(/^size_/, "").replace(/_inch$/, "").replace(/_/g, ".") + '"',
+                        lo: +((v || {}).lower), hi: +((v || {}).upper),
+                      })).filter(e => e.lo).sort((a, b) => parseFloat(a.label) - parseFloat(b.label))
+                    : [];
+                  const temps = [];
+                  for (const src of [g.propagation_details, g.culture_details]) {
+                    if (src && typeof src === "object") {
+                      for (const [k, v] of Object.entries(src)) {
+                        if (/temp/i.test(k) && typeof v !== "object") temps.push([k, String(v)]);
+                      }
+                    }
+                  }
+                  const cropTime = g.culture_details && typeof g.culture_details === "object" ? g.culture_details["Crop Time"] : null;
+                  return (
+                    <div style={{ marginTop: 6, background: "#fbfdf8", border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 11px", fontSize: 11.5, lineHeight: 1.6 }}>
+                      {p != null && <div>🌱 <b style={{ color: C.dark }}>Prop:</b> {p.lo === p.hi ? p.lo : `${p.lo}–${p.hi}`} weeks</div>}
+                      {fm.length > 0 && <div>⏱ <b style={{ color: C.dark }}>Finish:</b> {fm.map(e => `${e.label} ${e.lo}–${e.hi}wk`).join(" · ")}</div>}
+                      {temps.map(([k, v]) => <div key={k}>🌡 <b style={{ color: C.dark }}>{k}:</b> {v}</div>)}
+                      {cropTime && <div>📋 <b style={{ color: C.dark }}>Crop time:</b> {String(cropTime)}</div>}
+                      {!fm.length && !temps.length && !cropTime && <div style={{ color: C.muted }}>this guide carries prop time only</div>}
+                    </div>
+                  );
+                })()}
               </div>
             );
           })}

@@ -1,7 +1,20 @@
 {
-  "_comment": "Ball WebTrack 'Download'-format exports (availability grids with per-100 pricing). The parse pipeline can't read these — sync_quotes.js imports each via import_ball_innovaplant.js with these flags. Add a line per new export; missing files are skipped with a warning.",
+  "_comment": "Ball WebTrack 'Download'-format exports (availability grids with per-100 pricing). The parse pipeline can't read these \u2014 sync_quotes.js imports each via import_ball_innovaplant.js with these flags. Add a line per new export; missing files are skipped with a warning.",
   "files": [
-    { "file": "/Users/caleb/Desktop/PRODUCT_SEARCH_RESULTS_20260728074957.xlsx", "supplier": "Innovaplant/Kientzler", "freight": 0 },
-    { "file": "/Users/caleb/Desktop/Ball Quotes/ball danziger.xlsx", "supplier": "Danziger", "freight": 0.04 }
+    {
+      "file": "/Users/caleb/Desktop/PRODUCT_SEARCH_RESULTS_20260728074957.xlsx",
+      "supplier": "Innovaplant/Kientzler",
+      "freight": 0
+    },
+    {
+      "file": "/Users/caleb/Desktop/Ball Quotes/ball danziger.xlsx",
+      "supplier": "Danziger",
+      "freight": 0.04
+    },
+    {
+      "file": "/Users/caleb/Desktop/Ball Quotes/Dummen Kenya Ball (Dianthus).xlsx",
+      "supplier": "Dummen",
+      "freight": 0.05
+    }
   ]
 }
