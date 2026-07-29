@@ -8,6 +8,7 @@ import { getSupabase, getCultureClient } from "./supabase";
 import { useAuth } from "./Auth";
 import { rippleTasks, isoWeekOf } from "./ripple";
 import AddPlantDoor from "./AddPlantDoor";
+import { QuotePicker } from "./ProgramBuilder";
 import { wrapWk, weeksInYear } from "./shared";
 
 const C = { dark: "#1e2d1a", light: "#7fb069", cream: "#f3f8ee", creamBr: "#cfe3bd",
@@ -102,7 +103,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
       setRows(sc || []);
       const vids = [...new Set((sc || []).map(r => r.variety_id).filter(Boolean))];
       if (vids.length) {
-        const { data: vs } = await sb.from("variety_library").select("id,variety,variety_key").in("id", vids);
+        const { data: vs } = await sb.from("variety_library").select("id,variety,variety_key,match_aliases").in("id", vids);
         setVmap(Object.fromEntries((vs || []).map(v => [v.id, v])));
       }
       const trayIds = [...new Set((ser || []).map(s => s.prop_tray_id).filter(Boolean))];
@@ -148,32 +149,40 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
     if (!series.length || !rows?.length || !Object.keys(vmap).length) return;
     (async () => {
       const named = series.map(s => s.series_name).filter(n => n !== "(unassigned)").sort((a, b) => b.length - a.length);
-      const keyToSeries = {};
-      Object.values(vmap).forEach(v => {
-        const hit = named.find(n => v.variety.toLowerCase().startsWith(n.toLowerCase())) || "(unassigned)";
-        keyToSeries[v.variety_key] = hit;
-      });
-      const keys = Object.keys(keyToSeries);
-      if (!keys.length) return;
+      // variety-centric: each variety carries its canonical key PLUS any manually-locked
+      // aliases (match_aliases) — so a hand-matched quote counts as coverage and survives
+      // the next quote re-upload (the alias lives on OUR variety, not the parsed quote).
+      const vinfo = Object.values(vmap).map(v => ({
+        series: named.find(n => v.variety.toLowerCase().startsWith(n.toLowerCase())) || "(unassigned)",
+        key0: v.variety_key,
+        keys: [v.variety_key, ...(v.match_aliases || [])].filter(Boolean),
+      }));
+      const allKeys = [...new Set(vinfo.flatMap(v => v.keys))];
+      if (!allKeys.length) return;
       const quotes = [];
-      for (let i = 0; i < keys.length; i += 100) {
-        const { data } = await sb.from("broker_prices").select("variety_key,broker,supplier,form_class,landed").in("variety_key", keys.slice(i, i + 100));
+      for (let i = 0; i < allKeys.length; i += 100) {
+        const { data } = await sb.from("broker_prices").select("variety_key,broker,supplier,form_class,landed").in("variety_key", allKeys.slice(i, i + 100));
         quotes.push(...(data || []));
       }
       const FORM_TO_CLASS = f => /^URC/i.test(f || "") ? "urc" : /^(CALL|DIRECT)/i.test(f || "") ? "callused" : /^PLUG/i.test(f || "") ? "plug" : /^SEED/i.test(f || "") ? "seed" : null;
+      const byKey = {};
+      quotes.forEach(q => (byKey[q.variety_key] = byKey[q.variety_key] || []).push(q));
       const stats = {};
       series.forEach(s => {
         const fc = FORM_TO_CLASS(s.form);
-        const sKeys = keys.filter(k => keyToSeries[k] === s.series_name);
+        const vs = vinfo.filter(v => v.series === s.series_name);
         const byBroker = {};
-        quotes.filter(q => sKeys.includes(q.variety_key) && (!fc || q.form_class === fc)).forEach(q => {
-          const b = byBroker[q.broker] || (byBroker[q.broker] = { broker: q.broker, supplier: q.supplier, min: +q.landed, covered: new Set() });
-          b.min = Math.min(b.min, +q.landed);
-          b.covered.add(q.variety_key);
-          if (!b.supplier && q.supplier) b.supplier = q.supplier;
+        vs.forEach(v => {
+          const vq = v.keys.flatMap(k => byKey[k] || []).filter(q => !fc || q.form_class === fc);
+          vq.forEach(q => {
+            const b = byBroker[q.broker] || (byBroker[q.broker] = { broker: q.broker, supplier: q.supplier, min: +q.landed, covered: new Set() });
+            b.min = Math.min(b.min, +q.landed);
+            b.covered.add(v.key0);   // count the VARIETY, not the key, so aliases don't double it
+            if (!b.supplier && q.supplier) b.supplier = q.supplier;
+          });
         });
         stats[s.series_name] = Object.values(byBroker)
-          .map(b => ({ broker: b.broker, supplier: b.supplier, min: b.min, cov: b.covered.size, tot: sKeys.length }))
+          .map(b => ({ broker: b.broker, supplier: b.supplier, min: b.min, cov: b.covered.size, tot: vs.length }))
           .sort((a, b) => b.cov - a.cov || a.min - b.min);
       });
       setBrokerStats(stats);
@@ -290,6 +299,52 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
     vis.forEach((g, i) => { g.n = i + 1; });
     return vis;
   }, [groups, tuckedNames]);
+
+  // ── manual quote search + lock (Caleb 7/29) ───────────────────────────────
+  // "Don't see the variety quoted from your broker but know it's there? Search
+  // and match it yourself so it's permanently attached for future ordering."
+  const [quoteFor, setQuoteFor] = useState(null);   // {v} direct-to-variety, or {} free search
+  const [pendingQuote, setPendingQuote] = useState(null);   // a picked quote awaiting "attach to which color?"
+  // every plannable color in this family (variety_id → its plan rows), for the attach chooser
+  const attachVars = useMemo(() => {
+    const by = {};
+    (rows || []).filter(r => !r.is_combo_component).forEach(r => {
+      const v = vmap[r.variety_id];
+      const key = r.variety_id || r.item_name;
+      const o = by[key] || (by[key] = { variety_id: r.variety_id, variety: v?.variety || r.item_name, vkey: v?.variety_key, rows: [] });
+      o.rows.push(r);
+    });
+    return Object.values(by).sort((a, b) => String(a.variety).localeCompare(String(b.variety)));
+  }, [rows, vmap]);
+  // lock a broker quote onto a color: stamp its cost/source on the plan rows AND
+  // remember the matched key on the variety so it keeps matching after re-uploads.
+  async function lockQuote(v, r) {
+    if (!v || !r) return;
+    const vid = v.variety_id || v.rows?.map(x => x.variety_id).find(Boolean);
+    const targetRows = v.rows && v.rows.length ? v.rows : (rows || []).filter(x => x.variety_id === vid && !x.is_combo_component);
+    if (!targetRows.length) { window.alert("No plan rows for this color to attach a quote to."); return; }
+    if (!window.confirm(`Lock ${v.variety} to this quote?\n\n${r.variety} — ${[r.broker, r.supplier].filter(Boolean).join(" / ")} · ${r.form_class}${r.form_raw ? ` (${r.form_raw})` : ""} @ $${(+r.landed).toFixed(3)}/plant\n\nSets the cost on ${targetRows.length} row(s) and remembers this match for every future quote upload.`)) return;
+    setBusy(true);
+    try {
+      for (const x of targetRows) {
+        await sb.from("scheduled_crops").update({ liner_unit_cost: +r.landed, broker: r.broker, supplier: r.supplier }).eq("id", x.id);
+      }
+      if (vid && r.variety_key) {
+        const { data: vrow } = await sb.from("variety_library").select("variety_key,match_aliases").eq("id", vid).single();
+        const cur = vrow?.match_aliases || [];
+        if (r.variety_key !== vrow?.variety_key && !cur.includes(r.variety_key)) {
+          await sb.from("variety_library").update({ match_aliases: [...cur, r.variety_key] }).eq("id", vid);
+        }
+      }
+      try {
+        await sb.from("item_change_log").insert({ plan_id: plan.id, item_name: targetRows[0]?.item_name || v.variety,
+          variety_key: r.variety_key || null, change_type: "quote_locked",
+          detail: { variety: v.variety, broker: r.broker, supplier: r.supplier, landed: +r.landed, matched_key: r.variety_key },
+          changed_by: displayName || null, source: "family-page" });
+      } catch { /* audit must not block */ }
+    } catch (e) { window.alert("Couldn't lock the quote: " + (e.message || e)); }
+    setBusy(false); setQuoteFor(null); setPendingQuote(null); setTick(t => t + 1);
+  }
 
   const [openG, setOpenG] = useState({});
   const [ctx, setCtx] = useState(null);   // {x, y, vr, gKey, newWk} — right-click action menu
@@ -825,7 +880,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
               <table style={{ borderCollapse: "collapse", width: "100%" }}>
                 <thead><tr>{["Series", "Broker 📌", "Form", "Prop (wks)", "Tray", "Total wks"].map(h => <th key={h} style={th}>{h}</th>)}</tr></thead>
                 <tbody>
-                  {series.map(s => (
+                  {series.filter(s => s.series_name !== "(unassigned)").map(s => (
                     <tr key={s.id}>
                       <td style={{ ...td, fontWeight: 700 }}>
                         <input value={s.series_name} list="fp-series-suggest"
@@ -885,7 +940,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
                       </td>
                     </tr>
                   ))}
-                  {!series.length && <tr><td style={td} colSpan={6}>No series yet — add one below; new door-adds fall back to "(unassigned)" until their series exists.</td></tr>}
+                  {!series.filter(s => s.series_name !== "(unassigned)").length && <tr><td style={{ ...td, color: C.muted }} colSpan={6}>No series yet — ＋ Add series, or add colors from the catalog and they'll group by name.</td></tr>}
                 </tbody>
               </table>
               {/* series suggestions = this family's own variety-name prefixes (Caleb 7/29:
@@ -921,6 +976,11 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
                 title="new varieties added from the catalog don't create their series row — add it here, rename it, set form/root/tray, save"
                 style={{ marginTop: 8, padding: "6px 12px", borderRadius: 8, border: `1.5px dashed ${C.light}`, background: "#fff", color: C.dark, fontWeight: 800, fontSize: 11.5, cursor: "pointer", fontFamily: FONT }}>
                 ＋ Add series
+              </button>
+              <button disabled={busy} onClick={() => setQuoteFor({})}
+                title="Don't see a variety quoted from your broker but know it's there? Search the catalog yourself and match it to a color — the match is remembered for every future order."
+                style={{ marginTop: 8, marginLeft: 8, padding: "6px 12px", borderRadius: 8, border: `1.5px solid ${C.light}`, background: "#eef6e8", color: C.dark, fontWeight: 800, fontSize: 11.5, cursor: "pointer", fontFamily: FONT }}>
+                🔗 Find &amp; match a quote
               </button>
             </div>
           </div>
@@ -1059,8 +1119,20 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
                             <td style={{ ...td, textAlign: "right" }}>
                               <QtyInput value={vr.pots} disabled={busy} onCommit={v => setVarQty(vr, v)} />
                             </td>
-                            <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{vr.liner != null ? `$${vr.liner.toFixed(3)}` : <span style={{ color: C.amber, fontSize: 10 }}>no quote</span>}</td>
-                            <td style={{ ...td, color: C.muted, fontSize: 11 }}>{vr.broker || "—"}</td>
+                            <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                              {vr.liner != null ? `$${vr.liner.toFixed(3)}`
+                                : <button onClick={() => setQuoteFor({ v: { variety_id: vr.rows.map(r => r.variety_id).find(Boolean), variety: vr.variety, vkey: vr.vkey, rows: vr.rows } })}
+                                    title="search the broker catalog and lock a quote to this color"
+                                    style={{ border: `1px solid ${C.amber}`, background: C.amberBg, color: C.amber, borderRadius: 6, fontSize: 9.5, fontWeight: 800, padding: "1px 6px", cursor: "pointer", fontFamily: FONT }}>🔗 find quote</button>}
+                            </td>
+                            <td style={{ ...td, color: C.muted, fontSize: 11 }}>
+                              <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                                {vr.broker || "—"}
+                                <button onClick={() => setQuoteFor({ v: { variety_id: vr.rows.map(r => r.variety_id).find(Boolean), variety: vr.variety, vkey: vr.vkey, rows: vr.rows } })}
+                                  title="search the broker catalog and lock a quote to this color (remembered for future orders)"
+                                  style={{ border: "none", background: "none", cursor: "pointer", fontSize: 11, padding: 0, opacity: 0.6 }}>🔗</button>
+                              </span>
+                            </td>
                           </tr>
                         );
                       })}
@@ -1194,6 +1266,35 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
             onClose={() => setAddDoor(null)}
             onCreated={() => setTick(t => t + 1)}
             onOpenFamily={() => { /* already here — the reload shows the new color */ }} />
+        )}
+
+        {/* search the broker catalog and lock a quote to a color. From a color's 🔗 it
+            attaches straight to that variety; from the toolbar it asks which color after. */}
+        {quoteFor && (
+          <QuotePicker sb={sb}
+            varietyKey={quoteFor.v?.vkey || null}
+            initialQuery={quoteFor.v?.variety || recipe?.crop_name || ""}
+            onPick={r => { if (quoteFor.v) lockQuote(quoteFor.v, r); else setPendingQuote(r); }}
+            onClose={() => setQuoteFor(null)} />
+        )}
+        {pendingQuote && (
+          <div onClick={() => setPendingQuote(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.5)", zIndex: 9500, display: "flex", alignItems: "center", justifyContent: "center", padding: 18 }}>
+            <div onClick={e => e.stopPropagation()} style={{ background: "#f6f9f3", borderRadius: 14, width: "min(460px,94vw)", maxHeight: "80vh", overflow: "auto", padding: 18, fontFamily: FONT }}>
+              <div style={{ fontSize: 15, fontWeight: 800, color: C.dark, fontFamily: "'DM Serif Display',Georgia,serif", marginBottom: 4 }}>Attach this quote to which color?</div>
+              <div style={{ fontSize: 12, color: C.muted, marginBottom: 10 }}>
+                <b style={{ color: C.text }}>{pendingQuote.variety}</b> · {[pendingQuote.broker, pendingQuote.supplier].filter(Boolean).join(" / ")} · {pendingQuote.form_class} @ ${(+pendingQuote.landed).toFixed(3)}/plant
+              </div>
+              {attachVars.map(v => (
+                <button key={v.variety_id || v.variety} disabled={busy} onClick={() => lockQuote(v, pendingQuote)}
+                  style={{ display: "block", width: "100%", textAlign: "left", padding: "9px 12px", marginBottom: 5, borderRadius: 9, cursor: "pointer",
+                    border: `1.5px solid ${C.border}`, background: "#fff", fontFamily: FONT, fontSize: 12.5, fontWeight: 700, color: C.dark }}>
+                  {v.variety}
+                </button>
+              ))}
+              {!attachVars.length && <div style={{ fontSize: 12, color: C.muted }}>No colors in this family yet — add one first.</div>}
+              <button onClick={() => setPendingQuote(null)} style={{ marginTop: 4, background: "none", border: "none", color: C.muted, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>cancel</button>
+            </div>
+          </div>
         )}
 
         {/* closure button — everything already saved live; humans still deserve a "done".
