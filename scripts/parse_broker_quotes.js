@@ -21,8 +21,8 @@ const EHR_TERMS = {
   Danziger:        { volume: 1, discount: 0.10 }, // single-price; discount applied
   Darwin:          { volume: 1, discount: 0.08 }, // single-price
   Dummen:          { volume: 3, discount: 0.10 },
-  PlantSource:     { volume: 2, discount: 0.08 },
-  QualityCuttings: { volume: 1, discount: 0.10 }, // single-price
+  'Plant Source':  { volume: 2, discount: 0.08 },
+  'Quality Cuttings': { volume: 1, discount: 0.10 }, // single-price
   Syngenta:        { volume: 2, discount: 0.10 },
 };
 
@@ -74,23 +74,23 @@ function breederFromName(fn) {
   if (/syngenta|fis0|fis1/.test(f)) return 'Syngenta';
   if (/darwin|gre22/.test(f)) return 'Darwin';
   if (/beekenkamp|bee0/.test(f)) return 'Beekenkamp';
-  if (/green circle/.test(f)) return 'GreenCircle';
+  if (/green circle/.test(f)) return 'Green Circle';
   if (/raker|roberta/.test(f)) return 'Raker';
   if (/foremost/.test(f)) return 'Foremost';
   if (/dickman/.test(f)) return 'Dickman';
   if (/pell/.test(f)) return 'Pell';
   if (/walters/.test(f)) return 'Walters';
-  if (/creek hill/.test(f)) return 'CreekHill';
-  if (/emerald/.test(f)) return 'EmeraldCoast';
+  if (/creek hill/.test(f)) return 'Creek Hill';
+  if (/emerald/.test(f)) return 'Emerald Coast';
   if (/hishtel|hishtil/.test(f)) return 'Hishtil';
-  if (/garden solution/.test(f)) return 'GardenSolutions';
-  if (/plant source|psi0/.test(f)) return 'PlantSource';
-  if (/quality cutting|hma0/.test(f)) return 'QualityCuttings';
-  if (/kientzler/.test(f)) return 'Kientzler';
+  if (/garden solution/.test(f)) return 'Garden Solutions';
+  if (/plant source|psi0/.test(f)) return 'Plant Source';
+  if (/quality cutting|hma0/.test(f)) return 'Quality Cuttings';
+  if (/kientzler|innovaplant|innova plant/.test(f)) return 'Innovaplant/Kientzler';
   if (/pell/.test(f)) return 'Pell';
-  if (/green ?fuse/.test(f)) return 'GreenFuse';        // before Vivero — "Green Fuse ... URC - Vivero"
+  if (/green ?fuse/.test(f)) return 'Green Fuse';        // before Vivero — "Green Fuse ... URC - Vivero"
   if (/vivero/.test(f)) return 'Vivero';
-  if (/plant investment/.test(f)) return 'PlantInvestments';
+  if (/plant investment/.test(f)) return 'Plant Investments';
   if (/\bbob/.test(f)) return 'Bobs';                   // "L F Schlegel... BOBS PL 2027" — pansy/viola plugs
   return fn.replace(/\.xls[xb]?$/i, '').slice(0, 16);
 }
@@ -261,7 +261,11 @@ function parseFile(broker, file) {
         const t0l = t0.toLowerCase().replace(/[^a-z]/g, '');
         const cropLetters = (cropV || botanical || '').toLowerCase().replace(/[^a-z]/g, '');
         const camel = /^[A-Z][a-z]+[A-Z]/.test(t0);
-        if (btoks.length > 1 && t0l.length >= 4 && cropLetters.startsWith(t0l.slice(0, 3)) && (camel || BALL_ABBREV.has(t0l))) btoks = btoks.slice(1);
+        const cropEcho = camel || BALL_ABBREV.has(t0l)
+          // ALL-CAPS truncations too ("JAMESBRIT" under crop JAMESBRITTENIA): a ≥5-char
+          // strict prefix of the crop word is a crop echo, not a series name
+          || (t0l.length >= 5 && cropLetters.startsWith(t0l) && t0l !== cropLetters);
+        if (btoks.length > 1 && t0l.length >= 4 && cropLetters.startsWith(t0l.slice(0, 3)) && cropEcho) btoks = btoks.slice(1);
         cleanVariety = btoks.map(w => BALL_WORD[w] || w).join(' ');
       }
       // Express Raker lines carry a cell-size suffix ("Chenille-51c") — not part of the name
@@ -338,6 +342,28 @@ for (const r of all) {
 const preRecency = all.length;
 all = all.filter(r => r.sourceFile === newestFile[r.broker + '|' + r.mkey]);
 if (preRecency !== all.length) console.log(`recency rule: ${preRecency - all.length} rows superseded by newer uploads (${preRecency} -> ${all.length})`);
+
+// FREIGHT BORROWING (Caleb 2026-07-29): freight rates are standard industry-wide — when
+// one broker shows a supplier's per-plant freight and another quotes the SAME supplier
+// without it, borrow the rate into landed. Only per-plant magnitudes (<$0.50) count as
+// donors: Ball price lists carry per-100 freight already folded into landed, and rows
+// that HAVE a freight value (even huge) are left alone. Dickman keeps its explicit 4¢.
+{
+  const frtBy = {};
+  for (const r of all) if (r.freight != null && r.freight > 0 && r.freight < 0.5) (frtBy[r.breeder] = frtBy[r.breeder] || []).push(r.freight);
+  const frtMed = {};
+  for (const k in frtBy) { const v = frtBy[k].sort((a, b) => a - b); frtMed[k] = +v[Math.floor(v.length / 2)].toFixed(4); }
+  let borrowed = 0; const hit = {};
+  for (const r of all) {
+    if (r.freight == null && r.breeder !== 'Dickman' && frtMed[r.breeder] != null && (r.broker === 'EHR' || r.broker === 'Ball')) {
+      r.freight = frtMed[r.breeder];
+      r.landed = +(r.landed + frtMed[r.breeder]).toFixed(5);
+      hit[`${r.breeder} (${r.broker})`] = (hit[`${r.breeder} (${r.broker})`] || 0) + 1;
+      borrowed++;
+    }
+  }
+  if (borrowed) console.log(`freight borrowed onto ${borrowed} rows:`, Object.entries(hit).map(([k, n]) => `${k} ×${n} @$${frtMed[k.split(' (')[0]]}`).join(' · '));
+}
 console.log('parsed rows by broker:', counts, '| total', all.length);
 
 // per-breeder broker coverage

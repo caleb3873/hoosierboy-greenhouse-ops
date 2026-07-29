@@ -74,7 +74,7 @@ function canonical(desc) {
     }
     seen.add(key);
     out.push({
-      broker: "Ball", supplier: "Kientzler", origin,
+      broker: "Ball", supplier: "Innovaplant/Kientzler", origin,   // one company, one label (Caleb 7/29)
       crop: name.split(" ")[0], variety: name, variety_key: key, match_key: key,
       form_class: "urc", form_raw: `${r.Size} (Ball/InnovaPlant ${origin}; freight n/i)`,
       list_price: +(price / 100).toFixed(4), royalty: +(royalty / 100).toFixed(4),
@@ -111,5 +111,17 @@ function canonical(desc) {
     const { error } = await sb.from("broker_prices").insert(out.slice(i, i + 400));
     if (error) throw new Error(error.message);
   }
+  // Recency law across loaders (Caleb 7/29): innovaplant.xlsx (Jul 6, parse pipeline)
+  // and this WebTrack export (Jul 28) are the SAME channel — retire the older file's
+  // rows for every key this newer file quotes.
+  let retired = 0;
+  const impKeys = out.map(o => o.variety_key);
+  for (let i = 0; i < impKeys.length; i += 100) {
+    const { data: gone } = await sb.from("broker_prices").delete()
+      .eq("broker", "Ball").eq("supplier", "Innovaplant/Kientzler").eq("source_file", "innovaplant.xlsx")
+      .eq("form_class", "urc").in("variety_key", impKeys.slice(i, i + 100)).select("id");
+    retired += (gone || []).length;
+  }
+  if (retired) console.log(`recency: retired ${retired} innovaplant.xlsx rows superseded by this newer export`);
   console.log(`\nAPPLIED: ${out.length} rows inserted (idempotent by source_file).`);
 })().catch(e => { console.error("FAILED:", e.message); process.exit(1); });
