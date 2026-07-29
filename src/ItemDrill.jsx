@@ -13,6 +13,7 @@ import { QuotePicker } from "./ProgramBuilder";
 import { BasketDesigner } from "./ProductionPlans";
 import { useAuth } from "./Auth";
 import { makeKey } from "./brokerKey";
+import { plantOrder } from "./shared";
 
 const C = { dark: "#1e2d1a", light: "#7fb069", border: "#dfe7d8", muted: "#7a8c74",
   text: "#2f3b2a", red: "#c0392b", amber: "#c98a2e", green: "#2e7d32" };
@@ -50,6 +51,28 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
   const [view, setView] = useState("detail");   // detail | history
   const [history, setHistory] = useState(null);
   const [familyId, setFamilyId] = useState(null);   // recipe_id → opens the crop-family page
+
+  const [famOpts, setFamOpts] = useState(null);   // lazy family list for the set-family picker
+  async function loadFams() {
+    if (famOpts) return;
+    const { data } = await sb.from("crop_recipes").select("id,crop_name,size_label,display_name");
+    setFamOpts((data || []).map(r => ({ id: r.id, label: r.display_name || `${r.size_label} ${r.crop_name}` }))
+      .sort((a, b) => plantOrder(a.label, b.label)));
+  }
+  // assign this item to a family right from its page (Caleb 7/29) — plan-scoped, audited
+  async function assignFamily(toId) {
+    if (!toId) return;
+    const label = (famOpts || []).find(f => f.id === toId)?.label || "family";
+    const { error } = await sb.from("scheduled_crops").update({ recipe_id: toId }).eq("plan_id", plan.id).eq("item_name", row.item).not("is_combo_component", "is", true);
+    if (error) { window.alert("Family didn't set: " + error.message); return; }
+    try {
+      await sb.from("item_change_log").insert({ plan_id: plan.id, item_name: row.item,
+        change_type: "family_move", detail: { to: label }, changed_by: displayName || null, source: "item-drill" });
+    } catch { /* audit must not block */ }
+    setFamilyId(null);
+    onMutated && onMutated();
+    window.alert(`✅ ${row.item} → ${label}`);
+  }
 
   async function openFamily() {
     const { data } = await sb.from("scheduled_crops").select("recipe_id")
@@ -635,6 +658,12 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
           <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
             <button onClick={openFamily} title="the whole crop × size family — every color, planting groups, the recipe"
               style={{ padding: "5px 10px", borderRadius: 8, fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", border: `1.5px solid ${C.light}`, background: "#fff", color: C.dark }}>🌿 Family</button>
+            <select onFocus={loadFams} onClick={loadFams} value="" onChange={e => assignFamily(e.target.value)}
+              title="assign this item to a family (this plan)"
+              style={{ padding: "5px 8px", borderRadius: 8, fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", border: `1.5px solid ${C.border}`, background: "#fff", color: C.muted, maxWidth: 140 }}>
+              <option value="">→ set family…</option>
+              {(famOpts || []).map(f => <option key={f.id} value={f.id}>{f.label}</option>)}
+            </select>
             <button onClick={() => { setView("detail"); setDup(d => d ? null : { rows: [{ name: `${row.item} 2`, qty: String(row.planned || "") }], price: "" }); }}
               title="copy this item as a new line — recipe, sourcing, weeks; no benches"
               style={{ padding: "5px 10px", borderRadius: 8, fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", border: `1.5px solid ${C.border}`, background: "#fff", color: C.text }}>⧉ Duplicate</button>
