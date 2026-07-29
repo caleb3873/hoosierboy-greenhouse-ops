@@ -5,7 +5,7 @@
 import { useState, useEffect, useMemo, useRef, Fragment } from "react";
 import { getSupabase, getCultureClient } from "./supabase";
 import { useAuth } from "./Auth";
-import { sizeLabelForItem } from "./shared";
+import { sizeLabelForItem, wrapWk } from "./shared";
 import CategoryProfiles from "./CategoryProfiles";
 import BasketPlanner from "./BasketPlanner";
 import ItemDrill from "./ItemDrill";
@@ -2526,7 +2526,7 @@ function ReadyDatesTab({ plan }) {
   async function applyDecisions() {
     const [{ data: tgs }, sc] = await Promise.all([
       sb.from("plan_targets").select("*").eq("plan_id", plan.id),
-      srcPageAll(sb, "scheduled_crops", "id,item_name,qty_pots,ppp,plants_per_unit,ready_week,plant_week,ship_week,combo_parent_id,is_combo_component", q => q.eq("plan_id", plan.id)),
+      srcPageAll(sb, "scheduled_crops", "id,item_name,qty_pots,ppp,plants_per_unit,ready_week,ready_year,plant_week,plant_year,ship_week,ship_year,combo_parent_id,is_combo_component", q => q.eq("plan_id", plan.id)),
     ]);
     const decided = (tgs || []).filter(t => t.target_units != null || t.decision);
     const parents = {}; const kids = {};
@@ -2549,6 +2549,16 @@ function ReadyDatesTab({ plan }) {
     if (!window.confirm(`Apply ${plan27.length} decision${plan27.length !== 1 ? "s" : ""} to the production plan?\n\n• ${qChanged} quantity change${qChanged !== 1 ? "s" : ""}\n• ${dropped} drop${dropped !== 1 ? "s" : ""} (set to 0)\n• ${timed} timing shift${timed !== 1 ? "s" : ""}\n${skipped ? `• ${skipped} new item(s) skipped — need a bench/plant week in production first\n` : ""}\nThis rewrites the bench-row quantities the order tabs read. Wave splitting onto separate benches stays a production step.`)) return;
     setApplying(true);
     const stamp = new Date().toISOString();
+    // timing shifts must wrap across the year boundary (53-week years included) —
+    // raw week addition wrote "wk 54" / "wk -1" when a chain straddled New Year's
+    const shiftedWeeks = (row, shift) => {
+      if (!shift) return {};
+      const p = {};
+      if (row.ready_week != null) { const w = wrapWk(row.ready_week + shift, row.ready_year ?? plan.year ?? 2027); p.ready_week = w.wk; p.ready_year = w.yr; }
+      if (row.plant_week != null) { const w = wrapWk(row.plant_week + shift, row.plant_year ?? plan.year ?? 2027); p.plant_week = w.wk; p.plant_year = w.yr; }
+      if (row.ship_week != null) { const w = wrapWk(row.ship_week + shift, row.ship_year ?? row.plant_year ?? plan.year ?? 2027); p.ship_week = w.wk; p.ship_year = w.yr; }
+      return p;
+    };
     try {
       for (const g of plan27) {
         let assigned = 0;
@@ -2556,13 +2566,12 @@ function ReadyDatesTab({ plan }) {
           const r = g.rows[i];
           const nq = g.isDrop ? 0 : (i === g.rows.length - 1 ? g.target - assigned : Math.round(+r.qty_pots * g.factor));
           assigned += nq;
-          const patch = { qty_pots: Math.max(0, nq) };
-          if (g.shift) { if (r.ready_week != null) patch.ready_week = r.ready_week + g.shift; if (r.plant_week != null) patch.plant_week = r.plant_week + g.shift; if (r.ship_week != null) patch.ship_week = r.ship_week + g.shift; }
+          const patch = { qty_pots: Math.max(0, nq), ...shiftedWeeks(r, g.shift) };
           await sb.from("scheduled_crops").update(patch).eq("id", r.id);
           rowsTouched++;
           // scale this parent's components
           for (const k of (kids[r.id] || [])) {
-            await sb.from("scheduled_crops").update({ qty_plants_ordered: g.isDrop ? 0 : Math.round((+k.qty_plants_ordered || 0) * g.factor), ...(g.shift ? { ready_week: (k.ready_week ?? 0) + g.shift, plant_week: (k.plant_week ?? 0) + g.shift, ship_week: (k.ship_week ?? 0) + g.shift } : {}) }).eq("id", k.id);
+            await sb.from("scheduled_crops").update({ qty_plants_ordered: g.isDrop ? 0 : Math.round((+k.qty_plants_ordered || 0) * g.factor), ...shiftedWeeks(k, g.shift) }).eq("id", k.id);
             rowsTouched++;
           }
         }
