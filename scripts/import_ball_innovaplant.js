@@ -39,7 +39,7 @@ const CROP = {
   Osteo: "Osteospermum", NGI: "New Guinea Impatiens", BegVEG: "Begonia", ImpaDB: "Impatiens",
 };
 // word-level truncations — shared dictionary (scripts/ball_words.js)
-const { BALL_WORD: WORD } = require(path.join(__dirname, "ball_words"));
+const { expandWord } = require(path.join(__dirname, "ball_words"));
 
 function canonical(desc) {
   let toks = String(desc).replace(/#/g, "").trim().split(/\s+/);
@@ -51,7 +51,8 @@ function canonical(desc) {
   if (/^Impatiens$/i.test(toks[0]) && /^Sunpatns$/i.test(toks[1] || "")) toks = ["Sunpatiens", ...toks.slice(2)];
   const out = toks
     .map(w => /^(.{4,})ipd$/i.test(w) ? w.replace(/ipd$/i, "") : w)   // glued "Tangerineipd"
-    .map(w => WORD[w] || w).join(" ");
+    .map(w => /^(.{3,})2per$/i.test(w) ? w.replace(/2per$/i, "") : w)
+    .map(expandWord).join(" ");
   return out;
 }
 

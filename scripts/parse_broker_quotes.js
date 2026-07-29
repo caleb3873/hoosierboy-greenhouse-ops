@@ -52,7 +52,7 @@ const genusOf = (crop, botanical, variety) => tidy((botanical || crop || variety
 const titleCase = s => String(s).toLowerCase().replace(/\b([a-z])/g, c => c.toUpperCase());
 
 // Ball truncation dictionary — shared with the WebTrack importer (scripts/ball_words.js)
-const { BALL_WORD, BALL_ABBREV } = require(path.join(__dirname, "ball_words"));
+const { BALL_WORD, BALL_ABBREV, expandWord } = require(path.join(__dirname, "ball_words"));
 
 // ---------- breeder from filename ----------
 function breederFromName(fn) {
@@ -263,7 +263,8 @@ function parseFile(broker, file) {
       // shorthand ("Gldn Sphere") the Ball systems emit (Caleb 7/29, Solanna case)
       cleanVariety = cleanVariety.split(/\s+/)
         .map(w => /^(.{4,})ipd$/i.test(w) ? w.replace(/ipd$/i, '') : w)   // glued "Tangerineipd"
-        .map(w => BALL_WORD[w] || w).join(' ');
+        .map(w => /^(.{3,})2per$/i.test(w) ? w.replace(/2per$/i, '') : w) // glued "Appleblossom2per"
+        .map(expandWord).join(' ');
       // Express Raker lines carry a cell-size suffix ("Chenille-51c") — not part of the name
       cleanVariety = cleanVariety.replace(/\s*-\s*\d+c\b/gi, '').replace(/\s+/g, ' ').trim();
       cleanVariety = ALIASES[cleanVariety.toLowerCase()] || cleanVariety;

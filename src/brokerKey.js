@@ -37,10 +37,15 @@ function tidy(s) {
   s = s.replace(/\b-?(urc|cc|rc|tc|liner|plug|pellet|callused|unrooted|rooted)\b/g, ' ');
   s = s.replace(/\bn\/?g\b/g, ' ').replace(/\bnew guinea\b/g, ' ');
   s = s.replace(/\bmain street\b/g, 'mainstreet');          // Dümmen Coleus series: EHR "Main Street" == Express "Mainstreet"
+  s = s.replace(/\bflame ?throwe?r\b/g, 'flamethrower');    // Ball "Flm Throwr" (expanded) == Express "FlameThrower"
   s = s.replace(/\bimproved\b/g, ' ').replace(/\bimp\b/g, ' ');
   // catalog filler words, never part of the cultivar ("Caramia Series", "Other Cultivars Caradonna")
   s = s.replace(/\bother cultivars?\b/g, ' ').replace(/\bseries\b/g, ' ').replace(/\bcultivars?\b/g, ' ');
   s = s.replace(/[^a-z0-9 ]/g, ' ');
+  // plural fold (7/29 audit): suppliers drift chip/chips, candle/candles, crystal/crystals —
+  // fold trailing s on words >3 chars (guarding -ss/-us/-is/-os botanicals) so BOTH sides
+  // of every match land on the same key. Keys are a match grain, not display.
+  s = s.split(/\s+/).map(w => w.length > 3 && /s$/.test(w) && !/(ss|us|is|os)$/.test(w) ? w.slice(0, -1) : w).join(' ');
   return s.replace(/\s+/g, ' ').trim();
 }
 function makeKey(crop, botanical, varietyName) {

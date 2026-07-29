@@ -23,8 +23,26 @@ const BALL_WORD = {
   Calibskt: "Calibasket", Gull: "Gulliver", Blu: "Blue", Flos: "Floss",
   Pik: "Pink", Blackbrry: "Blackberry", Tcol: "Tricolor", Mac: "Maculata",
   Optiklav: "Optik Lavender", Optikgrp: "Optik Grape",
-  // deliberately NOT mapped (ambiguous — flag, don't guess): Str, Trst, Fnch
+  // 7/29 GLOBAL audit (all 51k lines, near-miss verified — each entry has a paired
+  // full-word key from another supplier):
+  Amer: "American", Appl: "Apple", Arb: "Arbor", Arend: "Arendsii", Arkwr: "Arkwrightii",
+  Atri: "Atriplicifolia", Atrip: "Atriplicifolia", Aur: "Auriculata", Axil: "Axillaris",
+  Ban: "Bannaticus", Bor: "Boreale", Bouq: "Bouquet", Brad: "Bradburiana", Bskt: "Basket",
+  Burg: "Burgundy", Byz: "Byzantina", Caly: "Calycinum", Carbo: "Carbon", Carnivl: "Carnival",
+  Cascd: "Cascade", Caut: "Cauticola", Ccd: "Colorcoded", Chin: "Chinensis", Chrmg: "Charming",
+  Cit: "Citriodorus", Clsc: "Classic", Cocc: "Coccineum", Colr: "Color", Comp: "Compact",
+  Cord: "Cordifolia", Cov: "Cover", Cr: "Cream", Crmsn: "Crimson", Crsh: "Crush", Csm: "Crisp",
+  Fashn: "Fashion", Flm: "Flame", Throwr: "Thrower", Flr: "Flair", Frt: "Fruit", Grpe: "Grape",
+  Grl: "Girl", Lg: "Large", Mf: "Magic Fountains", Mga: "Mega", Mntn: "Mountain", Mx: "Mix",
+  Pg: "Pacific Giant", Pls: "Plus", Pnch: "Punch", Ppprs: "Poppers", Rse: "Rose",
+  Sgr: "Sugar", Sh: "Shades", Spr: "Spring", Sps: "Splash", Str: "Street", Swt: "Sweet",
+  Vgrs: "Vigorous", Wdng: "Wedding", Wdngpty: "Wedding Party", Blch: "Blotch", Cntl: "Control",
+  // deliberately NOT mapped (ambiguous — flag, don't guess): Trst, Fnch, Crlht, Crshr, Bt, Col
 };
+// case-insensitive index — files disagree on casing of the same truncation
+const BALL_WORD_CI = {};
+for (const k in BALL_WORD) BALL_WORD_CI[k.toLowerCase()] = BALL_WORD[k];
+const expandWord = w => BALL_WORD[w] || BALL_WORD_CI[String(w).toLowerCase()] || w;
 // CamelCase / known crop-echo lead tokens the price lists prepend
 const BALL_ABBREV = new Set(["geris", "gerzon", "geriv", "petveg", "calib", "impng", "impaex", "verbeveg"]);
-module.exports = { BALL_WORD, BALL_ABBREV };
+module.exports = { BALL_WORD, BALL_ABBREV, expandWord };
