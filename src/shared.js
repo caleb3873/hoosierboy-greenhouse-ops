@@ -318,3 +318,25 @@ export function sizeLabelForItem(name) {
   }
   return (s.match(/^[A-Z]+/) || ["—"])[0];
 }
+
+// ── THE list order (Caleb 2026-07-29, STANDING RULE): size → cultivar → series → color.
+// Every list, every dropdown, every time — import plantOrder and stop re-deciding.
+// Size sequence follows the pot_size_sort_order convention: pots small→large, then
+// finished planters (fiber), then hanging baskets, then trays/plugs/misc, then sizeless.
+// After size, plain locale compare does the rest: names run CROP SERIES COLOR, so
+// alpha == cultivar → series → color.
+export function sizeSortVal(label) {
+  const s = String(label || "").trim();
+  let m = s.match(/^(?:pot\s+)?([\d.]+)\s*"/i);          // 4.5" Pot · POT 7.5" · 9" Pan
+  if (m) return +m[1];
+  if (/^fiber/i.test(s)) return 100 + (/lg/i.test(s) ? 2 : 1);
+  m = s.match(/^hb\s*([\d.]+)/i) || s.match(/^([\d.]+)\s*"\s*hb/i);
+  if (m) return 200 + (+m[1] || 0);
+  if (/^\d+\s*(cell|strip|plug)/i.test(s)) return 300;
+  return 500;
+}
+export function plantOrder(a, b) {
+  const av = sizeSortVal(a), bv = sizeSortVal(b);
+  if (av !== bv) return av - bv;
+  return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
+}

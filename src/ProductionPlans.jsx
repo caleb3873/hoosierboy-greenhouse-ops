@@ -13,6 +13,7 @@ import ProgramsPanel from "./ProgramBuilder";
 import PropagationGuide from "./PropagationGuide";
 import AddPlantDoor from "./AddPlantDoor";
 import FamilyAdmin from "./FamilyAdmin";
+import { plantOrder } from "./shared";
 import OrderReconciliation from "./OrderReconciliation";
 import FamilyPage from "./FamilyPage";
 

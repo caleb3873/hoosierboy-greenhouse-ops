@@ -38,14 +38,8 @@ const CROP = {
   Strept: "Streptocarpus", Portul: "Portulaca", Scaev: "Scaevola", Sanvit: "Sanvitalia",
   Osteo: "Osteospermum", NGI: "New Guinea Impatiens", BegVEG: "Begonia", ImpaDB: "Impatiens",
 };
-// word-level truncations inside descriptions (applied before keying)
-const WORD = {
-  SupCal: "Supercal", Sunpatns: "Sunpatiens", Bbycakes: "Babycakes", Sumr: "Summer",
-  Ameth: "Amethyst", Ltl: "Little", Dbl: "Double", Drm: "Dream", Buttrmlk: "Buttermilk",
-  Viol: "Violet", Ipd: "Improved", Angl: "Angel", Earrng: "Earrings", Vlvt: "Velvet",
-  Wht: "White", Blk: "Black", Org: "Orange", Prpl: "Purple", Slmn: "Salmon", Yel: "Yellow",
-  Tumblna: "Tumbelina", Grandaisy: "Grandaisy",
-};
+// word-level truncations — shared dictionary (scripts/ball_words.js)
+const { BALL_WORD: WORD } = require(path.join(__dirname, "ball_words"));
 
 function canonical(desc) {
   let toks = String(desc).replace(/#/g, "").trim().split(/\s+/);

@@ -51,17 +51,8 @@ function classForm(raw) {
 const genusOf = (crop, botanical, variety) => tidy((botanical || crop || variety || '').split(/\s+/)[0] || '');
 const titleCase = s => String(s).toLowerCase().replace(/\b([a-z])/g, c => c.toUpperCase());
 
-// Ball price lists abbreviate hard — expand truncations so keys line up with
-// Express/EHR (Caleb 7/29: "Petunia PetVeg Headlne White" hid Headline White).
-const BALL_WORD = {
-  SupCal: "Supercal", Sunpatns: "Sunpatiens", Bbycakes: "Babycakes", Sumr: "Summer",
-  Ameth: "Amethyst", Ltl: "Little", Dbl: "Double", Drm: "Dream", Buttrmlk: "Buttermilk",
-  Viol: "Violet", Ipd: "Improved", Angl: "Angel", Earrng: "Earrings", Vlvt: "Velvet",
-  Wht: "White", Blk: "Black", Org: "Orange", Prpl: "Purple", Slmn: "Salmon", Yel: "Yellow",
-  Tumblna: "Tumbelina", Grandaisy: "Grandaisy", Headlnr: "Headliner", Headlne: "Headliner",
-  Elec: "Electric", Purp: "Purple", Vn: "Vein", Grn: "Green", Bl: "Blue", Rd: "Red",
-};
-const BALL_ABBREV = new Set(["geris", "gerzon", "geriv", "petveg", "calib", "impng", "impaex", "verbeveg"]);
+// Ball truncation dictionary — shared with the WebTrack importer (scripts/ball_words.js)
+const { BALL_WORD, BALL_ABBREV } = require(path.join(__dirname, "ball_words"));
 
 // ---------- breeder from filename ----------
 function breederFromName(fn) {
