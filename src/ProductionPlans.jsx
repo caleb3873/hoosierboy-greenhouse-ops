@@ -2896,11 +2896,11 @@ function SalesVsPlanTab({ plan }) {
       if (!ids.length) { setFamList([]); setPerItems(new Set()); return; }
       const recs = [];
       for (let i = 0; i < ids.length; i += 200) {
-        const { data } = await sb.from("crop_recipes").select("id,crop_name,size_label,plant_class").in("id", ids.slice(i, i + 200));
+        const { data } = await sb.from("crop_recipes").select("id,crop_name,size_label,plant_class,display_name").in("id", ids.slice(i, i + 200));
         recs.push(...(data || []));
       }
-      setFamList(recs.map(r => ({ id: r.id, label: `${r.size_label} ${r.crop_name}`, n: counts[r.id] }))
-        .sort((a, b) => a.label.localeCompare(b.label)));
+      setFamList(recs.map(r => ({ id: r.id, label: r.display_name || `${r.size_label} ${r.crop_name}`, n: counts[r.id] }))
+        .sort((a, b) => plantOrder(a.label, b.label)));
       const perRec = new Set(recs.filter(r => r.plant_class === "perennial").map(r => r.id));
       setPerItems(new Set(Object.entries(itemRec).filter(([, rid]) => perRec.has(rid)).map(([n]) => n)));
     })();
@@ -3185,6 +3185,35 @@ function SalesVsPlanTab({ plan }) {
       setTargets(t => { const n = { ...t }; payload.forEach(p => { n[p.item_name] = { ...(n[p.item_name] || {}), note }; }); return n; });
     } catch (e) { window.alert("Couldn't add note: " + (e.message || e)); }
     setBulkBusy(false);
+  }
+
+  // Family-grain target: one number for the family, distributed across its colors by
+  // 2026 sales share (planned share when nothing sold; largest remainder so the sum is
+  // exact). Writes ordinary per-item plan_targets — dig into any color later.
+  async function saveFamilyTarget(f, raw) {
+    const total = Math.max(0, Math.round(+String(raw).replace(/[^0-9.]/g, "")));
+    if (isNaN(total) || !f.id) return;
+    const famRows = rows.filter(r => itemRecipe[r.item] === f.id && !targets[r.item]?.archived_at);
+    if (!famRows.length) return;
+    const already = famRows.filter(r => targetOf(r) != null).length;
+    if (already > 0 && !window.confirm(`Distribute ${total.toLocaleString()} across ${famRows.length} color${famRows.length !== 1 ? "s" : ""} by 2026 sales?\n\nThis replaces ${already} existing item target${already !== 1 ? "s" : ""} in this family — fine-tune per item afterwards.`)) return;
+    const wSold = famRows.reduce((a, r) => a + r.sold, 0);
+    const weights = famRows.map(r => wSold > 0 ? r.sold : r.planned);
+    const W = weights.reduce((a, b) => a + b, 0);
+    const exact = famRows.map((r, i) => W > 0 ? total * weights[i] / W : total / famRows.length);
+    const units = exact.map(Math.floor);
+    let rem = total - units.reduce((a, b) => a + b, 0);
+    exact.map((e, i) => ({ i, fr: e - units[i] })).sort((a, b) => b.fr - a.fr).forEach(o => { if (rem > 0) { units[o.i]++; rem--; } });
+    const stamp = new Date().toISOString();
+    const payload = famRows.map((r, i) => ({ plan_id: plan.id, item_name: r.item, target_units: units[i],
+      decision: units[i] === 0 ? "drop" : units[i] > r.planned ? "grow" : units[i] < r.planned ? "cut" : "hold",
+      note: `family target ${total.toLocaleString()} — split by ${wSold > 0 ? "2026 sales" : "planned share"}`,
+      prior_units: r.sold, current_units: r.planned,
+      decided_by: displayName || "planner", decided_at: stamp, updated_at: stamp }));
+    try {
+      for (let i = 0; i < payload.length; i += 200) await sb.from("plan_targets").upsert(payload.slice(i, i + 200), { onConflict: "plan_id,item_name" });
+      setTargets(t => { const n = { ...t }; payload.forEach(p => { n[p.item_name] = { ...(n[p.item_name] || {}), ...p }; }); return n; });
+    } catch (e) { window.alert("Family target didn't save: " + (e.message || e)); }
   }
 
   const shown = rows.filter(r => {
@@ -3678,7 +3707,17 @@ function SalesVsPlanTab({ plan }) {
                       <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{f.sold.toLocaleString()}</td>
                       <td style={{ ...td, textAlign: "right", fontWeight: 700, color: st == null ? COLORS.muted : st >= 95 ? "#2e7d32" : st >= 60 ? COLORS.dark : COLORS.amber }}>{st == null ? "—" : st + "%"}</td>
                       <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtMoney(f.rev)}</td>
-                      <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>{f.hasTgt ? f.tgt.toLocaleString() : "—"}</td>
+                      <td style={{ ...td, textAlign: "right" }} onClick={e => e.stopPropagation()}>
+                        <input key={(f.id || "un") + "|" + f.decided + "|" + f.tgt}
+                          defaultValue={f.hasTgt && f.decided === f.items ? f.tgt : ""}
+                          placeholder={f.hasTgt ? `${f.tgt.toLocaleString()}…` : "—"}
+                          inputMode="numeric" disabled={!f.id}
+                          title="family 2027 target in sellable units — distributed across the colors by 2026 sales share; fine-tune per item afterwards"
+                          onBlur={e => { const s = e.target.value.trim(); if (s === "" || (f.hasTgt && f.decided === f.items && +s.replace(/[^0-9.]/g, "") === f.tgt)) return; saveFamilyTarget(f, s); }}
+                          onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                          style={{ width: 66, padding: "3px 6px", textAlign: "right", borderRadius: 6, fontSize: 12.5, fontFamily: "inherit", boxSizing: "border-box",
+                            border: `1.5px solid ${f.hasTgt && f.decided === f.items ? COLORS.light : COLORS.border}`, fontWeight: f.hasTgt ? 700 : 400 }} />
+                      </td>
                     </tr>
                   );
                 })}

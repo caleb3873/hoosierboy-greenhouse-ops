@@ -41,11 +41,12 @@ export default function FamilyAdmin({ plan, onClose, onChanged }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [newFam, setNewFam] = useState(null);   // {crop, size, weeks}
+  const [renaming, setRenaming] = useState(null);   // {id, val} — ✎ custom family name
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
     (async () => {
-      const { data: recs } = await sb.from("crop_recipes").select("id,crop_name,size_label,plant_class").order("crop_name");
+      const { data: recs } = await sb.from("crop_recipes").select("id,crop_name,size_label,plant_class,display_name").order("crop_name");
       let all = [], from = 0;
       for (;;) {   // page past the 1,000-row cap
         const { data } = await sb.from("scheduled_crops")
@@ -76,7 +77,7 @@ export default function FamilyAdmin({ plan, onClose, onChanged }) {
     });
     const term = q.trim().toLowerCase();
     return (recipes || [])
-      .map(rec => ({ ...rec, label: `${rec.size_label} ${rec.crop_name}`, n: counts[rec.id] || 0, items: items[rec.id] || {} }))
+      .map(rec => ({ ...rec, label: rec.display_name || `${rec.size_label} ${rec.crop_name}`, n: counts[rec.id] || 0, items: items[rec.id] || {} }))
       .filter(f => !sizeFilt || f.size_label === sizeFilt)
       .filter(f => !perFilt || f.plant_class === "perennial")
       .map(f => ({ ...f, hitItems: term ? Object.keys(f.items).filter(it => it.toLowerCase().includes(term)) : [] }))
@@ -100,14 +101,34 @@ export default function FamilyAdmin({ plan, onClose, onChanged }) {
     (recipes || [])
       .filter(r => !sizeFilt || r.size_label === sizeFilt)
       .filter(r => !perFilt || r.plant_class === "perennial")
-      .map(r => ({ ...r, label: `${r.size_label} ${r.crop_name}` }))
+      .map(r => ({ ...r, label: r.display_name || `${r.size_label} ${r.crop_name}` }))
       .sort((a, b) => plantOrder(a.label, b.label)),
   [recipes, sizeFilt, perFilt]);
+
+  // custom family name — a category of Caleb's choosing, not tied to crop+size.
+  // Empty restores the derived "SIZE CROP" label. Global: the name IS the recipe's.
+  async function renameFamily(f, val) {
+    const name = String(val || "").trim();
+    setRenaming(null);
+    if (name === (f.display_name || "")) return;
+    setBusy(true);
+    const { error } = await sb.from("crop_recipes").update({ display_name: name || null }).eq("id", f.id);
+    if (error) window.alert("Rename didn't save: " + error.message);
+    else {
+      setMsg(name ? `renamed to “${name}”` : `back to ${f.size_label} ${f.crop_name}`);
+      try {
+        await sb.from("item_change_log").insert({ plan_id: plan.id, item_name: `(family) ${f.size_label} ${f.crop_name}`,
+          change_type: "family_renamed", detail: { from: f.label, to: name || `${f.size_label} ${f.crop_name}` },
+          changed_by: displayName || null, source: "family-admin" });
+      } catch { /* audit must not block */ }
+    }
+    setBusy(false); setTick(t => t + 1); onChanged && onChanged();
+  }
 
   async function mergeFamily(a, toId) {
     const b = (recipes || []).find(r => r.id === toId);
     if (!b || a.id === b.id) return;
-    const bl = `${b.size_label} ${b.crop_name}`;
+    const bl = b.display_name || `${b.size_label} ${b.crop_name}`;
     if (!window.confirm(`Merge "${a.label}" INTO "${bl}"?\n\nEvery item (all plans), series and override of ${a.label} moves over; the ${a.label} recipe is deleted. Where a series/override collides, ${bl}'s version wins.`)) return;
     setBusy(true);
     try {
@@ -311,7 +332,23 @@ export default function FamilyAdmin({ plan, onClose, onChanged }) {
                   <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "8px 12px" }}>
                     <button onClick={() => setOpen(o => ({ ...o, [f.id]: !isOpen }))}
                       style={{ background: "none", border: "none", cursor: "pointer", color: C.muted, fontSize: 11, transform: isOpen ? "rotate(90deg)" : "none", transition: "transform .15s" }}>▶</button>
-                    <b style={{ fontSize: 13, color: C.dark }}>{f.label}</b>
+                    {renaming?.id === f.id ? (
+                      <input autoFocus value={renaming.val}
+                        onChange={e => setRenaming({ id: f.id, val: e.target.value })}
+                        onBlur={e => renameFamily(f, e.target.value)}
+                        onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") setRenaming(null); }}
+                        placeholder={`${f.size_label} ${f.crop_name}`}
+                        style={{ fontSize: 13, fontWeight: 700, padding: "3px 7px", borderRadius: 7, border: `1.5px solid ${C.light}`, fontFamily: "inherit", minWidth: 190 }} />
+                    ) : (
+                      <b style={{ fontSize: 13, color: C.dark }}>{f.label}
+                        {f.display_name && <span title={`custom name — underlying family: ${f.size_label} ${f.crop_name}`} style={{ marginLeft: 6, fontSize: 10, fontWeight: 600, color: C.muted }}>({f.size_label} {f.crop_name})</span>}
+                      </b>
+                    )}
+                    {renaming?.id !== f.id && (
+                      <button title="rename — give this family your own name (empty puts the derived name back)"
+                        onClick={() => setRenaming({ id: f.id, val: f.display_name || "" })}
+                        style={{ background: "none", border: "none", cursor: "pointer", fontSize: 11, color: C.muted, padding: 0 }}>✎</button>
+                    )}
                     {f.plant_class === "perennial" && <span style={{ fontSize: 10, color: "#2e7d32", fontWeight: 800 }}>🌲</span>}
                     <span style={{ fontSize: 11, color: C.muted }}>{f.n} row{f.n === 1 ? "" : "s"} · {Object.keys(f.items).length} item{Object.keys(f.items).length === 1 ? "" : "s"}</span>
                     {f.hitItems.length > 0 && <span style={{ fontSize: 10, fontWeight: 800, color: C.amber }}>{f.hitItems.length} match</span>}
