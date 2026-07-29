@@ -282,6 +282,15 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
   }, [groups, tmap]); // eslint-disable-line
   const tuckedNames = useMemo(() => new Set(tucked.map(t => t.variety)), [tucked]);
 
+  // groups number by what's VISIBLE — a round left holding only not-returning
+  // varieties is hidden, and numbering must not skip over its husk (Caleb 7/29:
+  // moved the last live variety out of Group 1, the survivor still said "Group 2")
+  const displayGroups = useMemo(() => {
+    const vis = groups.filter(g => g.vars.some(vr => !tuckedNames.has(vr.variety)));
+    vis.forEach((g, i) => { g.n = i + 1; });
+    return vis;
+  }, [groups, tuckedNames]);
+
   const [openG, setOpenG] = useState({});
   const [ctx, setCtx] = useState(null);   // {x, y, vr, gKey, newWk} — right-click action menu
   const [flashKey, setFlashKey] = useState(null);   // follow the group you just edited across a re-sort
@@ -956,7 +965,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
         )}
 
         {/* planting groups */}
-        {groups.map(g => {
+        {displayGroups.map(g => {
           const open = openG[g.key] ?? true;
           const liveVars = g.vars.filter(vr => !tuckedNames.has(vr.variety));
           if (!liveVars.length) return null;   // a round of only not-returning varieties has nothing to say
@@ -1127,7 +1136,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
                   🔍 Open the item page
                 </button>
               )}
-              {groups.filter(g => g.key !== ctx.gKey).map(g => (
+              {displayGroups.filter(g => g.key !== ctx.gKey).map(g => (
                 <button key={g.key} disabled={busy}
                   onClick={() => moveToGroup(ctx.vr, { plant: g.plant, plantYear: g.plantYear, ready: g.ready, readyYear: g.readyYear ?? g.plantYear })}
                   style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 12px", background: "#fff",
