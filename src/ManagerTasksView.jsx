@@ -997,36 +997,33 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       else                                   locBarBg = "#7a8c74"; // muted
     }
 
+    // ── COMPACT generic card (Caleb 7/29: "make all the tasks present like that") —
+    // same idiom as the payload cards: one dense line + a small meta line, no location
+    // banner (inline colored 📍 chip), no description preview — the detail lives on tap.
     return (
       <div key={t.id} style={{
-        background: "#fff", borderRadius: 14,
+        background: "#fff", borderRadius: 12,
         border: `1.5px solid ${isOverdue ? "#d94f3d" : isDone ? "#c8d8c0" : "#e0ead8"}`,
         boxShadow: isOverdue ? "0 0 0 2px rgba(217,79,61,0.15)" : "none",
-        marginBottom: 10, opacity: isDone ? 0.65 : 1, overflow: "hidden",
+        marginBottom: 8, opacity: isDone ? 0.65 : 1, overflow: "hidden",
       }}>
-        {locBarBg && (
-          <div style={{ background: locBarBg, color: "#fff", padding: "8px 14px", fontSize: 14, fontWeight: 800, letterSpacing: 0.4, textTransform: "uppercase", display: "flex", alignItems: "flex-start", gap: 6, lineHeight: 1.3 }}>
-            <span style={{ flexShrink: 0 }}>📍</span>
-            <span>{locText}</span>
-          </div>
-        )}
-        <div style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "14px 16px" }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "9px 12px" }}>
+          <div style={{ display: "flex", flexDirection: "column" }}>
             <button onClick={() => moveTask(t, "up")} disabled={idx === 0 || isDone}
-              style={{ background: "none", border: "none", color: idx === 0 || isDone ? "#d0d8cc" : "#7a8c74", fontSize: 16, cursor: idx === 0 || isDone ? "default" : "pointer", padding: "2px 6px" }}>&#9650;</button>
+              style={{ background: "none", border: "none", color: idx === 0 || isDone ? "#d0d8cc" : "#7a8c74", fontSize: 13, cursor: idx === 0 || isDone ? "default" : "pointer", padding: "0 5px", lineHeight: 1.2 }}>&#9650;</button>
             <button onClick={() => moveTask(t, "down")} disabled={idx === visibleTasks.length - 1 || isDone}
-              style={{ background: "none", border: "none", color: idx === visibleTasks.length - 1 || isDone ? "#d0d8cc" : "#7a8c74", fontSize: 16, cursor: idx === visibleTasks.length - 1 || isDone ? "default" : "pointer", padding: "2px 6px" }}>&#9660;</button>
+              style={{ background: "none", border: "none", color: idx === visibleTasks.length - 1 || isDone ? "#d0d8cc" : "#7a8c74", fontSize: 13, cursor: idx === visibleTasks.length - 1 || isDone ? "default" : "pointer", padding: "0 5px", lineHeight: 1.2 }}>&#9660;</button>
           </div>
           <button onClick={() => toggleComplete(t)}
             style={{
-              width: 28, height: 28, minWidth: 28, borderRadius: 8,
+              width: 26, height: 26, minWidth: 26, borderRadius: 7,
               border: `2px solid #7fb069`, background: isDone ? "#7fb069" : "#fff",
-              color: "#1e2d1a", fontSize: 16, fontWeight: 800, cursor: "pointer", padding: 0,
+              color: "#1e2d1a", fontSize: 15, fontWeight: 800, cursor: "pointer", padding: 0,
               display: "flex", alignItems: "center", justifyContent: "center",
             }}>{isDone ? "✓" : ""}</button>
           <div style={{ flex: 1 }} onClick={() => setSelectedTask(t)}>
-            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <div style={{ fontSize: 15, fontWeight: 700, color: isOverdue ? "#d94f3d" : "#1e2d1a", textDecoration: isDone ? "line-through" : "none" }}>{displayTitle}</div>
+            <div style={{ display: "flex", gap: 7, alignItems: "center", flexWrap: "wrap" }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: isOverdue ? "#d94f3d" : "#1e2d1a", textDecoration: isDone ? "line-through" : "none", lineHeight: 1.35 }}>{displayTitle}</div>
               {alertText && (
                 <span style={{ background: "#fff3c4", color: "#7a5a00", border: "1.5px solid #e89a3a", borderRadius: 999, padding: "2px 8px", fontSize: 11, fontWeight: 800 }}>⚠ {alertText}</span>
               )}
@@ -1050,37 +1047,29 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
                 <span key={nm} style={{ background: "#4a90d9", color: "#fff", borderRadius: 999, padding: "2px 8px", fontSize: 10, fontWeight: 800 }}>👤 {nm}</span>
               ))}
             </div>
-            {t.targetDate && <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 2, fontWeight: 600 }}>📅 {formatTargetDate(t.targetDate)}</div>}
-            {t.location && (
-              <div style={{ fontSize: 12, color: "#4a7a35", marginTop: 2, fontWeight: 800 }}>📍 {t.location}</div>
-            )}
+            {/* one quiet meta line — where, when, and tiny indicators; detail lives on tap */}
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 3, fontSize: 11 }}>
+              {locText && <span style={{ color: locBarBg || "#4a7a35", fontWeight: 800 }}>📍 {locText}</span>}
+              {t.targetDate && <span style={{ color: "#7a8c74", fontWeight: 600 }}>📅 {formatTargetDate(t.targetDate)}</span>}
+              {(t.photos || []).length > 0 && <span style={{ color: "#4a90d9", fontWeight: 700 }}>📷 {t.photos.length}</span>}
+              {t.notes && <span style={{ color: "#7a8c74", fontWeight: 600, fontStyle: "italic" }}>📝 note</span>}
+              {t.diagramUrl && <a href={t.diagramUrl} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
+                style={{ color: "#4a7a35", fontWeight: 800, textDecoration: "none" }}>🔗 diagram</a>}
+              {isDone && <span style={{ color: "#4a7a35", fontWeight: 600 }}>✓ {t.completedBy} — {formatTime(t.completedAt)}</span>}
+            </div>
             {Array.isArray(t.benchNumbers) && t.benchNumbers.length > 0 && (
-              <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 3 }}>
-                {t.benchNumbers.slice(0, 12).map(b => (
-                  <span key={b} style={{ background: "#1e2d1a", color: "#c8e6b8", fontSize: 10, fontFamily: "monospace", padding: "2px 6px", borderRadius: 3, fontWeight: 800 }}>
+              <div style={{ marginTop: 4, display: "flex", flexWrap: "wrap", gap: 3 }}>
+                {t.benchNumbers.slice(0, 8).map(b => (
+                  <span key={b} style={{ background: "#f2f5ef", border: "1px solid #c8d8c0", color: "#1e2d1a", fontSize: 9.5, fontFamily: "monospace", padding: "1px 6px", borderRadius: 3, fontWeight: 800 }}>
                     {b}
                   </span>
                 ))}
-                {t.benchNumbers.length > 12 && (
-                  <span style={{ fontSize: 10, color: "#7a8c74", alignSelf: "center" }}>+{t.benchNumbers.length - 12} more</span>
+                {t.benchNumbers.length > 8 && (
+                  <span style={{ fontSize: 10, color: "#7a8c74", alignSelf: "center" }}>+{t.benchNumbers.length - 8} more</span>
                 )}
               </div>
             )}
-            {t.description && (
-              <div style={{ fontSize: 12, color: "#7a8c74", marginTop: 4, whiteSpace: "pre-line", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
-                {/* collapsed card shows the summary line(s) only — open the task for benches/recipes */}
-                {descLocMatch ? (t.description || "").replace(/^LOCATION:[^\n]*\n?/m, "").trim() : t.description}
-              </div>
-            )}
-            {(t.photos || []).length > 0 && <div style={{ fontSize: 11, color: "#4a90d9", marginTop: 4 }}>📷 {t.photos.length} photo{t.photos.length !== 1 ? "s" : ""}</div>}
-            {t.diagramUrl && <a href={t.diagramUrl} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} style={{ display: "inline-block", fontSize: 12, fontWeight: 700, color: "#fff", background: "#7fb069", padding: "4px 10px", borderRadius: 7, textDecoration: "none", marginTop: 6 }}>🔗 Planting diagram</a>}
-            {t.notes && <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 4, fontStyle: "italic" }}>📝 {t.notes}</div>}
             <TaskSpecialMessageBanner task={t} />
-            {isDone && (
-              <div style={{ fontSize: 11, color: "#4a7a35", marginTop: 4 }}>
-                ✓ {t.completedBy} — {formatTime(t.completedAt)}
-              </div>
-            )}
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-end" }}>
             <button onClick={() => deleteTask(t)}
