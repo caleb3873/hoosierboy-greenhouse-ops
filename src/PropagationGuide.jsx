@@ -373,7 +373,9 @@ function isoWeekMonday(year, week) {
   return s.toISOString().slice(0, 10);
 }
 function isoWeekOf(dateStr) {
-  const t = new Date(dateStr); t.setHours(0, 0, 0, 0);
+  // bare YYYY-MM-DD parses as UTC midnight = 7-8pm the PREVIOUS day in Indianapolis —
+  // anchor to local midnight or Monday dates compute the prior week
+  const t = new Date(String(dateStr).includes("T") ? dateStr : dateStr + "T00:00:00"); t.setHours(0, 0, 0, 0);
   const dn = (t.getDay() + 6) % 7; t.setDate(t.getDate() - dn + 3);
   const f = new Date(t.getFullYear(), 0, 4);
   return 1 + Math.round(((t - f) / 86400000 - 3 + (f.getDay() + 6) % 7) / 7);

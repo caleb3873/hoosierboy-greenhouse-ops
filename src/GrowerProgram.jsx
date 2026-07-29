@@ -186,9 +186,12 @@ function ProgramTab() {
         const p = lookup(r.productName);
         const isBen = r.kind === "beneficial";
         const dose = computeDose(r.rate, tankGal, p);
+        const genTitle = `${isBen ? "🐞 Release" : "💧 Apply"}: ${r.productName}${r.rate ? ` @ ${r.rate}` : ""}${r.location ? ` — ${r.location}` : ""}`;
+        // regenerate-safe: the same program week must not sprout twins on a second click
+        if (tasks.some(x => x.title === genTitle && x.weekNumber === now.week && x.year === now.year && x.status !== "rejected")) continue;
         await upsert({
           id: crypto.randomUUID(),
-          title: `${isBen ? "🐞 Release" : "💧 Apply"}: ${r.productName}${r.rate ? ` @ ${r.rate}` : ""}${r.location ? ` — ${r.location}` : ""}`,
+          title: genTitle,
           description: [
             p?.targets && `Controls: ${p.targets}`,
             dose && `Measure ${dose.amount} ${dose.unit} for a ${tankGal} gal tank`,

@@ -196,7 +196,7 @@ async function syncProductionTasks(db) {
     }
 
     const { data: existing } = await db.from("manager_tasks")
-      .select("id,title,status,description,work_payload").eq("plan_id", plan.id)
+      .select("id,title,status,description,work_payload,target_date").eq("plan_id", plan.id)
       .or("title.like.Pot fill*,title.like.PLANT*,title.like.Pre-plant bench prep*,title.like.Day *");
 
     for (const g of Object.values(groups)) {
@@ -314,7 +314,10 @@ async function syncProductionTasks(db) {
         const hit = (existing || []).find(u.match);
         if (hit) {
           if (hit.status === "pending" && (hit.description !== u.desc || JSON.stringify(hit.work_payload || null) !== JSON.stringify(u.payload))) {
-            await db.from("manager_tasks").update({ description: u.desc, bench_numbers: [...g.benches].sort(), target_date: u.due, work_payload: u.payload }).eq("id", hit.id);
+            // never drag target_date BACKWARD: the view's carryover rolls overdue tasks to
+            // today, and yanking them back to the original Monday would ping-pong the date
+            const tdPatch = hit.target_date && hit.target_date > u.due ? hit.target_date : u.due;
+            await db.from("manager_tasks").update({ description: u.desc, bench_numbers: [...g.benches].sort(), target_date: tdPatch, work_payload: u.payload }).eq("id", hit.id);
             out.updated++;
           }
         } else {

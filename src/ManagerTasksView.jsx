@@ -244,7 +244,9 @@ function formatTime(iso) {
   return d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
-function toISODate(d) { return d.toISOString().slice(0, 10); }
+// LOCAL calendar date — never toISOString for "what day is it": after ~8pm Indianapolis
+// time UTC is already tomorrow, which made carryover roll tasks and stamp OVERDUE a day early
+function toISODate(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
 function addDays(d, n) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
 
 // Compute a target date from a bucket name based on today
@@ -449,7 +451,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
   const pendingVacations = useMemo(() => (vacationReqs || []).filter(v => v.status === "pending"), [vacationReqs]);
   const { rows: driverReqRows } = useDriverRequests();
   const pendingDriverRequests = useMemo(() => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = toISODate(new Date());
     return (driverReqRows || []).filter(r => r.status === "pending" && r.deliveryDate >= today);
   }, [driverReqRows]);
 
@@ -764,7 +766,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
   // ── CARRYOVER: move pending tasks from prior weeks into current week, refresh target_date ──
   useEffect(() => {
     if (!tasks.length) return;
-    const todayISO = new Date().toISOString().slice(0, 10);
+    const todayISO = toISODate(new Date());
     tasks.forEach(t => {
       if (t.status === "completed" || t.status === "requested") return;
       const stale = t.year < today.year || (t.year === today.year && t.weekNumber < today.week);
@@ -788,7 +790,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
   // (deterministic ID prevents duplicates). Does not re-create if the manager deletes it.
   useEffect(() => {
     if (!tasks.length) return;
-    const todayISO = new Date().toISOString().slice(0, 10);
+    const todayISO = toISODate(new Date());
 
     // Group production sow & stick tasks by (year, week, type)
     const groups = {};
@@ -1164,7 +1166,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
 
       {/* ── HUB HOME ─────────────────────────────────────────────────────── */}
       {currentView === "hub" && (() => {
-        const todayIso = new Date().toISOString().slice(0,10);
+        const todayIso = toISODate(new Date());
         const tasksToday = (cat) => tasks.filter(t =>
           (t.category || "production") === cat &&
           t.status !== "completed" && t.status !== "requested" && t.status !== "rejected" &&
@@ -1801,7 +1803,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
             // Group by targetDate. Special-case Today + Overdue on the current week;
             // future days get a day-of-week + date header. Falls back to a bucket
             // header for tasks with no targetDate.
-            const todayIso = new Date().toISOString().slice(0, 10);
+            const todayIso = toISODate(new Date());
             const sections = new Map(); // key → { label, accent, order, tasks[] }
             const ensure = (key, label, accent, order) => {
               if (!sections.has(key)) sections.set(key, { label, accent, order, tasks: [] });
@@ -2187,7 +2189,7 @@ function MessagesSubPage({ onBack, canPost, onPost, isTrish, onHrCompose, onOpen
 
 // ── Today / This Week aggregated view (any manager) ──────────────────────────
 function TodayWeekView({ mode, tasks, today, onBack, onOpenTask }) {
-  const todayIso = new Date().toISOString().slice(0, 10);
+  const todayIso = toISODate(new Date());
   const inScope = (t) => {
     if (t.status === "completed" || t.status === "requested" || t.status === "rejected") return false;
     if (mode === "today") return t.targetDate === todayIso || t.bucket === "today";
@@ -2280,7 +2282,7 @@ function HeaderIconButton({ emoji, title, badge = 0, onClick }) {
 // ── COMPLETION PROMPT MODAL ─────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════════════
 export function CompletionPromptModal({ task, onCancel, onSave }) {
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = toISODate(new Date());
   const yStr = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
   const [notes, setNotes] = useState("");
   const [photos, setPhotos] = useState([]); // storage paths

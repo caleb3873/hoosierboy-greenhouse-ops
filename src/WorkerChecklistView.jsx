@@ -15,6 +15,9 @@ import InventoryView from "./InventoryView";
 import ReferenceDocs from "./ReferenceDocs";
 import Evaluations from "./Evaluations";
 
+// LOCAL calendar date — toISOString says tomorrow after ~8pm Indianapolis time
+const localISODate = () => { const x = new Date(); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`; };
+
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
 const GREEN_DARK = "#1e2d1a";
 const GREEN = "#7fb069";
@@ -279,7 +282,7 @@ function WorkerChecklistViewInner({ onSwitchMode, onBackToApp, onOpenTaskCreator
   // Carryover + target_date refresh for growing tasks
   useEffect(() => {
     if (!tasks.length) return;
-    const todayISO = new Date().toISOString().slice(0, 10);
+    const todayISO = localISODate();
     tasks.forEach(t => {
       if ((t.category || "production") !== "growing") return;
       if (t.status === "completed" || t.status === "requested") return;
@@ -361,10 +364,14 @@ function WorkerChecklistViewInner({ onSwitchMode, onBackToApp, onOpenTaskCreator
     const ttl = completingTask.title || "";
     const waterTitle = ttl.startsWith("🌿 Plant") ? "💧 Water-in plants"
       : ttl.startsWith("🪴 Fill pots") ? "💧 Water-in dry pots" : null;
-    if (waterTitle) {
+    // idempotent: re-completing (or un-complete → complete again) must not spawn twins
+    const fullWaterTitle = waterTitle ? waterTitle + (completingTask.location ? ` — ${completingTask.location}` : "") : null;
+    const waterDupe = fullWaterTitle && tasks.some(x =>
+      x.title === fullWaterTitle && x.targetDate === completingTask.targetDate && x.status !== "rejected");
+    if (waterTitle && !waterDupe) {
       await upsert({
         id: crypto.randomUUID(),
-        title: waterTitle + (completingTask.location ? ` — ${completingTask.location}` : ""),
+        title: fullWaterTitle,
         weekNumber: completingTask.weekNumber,
         year: completingTask.year,
         targetDate: completingTask.targetDate,
@@ -544,7 +551,7 @@ function WorkerChecklistViewInner({ onSwitchMode, onBackToApp, onOpenTaskCreator
         {visible.length > 0 && (() => {
           // Group by targetDate. Today + Overdue float to top (Overdue in red),
           // then one section per upcoming day of the week.
-          const todayIso = new Date().toISOString().slice(0, 10);
+          const todayIso = localISODate();
           const sections = new Map();
           const ensure = (key, label, accent, order) => {
             if (!sections.has(key)) sections.set(key, { label, accent, order, tasks: [] });
