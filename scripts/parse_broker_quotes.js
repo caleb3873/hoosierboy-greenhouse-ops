@@ -36,7 +36,7 @@ const { SPECIES, GENUS_SYN, WORD_SYN, tidy, makeKey } = require(path.join(__dirn
 // classify a raw form string into a comparable form class (compare like-with-like)
 function classForm(raw) {
   const f = String(raw || '').toLowerCase();
-  if (/cell tray|mega tray|\bplug\b|\d+\s*cell/.test(f)) return 'plug';
+  if (/cell tray|mega tray|\bplug\b|\d+\s*cell|\bstrip\b/.test(f)) return 'plug';   // Raker "51 STRIP" = strip plug tray
   // Ball "Lin 72" and EHR-AED "72 C.P." (cell plug) are the same cell liner — same class so they match
   if (/\blin\b|liner|\blin\s|^lin|\d+\s*c\.?\s*p\.?\b|\bc\.?\s*p\.?\b/.test(f)) return 'liner';
   if (/bareroot|\bbrt\b|\bbr\b|bare ?root|eye\b/.test(f)) return 'bareroot';
@@ -61,6 +61,8 @@ function breederFromName(fn) {
   if (/beekenkamp|bee0/.test(f)) return 'Beekenkamp';
   if (/green circle/.test(f)) return 'GreenCircle';
   if (/raker|roberta/.test(f)) return 'Raker';
+  if (/foremost/.test(f)) return 'Foremost';
+  if (/dickman/.test(f)) return 'Dickman';
   if (/pell/.test(f)) return 'Pell';
   if (/walters/.test(f)) return 'Walters';
   if (/creek hill/.test(f)) return 'CreekHill';
@@ -75,7 +77,7 @@ function breederFromName(fn) {
   if (/vivero/.test(f)) return 'Vivero';
   if (/plant investment/.test(f)) return 'PlantInvestments';
   if (/\bbob/.test(f)) return 'Bobs';                   // "L F Schlegel... BOBS PL 2027" — pansy/viola plugs
-  return fn.replace(/\.xlsx?$/i, '').slice(0, 16);
+  return fn.replace(/\.xls[xb]?$/i, '').slice(0, 16);
 }
 
 // ---------- farm / origin from filename ----------
@@ -180,7 +182,7 @@ function parseFile(broker, file) {
     const cRoy  = find(/royalty/, /license fee\s*$/);
     const cFrt  = find(/freight dtd usa/, /freight price/, /^freight$/);
     const cTotal= find(/^total price/, /no tag unit price includes frt/);
-    const cAed  = find(/^v1 eod$/, /^v1$/);   // EHR AED quotes: V1 EOD = early-order unit price
+    const cAed  = find(/^v\d+ eod$/, /^v\d+$/);   // EHR AED quotes: V{n} EOD = early-order unit price at Schlegel's tier (Raker files come in at V7)
     const cExcl = find(/exclusiv/);
     const cMin  = find(/item min/, /min per var/, /^min qty$/); // Express "Item Min" per-variety minimum
     const tiers = tierCols(hdr);
@@ -272,12 +274,12 @@ function parseFile(broker, file) {
 function dedupKey(fn) {
   const pq = fn.match(/PQ\d{4,}/i);
   if (pq) return pq[0].toUpperCase();
-  return fn.replace(/\s*\(\d+\)(?=\.xlsx?$)/i, '').replace(/\.xlsx?$/i, '').toLowerCase().trim();
+  return fn.replace(/\s*\(\d+\)(?=\.xls[xb]?$)/i, '').replace(/\.xls[xb]?$/i, '').toLowerCase().trim();
 }
 let all = [];
 const counts = {}, dropped = [];
 for (const [broker, dir] of Object.entries(QUOTE_DIRS)) {
-  const files = fs.readdirSync(dir).filter(x => /\.xlsx?$/i.test(x) && !x.startsWith('~'))
+  const files = fs.readdirSync(dir).filter(x => /\.xls[xb]?$/i.test(x) && !x.startsWith('~'))
     .map(fn => ({ fn, mtime: fs.statSync(dir + '/' + fn).mtimeMs }));
   const byKey = {};
   for (const f of files) { const k = dedupKey(f.fn); if (!byKey[k] || f.mtime > byKey[k].mtime) { if (byKey[k]) dropped.push(byKey[k].fn); byKey[k] = f; } else dropped.push(f.fn); }
@@ -287,6 +289,25 @@ for (const [broker, dir] of Object.entries(QUOTE_DIRS)) {
   }
 }
 if (dropped.length) console.log('deduped (older/duplicate copies skipped):', dropped.length);
+
+// HARD RULE (Caleb 2026-07-29): duplicative quotes WITHIN a broker resolve to the most
+// recently uploaded file — newest file mtime wins per (broker, supplier|form|variety).
+// The cascade is automatic: broker_prices keeps only the winners, and every surface
+// (door search, family pins, reconciliation, sourcing compare) reads broker_prices.
+const mtCache = {};
+const mtimeOf = (broker, file) => {
+  const k = broker + '|' + file;
+  if (!(k in mtCache)) { try { mtCache[k] = fs.statSync(path.join(QUOTE_DIRS[broker], file)).mtimeMs; } catch { mtCache[k] = 0; } }
+  return mtCache[k];
+};
+const newestFile = {};   // broker|mkey -> winning sourceFile
+for (const r of all) {
+  const dk = r.broker + '|' + r.mkey;
+  if (!(dk in newestFile) || mtimeOf(r.broker, r.sourceFile) > mtimeOf(r.broker, newestFile[dk])) newestFile[dk] = r.sourceFile;
+}
+const preRecency = all.length;
+all = all.filter(r => r.sourceFile === newestFile[r.broker + '|' + r.mkey]);
+if (preRecency !== all.length) console.log(`recency rule: ${preRecency - all.length} rows superseded by newer uploads (${preRecency} -> ${all.length})`);
 console.log('parsed rows by broker:', counts, '| total', all.length);
 
 // per-breeder broker coverage
