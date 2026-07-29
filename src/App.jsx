@@ -56,6 +56,7 @@ import PickSheetViewer      from "./shipping/PickSheetViewer";
 import HeadGrowerHiring     from "./HeadGrowerHiring";
 import VacationCalendar     from "./VacationCalendar";
 import { AnnouncementBanner, AnnouncementPopup, useAnnouncementPopup } from "./Announcements";
+import UpdateBanner from "./UpdateBanner";
 
 // ── PLANNER SHELL ─────────────────────────────────────────────────────────────
 // Nav grouped by category
@@ -455,6 +456,7 @@ export default function App() {
     <AuthProvider>
       <ExtractionProvider>
         <AppInner />
+        <UpdateBanner />
       </ExtractionProvider>
     </AuthProvider>
   );
