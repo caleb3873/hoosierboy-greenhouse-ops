@@ -103,12 +103,26 @@ export function useTable(tableName, { orderBy = "created_at", ascending = false,
     setLoading(true);
     setError(null);
     try {
-      const { data, error: err } = await db
-        .from(tableName)
-        .select("*")
-        .order(orderBy, { ascending });
-      if (err) throw err;
-      if (mounted.current) setRows(toCamel(data || []));
+      // PostgREST caps any single select at 1,000 rows — page until a short page so big
+      // tables never silently truncate. This bit on 7/28: manager_tasks hit 1,142 rows and
+      // the 142 that fell off (ordered by priority) were exactly the priority-50 system
+      // planting tasks — "why are these tasks missing" with perfectly healthy data.
+      // The id tiebreak keeps pages stable across ties in orderBy.
+      const PAGE = 1000;
+      let all = [], from = 0;
+      for (;;) {
+        const { data, error: err } = await db
+          .from(tableName)
+          .select("*")
+          .order(orderBy, { ascending })
+          .order("id", { ascending: true })
+          .range(from, from + PAGE - 1);
+        if (err) throw err;
+        all = all.concat(data || []);
+        if (!data || data.length < PAGE) break;
+        from += PAGE;
+      }
+      if (mounted.current) setRows(toCamel(all));
     } catch (e) {
       if (mounted.current) setError(e.message);
     } finally {
