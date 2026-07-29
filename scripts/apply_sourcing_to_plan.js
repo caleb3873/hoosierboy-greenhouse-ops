@@ -52,7 +52,16 @@ const isLucasBegonia = name => /\bbegonia\b/i.test(name) && !/reiger/i.test(name
   const prices = await page('broker_prices', 'broker,supplier,form_class,variety_key,landed,form_raw,origin', q => q.eq('season', '2026-2027').gt('landed', 0).or('form_class.in.(urc,callused),supplier.eq.Bobs'));
   const sel = await page('sourcing_selections', 'supplier,form_class,selected_broker', q => q.eq('season', '2026-2027').eq('form_class', '*'));
   const sels = {}; sel.forEach(s => { if (s.selected_broker) sels[s.supplier] = s.selected_broker; });
-  const crops = await page('scheduled_crops', 'id,item_name,qty_pots,plants_per_unit,liner_unit_cost,broker,is_combo_component', q => q.eq('plan_id', plan.id).eq('is_combo_component', false).gt('qty_pots', 0));
+  const crops = await page('scheduled_crops', 'id,item_name,qty_pots,plants_per_unit,liner_unit_cost,broker,supplier,is_combo_component,variety_id,sourcing_locked', q => q.eq('plan_id', plan.id).eq('is_combo_component', false).gt('qty_pots', 0));
+
+  // manual quote locks: a variety may carry hand-matched broker keys (match_aliases) so a
+  // quote the normalizer couldn't auto-collapse still resolves. Build variety_id → [keys].
+  const vids = [...new Set(crops.map(c => c.variety_id).filter(Boolean))];
+  const vidKeys = {};
+  for (let i = 0; i < vids.length; i += 200) {
+    const { data: vl } = await sb.from('variety_library').select('id,variety_key,match_aliases').in('id', vids.slice(i, i + 200));
+    (vl || []).forEach(v => { vidKeys[v.id] = [v.variety_key, ...(v.match_aliases || [])].filter(Boolean); });
+  }
 
   // Curated form rules — MUST match v_sourcing_prices so a plan costs exactly what the Sourcing UI
   // shows (autostix already excluded by the query above):
@@ -79,11 +88,34 @@ const isLucasBegonia = name => /\bbegonia\b/i.test(name) && !/reiger/i.test(name
   // recommended broker per supplier = cheapest-most-often (use the catalog min as proxy fallback)
   // here: for a key+supplier, if no selection, take the cheapest broker available for that key.
 
-  let matched = 0, ambiguous = 0, unmatched = 0, gap = 0, costUp = 0, costDn = 0, deltaPlants = 0;
+  let matched = 0, ambiguous = 0, unmatched = 0, gap = 0, costUp = 0, costDn = 0, deltaPlants = 0, locked = 0;
   const updates = [], gaps = [];
   let lucasBegonia = 0;
   for (const c of crops) {
-    const key = makeKey(null, null, stripSize(c.item_name));
+    const nameKey = makeKey(null, null, stripSize(c.item_name));
+    // candidate keys = the item-name key PLUS the variety's canonical key and any hand-locked
+    // aliases, so a manually-matched quote resolves even when the name won't auto-key to it
+    const candKeys = [...new Set([nameKey, ...(vidKeys[c.variety_id] || [])])].filter(Boolean);
+
+    // LOCKED rows: a planner hand-matched a specific broker/supplier. Refresh the price from
+    // THAT source only (picking up re-uploaded price changes); never re-point by name-match.
+    if (c.sourcing_locked) {
+      let best = null;
+      for (const k of candKeys) {
+        const hit = idx[k]?.[c.supplier]?.[c.broker];
+        if (hit && (!best || hit.landed < best.landed)) best = hit;
+      }
+      locked++;
+      if (best) {
+        const old = +c.liner_unit_cost || 0;
+        const plants = (+c.qty_pots || 0) * (+c.plants_per_unit || 1);
+        deltaPlants += (best.landed - old) * plants; if (best.landed > old) costUp++; else if (best.landed < old) costDn++;
+        updates.push({ id: c.id, item: c.item_name, supplier: c.supplier, broker: c.broker, origin: best.origin || null, landed: best.landed, old, lock: true });
+      }
+      continue;   // no fresh quote from the locked source → leave the row exactly as locked
+    }
+
+    const key = candKeys.find(k => idx[k]) || nameKey;   // first candidate that hits the catalog
     const genus = key.split(' ')[0];
     // vegetative begonias → Lucas rooted liner (pending Lucas quote); never URC-match these
     if (isLucasBegonia(c.item_name)) { lucasBegonia++; continue; }
@@ -124,6 +156,7 @@ const isLucasBegonia = name => /\bbegonia\b/i.test(name) && !/reiger/i.test(name
 
   console.log(`\ncrops (finished): ${crops.length}`);
   console.log(`  matched to a broker catalog: ${matched}`);
+  console.log(`  hand-locked quotes (refreshed from their locked source only): ${locked}`);
   console.log(`  ambiguous (≥2 suppliers, no selection): ${ambiguous}`);
   console.log(`  unmatched (not in any catalog): ${unmatched}`);
   console.log(`  selection had a broker gap (fell back to cheapest): ${gap}`);
@@ -131,7 +164,7 @@ const isLucasBegonia = name => /\bbegonia\b/i.test(name) && !/reiger/i.test(name
   console.log(`  selections in place: ${Object.keys(sels).length ? JSON.stringify(sels) : 'NONE — using cheapest available per variety'}`);
   console.log(`\nliner-cost change if applied: ${deltaPlants >= 0 ? '+' : ''}$${deltaPlants.toFixed(0)} (${costUp} up, ${costDn} down)`);
   console.log('\nsample matches:');
-  updates.slice(0, 12).forEach(u => console.log(`  ${u.item.slice(0, 42).padEnd(44)} ${u.supplier}/${u.broker}  $${u.old.toFixed(4)} → $${u.landed.toFixed(4)}`));
+  updates.slice(0, 12).forEach(u => console.log(`  ${u.item.slice(0, 42).padEnd(44)} ${u.supplier}/${u.broker}  $${u.old.toFixed(4)} → $${u.landed.toFixed(4)}${u.lock ? '  🔒 locked' : ''}`));
   if (gaps.length) {
     console.log(`\nGAP — your selected broker doesn't carry these in URC/callused; fell back to cheapest (${gaps.length}):`);
     gaps.forEach(g => console.log(`  ${g.item.slice(0, 46).padEnd(48)} ${g.supplier}: want ${g.want} → using ${g.got}  $${g.landed.toFixed(4)}`));

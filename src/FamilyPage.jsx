@@ -303,6 +303,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
   // ── manual quote search + lock (Caleb 7/29) ───────────────────────────────
   // "Don't see the variety quoted from your broker but know it's there? Search
   // and match it yourself so it's permanently attached for future ordering."
+  const [cropSeriesSug, setCropSeriesSug] = useState([]);   // series names derived from ALL broker quotes for this crop
   const [quoteFor, setQuoteFor] = useState(null);   // {v} direct-to-variety, or {} free search
   const [pendingQuote, setPendingQuote] = useState(null);   // a picked quote awaiting "attach to which color?"
   // every plannable color in this family (variety_id → its plan rows), for the attach chooser
@@ -316,6 +317,39 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
     });
     return Object.values(by).sort((a, b) => String(a.variety).localeCompare(String(b.variety)));
   }, [rows, vmap]);
+  // series dropdown suggestions come FROM THE QUOTES (Caleb 7/29: on Cuphea it only
+  // showed Enchantia — the family's own — but Ball/Express carry FloriGlory, Sweet Talk,
+  // Cubano, Vermillionaire…). Derive series from every broker quote's ORIGINAL name for
+  // this crop (the key is word-sorted and useless for this; the display name isn't).
+  useEffect(() => {
+    const crop = recipe?.crop_name;
+    if (!crop) { setCropSeriesSug([]); return; }
+    (async () => {
+      const { data } = await sb.from("broker_prices").select("variety").ilike("crop", `%${crop}%`).limit(2000);
+      const genus = String(crop).toLowerCase().split(/\s+/)[0];
+      // species/junk tokens that sit between genus and the real series in broker names
+      const SKIP = /^(hyss|hys|hyb|hybrid|interspecific|hybrida|ignea|llavea|cyanea|hyssopifolia|x|sp|spp)\.?$/i;
+      const clean = n => String(n || "").replace(/[™®'"‘’]/g, " ").replace(/\b(improved|imp|ppaf|pp\d+)\b/ig, " ").replace(/\b(19|20)\d\d\b/g, " ").replace(/\s+/g, " ").trim();
+      const one = {}, two = {}, singles = new Set();
+      (data || []).forEach(raw => {
+        let t = clean(raw).split(" ").filter(Boolean);
+        while (t.length && (t[0].toLowerCase() === genus || SKIP.test(t[0]))) t.shift();
+        if (!t.length) return;
+        if (t.length === 1) singles.add(t[0]);       // single-word series: Firecracker, Vermillionaire
+        one[t[0]] = (one[t[0]] || 0) + 1;
+        if (t.length >= 2) two[`${t[0]} ${t[1]}`] = (two[`${t[0]} ${t[1]}`] || 0) + 1;
+      });
+      const sug = new Set();
+      Object.entries(two).forEach(([k, c]) => { if (c >= 2) sug.add(k); });   // recurring 2-word series (Sweet Talk)
+      Object.entries(one).forEach(([k, c]) => {                                // recurring 1-word series (FloriGlory)
+        if (c >= 2 && ![...sug].some(s => s.toLowerCase().startsWith(k.toLowerCase() + " "))) sug.add(k);
+      });
+      singles.forEach(s => sug.add(s));
+      const title = s => s.split(" ").map(w => w.length > 2 ? w[0].toUpperCase() + w.slice(1) : w).join(" ");
+      setCropSeriesSug([...sug].map(title).sort((a, b) => a.localeCompare(b)));
+    })();
+  }, [sb, recipe?.crop_name]);
+
   // lock a broker quote onto a color: stamp its cost/source on the plan rows AND
   // remember the matched key on the variety so it keeps matching after re-uploads.
   async function lockQuote(v, r) {
@@ -327,7 +361,9 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
     setBusy(true);
     try {
       for (const x of targetRows) {
-        await sb.from("scheduled_crops").update({ liner_unit_cost: +r.landed, broker: r.broker, supplier: r.supplier }).eq("id", x.id);
+        // sourcing_locked = the reprice engine refreshes this only from THIS broker/supplier,
+        // never re-points it by name-match (the lock is permanent for future ordering)
+        await sb.from("scheduled_crops").update({ liner_unit_cost: +r.landed, broker: r.broker, supplier: r.supplier, sourcing_locked: true }).eq("id", x.id);
       }
       if (vid && r.variety_key) {
         const { data: vrow } = await sb.from("variety_library").select("variety_key,match_aliases").eq("id", vid).single();
@@ -943,21 +979,22 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
                   {!series.filter(s => s.series_name !== "(unassigned)").length && <tr><td style={{ ...td, color: C.muted }} colSpan={6}>No series yet — ＋ Add series, or add colors from the catalog and they'll group by name.</td></tr>}
                 </tbody>
               </table>
-              {/* series suggestions = this family's own variety-name prefixes (Caleb 7/29:
-                  "should be a dropdown or auto populate based on an item I added") */}
+              {/* series suggestions = every series the BROKERS quote for this crop (Caleb 7/29:
+                  Cuphea should show FloriGlory, Sweet Talk, Cubano… not just our Enchantia),
+                  unioned with the family's own variety-name prefixes so nothing's lost */}
               <datalist id="fp-series-suggest">
                 {(() => {
                   const names = Object.values(vmap).map(v => String(v.variety || "").replace(/[™®]/g, " ").replace(/\s+/g, " ").trim()).filter(Boolean);
                   const two = {};
                   names.forEach(n => { const t = n.split(" "); if (t.length >= 3) two[`${t[0]} ${t[1]}`] = (two[`${t[0]} ${t[1]}`] || 0) + 1; });
-                  const sug = new Set();
+                  const sug = new Set(cropSeriesSug);
                   names.forEach(n => {
                     const t = n.split(" ");
                     const p2 = t.length >= 3 ? `${t[0]} ${t[1]}` : null;
                     if (p2 && two[p2] >= 2) sug.add(p2);
                     else if (t.length >= 2) sug.add(t[0]);
                   });
-                  return [...sug].sort().map(nm => <option key={nm} value={nm} />);
+                  return [...sug].sort((a, b) => a.localeCompare(b)).map(nm => <option key={nm} value={nm} />);
                 })()}
               </datalist>
               <button disabled={busy} onClick={async () => {
