@@ -3547,7 +3547,7 @@ function SalesVsPlanTab({ plan }) {
           title="Open a crop family — every color and planting group at one size"
           style={{ padding: "6px 10px", borderRadius: 16, fontWeight: 700, fontSize: 12, cursor: "pointer", border: `1.5px solid ${COLORS.light}`, background: "#fff", color: COLORS.dark, maxWidth: 210 }}>
           <option value="">🌿 Families…</option>
-          <option value="__manage">⚙ Manage families (merge / re-home)…</option>
+          <option value="__manage">⚙ Manage families (rename / merge / delete)…</option>
           {famList.map(f => <option key={f.id} value={f.id}>{f.label} ({f.n})</option>)}
         </select>
         <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>

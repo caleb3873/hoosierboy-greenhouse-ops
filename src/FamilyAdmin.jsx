@@ -399,14 +399,15 @@ export default function FamilyAdmin({ plan, onClose, onChanged }) {
                         placeholder={`${f.size_label} ${f.crop_name}`}
                         style={{ fontSize: 13, fontWeight: 700, padding: "3px 7px", borderRadius: 7, border: `1.5px solid ${C.light}`, fontFamily: "inherit", minWidth: 190 }} />
                     ) : (
-                      <b style={{ fontSize: 13, color: C.dark }}>{f.label}
+                      <b onClick={() => setRenaming({ id: f.id, val: f.display_name || "" })}
+                        title="click to rename this family" style={{ fontSize: 13, color: C.dark, cursor: "text" }}>{f.label}
                         {f.display_name && <span title={`custom name — underlying family: ${f.size_label} ${f.crop_name}`} style={{ marginLeft: 6, fontSize: 10, fontWeight: 600, color: C.muted }}>({f.size_label} {f.crop_name})</span>}
                       </b>
                     )}
                     {renaming?.id !== f.id && (
                       <button title="rename — give this family your own name (empty puts the derived name back)"
                         onClick={() => setRenaming({ id: f.id, val: f.display_name || "" })}
-                        style={{ background: "none", border: "none", cursor: "pointer", fontSize: 11, color: C.muted, padding: 0 }}>✎</button>
+                        style={{ background: "#fff", border: `1.5px solid ${C.creamBr}`, borderRadius: 7, cursor: "pointer", fontSize: 10.5, fontWeight: 800, color: C.dark, padding: "3px 8px", fontFamily: FONT }}>✎ Rename</button>
                     )}
                     {f.plant_class === "perennial" && <span style={{ fontSize: 10, color: "#2e7d32", fontWeight: 800 }}>🌲</span>}
                     <span style={{ fontSize: 11, color: C.muted }}>{f.n} row{f.n === 1 ? "" : "s"} · {Object.keys(f.items).length} item{Object.keys(f.items).length === 1 ? "" : "s"}</span>
