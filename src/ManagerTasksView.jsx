@@ -533,21 +533,20 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
     }
   }, [pendingRequests.length]);
 
-  // Auto-open overdue modal once per session if anything is overdue.
-  // Waits a tick so the carryover effect has a chance to settle.
+  // Auto-open overdue modal — but a dismissal buys 24 QUIET HOURS (Caleb 7/29).
+  // Snooze stamps on CLOSE (localStorage, survives sessions); until dismissed it
+  // may reappear on remount, which is the point. Waits a tick for carryover.
   useEffect(() => {
     if (overdueCheckedRef.current) return;
     if (!tasks.length) return;
-    const sessionKey = `gh_overdue_seen_${displayName || "anon"}_${today.year}w${today.week}`;
-    if (sessionStorage.getItem(sessionKey)) {
+    const snoozeKey = `gh_overdue_snooze_${displayName || "anon"}`;
+    const last = +(localStorage.getItem(snoozeKey) || 0);
+    if (Date.now() - last < 24 * 3600 * 1000) {
       overdueCheckedRef.current = true;
       return;
     }
     const id = setTimeout(() => {
-      if (overdueTasks.length > 0) {
-        setShowOverdue(true);
-        sessionStorage.setItem(sessionKey, "1");
-      }
+      if (overdueTasks.length > 0) setShowOverdue(true);
       overdueCheckedRef.current = true;
     }, 500);
     return () => clearTimeout(id);
@@ -631,9 +630,15 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       const q = searchQuery.trim().toLowerCase();
       r = r.filter(t => (t.title || "").toLowerCase().includes(q));
     }
-    // targetDate asc (chronological within a bucket) → priority desc (manual reorder wins) → variety alphabetical
+    // Caleb 7/29: within each day, JOB TYPE then LOCATION — the crew reads the board
+    // as "all the pot fills, place by place, then all the plantings…". Date stays
+    // outermost (the Today/Overdue sections depend on it); manual ▲▼ reorder still
+    // wins within a type+location cluster; variety alphabetical last.
+    const TYPE_RANK = { sow: 0, stick: 1, potfill: 2, planting: 3, tags: 4, other: 5 };
     return [...r].sort((a, b) =>
       (a.targetDate || "9999-12-31").localeCompare(b.targetDate || "9999-12-31") ||
+      ((TYPE_RANK[getProdType(a.title)] ?? 5) - (TYPE_RANK[getProdType(b.title)] ?? 5)) ||
+      String(a.location || "~").toLowerCase().localeCompare(String(b.location || "~").toLowerCase()) ||
       (b.priority || 0) - (a.priority || 0) ||
       taskSortKey(a).localeCompare(taskSortKey(b), undefined, { numeric: true })
     );
@@ -650,15 +655,21 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
     const firstName = (displayName || "").split(/\s+/)[0];
     let assignedTo = firstName && firstName !== "Manager" ? firstName : null;
     if (category === "maintenance") assignedTo = "Gerry";
+    // Caleb 7/29: "when Amanda is making a task she is making a pot filling task" —
+    // her production tasks get the 📦 type automatically when she didn't pick one, so
+    // they land on the Pot Fill tab and read as pot-fill cards.
+    let cleanTitle = title.trim();
+    const TYPE_PREFIXES = ["📦", "🌿", "🌱", "🏷", "✂", "🌼", "💧", "🔍"];
+    if (category === "production" && /AMANDA/i.test(displayName || "") && !TYPE_PREFIXES.some(p => cleanTitle.startsWith(p))) {
+      cleanTitle = "📦 " + cleanTitle;
+    }
     // Amanda's pot-filling requests auto-route to Sam (head of pot filling).
-    // Detected by 📦 emoji prefix the VoiceRecorderModal stamps when
-    // "Pot Filling" is selected as the task type.
-    if (category === "production" && title.trim().startsWith("📦") && /AMANDA/i.test(displayName || "")) {
+    if (category === "production" && cleanTitle.startsWith("📦") && /AMANDA/i.test(displayName || "")) {
       assignedTo = "Sam";
     }
     await upsert({
       id: crypto.randomUUID(),
-      title: title.trim(),
+      title: cleanTitle,
       priority: maxPriority + 10,
       weekNumber: today.week,
       year: today.year,
@@ -685,7 +696,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
     fetch("/api/notify-task", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ event: "task_created", title: title.trim(), category, bucket }),
+      body: JSON.stringify({ event: "task_created", title: cleanTitle, category, bucket }),
     }).catch(() => {});
   }
 
@@ -2032,7 +2043,11 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
         <OverdueModal
           tasks={overdueTasks}
           displayName={displayName}
-          onClose={() => setShowOverdue(false)}
+          onClose={() => {
+            setShowOverdue(false);
+            // dismissal = 24h of quiet, across sessions
+            try { localStorage.setItem(`gh_overdue_snooze_${displayName || "anon"}`, String(Date.now())); } catch { /* private mode */ }
+          }}
           onMarkDone={async (t) => {
             await upsert({
               ...t,
