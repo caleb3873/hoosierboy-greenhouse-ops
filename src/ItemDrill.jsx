@@ -651,6 +651,15 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
           </div>
         </div>
 
+        {tgt?.archived_at && (
+          <div style={{ marginTop: 12, background: "#f2f2ec", border: "1.5px solid #d8ddd2", borderRadius: 10, padding: "9px 13px", fontSize: 12.5, color: C.muted, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <b style={{ color: C.dark }}>📦 Retired {new Date(tgt.archived_at).toLocaleDateString([], { month: "short", day: "numeric" })}{tgt.decided_by ? ` · ${tgt.decided_by}` : ""}</b>
+            <span>not growing in 2027 — production is zeroed; the weeks below are last year's chain, kept for reference. 2026 sales history stays.</span>
+            {onSaveTarget && <button onClick={() => onSaveTarget({ archived_at: null, target_units: null, decision: null, note: "reactivated" })}
+              style={{ marginLeft: "auto", padding: "4px 12px", borderRadius: 8, border: `1.5px solid ${C.light}`, background: "#fff", color: C.dark, fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>↩ bring back</button>}
+          </div>
+        )}
+
         {view === "history" && (
           <div style={{ background: "#fff", border: `1px solid ${C.border}`, borderRadius: 10, padding: "11px 13px", marginTop: 12 }}>
             <div style={{ fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", marginBottom: 6 }}>Change history</div>

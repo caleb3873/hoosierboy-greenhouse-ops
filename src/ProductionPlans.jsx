@@ -3187,6 +3187,27 @@ function SalesVsPlanTab({ plan }) {
     setBulkBusy(false);
   }
 
+  // Retire = the decision AND the production zeroing in one act (Caleb 7/29: "if an
+  // item retires everything from that item goes to zero"). Bench rows drop to 0 pots,
+  // combo components to 0 plants; supply un-ordered. History keeps what was there.
+  async function retireItem(r) {
+    await saveTarget(r, { archived_at: new Date().toISOString(), target_units: 0, decision: "drop",
+      note: targets[r.item]?.note || "retired — not repeating", applied_at: new Date().toISOString(), applied_units: 0 });
+    try {
+      const { data: rows0 } = await sb.from("scheduled_crops").select("id,qty_pots").eq("plan_id", plan.id).eq("item_name", r.item);
+      const ids = (rows0 || []).map(x => x.id);
+      const hadPots = (rows0 || []).reduce((a, x) => a + (+x.qty_pots || 0), 0);
+      if (ids.length) {
+        await sb.from("scheduled_crops").update({ qty_pots: 0, qty_plants_ordered: null }).in("id", ids);
+        await sb.from("scheduled_crops").update({ qty_plants_ordered: 0 }).in("combo_parent_id", ids);
+      }
+      await sb.from("item_change_log").insert({ plan_id: plan.id, item_name: r.item,
+        change_type: "retired", detail: { production_zeroed: true, was_qty: hadPots },
+        changed_by: displayName || null, source: "sales-vs-plan" });
+    } catch (e) { window.alert("Retired, but zeroing production hit a snag: " + (e.message || e)); }
+    setReloadTick(t => t + 1);
+  }
+
   // Family-grain target: one number for the family, distributed across its colors by
   // 2026 sales share (planned share when nothing sold; largest remainder so the sum is
   // exact). Writes ordinary per-item plan_targets — dig into any color later.
@@ -3624,8 +3645,8 @@ function SalesVsPlanTab({ plan }) {
               )}
               {!arch ? (
                 <button style={{ ...mi, borderBottom: "none", color: COLORS.red, fontWeight: 700 }}
-                  onClick={() => { setRowCtx(null); saveTarget(r, { archived_at: new Date().toISOString(), target_units: 0, decision: "drop", note: tg.note || "retired — not repeating" }); }}>
-                  📦 Retire — won't repeat <span style={{ fontSize: 10.5, color: COLORS.muted, fontWeight: 500 }}>hidden unless 📦 filter</span>
+                  onClick={() => { setRowCtx(null); retireItem(r); }}>
+                  📦 Retire — won't repeat <span style={{ fontSize: 10.5, color: COLORS.muted, fontWeight: 500 }}>zeroes 2027 production · hidden unless 📦 filter</span>
                 </button>
               ) : (
                 <button style={{ ...mi, borderBottom: "none", color: "#2e7d32", fontWeight: 700 }}
