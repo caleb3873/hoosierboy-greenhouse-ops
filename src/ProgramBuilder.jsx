@@ -69,6 +69,13 @@ export default function ProgramsPanel({ plan, onAddPlant }) {
       let varName = (it.material?.variety || it.item_name).trim();
       const cw = cropName.toLowerCase();
       if (varName.toLowerCase().startsWith(cw)) varName = varName.slice(cropName.length).trim() || varName;
+      // hygiene (7/29): program materials arrive like "SOLANNA™ Solanna™ Bright Touch" —
+      // strip ™/®, collapse repeated words/phrases so the library stays clean
+      varName = varName.replace(/[™®]/g, " ").replace(/\s+/g, " ").trim();
+      { const t = varName.split(" "); const half = Math.floor(t.length / 2);
+        if (t.length >= 2 && t.length % 2 === 0 && t.slice(0, half).join(" ").toLowerCase() === t.slice(half).join(" ").toLowerCase()) varName = t.slice(0, half).join(" ");
+        const out = []; for (const w of varName.split(" ")) { if (!out.length || out[out.length - 1].toLowerCase() !== w.toLowerCase()) out.push(w); }
+        varName = out.join(" "); }
       let { data: v } = await sb.from("variety_library").select("id")
         .ilike("crop_name", cropName).ilike("variety", varName).limit(1);
       let varietyId = v && v[0] ? v[0].id : null;

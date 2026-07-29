@@ -193,19 +193,24 @@ export default function FamilyAdmin({ plan, onClose, onChanged }) {
       for (const g of list) {
         const rec = await createFamily({ crop: g.crop, size: g.size, weeks: null }, [...g.items]);
         // series from variety-name prefixes: two-word prefix needs ≥2 sharing varieties
-        const vars = [...g.varieties];
-        const two = {}, one = {};
-        vars.forEach(v => {
-          const t = v.split(/\s+/);
-          if (t.length >= 2) two[`${t[0]} ${t[1]}`] = (two[`${t[0]} ${t[1]}`] || 0) + 1;
-          one[t[0]] = (one[t[0]] || 0) + 1;
-        });
+        // clean first (™/® + doubled words), then derive: two-word series when 2+ share,
+        // else the first word — SINGLETONS INCLUDED (the Solanna lesson, 7/29)
+        const cleanName = v => {
+          const out = [];
+          for (const w of String(v).replace(/[™®]/g, " ").replace(/\s+/g, " ").trim().split(" ")) {
+            if (!out.length || out[out.length - 1].toLowerCase() !== w.toLowerCase()) out.push(w);
+          }
+          return out.join(" ");
+        };
+        const vars = [...g.varieties].map(cleanName);
+        const two = {};
+        vars.forEach(v => { const t = v.split(" "); if (t.length >= 3) two[`${t[0]} ${t[1]}`] = (two[`${t[0]} ${t[1]}`] || 0) + 1; });
         const names = new Set();
         vars.forEach(v => {
-          const t = v.split(/\s+/);
-          const p2 = t.length >= 2 ? `${t[0]} ${t[1]}` : null;
-          if (p2 && two[p2] >= 2 && t.length >= 3) names.add(p2);
-          else if (one[t[0]] >= 2 && t.length >= 2) names.add(t[0]);
+          const t = v.split(" ");
+          const p2 = t.length >= 3 ? `${t[0]} ${t[1]}` : null;
+          if (p2 && two[p2] >= 2) names.add(p2);
+          else if (t.length >= 2) names.add(t[0]);
         });
         const form = Object.entries(g.forms).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
         for (const nm of names) {

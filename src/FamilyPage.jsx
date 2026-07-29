@@ -789,9 +789,9 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
                   {series.map(s => (
                     <tr key={s.id}>
                       <td style={{ ...td, fontWeight: 700 }}>
-                        <input value={s.series_name}
+                        <input value={s.series_name} list="fp-series-suggest"
                           onChange={e => setSeries(series.map(x => x.id === s.id ? { ...x, series_name: e.target.value } : x))}
-                          title={`rename the series — "(unassigned)" just means the seed couldn't derive it from the variety names`}
+                          title={`pick from the family's own series (derived from its variety names) or type — "(unassigned)" just means nothing derived it yet`}
                           style={{ width: 130, padding: "3px 6px", borderRadius: 6, border: `1.5px solid ${C.creamBr}`, fontSize: 12, fontWeight: 700, fontFamily: FONT }} />
                       </td>
                       <td style={td}>
@@ -849,6 +849,23 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
                   {!series.length && <tr><td style={td} colSpan={6}>No series yet — add one below; new door-adds fall back to "(unassigned)" until their series exists.</td></tr>}
                 </tbody>
               </table>
+              {/* series suggestions = this family's own variety-name prefixes (Caleb 7/29:
+                  "should be a dropdown or auto populate based on an item I added") */}
+              <datalist id="fp-series-suggest">
+                {(() => {
+                  const names = Object.values(vmap).map(v => String(v.variety || "").replace(/[™®]/g, " ").replace(/\s+/g, " ").trim()).filter(Boolean);
+                  const two = {};
+                  names.forEach(n => { const t = n.split(" "); if (t.length >= 3) two[`${t[0]} ${t[1]}`] = (two[`${t[0]} ${t[1]}`] || 0) + 1; });
+                  const sug = new Set();
+                  names.forEach(n => {
+                    const t = n.split(" ");
+                    const p2 = t.length >= 3 ? `${t[0]} ${t[1]}` : null;
+                    if (p2 && two[p2] >= 2) sug.add(p2);
+                    else if (t.length >= 2) sug.add(t[0]);
+                  });
+                  return [...sug].sort().map(nm => <option key={nm} value={nm} />);
+                })()}
+              </datalist>
               <button disabled={busy} onClick={async () => {
                   // one placeholder at a time — a second upsert would land on the SAME
                   // (recipe_id,'New series') row and clobber unsaved local edits
