@@ -1265,7 +1265,7 @@ function CultureCard({ recipe, series, locked, setRecipe, setSeries }) {
   );
 
   return (
-    <div style={{ ...card }}>
+    <div style={{ background: "#fff", border: `1px solid ${C.border}`, borderRadius: 12, marginBottom: 12 }}>
       <button onClick={() => setOpen(o => !o)}
         style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", background: "none", border: "none", padding: "10px 14px", cursor: "pointer", fontFamily: FONT, textAlign: "left" }}>
         <b style={{ fontSize: 12.5, color: C.text }}>📖 Culture — breeder guidance for {recipe.crop_name}</b>
