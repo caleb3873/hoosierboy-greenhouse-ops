@@ -51,9 +51,24 @@ function classForm(raw) {
 const genusOf = (crop, botanical, variety) => tidy((botanical || crop || variety || '').split(/\s+/)[0] || '');
 const titleCase = s => String(s).toLowerCase().replace(/\b([a-z])/g, c => c.toUpperCase());
 
+// Ball price lists abbreviate hard — expand truncations so keys line up with
+// Express/EHR (Caleb 7/29: "Petunia PetVeg Headlne White" hid Headline White).
+const BALL_WORD = {
+  SupCal: "Supercal", Sunpatns: "Sunpatiens", Bbycakes: "Babycakes", Sumr: "Summer",
+  Ameth: "Amethyst", Ltl: "Little", Dbl: "Double", Drm: "Dream", Buttrmlk: "Buttermilk",
+  Viol: "Violet", Ipd: "Improved", Angl: "Angel", Earrng: "Earrings", Vlvt: "Velvet",
+  Wht: "White", Blk: "Black", Org: "Orange", Prpl: "Purple", Slmn: "Salmon", Yel: "Yellow",
+  Tumblna: "Tumbelina", Grandaisy: "Grandaisy", Headlnr: "Headliner", Headlne: "Headliner",
+  Elec: "Electric", Purp: "Purple", Vn: "Vein", Grn: "Green", Bl: "Blue", Rd: "Red",
+};
+const BALL_ABBREV = new Set(["geris", "gerzon", "geriv", "petveg", "calib", "impng", "impaex", "verbeveg"]);
+
 // ---------- breeder from filename ----------
 function breederFromName(fn) {
   const f = fn.toLowerCase();
+  // bfp = Ball FloraPlant — same channel as Ball's own list; unifying the supplier
+  // lets the recency rule retire the older of the two (Caleb 7/29)
+  if (/^bfp\b|ball ?flora/.test(f) || /^ball\./.test(f)) return 'Ball';
   if (/danziger/.test(f)) return 'Danziger';
   if (/dummen|dümmen|red fox|oglevee|barberet|fides|fid0|ogl0|dum0|bar1/.test(f)) return 'Dummen';
   if (/syngenta|fis0|fis1/.test(f)) return 'Syngenta';
@@ -238,7 +253,22 @@ function parseFile(broker, file) {
       // Persistent manual aliases for one-off naming differences a broker can't normalize away —
       // e.g. EHR appends color to named dahlias ("Karma Amanda Violet White Bicolor") while Express
       // has just "Karma Amanda". Maintained in scripts/broker_aliases.json; reapplied every run.
+      if (broker === 'Ball') {
+        // drop the CamelCase crop-abbrev lead token ("GerIS", "PetVeg") when it echoes
+        // the crop column, then expand Ball truncations token-wise
+        let btoks = cleanVariety.split(/\s+/);
+        const t0 = btoks[0] || '';
+        const t0l = t0.toLowerCase().replace(/[^a-z]/g, '');
+        const cropLetters = (cropV || botanical || '').toLowerCase().replace(/[^a-z]/g, '');
+        const camel = /^[A-Z][a-z]+[A-Z]/.test(t0);
+        if (btoks.length > 1 && t0l.length >= 4 && cropLetters.startsWith(t0l.slice(0, 3)) && (camel || BALL_ABBREV.has(t0l))) btoks = btoks.slice(1);
+        cleanVariety = btoks.map(w => BALL_WORD[w] || w).join(' ');
+      }
+      // Express Raker lines carry a cell-size suffix ("Chenille-51c") — not part of the name
+      cleanVariety = cleanVariety.replace(/\s*-\s*\d+c\b/gi, '').replace(/\s+/g, ' ').trim();
       cleanVariety = ALIASES[cleanVariety.toLowerCase()] || cleanVariety;
+      // Dickman quotes freight as TBD — Caleb 7/29: carry 4¢/plant as the freight estimate
+      if (breeder === 'Dickman' && landed != null) { landed = landed + 0.04; }
       const vkey = makeKey(cropV, botanical, cleanVariety);
       // Consistent display name "Genus Series Cultivar" — canonical genus prefixed, the variety's
       // own word order kept so the series leads (e.g. "Calibrachoa Lia Spark Pink"); drop a leading

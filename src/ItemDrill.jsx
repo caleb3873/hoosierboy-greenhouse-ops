@@ -869,6 +869,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
         )}
 
         {/* combo components — editable */}
+        {agg && agg.comps.length > 0 && <LinerVsUrcCard detail={detail} />}
         {agg && agg.comps.length > 0 && (
           <div style={{ background: "#fff", border: `1px solid ${C.border}`, borderRadius: 10, padding: "11px 13px", marginTop: 12 }}>
             <div style={{ fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", marginBottom: 6 }}>
@@ -1119,6 +1120,122 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
           </div>
         );
       })()}
+    </div>
+  );
+}
+
+// ── 🔁 Liner vs URC — Caleb 7/29: "bringing in liners for our high-end 16"/14"
+// baskets… I want to see if it is economical." Side-by-side per component: our
+// current route (URC/CC price + stick labor + tray share) against the best ROOTED
+// quote (liner/plug/rooted — Dickman, Raker, Green Circle…). Dickman landed already
+// carries the 4¢ freight estimate, so the comparison is honest. Beyond the dollars,
+// the liner route removes rooting weeks and prop-failure/shortage risk — the money
+// column tells you what that insurance costs.
+function LinerVsUrcCard({ detail }) {
+  const sb = getSupabase();
+  const [open, setOpen] = useState(false);
+  const [rows, setRows] = useState(null);
+
+  useEffect(() => {
+    if (!open || !detail || rows) return;
+    (async () => {
+      const baskets = detail.parents.reduce((a, p) => a + (+p.qty_pots || 0), 0) || 1;
+      const propOf = ch => {
+        if (!["URC", "CALL"].includes(ch.prop_method)) return 0;
+        const tray = detail.trays?.find(t => t.id === ch.prop_tray_id) || detail.defaultTray;
+        return (detail.stick || 0) + (tray ? +tray.cost_per_unit / (+tray.cells_per_flat || 1) : 0);
+      };
+      const by = {};
+      const add = (variety_id, plants, liner, prop) => {
+        if (!variety_id || !(plants > 0)) return;
+        const o = by[variety_id] || (by[variety_id] = { variety_id, plants: 0, liner: 0, prop });
+        o.plants += plants;
+        if (liner > 0) o.liner = liner;
+      };
+      detail.parents.forEach(p => add(p.variety_id, (+p.qty_pots || 0) * (+p.ppp || 1), +p.liner_unit_cost || 0, propOf(p)));
+      detail.children.forEach(c => add(c.variety_id, +c.qty_plants_ordered || 0, +c.liner_unit_cost || 0, propOf(c)));
+      const list = Object.values(by);
+      const keys = [...new Set(list.map(r => detail.vmap[r.variety_id]?.variety_key).filter(Boolean))];
+      let best = {};
+      if (keys.length) {
+        const { data: q } = await sb.from("broker_prices")
+          .select("variety_key,broker,supplier,form_class,landed")
+          .in("variety_key", keys).in("form_class", ["liner", "plug", "rooted"])
+          .gt("landed", 0).order("landed", { ascending: true });
+        (q || []).forEach(r => { if (!best[r.variety_key]) best[r.variety_key] = r; });   // cheapest rooted per key
+      }
+      setRows(list.map(r => {
+        const v = detail.vmap[r.variety_id];
+        const rooted = v?.variety_key ? best[v.variety_key] : null;
+        const per = r.plants / baskets;
+        return {
+          name: v ? `${v.crop_name || ""} ${v.variety || ""}`.trim() : "?",
+          per: Math.round(per * 10) / 10,
+          urcPlant: r.liner + r.prop,
+          urcBasket: (r.liner + r.prop) * per,
+          rooted, linBasket: rooted ? rooted.landed * per : null,
+        };
+      }));
+    })();
+  }, [open, detail, rows, sb]);
+
+  const quoted = (rows || []).filter(r => r.rooted);
+  const urcTot = quoted.reduce((a, r) => a + r.urcBasket, 0);
+  const linTot = quoted.reduce((a, r) => a + r.linBasket, 0);
+  const missing = (rows || []).filter(r => !r.rooted);
+
+  return (
+    <div style={{ background: "#fff", border: `1px solid ${C.border}`, borderRadius: 10, padding: "11px 13px", marginTop: 12 }}>
+      <button onClick={() => setOpen(o => !o)}
+        style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+        <span style={{ fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase" }}>🔁 Liner vs URC — worth buying rooted?</span>
+        <span style={{ marginLeft: "auto", fontSize: 11, color: C.muted }}>{open ? "▾ hide" : "▸ compare"}</span>
+      </button>
+      {open && rows == null && <div style={{ fontSize: 12, color: C.muted, marginTop: 8 }}>pricing both routes…</div>}
+      {open && rows != null && (
+        <div style={{ marginTop: 8 }}>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12 }}>
+              <thead><tr>
+                {["Component", "/basket", "Our route /plant", "Liner route /plant", "Δ /basket"].map((h, i) => (
+                  <th key={h} style={{ textAlign: i ? "right" : "left", padding: "3px 8px 3px 0", fontSize: 9.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap" }}>{h}</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {rows.map((r, i) => {
+                  const d = r.linBasket != null ? r.linBasket - r.urcBasket : null;
+                  return (
+                    <tr key={i} style={{ borderBottom: `1px solid #f0f4ec` }}>
+                      <td style={{ padding: "4px 8px 4px 0", fontWeight: 700 }}>{r.name}</td>
+                      <td style={{ padding: "4px 8px 4px 0", textAlign: "right" }}>{r.per}</td>
+                      <td style={{ padding: "4px 8px 4px 0", textAlign: "right" }}>${r.urcPlant.toFixed(3)} <span style={{ color: C.muted, fontSize: 10 }}>incl. stick+tray</span></td>
+                      <td style={{ padding: "4px 8px 4px 0", textAlign: "right" }}>
+                        {r.rooted
+                          ? <>${(+r.rooted.landed).toFixed(3)} <span style={{ color: C.muted, fontSize: 10 }}>{r.rooted.supplier || r.rooted.broker} · {r.rooted.form_class}</span></>
+                          : <span style={{ color: C.amber, fontSize: 11 }}>no rooted quote</span>}
+                      </td>
+                      <td style={{ padding: "4px 0", textAlign: "right", fontWeight: 800, color: d == null ? C.muted : d > 0 ? C.red : C.green }}>
+                        {d == null ? "—" : `${d > 0 ? "+" : ""}$${d.toFixed(2)}`}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {quoted.length > 0 && (
+            <div style={{ marginTop: 8, background: linTot <= urcTot ? "#eaf5e9" : "#fbf1df", border: `1px solid ${linTot <= urcTot ? "#c2e0be" : "#ecd9b8"}`, borderRadius: 9, padding: "8px 11px", fontSize: 12.5 }}>
+              Plants per basket, {quoted.length} quoted component{quoted.length > 1 ? "s" : ""}: our route <b>${urcTot.toFixed(2)}</b> · liner route <b>${linTot.toFixed(2)}</b> ·{" "}
+              <b style={{ color: linTot > urcTot ? C.red : C.green }}>{linTot > urcTot ? "+" : ""}${(linTot - urcTot).toFixed(2)}/basket</b>
+              <div style={{ fontSize: 11, color: C.muted, marginTop: 3 }}>
+                Liner route also drops the rooting weeks and the prop-failure / shortage exposure — the Δ is what that insurance costs.
+                Transplant labor is a wash (both routes plant once); sticking labor is already inside "our route".
+              </div>
+              {missing.length > 0 && <div style={{ fontSize: 11, color: C.amber, marginTop: 3 }}>⚠ {missing.length} component{missing.length > 1 ? "s" : ""} with no rooted quote ({missing.map(m => m.name).join(", ")}) — totals compare the quoted ones only.</div>}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

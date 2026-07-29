@@ -32,7 +32,9 @@ function tidy(s) {
   s = s.replace(/\([^)]*\)/g, ' ');                       // parenthetical codes
   s = s.replace(/\b20\d\d\b/g, ' ');                       // stray years
   s = s.replace(/\b\d{2,4}\s*c\b/g, ' ');                    // tray-cell suffixes: "Juncus Blue Arrows-128c"
-  s = s.replace(/-?(urc|cc|rc|tc|liner|plug|pellet|callused|unrooted|rooted)\b/g, ' ');
+  // leading \b is load-bearing: without it "headLINER"/"headlinER" style series names
+  // lose their tails ("Headliner" → "head" — Caleb hit this 7/29 hunting Headliner White)
+  s = s.replace(/\b-?(urc|cc|rc|tc|liner|plug|pellet|callused|unrooted|rooted)\b/g, ' ');
   s = s.replace(/\bn\/?g\b/g, ' ').replace(/\bnew guinea\b/g, ' ');
   s = s.replace(/\bmain street\b/g, 'mainstreet');          // Dümmen Coleus series: EHR "Main Street" == Express "Mainstreet"
   s = s.replace(/\bimproved\b/g, ' ').replace(/\bimp\b/g, ' ');
