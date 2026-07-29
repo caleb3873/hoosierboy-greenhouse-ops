@@ -6,13 +6,38 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { getSupabase } from "./supabase";
 import { useAuth } from "./Auth";
-import { rippleTasks } from "./ripple";
+import { rippleTasks, isoWeekOf } from "./ripple";
+import AddPlantDoor from "./AddPlantDoor";
 
 const C = { dark: "#1e2d1a", light: "#7fb069", cream: "#f3f8ee", creamBr: "#cfe3bd",
   muted: "#7a8c74", text: "#2f3b2a", amber: "#c9812a", amberBg: "#fbf1df", red: "#c0492b",
   redBg: "#fae9e5", border: "#e4ecdd", chip: "#eaf2e0", green: "#2e7d32" };
 const FONT = "'DM Sans','Segoe UI',sans-serif";
 const wkFmt = (yr, wk) => (yr == null || wk == null) ? "—" : `${String(yr).slice(2)}${String(wk).padStart(2, "0")}`;
+
+// ONE DISPLAY UNIT (Caleb 7/29): the family page speaks POTS — always, never cases,
+// even though 4.5" sells in cases. Rows arrive in two native encodings (pot-entered:
+// qty_pots = pots · flat-entered: qty_pots = cases/flats) — normalize on read,
+// denormalize on write. Plants stay qty_pots × row.ppp under BOTH encodings.
+const potFactor = r => {
+  const ppp = Math.max(1, +r.ppp || 1);
+  const ppu = Math.max(1, +r.plants_per_unit || +r.pack_size || 1);
+  return ppp >= ppu && ppu > 1 ? ppu : 1;   // flat-entered → each stored unit is ppu pots
+};
+const potsOf = r => (+r.qty_pots || 0) * potFactor(r);
+
+// Past-week guard (Caleb 7/29: typed 2615 for 2715) — an item cannot finish in the past.
+// Returns true (and explains) when the ready week already went by.
+function readyInPast(yr, wk) {
+  const n = new Date();
+  const ds = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
+  const cw = isoWeekOf(ds), cy = n.getFullYear();
+  if (yr < cy || (yr === cy && wk < cw)) {
+    window.alert(`⚠ ${String(yr).slice(2)}${String(wk).padStart(2, "0")} is in the PAST — we're in wk${cw} of ${cy}. If you meant next year, type ${String(yr + 1).slice(2)}${String(wk).padStart(2, "0")}.`);
+    return true;
+  }
+  return false;
+}
 // size label → item-name prefix, same convention the Add-a-plant door writes with
 function famSizePrefix(sizeLabel) {
   let m;
@@ -52,7 +77,7 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
       const { data: ser } = await sb.from("crop_recipe_series").select("*").eq("recipe_id", recipeId).order("series_name");
       setSeries(ser || []);
       const { data: sc } = await sb.from("scheduled_crops")
-        .select("id,item_name,variety_id,qty_pots,ppp,qty_plants_ordered,plant_week,plant_year,ship_week,ship_year,ready_week,ready_year,broker,supplier,liner_unit_cost,prop_method,bench_id,is_combo_component")
+        .select("id,item_name,variety_id,qty_pots,ppp,pack_size,plants_per_unit,qty_plants_ordered,plant_week,plant_year,ship_week,ship_year,ready_week,ready_year,broker,supplier,liner_unit_cost,prop_method,bench_id,is_combo_component")
         .eq("plan_id", plan.id).eq("recipe_id", recipeId).not("is_combo_component", "is", true).limit(2000);
       setRows(sc || []);
       const vids = [...new Set((sc || []).map(r => r.variety_id).filter(Boolean))];
@@ -86,6 +111,14 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
           (st || []).forEach(s => { const it = skuToItem[s.sku]; soldMap[it] = (soldMap[it] || 0) + (+s.units || 0); });
         }
       }
+      // sales arrive in SELLABLE UNITS (cases for 4.5") — convert to POTS here, once,
+      // so every sold figure and sell-through on this page is pots vs pots
+      const packByItem = {};
+      (sc || []).forEach(r => {
+        const ppu = Math.max(1, +r.plants_per_unit || +r.pack_size || 1);
+        packByItem[r.item_name] = Math.max(packByItem[r.item_name] || 1, ppu);
+      });
+      Object.keys(soldMap).forEach(it => { soldMap[it] = soldMap[it] * (packByItem[it] || 1); });
       setSoldByItem(soldMap);
     })();
   }, [sb, plan.id, recipeId, tick]); // eslint-disable-line
@@ -166,7 +199,7 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
         const o = byVar[key] || (byVar[key] = { variety: key, vkey: v?.variety_key, rows: [], pots: 0,
           liner: null, broker: null, items: new Set(), benches: new Set() });
         o.rows.push(r);
-        o.pots += +r.qty_pots || 0;
+        o.pots += potsOf(r);
         o.items.add(r.item_name);
         if (r.bench_id && bmap[r.bench_id]) o.benches.add(bmap[r.bench_id]);
         if (r.liner_unit_cost != null && r.liner_unit_cost !== 1) o.liner = +r.liner_unit_cost;
@@ -182,7 +215,7 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
     const remaining = { ...soldByItem };
     gs.forEach(g => {
       const itemPots = {};
-      g.rows.forEach(r => { itemPots[r.item_name] = (itemPots[r.item_name] || 0) + (+r.qty_pots || 0); });
+      g.rows.forEach(r => { itemPots[r.item_name] = (itemPots[r.item_name] || 0) + potsOf(r); });
       g.itemSold = {};
       Object.entries(itemPots).forEach(([it, pots]) => {
         const take = Math.min(remaining[it] || 0, pots > 0 ? pots : (remaining[it] || 0));
@@ -196,11 +229,11 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
     });
     gs.forEach(g => {
       const itemPots = {};
-      g.rows.forEach(r => { itemPots[r.item_name] = (itemPots[r.item_name] || 0) + (+r.qty_pots || 0); });
+      g.rows.forEach(r => { itemPots[r.item_name] = (itemPots[r.item_name] || 0) + potsOf(r); });
       g.vars.forEach(vr => {
         vr.sold = 0;
         const mine = {};
-        vr.rows.forEach(r => { mine[r.item_name] = (mine[r.item_name] || 0) + (+r.qty_pots || 0); });
+        vr.rows.forEach(r => { mine[r.item_name] = (mine[r.item_name] || 0) + potsOf(r); });
         Object.entries(mine).forEach(([it, p]) => {
           const tot = itemPots[it] || 1;
           vr.sold += Math.round((g.itemSold[it] || 0) * (tot > 0 ? p / tot : 1));
@@ -228,6 +261,7 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
   const [ctx, setCtx] = useState(null);   // {x, y, vr, gKey, newWk} — right-click action menu
   const [flashKey, setFlashKey] = useState(null);   // follow the group you just edited across a re-sort
   const [dupG, setDupG] = useState(null);           // {key, wk} — inline "⧉ New round" week input per group
+  const [addDoor, setAddDoor] = useState(null);     // {readyWk} — ＋ Add a color opens THE door, group week prefilled
   const [ripple, setRipple] = useState(null);       // {moved, flags[]} — last ripple result banner
 
   // whole-family 2026 sales by NAME match (size prefix + crop), independent of the
@@ -272,6 +306,7 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
     const ready = digits.length <= 2 ? +digits : +digits.slice(2);
     const readyYear = digits.length <= 2 ? (g.plantYear ?? plan.year ?? 2027) : 2000 + +digits.slice(0, 2);
     if (!ready || ready > 52) return;
+    if (readyInPast(readyYear, ready)) return;
     const wrap = (wk, yr) => wk <= 0 ? { wk: wk + 52, yr: yr - 1 } : { wk, yr };
     const acc = { moved: 0, flags: [] };
     setBusy(true);
@@ -350,6 +385,7 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
     const ready = digits.length <= 2 ? +digits : +digits.slice(2);
     const readyYear = digits.length <= 2 ? (plan.year ?? 2027) : 2000 + +digits.slice(0, 2);
     if (!ready || ready > 52 || recipe?.crop_weeks == null) return;
+    if (readyInPast(readyYear, ready)) return;
     const wrap = (wk, yr) => wk <= 0 ? { wk: wk + 52, yr: yr - 1 } : { wk, yr };
     const sSpec = seriesOf(vr.variety) || {};
     const rooted = /^(URC|CALL)/i.test(sSpec.form || "");
@@ -368,6 +404,7 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
     const ready = digits.length <= 2 ? +digits : +digits.slice(2);
     const readyYear = digits.length <= 2 ? (g.plantYear ?? plan.year ?? 2027) : 2000 + +digits.slice(0, 2);
     if (!ready || ready > 52) return;
+    if (readyInPast(readyYear, ready)) return;
     const wrap = (wk, yr) => wk <= 0 ? { wk: wk + 52, yr: yr - 1 } : { wk, yr };
     setBusy(true);
     const { data: full } = await sb.from("scheduled_crops").select("*").in("id", g.rows.map(r => r.id));
@@ -562,7 +599,7 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
     if (!rows || !recipe) return [];
     const ppu = Math.max(1, Math.round(+recipe.pots_per_unit || 1));
     const potsByItem = {};
-    rows.forEach(r => { if (!r.is_combo_component) potsByItem[r.item_name] = (potsByItem[r.item_name] || 0) + (+r.qty_pots || 0); });
+    rows.forEach(r => { if (!r.is_combo_component) potsByItem[r.item_name] = (potsByItem[r.item_name] || 0) + potsOf(r); });
     const out = [];
     Object.entries(potsByItem).forEach(([it, pots]) => {
       const t = tmap[it];
@@ -587,11 +624,16 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
   async function applyTarget(g) {
     const its = (rows || []).filter(r => r.item_name === g.item && !r.is_combo_component);
     if (!its.length) return;
-    const cur = its.reduce((a, r) => a + (+r.qty_pots || 0), 0);
-    const exact = its.map(r => cur > 0 ? g.wantPots * (+r.qty_pots || 0) / cur : g.wantPots / its.length);
-    const flo = exact.map(Math.floor);
-    const rem = g.wantPots - flo.reduce((a, b) => a + b, 0);
-    exact.map((e, i) => ({ i, fr: e - flo[i] })).sort((a, b) => b.fr - a.fr).slice(0, Math.max(0, rem)).forEach(x => flo[x.i]++);
+    // wantPots is POTS; rows write back in their native unit (pots or whole flats)
+    const factors = its.map(potFactor);
+    const cur = its.reduce((a, r, i) => a + (+r.qty_pots || 0) * factors[i], 0);
+    const exactNative = its.map((r, i) =>
+      cur > 0 ? (g.wantPots * ((+r.qty_pots || 0) * factors[i]) / cur) / factors[i] : (g.wantPots / its.length) / factors[i]);
+    const flo = exactNative.map(Math.floor);
+    let remPots = g.wantPots - flo.reduce((a, n, i) => a + n * factors[i], 0);
+    for (const o of exactNative.map((e, i) => ({ i, fr: e - flo[i] })).sort((a, b) => b.fr - a.fr)) {
+      if (remPots >= factors[o.i]) { flo[o.i]++; remPots -= factors[o.i]; }
+    }
     setBusy(true);
     let failed = 0;
     for (let i = 0; i < its.length; i++) {
@@ -615,15 +657,22 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
     setBusy(false); setTick(t => t + 1);
   }
 
-  // plan-qty edit: distribute a variety's new total across its bench rows (largest remainder)
+  // plan-qty edit: the input speaks POTS; rows store their native unit (pots OR flats) —
+  // distribute by pot share, write back native, keep whole flats whole (largest remainder
+  // measured in pots, granted one native unit at a time)
   async function setVarQty(vr, newTotal) {
-    const tot = Math.max(0, Math.round(newTotal));
-    const cur = vr.pots || 0;
-    if (tot === cur) return;
-    const exact = vr.rows.map(r => cur > 0 ? tot * (+r.qty_pots || 0) / cur : tot / vr.rows.length);
-    const flo = exact.map(Math.floor);
-    let rem = tot - flo.reduce((a, b) => a + b, 0);
-    exact.map((e, i) => ({ i, fr: e - flo[i] })).sort((a, b) => b.fr - a.fr).slice(0, Math.max(0, rem)).forEach(x => flo[x.i]++);
+    const tot = Math.max(0, Math.round(newTotal));   // POTS
+    const factors = vr.rows.map(potFactor);
+    const curPots = vr.rows.reduce((a, r, i) => a + (+r.qty_pots || 0) * factors[i], 0);
+    if (tot === curPots) return;
+    const cur = curPots;
+    const exactNative = vr.rows.map((r, i) =>
+      cur > 0 ? (tot * ((+r.qty_pots || 0) * factors[i]) / cur) / factors[i] : (tot / vr.rows.length) / factors[i]);
+    const flo = exactNative.map(Math.floor);
+    let remPots = tot - flo.reduce((a, n, i) => a + n * factors[i], 0);
+    for (const o of exactNative.map((e, i) => ({ i, fr: e - flo[i] })).sort((a, b) => b.fr - a.fr)) {
+      if (remPots >= factors[o.i]) { flo[o.i]++; remPots -= factors[o.i]; }
+    }
     setBusy(true);
     for (let i = 0; i < vr.rows.length; i++) {
       if (flo[i] !== +vr.rows[i].qty_pots) await sb.from("scheduled_crops").update({ qty_pots: flo[i] }).eq("id", vr.rows[i].id);
@@ -830,8 +879,8 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
                 <b style={{ minWidth: 180 }}>{g.item}</b>
                 {g.drop
                   ? <span style={{ color: "#c0492b", fontWeight: 700 }}>✕ dropped in the walkthrough → rows go to 0 ({g.pots.toLocaleString()} pots today)</span>
-                  : <span>
-                      🎯 <b>{g.wantU.toLocaleString()}</b> {g.ppu > 1 ? `cases (= ${g.wantPots.toLocaleString()} pots)` : "units"} · rows today <b>{g.pots.toLocaleString()}</b> pots ·{" "}
+                  : <span title={g.ppu > 1 ? `the walkthrough number was ${g.wantU.toLocaleString()} cases of ${g.ppu} — this page speaks pots only` : undefined}>
+                      🎯 target <b>{g.wantPots.toLocaleString()} pots</b> · rows today <b>{g.pots.toLocaleString()} pots</b> ·{" "}
                       <b style={{ color: g.delta > 0 ? "#2e7d32" : "#c0492b" }}>{g.delta > 0 ? "+" : ""}{g.delta.toLocaleString()} pots</b>
                     </span>}
                 {g.by && <span style={{ fontSize: 10.5, color: C.muted }}>by {g.by}</span>}
@@ -891,11 +940,18 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
                       <button onClick={() => setDupG(null)} style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", fontSize: 12, padding: 0 }}>✕</button>
                     </>
                   ) : (
-                    <button disabled={busy} onClick={() => setDupG({ key: g.key, wk: "" })}
-                      title="ADD a planting group: clone this group's colors into a NEW round at a different finish week — quantities copy as-is, benches unassigned, supply unordered"
-                      style={{ padding: "4px 10px", borderRadius: 7, border: `1.5px solid ${C.light}`, background: "#fff", color: C.dark, fontWeight: 800, fontSize: 11, cursor: "pointer", fontFamily: FONT }}>
-                      ⧉ New round
-                    </button>
+                    <>
+                      <button disabled={busy} onClick={() => setAddDoor({ readyWk: g.ready })}
+                        title="add a color to this family through THE door — broker catalogs only, this group's finish week prefilled"
+                        style={{ padding: "4px 10px", borderRadius: 7, border: `1.5px solid ${C.light}`, background: "#fff", color: C.dark, fontWeight: 800, fontSize: 11, cursor: "pointer", fontFamily: FONT }}>
+                        ＋ Add a color
+                      </button>
+                      <button disabled={busy} onClick={() => setDupG({ key: g.key, wk: "" })}
+                        title="ADD a planting group: clone this group's colors into a NEW round at a different finish week — quantities copy as-is, benches unassigned, supply unordered"
+                        style={{ padding: "4px 10px", borderRadius: 7, border: `1.5px solid ${C.light}`, background: "#fff", color: C.dark, fontWeight: 800, fontSize: 11, cursor: "pointer", fontFamily: FONT }}>
+                        ⧉ New round
+                      </button>
+                    </>
                   )}
                 </span>
               </div>
@@ -1052,6 +1108,13 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
         <div style={{ fontSize: 10.5, color: C.muted, textAlign: "center", marginTop: 4 }}>
           Sold figures come from the canonical SKU map (item → sku → sales), allocated FIFO across the groups that grew each item — combo-modeled lines included. Qty edits redistribute across bench rows (largest remainder) and log to the item history. ⚠ drift badges = plan weeks disagree with the recipe's chain.
         </div>
+
+        {addDoor && (
+          <AddPlantDoor plan={plan} initialReadyWk={addDoor.readyWk ?? undefined}
+            onClose={() => setAddDoor(null)}
+            onCreated={() => setTick(t => t + 1)}
+            onOpenFamily={() => { /* already here — the reload shows the new color */ }} />
+        )}
 
         {/* closure button — everything already saved live; humans still deserve a "done".
             EXCEPT an unlocked recipe: those drafts only commit on 💾 Save, so don't lie. */}

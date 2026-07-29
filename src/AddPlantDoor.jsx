@@ -44,7 +44,7 @@ const stripCrop = (crop, name) => {
   return v.toLowerCase().startsWith(c.toLowerCase() + " ") ? v.slice(c.length + 1) : v;
 };
 
-export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily }) {
+export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, initialReadyWk }) {
   const sb = getSupabase();
   const { displayName } = useAuth();
   const planYear = plan.year || new Date().getFullYear();
@@ -55,9 +55,9 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily })
   const [recipeId, setRecipeId] = useState(null);
   const [series, setSeries] = useState([]);          // series of the chosen recipe
   const [quote, setQuote] = useState(null);          // {landed, broker, supplier, alts}
-  const [mode, setMode] = useState("date");
+  const [mode, setMode] = useState(initialReadyWk != null ? "week" : "date");
   const [readyDate, setReadyDate] = useState(`${planYear}-04-15`);
-  const [readyWkIn, setReadyWkIn] = useState("16");
+  const [readyWkIn, setReadyWkIn] = useState(initialReadyWk != null ? String(initialReadyWk) : "16");
   const [units, setUnits] = useState("");
   const [itemName, setItemName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -242,18 +242,30 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily })
     })();
   }, [recipe, variety, series, sb]); // eslint-disable-line
 
-  // the chain: ready − crop = plant · plant − root = ship (URC/CALL; plug/seed ship at plant)
+  // the chain: ready − crop = plant · plant − root = ship (URC/CALL; plug/seed ship at plant).
+  // Week input takes "15" (plan year) or YYWW ("2715"); a PAST ready week blocks confirm —
+  // Caleb typed 2615 for 2715 and nothing said a word (7/29).
   const chain = useMemo(() => {
     if (!recipe) return null;
-    const readyWk = mode === "date"
-      ? (readyDate ? isoWeek(new Date(readyDate + "T00:00:00")) : null)
-      : Math.max(1, Math.min(52, parseInt(readyWkIn, 10) || 0)) || null;
-    if (!readyWk || recipe.crop_weeks == null) return { readyWk, incomplete: true };
-    const p = wrapWk(readyWk - Math.round(+recipe.crop_weeks), planYear);
+    let readyWk = null, readyYear = planYear;
+    if (mode === "date") {
+      if (readyDate) { readyWk = isoWeek(new Date(readyDate + "T00:00:00")); readyYear = +readyDate.slice(0, 4); }
+    } else {
+      const d = String(readyWkIn).replace(/\D/g, "");
+      if (d.length > 2) { readyYear = 2000 + +d.slice(0, 2); readyWk = +d.slice(2) || null; }
+      else if (d) readyWk = Math.max(1, Math.min(53, +d));
+    }
+    if (!readyWk || readyWk > 53 || recipe.crop_weeks == null) return { readyWk, incomplete: true };
+    const n = new Date();
+    const curWk = isoWeek(n), curYr = n.getFullYear();
+    if (readyYear < curYr || (readyYear === curYr && readyWk < curWk)) {
+      return { readyWk, readyYear, past: true, incomplete: true, curWk, curYr };
+    }
+    const p = wrapWk(readyWk - Math.round(+recipe.crop_weeks), readyYear);
     const rooted = /^(URC|CALL)/i.test(sMatch?.form || "");
     const root = rooted ? Math.round(+(sMatch?.rooting_weeks ?? 0)) : 0;
     const s = wrapWk(p.wk - root, p.year);
-    return { readyWk, readyYear: planYear, plant: p, ship: s, rooted, root };
+    return { readyWk, readyYear, plant: p, ship: s, rooted, root };
   }, [recipe, sMatch, mode, readyDate, readyWkIn, planYear]);
 
   // item-name prefill whenever the single pick changes (stays editable)
@@ -651,6 +663,8 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily })
               <span style={{ flex: 1, fontFamily: MONO, fontSize: 12.5 }}>
                 {chain && !chain.incomplete
                   ? <>{chain.rooted ? `arrive/stick ${yyww(chain.ship.wk, chain.ship.year)} → ` : ""}plant <b>{yyww(chain.plant.wk, chain.plant.year)}</b> → ready <b style={{ color: C.green }}>{yyww(chain.readyWk, chain.readyYear)}</b></>
+                  : chain?.past
+                  ? <span style={{ color: "#c0492b", fontWeight: 800 }}>⚠ {yyww(chain.readyWk, chain.readyYear)} is in the PAST (we're in wk{chain.curWk} of {chain.curYr}) — check the year</span>
                   : <span style={{ color: C.muted }}>set a ready date…</span>}
               </span>
               <span style={{ fontFamily: MONO, fontSize: 9.5, color: C.muted }}>← derived</span>
