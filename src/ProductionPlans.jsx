@@ -16,6 +16,7 @@ import FamilyAdmin from "./FamilyAdmin";
 import { plantOrder } from "./shared";
 import OrderReconciliation from "./OrderReconciliation";
 import FamilyPage from "./FamilyPage";
+import PotOrders from "./PotOrders";
 
 const COLORS = {
   bg:        "#f7f8f5",
@@ -339,6 +340,7 @@ const PLAN_TABS = [
   { id: "sales",     label: "📈 Sales vs Plan" },
   { id: "yoy",       label: "⚖ Year over Year" },
   { id: "readydates",label: "📆 Ready & Orders" },
+  { id: "pots",      label: "🪴 Pot Orders" },
   { id: "reconcile", label: "🧾 Reconcile" },
   { id: "categories",label: "🏷 Categories" },
   { id: "orders",    label: "📋 Orders" },
@@ -486,6 +488,7 @@ function PlanDashboard({ plan, initialTab }) {
           {hasData && tab === "sales"     && <SalesVsPlanTab plan={plan} />}
           {hasData && tab === "yoy"       && <YearOverYearTab plan={plan} />}
           {hasData && tab === "readydates" && <ReadyDatesTab plan={plan} />}
+          {hasData && tab === "pots"       && <PotOrders plan={plan} />}
           {hasData && tab === "reconcile" && <OrderReconciliation plan={plan} />}
           {hasData && tab === "categories" && <CategoryProfiles plan={plan} />}
           {hasData && tab === "baskets"    && <BasketPlanner plan={plan} onOpenCombos={() => setTab("combos")} />}

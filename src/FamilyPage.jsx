@@ -303,6 +303,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
   // ── manual quote search + lock (Caleb 7/29) ───────────────────────────────
   // "Don't see the variety quoted from your broker but know it's there? Search
   // and match it yourself so it's permanently attached for future ordering."
+  const [potOpts, setPotOpts] = useState([]);   // finished containers for the pot picker (match a family to a pot)
   const [cropSeriesSug, setCropSeriesSug] = useState([]);   // series names derived from ALL broker quotes for this crop
   const [quoteFor, setQuoteFor] = useState(null);   // {v} direct-to-variety, or {} free search
   const [pendingQuote, setPendingQuote] = useState(null);   // a picked quote awaiting "attach to which color?"
@@ -317,6 +318,23 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
     });
     return Object.values(by).sort((a, b) => String(a.variety).localeCompare(String(b.variety)));
   }, [rows, vmap]);
+  // finished-pot options for the header pot picker — match the family to the pot it ships in
+  useEffect(() => {
+    (async () => {
+      const { data } = await sb.from("containers").select("id,name,sku,cost_per_unit,diameter_in").eq("kind", "finished").order("diameter_in");
+      setPotOpts(data || []);
+    })();
+  }, [sb]);
+  async function setFamilyPot(containerId) {
+    setRecipe(r => ({ ...r, default_container_id: containerId || null }));
+    await sb.from("crop_recipes").update({ default_container_id: containerId || null }).eq("id", recipeId);
+    try {
+      const c = potOpts.find(x => x.id === containerId);
+      await sb.from("item_change_log").insert({ plan_id: plan.id, item_name: `(family) ${recipe?.size_label} ${recipe?.crop_name}`,
+        change_type: "pot_matched", detail: { container: c?.name || null, sku: c?.sku || null }, changed_by: displayName || null, source: "family-page" });
+    } catch { /* audit must not block */ }
+  }
+
   // series dropdown suggestions come FROM THE QUOTES (Caleb 7/29: on Cuphea it only
   // showed Enchantia — the family's own — but Ball/Express carry FloriGlory, Sweet Talk,
   // Cubano, Vermillionaire…). Derive series from every broker quote's ORIGINAL name for
@@ -839,6 +857,16 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
           </div>
           <div style={{ fontSize: 12, color: C.muted }}>{groups.length} planting group{groups.length === 1 ? "" : "s"} · {Object.keys(vmap).length} varieties · {plan.name}</div>
           <span style={{ flex: 1 }} />
+          {/* match this family to the pot it ships in — feeds the 🪴 Pot Orders ledger live */}
+          <span title="the physical pot this family ships in — drives the pot-order worksheet"
+            style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, color: C.muted, fontWeight: 700 }}>
+            🪴
+            <select value={recipe.default_container_id || ""} onChange={e => setFamilyPot(e.target.value)}
+              style={{ padding: "4px 6px", borderRadius: 7, border: `1.5px solid ${recipe.default_container_id ? C.light : C.amber}`, fontSize: 11.5, fontFamily: FONT, fontWeight: 700, maxWidth: 210, cursor: "pointer", background: recipe.default_container_id ? "#fff" : C.amberBg }}>
+              <option value="">— match a pot —</option>
+              {potOpts.map(c => <option key={c.id} value={c.id}>{c.name}{c.sku ? ` (${c.sku})` : ""}</option>)}
+            </select>
+          </span>
           <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: C.muted }}>✕</button>
         </div>
 
