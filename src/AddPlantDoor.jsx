@@ -13,7 +13,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { getSupabase } from "./supabase";
 import { useAuth } from "./Auth";
-import { wrapWk } from "./shared";
+import { wrapWk, sizeSortVal } from "./shared";
 
 const C = { dark: "#1e2d1a", light: "#7fb069", cream: "#f3f8ee", creamBr: "#cfe3bd",
   muted: "#7a8c74", text: "#2f3b2a", amber: "#c9812a", amberBg: "#fbf1df",
@@ -53,7 +53,7 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
   const [q, setQ] = useState("");
   const [variety, setVariety] = useState(null);      // variety_library row (single-add)
   const [recipes, setRecipes] = useState([]);        // crop_recipes for the crop
-  const [recipeId, setRecipeId] = useState(null);
+  const [sizeSel, setSizeSel] = useState("");         // chosen SIZE label — the recipe is resolved/stubbed from it
   const [series, setSeries] = useState([]);          // series of the chosen recipe
   const [quote, setQuote] = useState(null);          // {landed, broker, supplier, alts}
   const [mode, setMode] = useState(initialReadyWk != null ? "week" : "date");
@@ -63,7 +63,6 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
   const [itemName, setItemName] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  const [newRec, setNewRec] = useState(null);   // {size_label, crop_weeks, pots_per_unit, ppp, form, rooting_weeks}
   const [sizeOptions, setSizeOptions] = useState([]);
   const [sel, setSel] = useState([]);           // catalog hits checked for a family add
   const [famMode, setFamMode] = useState(false);
@@ -89,37 +88,12 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
     return { id, crop_name: crop, variety: vname, variety_key: c.key };
   }
 
-  async function createRecipe() {
-    const cropName = variety?.crop_name || (sel.length ? titleCase(sel[0].crop) : null);
-    if (!cropName || !newRec?.size_label?.trim() || !newRec?.crop_weeks) return;
-    setBusy(true); setErr("");
-    try {
-      const rec = {
-        crop_name: cropName, size_label: newRec.size_label.trim(),
-        crop_weeks: +newRec.crop_weeks, pots_per_unit: Math.max(1, +newRec.pots_per_unit || 1),
-        ppp: Math.max(1, +newRec.ppp || 1), updated_by: displayName || "planner",
-        seeded_from: { source: "add-door", note: "starter recipe — refine on the family page" },
-      };
-      const { data: ins, error } = await sb.from("crop_recipes")
-        .upsert(rec, { onConflict: "crop_name,size_label" }).select("*").single();
-      if (error) throw new Error(error.message);
-      await sb.from("crop_recipe_series").upsert({
-        recipe_id: ins.id, series_name: "(unassigned)", form: newRec.form || null,
-        rooting_weeks: /^(URC|CALL)/i.test(newRec.form || "") && newRec.rooting_weeks ? +newRec.rooting_weeks : null,
-      }, { onConflict: "recipe_id,series_name" });
-      setRecipes(rs => [...rs.filter(r => r.id !== ins.id), ins]);
-      setRecipeId(ins.id); setNewRec(null);
-    } catch (e) { setErr(e.message); }
-    setBusy(false);
-  }
-
-  useEffect(() => {   // distinct size labels across all recipes — suggestions for a starter recipe
-    if (!newRec) return;
+  useEffect(() => {   // the size vocabulary — every size we already carry, for the Size dropdown
     (async () => {
       const { data } = await sb.from("crop_recipes").select("size_label").limit(400);
-      setSizeOptions([...new Set((data || []).map(r => r.size_label))].sort());
+      setSizeOptions([...new Set((data || []).map(r => r.size_label))].sort((a, b) => sizeSortVal(a) - sizeSortVal(b) || a.localeCompare(b)));
     })();
-  }, [newRec, sb]); // eslint-disable-line
+  }, [sb]); // eslint-disable-line
 
   // material search — the broker catalogs ONLY (39k quote lines, by cultivar/series).
   // If nobody quotes it, it doesn't appear: you can't buy a plant with no supplier.
@@ -194,16 +168,18 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
   // crop in play (either lane) → its recipes
   const cropName = variety?.crop_name || (sel.length ? titleCase(sel[0].crop) : null);
   useEffect(() => {
-    if (!cropName) { setRecipes([]); setRecipeId(null); return; }
+    if (!cropName) { setRecipes([]); setSizeSel(""); return; }
     (async () => {
       const { data: recs } = await sb.from("crop_recipes").select("*")
         .ilike("crop_name", cropName).order("size_label");
       setRecipes(recs || []);
-      setRecipeId(recs?.length === 1 ? recs[0].id : null);
+      setSizeSel(recs?.length === 1 ? recs[0].size_label : "");
     })();
   }, [cropName, sb]); // eslint-disable-line
 
-  const recipe = useMemo(() => recipes.find(r => r.id === recipeId) || null, [recipes, recipeId]);
+  // the SIZE drives everything; the recipe is whatever existing recipe carries that size for
+  // this crop (or null → a stub gets created at confirm — you don't have to define it here)
+  const recipe = useMemo(() => recipes.find(r => r.size_label === sizeSel) || null, [recipes, sizeSel]);
   useEffect(() => { setFamPerennial(recipe?.plant_class === "perennial"); }, [recipe]);
 
   // recipe chosen → its series
@@ -247,7 +223,6 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
   // Week input takes "15" (plan year) or YYWW ("2715"); a PAST ready week blocks confirm —
   // Caleb typed 2615 for 2715 and nothing said a word (7/29).
   const chain = useMemo(() => {
-    if (!recipe) return null;
     let readyWk = null, readyYear = planYear;
     if (mode === "date") {
       if (readyDate) { readyWk = isoWeek(new Date(readyDate + "T00:00:00")); readyYear = +readyDate.slice(0, 4); }
@@ -256,12 +231,15 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
       if (d.length > 2) { readyYear = 2000 + +d.slice(0, 2); readyWk = +d.slice(2) || null; }
       else if (d) readyWk = Math.max(1, Math.min(53, +d));
     }
-    if (!readyWk || readyWk > 53 || recipe.crop_weeks == null) return { readyWk, incomplete: true };
+    if (!readyWk || readyWk > 53) return { readyWk, incomplete: true };
     const n = new Date();
     const curWk = isoWeek(n), curYr = n.getFullYear();
     if (readyYear < curYr || (readyYear === curYr && readyWk < curWk)) {
       return { readyWk, readyYear, past: true, incomplete: true, curWk, curYr };
     }
+    // no crop weeks yet (a brand-new size / catalog stub) — the item still lands with its
+    // ready week; plant/ship fill in once the recipe gets crop weeks on the family page
+    if (recipe?.crop_weeks == null) return { readyWk, readyYear, weeksUnknown: true };
     const p = wrapWk(readyWk - Math.round(+recipe.crop_weeks), readyYear);
     const rooted = /^(URC|CALL)/i.test(sMatch?.form || "");
     const root = rooted ? Math.round(+(sMatch?.rooting_weeks ?? 0)) : 0;
@@ -269,27 +247,52 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
     return { readyWk, readyYear, plant: p, ship: s, rooted, root };
   }, [recipe, sMatch, mode, readyDate, readyWkIn, planYear]);
 
-  // item-name prefill whenever the single pick changes (stays editable)
+  // pots-per-unit for a not-yet-created size follows the house convention (4.5" sells in
+  // flats of 10, everything else 1) so the pot math holds even before the recipe exists
+  const inferPPU = sz => /^\s*4\.5"/.test(String(sz || "")) ? 10 : 1;
+  // item-name prefill whenever the single pick / size changes (stays editable)
   useEffect(() => {
-    if (!recipe || !variety) return;
-    setItemName(`${sizePrefix(recipe.size_label)} ${variety.crop_name} ${variety.variety}`.toUpperCase());
-  }, [recipe, variety]);
+    if (!sizeSel || !variety) return;
+    setItemName(`${sizePrefix(sizeSel)} ${variety.crop_name} ${variety.variety}`.toUpperCase());
+  }, [sizeSel, variety]);
 
   const u = Math.max(0, parseInt(units, 10) || 0);
-  const ppu = recipe ? Math.max(1, Math.round(+recipe.pots_per_unit || 1)) : 1;
+  const ppu = recipe ? Math.max(1, Math.round(+recipe.pots_per_unit || 1)) : inferPPU(sizeSel);
   const pots = u * ppu;
   const plants = pots * (recipe ? Math.max(1, Math.round(+recipe.ppp || 1)) : 1);
-  const canConfirm = recipe && variety && chain && !chain.incomplete && u > 0 && itemName.trim() && !busy;
-  const canFamConfirm = famMode && sel.length > 0 && recipe && chain && !chain.incomplete && !busy;
+  // ready week must be valid and not in the past; the recipe/crop-weeks can come LATER
+  const readyOk = chain && chain.readyWk && !chain.past;
+  const canConfirm = variety && sizeSel && readyOk && u > 0 && itemName.trim() && !busy;
+  const canFamConfirm = famMode && sel.length > 0 && sizeSel && readyOk && !busy;
+
+  // resolve the recipe for this crop+size, or STUB one silently — you add products to the
+  // catalog by size; the recipe details (crop weeks, prop, tray) get filled on the family
+  // page later. This is how the catalog gets assembled fast (Caleb 7/29).
+  async function resolveRecipe(crop, sizeLabel) {
+    const existing = recipes.find(r => r.size_label === sizeLabel && r.crop_name?.toLowerCase() === crop.toLowerCase());
+    if (existing) return existing;
+    const { data: ins, error } = await sb.from("crop_recipes").upsert({
+      crop_name: crop, size_label: sizeLabel, pots_per_unit: inferPPU(sizeLabel), ppp: 1,
+      updated_by: displayName || "planner",
+      seeded_from: { source: "add-door", note: "catalog stub — set crop weeks / prop on the family page" },
+    }, { onConflict: "crop_name,size_label" }).select("*").single();
+    if (error) throw new Error(`recipe: ${error.message}`);
+    await sb.from("crop_recipe_series").upsert({ recipe_id: ins.id, series_name: "(unassigned)" }, { onConflict: "recipe_id,series_name" });
+    setRecipes(rs => rs.some(r => r.id === ins.id) ? rs : [...rs, ins]);
+    return ins;
+  }
 
   // one item = one write set: plant row + decision + tasks + history
   async function writeItem(v, recipeRow, unitsIn, nameOverride) {
     const sm = sMatchFor(v.variety);
-    const cw = Math.round(+recipeRow.crop_weeks);
-    const p = wrapWk(chain.readyWk - cw, planYear);
+    // crop weeks may be unknown for a fresh catalog stub — then plant/ship stay null (filled
+    // when the recipe gets weeks); the row still lands with its ready week
+    const cw = recipeRow.crop_weeks != null ? Math.round(+recipeRow.crop_weeks) : null;
+    const readyYr = chain.readyYear ?? planYear;
     const rooted = /^(URC|CALL)/i.test(sm?.form || "");
     const root = rooted ? Math.round(+(sm?.rooting_weeks ?? 0)) : 0;
-    const s = wrapWk(p.wk - root, p.year);
+    const p = cw != null ? wrapWk(chain.readyWk - cw, readyYr) : null;
+    const s = p ? wrapWk(p.wk - root, p.year) : null;
     const fc = FORM_TO_CLASS(sm?.form);
     let qq = sb.from("broker_prices").select("broker,supplier,landed").eq("variety_key", v.variety_key).order("landed");
     if (fc) qq = qq.eq("form_class", fc);
@@ -310,9 +313,9 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
       plants_per_unit: Math.max(1, Math.round(+recipeRow.pots_per_unit || 1)),
       qty_plants_ordered: null,               // supply committed at ordering, not here
       crop_weeks: cw,
-      ready_week: chain.readyWk, ready_year: chain.readyYear,
-      plant_week: p.wk, plant_year: p.year,
-      ship_week: s.wk, ship_year: s.year,
+      ready_week: chain.readyWk, ready_year: chain.readyYear ?? planYear,
+      plant_week: p?.wk ?? null, plant_year: p?.year ?? null,
+      ship_week: s?.wk ?? null, ship_year: s?.year ?? null,
       prop_method: sm?.form || null, prop_tray_id: sm?.prop_tray_id || null,
       broker: best?.broker || sm?.pinned_broker || null,
       supplier: best?.supplier || sm?.pinned_supplier || null,
@@ -328,7 +331,7 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
       decided_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     }, { onConflict: "plan_id,item_name" });
     if (e2) throw new Error(`${name}: ${e2.message}`);
-    if (unitsIn > 0) {   // zero-qty family stubs get their tasks once quantities land
+    if (unitsIn > 0 && p) {   // tasks need a plant week — a weeks-unknown stub gets them once the recipe has crop weeks
       const tasks = [];
       if (rooted) tasks.push({
         date: isoWeekMonday(s.year, s.wk),
@@ -355,7 +358,7 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
       await sb.from("item_change_log").insert({
         plan_id: plan.id, item_name: name, variety_key: v.variety_key,
         change_type: "created", changed_by: displayName || null, source: "add-door",
-        detail: { units: unitsIn, pots: uPots, ready: yyww(chain.readyWk, chain.readyYear), plant: yyww(p.wk, p.year), ship: yyww(s.wk, s.year), broker: best?.broker || null, liner: best?.landed ?? null },
+        detail: { units: unitsIn, pots: uPots, ready: yyww(chain.readyWk, chain.readyYear ?? planYear), plant: p ? yyww(p.wk, p.year) : null, ship: s ? yyww(s.wk, s.year) : null, weeks_pending: cw == null, broker: best?.broker || null, liner: best?.landed ?? null },
       });
     } catch { /* audit must never block */ }
     return { name, skipped: false };
@@ -365,8 +368,9 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
     if (!canConfirm) return;
     setBusy(true); setErr("");
     try {
+      const rec = await resolveRecipe(variety.crop_name, sizeSel);   // existing recipe, or a fresh stub
       // single add honors the edited item name — same write set as the family path
-      const res = await writeItem(variety, recipe, u, itemName.trim());
+      const res = await writeItem(variety, rec, u, itemName.trim());
       if (res.skipped) { setErr(`"${res.name}" already exists in ${plan.name} — open it instead, or change the name.`); setBusy(false); return; }
       onCreated?.(res.name);
       onClose();
@@ -378,16 +382,17 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
     setBusy(true); setErr("");
     const added = [], skipped = [];
     try {
+      const rec = await resolveRecipe(cropName, sizeSel);   // existing recipe, or a fresh stub for this size
       for (const c of sel) {
         const v = await ensureVariety(c);
-        const res = await writeItem(v, recipe, u);
+        const res = await writeItem(v, rec, u);
         (res.skipped ? skipped : added).push(res.name);
       }
-      if (famPerennial !== (recipe.plant_class === "perennial")) {
-        await sb.from("crop_recipes").update({ plant_class: famPerennial ? "perennial" : null }).eq("id", recipe.id);
+      if (famPerennial !== (rec.plant_class === "perennial")) {
+        await sb.from("crop_recipes").update({ plant_class: famPerennial ? "perennial" : null }).eq("id", rec.id);
       }
       onCreated?.(added.join(", "));
-      onOpenFamily?.(recipe.id);   // straight to the family page — numbers + recipe live there
+      onOpenFamily?.(rec.id);   // straight to the family page — numbers + recipe live there
       onClose();
     } catch (e) {
       setErr(e.message + (added.length ? ` — ${added.length} of ${sel.length} were added before the failure` : ""));
@@ -400,39 +405,28 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
   const rrow = { display: "flex", gap: 10, alignItems: "baseline", padding: "7px 12px", borderBottom: `1px solid ${C.creamBr}`, fontSize: 12.5 };
   const rk = { fontWeight: 800, color: C.dark, width: 52, flex: "none", fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".4px" };
 
-  const starterRecipePanel = !newRec
-    ? <button onClick={() => setNewRec({ size_label: "", crop_weeks: "", pots_per_unit: 1, ppp: 1, form: "URC", rooting_weeks: "" })}
-        style={{ marginTop: 6, padding: "7px 12px", borderRadius: 9, border: `1.5px dashed ${C.light}`, background: "#fff", color: C.dark, fontWeight: 800, fontSize: 11.5, cursor: "pointer", fontFamily: FONT }}>
-        ＋ Create a starter recipe for {cropName}</button>
-    : (
-      <div style={{ marginTop: 8, background: C.amberBg, border: "1.5px solid #ecd9b8", borderRadius: 10, padding: "10px 12px" }}>
-        <div style={{ fontSize: 11, fontWeight: 800, color: C.amber, marginBottom: 8 }}>STARTER RECIPE — set once, refine on the family page later</div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
-          <div style={{ gridColumn: "1 / -1" }}><label style={{ fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", color: C.muted }}>Size label</label>
-            <input list="apd-sizes" value={newRec?.size_label || ""} onChange={e => setNewRec({ ...newRec, size_label: e.target.value })} placeholder={`e.g. 4.5" Pot · 10" HB`} style={{ ...ctl, padding: "7px 9px", fontSize: 13 }} />
-            <datalist id="apd-sizes">{sizeOptions.map(s => <option key={s} value={s} />)}</datalist></div>
-          <div><label style={{ fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", color: C.muted }}>Crop wks</label>
-            <input value={newRec?.crop_weeks || ""} onChange={e => setNewRec({ ...newRec, crop_weeks: e.target.value })} inputMode="numeric" style={{ ...ctl, padding: "7px 9px", fontSize: 13 }} /></div>
-          <div><label style={{ fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", color: C.muted }}>Pots / unit</label>
-            <input value={newRec?.pots_per_unit ?? 1} onChange={e => setNewRec({ ...newRec, pots_per_unit: e.target.value })} inputMode="numeric" style={{ ...ctl, padding: "7px 9px", fontSize: 13 }} /></div>
-          <div><label style={{ fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", color: C.muted }}>PPP</label>
-            <input value={newRec?.ppp ?? 1} onChange={e => setNewRec({ ...newRec, ppp: e.target.value })} inputMode="numeric" style={{ ...ctl, padding: "7px 9px", fontSize: 13 }} /></div>
-          <div><label style={{ fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", color: C.muted }}>Form</label>
-            <select value={newRec?.form || "URC"} onChange={e => setNewRec({ ...newRec, form: e.target.value })} style={{ ...ctl, padding: "7px 9px", fontSize: 13, cursor: "pointer" }}>
-              {["URC", "CALL", "PLUG", "SEED", "BULB", "LINER"].map(f => <option key={f}>{f}</option>)}
-            </select></div>
-          {/^(URC|CALL)$/.test(newRec?.form || "") && (
-            <div><label style={{ fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", color: C.muted }}>Root wks</label>
-              <input value={newRec?.rooting_weeks || ""} onChange={e => setNewRec({ ...newRec, rooting_weeks: e.target.value })} inputMode="numeric" style={{ ...ctl, padding: "7px 9px", fontSize: 13 }} /></div>
-          )}
+  // SIZE picker — pick from the sizes we already carry, or type a new one. The recipe is
+  // resolved/stubbed from it at confirm; you never define a recipe here (Caleb 7/29:
+  // "allow new products to be added without determining recipe — this is how we build the catalog").
+  const cropForSize = cropName || variety?.crop_name;
+  const sizeSelect = (
+    <div>
+      <input list="apd-sizes" value={sizeSel} onChange={e => setSizeSel(e.target.value)}
+        placeholder={`pick or type a size — e.g. 4.5" Pot`} style={{ ...ctl, cursor: "text" }} />
+      <datalist id="apd-sizes">{sizeOptions.map(s => <option key={s} value={s} />)}</datalist>
+      {sizeSel && !recipe && (
+        <div style={{ fontSize: 10.5, color: C.amber, background: C.amberBg, border: "1px solid #ecd9b8", borderRadius: 8, padding: "5px 8px", marginTop: 4 }}>
+          new size for {cropForSize} — added to the catalog now; crop weeks &amp; prop get set on the family page later
         </div>
-        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-          <button disabled={busy || !newRec?.size_label?.trim() || !newRec?.crop_weeks} onClick={createRecipe}
-            style={{ padding: "7px 13px", borderRadius: 8, border: "none", background: C.light, color: "#fff", fontWeight: 800, fontSize: 12, cursor: "pointer", fontFamily: FONT }}>Create recipe →</button>
-          <button onClick={() => setNewRec(null)} style={{ padding: "7px 13px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: "#fff", color: C.muted, fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: FONT }}>back</button>
+      )}
+      {recipe && (
+        <div style={{ fontSize: 10.5, color: C.muted, marginTop: 3 }}>
+          {recipe.crop_weeks != null ? `crop ${recipe.crop_weeks}w` : "⚠ crop weeks not set — fill on the family page"}
+          {recipe.pots_per_unit > 1 ? ` · ${recipe.pots_per_unit} pots/unit` : ""}
         </div>
-      </div>
-    );
+      )}
+    </div>
+  );
 
   const readyByRow = (
     <div style={{ display: "flex", gap: 8 }}>
@@ -531,7 +525,7 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
             <div style={{ display: "flex", alignItems: "center", gap: 8, background: C.cream, border: `1.5px solid ${C.creamBr}`, borderRadius: 10, padding: "8px 12px" }}>
               <b style={{ fontSize: 14 }}>{variety.variety}</b>
               <span style={{ color: C.muted, fontSize: 12 }}>{variety.crop_name}</span>
-              <button onClick={() => { setVariety(null); setRecipes([]); setRecipeId(null); setQ(""); }}
+              <button onClick={() => { setVariety(null); setRecipes([]); setSizeSel(""); setQ(""); }}
                 style={{ marginLeft: "auto", background: "none", border: "none", color: C.muted, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>change</button>
             </div>
           )}
@@ -569,24 +563,14 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
               <div>
-                <label style={lbl}>Size (the recipe)</label>
-                {recipes.length ? (
-                  <select value={recipeId || ""} onChange={e => setRecipeId(e.target.value || null)} style={{ ...ctl, cursor: "pointer" }}>
-                    <option value="">— pick a size —</option>
-                    {recipes.map(r => <option key={r.id} value={r.id}>{r.size_label} · crop {r.crop_weeks}w</option>)}
-                  </select>
-                ) : (
-                  <div style={{ fontSize: 12, color: C.amber, background: C.amberBg, border: `1px solid #ecd9b8`, borderRadius: 9, padding: "9px 11px" }}>
-                    No recipes for {cropName} yet — set the starter once, the whole family rides it.
-                  </div>
-                )}
-                {starterRecipePanel}
+                <label style={lbl}>Size</label>
+                {sizeSelect}
               </div>
               <div>
                 <label style={lbl}>Units per variety (start)</label>
                 <input value={units} onChange={e => setUnits(e.target.value)} inputMode="numeric" placeholder="0 — set each on the family page" style={ctl} />
-                {recipe && <div style={{ fontSize: 10.5, color: C.muted, marginTop: 3 }}>
-                  {u > 0 ? `= ${pots.toLocaleString()} pots each · tasks created` : "0 is fine — quantities land on the family page next"}
+                {sizeSel && <div style={{ fontSize: 10.5, color: C.muted, marginTop: 3 }}>
+                  {u > 0 ? `= ${pots.toLocaleString()} pots each${chain?.weeksUnknown ? "" : " · tasks created"}` : "0 is fine — quantities land on the family page next"}
                 </div>}
               </div>
               <div style={{ gridColumn: "1 / -1" }}>
@@ -598,11 +582,13 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
                 🌲 This family is perennial <span style={{ fontWeight: 500, color: C.muted }}>— tags the recipe; filters in Sales vs Plan</span>
               </label>
             </div>
-            {recipe && (
+            {sizeSel && (
               <div style={{ marginTop: 12, border: `1px solid ${C.creamBr}`, borderRadius: 11, overflow: "hidden", background: C.cream }}>
                 <div style={rrow}><span style={rk}>Chain</span>
                   <span style={{ flex: 1, fontFamily: MONO, fontSize: 12.5 }}>
-                    {chain && !chain.incomplete
+                    {chain && chain.weeksUnknown
+                      ? <>ready <b style={{ color: C.green }}>{yyww(chain.readyWk, chain.readyYear)}</b> <span style={{ color: C.muted }}>· plant/stick fill in once this size has crop weeks (family page)</span></>
+                    : chain && !chain.incomplete
                       ? <>{chain.rooted ? `arrive/stick ${yyww(chain.ship.wk, chain.ship.year)} → ` : ""}plant <b>{yyww(chain.plant.wk, chain.plant.year)}</b> → ready <b style={{ color: C.green }}>{yyww(chain.readyWk, chain.readyYear)}</b></>
                       : <span style={{ color: C.muted }}>set a ready date…</span>}
                   </span>
@@ -619,23 +605,13 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
         {!famMode && variety && (
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
             <div>
-              <label style={lbl}>Size (the recipe)</label>
-              {recipes.length ? (
-                <select value={recipeId || ""} onChange={e => setRecipeId(e.target.value || null)} style={{ ...ctl, cursor: "pointer" }}>
-                  <option value="">— pick a size —</option>
-                  {recipes.map(r => <option key={r.id} value={r.id}>{r.size_label} · crop {r.crop_weeks}w</option>)}
-                </select>
-              ) : (
-                <div style={{ fontSize: 12, color: C.amber, background: C.amberBg, border: `1px solid #ecd9b8`, borderRadius: 9, padding: "9px 11px" }}>
-                  No recipes for {variety.crop_name} yet — a new crop needs its recipe set ONCE, then every future add fills itself.
-                </div>
-              )}
-              {starterRecipePanel}
+              <label style={lbl}>Size</label>
+              {sizeSelect}
             </div>
             <div>
               <label style={lbl}>Quantity (units)</label>
               <input value={units} onChange={e => setUnits(e.target.value)} inputMode="numeric" placeholder="e.g. 120" style={ctl} />
-              {recipe && u > 0 && <div style={{ fontSize: 10.5, color: C.muted, marginTop: 3 }}>= {pots.toLocaleString()} pots · {plants.toLocaleString()} plants{ppu > 1 ? ` (${ppu}/unit)` : ""}</div>}
+              {sizeSel && u > 0 && <div style={{ fontSize: 10.5, color: C.muted, marginTop: 3 }}>= {pots.toLocaleString()} pots · {plants.toLocaleString()} plants{ppu > 1 ? ` (${ppu}/unit)` : ""}</div>}
             </div>
             <div style={{ gridColumn: "1 / -1" }}>
               <label style={lbl}>Ready by</label>
@@ -645,7 +621,7 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
         )}
 
         {/* ② recipe fills · ③ chain (single add) */}
-        {!famMode && variety && recipe && (
+        {!famMode && variety && sizeSel && (
           <div style={{ marginTop: 12, border: `1px solid ${C.creamBr}`, borderRadius: 11, overflow: "hidden", background: C.cream }}>
             <div style={rrow}><span style={rk}>Source</span>
               <span style={{ flex: 1 }}>{quote
@@ -662,7 +638,9 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
             </div>
             <div style={rrow}><span style={rk}>Chain</span>
               <span style={{ flex: 1, fontFamily: MONO, fontSize: 12.5 }}>
-                {chain && !chain.incomplete
+                {chain?.weeksUnknown
+                  ? <>ready <b style={{ color: C.green }}>{yyww(chain.readyWk, chain.readyYear)}</b> <span style={{ color: C.muted }}>· plant/stick fill in once this size has crop weeks</span></>
+                : chain && !chain.incomplete
                   ? <>{chain.rooted ? `arrive/stick ${yyww(chain.ship.wk, chain.ship.year)} → ` : ""}plant <b>{yyww(chain.plant.wk, chain.plant.year)}</b> → ready <b style={{ color: C.green }}>{yyww(chain.readyWk, chain.readyYear)}</b></>
                   : chain?.past
                   ? <span style={{ color: "#c0492b", fontWeight: 800 }}>⚠ {yyww(chain.readyWk, chain.readyYear)} is in the PAST (we're in wk{chain.curWk} of {chain.curYr}) — check the year</span>
