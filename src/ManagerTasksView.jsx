@@ -74,7 +74,12 @@ const _isoWeekOf = (iso) => {
 // Close the loop: when a size-triggered PGR (Piccolo etc.) treatment task is completed, auto-schedule a
 // "Response check" task ~daysOut later, linked to the same treatment record + variety. When the crew
 // completes THAT with photos, the Treatment Plan loops them back as dated Response photos.
+// RETIRED (Caleb 2026-07-29): 📸 response-check tasks cut from the program along with
+// the other auto-generated support tasks (bench prep, water-in, space+tube, watch).
+// Treatment responses are captured through the completion-photo flow instead.
+const RESPONSE_CHECKS_ENABLED = false;
 export async function ensureResponseCheck(task, completedAtISO, daysOut = 12) {
+  if (!RESPONSE_CHECKS_ENABLED) return;
   const sb = getSupabase();
   if (!sb || !task || !task.sourceRecordId || task.sourceKind === "response") return;
   const pgr = /piccolo|paclo|bonzi|sumagic|b-?nine|\bb9\b|\bccc\b|dazide|cycocel|florel|pgr|a-rest|topflor/i.test(task.title || "");
@@ -789,6 +794,9 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
   // Sprague growing task to monitor germination/establishment. Fires once per group
   // (deterministic ID prevents duplicates). Does not re-create if the manager deletes it.
   useEffect(() => {
+    // RETIRED (Caleb 2026-07-29): 🔍 auto watch tasks cut with the other auto-generated
+    // support tasks. Growers watch germination as part of the daily walk, not a task card.
+    if (!RESPONSE_CHECKS_ENABLED) return;
     if (!tasks.length) return;
     const todayISO = toISODate(new Date());
 

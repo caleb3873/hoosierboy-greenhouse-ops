@@ -272,43 +272,10 @@ async function syncProductionTasks(db) {
         { title: fillTitle, match: t => t.title === fillTitle, desc: fillDesc, due: iso(friday), payload: fillPayload },
         { title: plantTitle, match: t => new RegExp(`^PLANT.*— ${g.zone.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\(wk${g.wk}\\)`).test(t.title), desc: plantDesc, due: iso(g.mon), payload: plantPayload },
       ];
-      // Bench prep + water-in/leech get the same summary-first clarity.
-      // REWRITE ONLY — never created here: the leech protocol is a poinsettia
-      // planting decision, not something every plan should sprout.
-      const escZone = g.zone.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const extras = (existing || []).filter(t => t.status === "pending" && (
-        t.title === `Pre-plant bench prep — ${g.zone} (wk${g.wk})` ||
-        new RegExp(`^Day \\d+ (water-in|leech-water) — ${escZone} \\(wk${g.wk}`).test(t.title)));
-      for (const t of extras) {
-        let desc;
-        if (t.title.startsWith("Pre-plant")) {
-          desc = [
-            `Prep ${g.benches.size} bench(es) — ${benchList}`,
-            "",
-            `${g.zone}, for wk${g.wk} planting. Liners arrive ${iso(g.mon)}.`,
-            "Clean + sanitize · check tube emitters · place variety labels · walk the space.",
-          ].join("\n");
-        } else {
-          const dm = t.title.match(/^Day (\d+) (water-in|leech-water)/);
-          desc = dm && dm[2] === "water-in"
-            ? [
-                `Water-in ${totalPots.toLocaleString()} pots — immediately after planting`,
-                "",
-                `${g.zone} · ${benchList}`,
-                "Critical first watering — sets establishment for the entire crop.",
-              ].join("\n")
-            : [
-                `Leech-water ${totalPots.toLocaleString()} pots — day ${dm ? dm[1] : "?"}`,
-                "",
-                `${g.zone} · ${benchList}`,
-                "Hand + tube leech watering, generous water-through — salt-sensitive establishment.",
-              ].join("\n");
-        }
-        if (t.description !== desc) {
-          await db.from("manager_tasks").update({ description: desc, bench_numbers: [...g.benches].sort() }).eq("id", t.id);
-          out.updated++;
-        }
-      }
+      // RETIRED (Caleb 2026-07-29): bench-prep / water-in / leech support tasks are cut
+      // from the program (rows purged, rewrite maintenance removed). The cron now owns
+      // ONLY Pot fill + PLANT — the four keeper types are plant, pot fill, piccolo, pinch
+      // (piccolo/pinch come from the Treatment Plan, untouched).
 
       for (const u of upserts) {
         const hit = (existing || []).find(u.match);
