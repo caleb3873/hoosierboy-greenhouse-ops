@@ -400,9 +400,8 @@ export default function FamilyAdmin({ plan, onClose, onChanged }) {
                         style={{ fontSize: 13, fontWeight: 700, padding: "3px 7px", borderRadius: 7, border: `1.5px solid ${C.light}`, fontFamily: "inherit", minWidth: 190 }} />
                     ) : (
                       <b onClick={() => setRenaming({ id: f.id, val: f.display_name || "" })}
-                        title="click to rename this family" style={{ fontSize: 13, color: C.dark, cursor: "text" }}>{f.label}
-                        {f.display_name && <span title={`custom name — underlying family: ${f.size_label} ${f.crop_name}`} style={{ marginLeft: 6, fontSize: 10, fontWeight: 600, color: C.muted }}>({f.size_label} {f.crop_name})</span>}
-                      </b>
+                        title={f.display_name ? `custom name for ${f.size_label} ${f.crop_name} — click to rename` : "click to rename this family"}
+                        style={{ fontSize: 13, color: C.dark, cursor: "text" }}>{f.label}</b>
                     )}
                     {renaming?.id !== f.id && (
                       <button title="rename — give this family your own name (empty puts the derived name back)"

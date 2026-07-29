@@ -851,9 +851,9 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
       <div style={{ fontFamily: FONT }}>
         {/* header */}
         <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginBottom: 4 }}>
-          <div style={{ fontSize: 21, fontWeight: 800, color: C.dark, fontFamily: "'DM Serif Display',Georgia,serif" }}>
+          <div title={recipe.display_name ? `custom name for ${recipe.size_label} ${recipe.crop_name} — rename in ⚙ Manage families` : undefined}
+            style={{ fontSize: 21, fontWeight: 800, color: C.dark, fontFamily: "'DM Serif Display',Georgia,serif" }}>
             {recipe.display_name || `${recipe.size_label} ${recipe.crop_name}`} — the whole family
-            {recipe.display_name && <span title="custom family name — rename in ⚙ Manage families" style={{ marginLeft: 8, fontSize: 11, fontWeight: 600, color: C.muted }}>({recipe.size_label} {recipe.crop_name})</span>}
           </div>
           <div style={{ fontSize: 12, color: C.muted }}>{groups.length} planting group{groups.length === 1 ? "" : "s"} · {Object.keys(vmap).length} varieties · {plan.name}</div>
           <span style={{ flex: 1 }} />
