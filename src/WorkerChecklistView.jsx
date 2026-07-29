@@ -288,13 +288,12 @@ function WorkerChecklistViewInner({ onSwitchMode, onBackToApp, onOpenTaskCreator
       if (t.status === "completed" || t.status === "requested") return;
       const stale = t.year < today.year || (t.year === today.year && t.weekNumber < today.week);
       const needsTargetDate = !t.targetDate;
-      // null-bucket (system-generated) tasks roll forward too — same fix as ManagerTasksView:
-      // a Monday-dated task must not go invisible from Tuesday within its own week
-      const staleDate = t.targetDate && t.targetDate < todayISO && (!t.bucket || t.bucket === "today" || t.bucket === "tomorrow" || t.bucket === "check_tomorrow");
+      // Same-week rolls are BUCKET tasks only — dated week work keeps its day and is
+      // not overdue until the week turns (Caleb 7/29; matches ManagerTasksView).
+      const staleDate = t.targetDate && t.targetDate < todayISO && (t.bucket === "today" || t.bucket === "tomorrow" || t.bucket === "check_tomorrow");
       if (stale || needsTargetDate || staleDate) {
         const patch = { ...t };
         if (stale) { patch.year = today.year; patch.weekNumber = today.week; patch.carriedOver = true; }
-        if (staleDate) patch.carriedOver = true;
         if (needsTargetDate || staleDate) patch.targetDate = bucketToDate(t.bucket || "today");
         upsert(patch);
       }

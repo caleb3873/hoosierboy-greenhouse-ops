@@ -189,6 +189,15 @@ function getProdType(title) {
   return "other";
 }
 
+// Overdue philosophy (Caleb 7/29): week work is week work — a task only goes red once
+// its WEEK has passed (the carryover roll flags it), UNLESS it's explicitly dated,
+// time-sensitive work — treatments/PGR (🌼 piccolo, ✂ pinch) and response checks —
+// which go red the day after their date. Pot fill / planting inside their own week
+// are never "overdue", just not done yet.
+const isTimeSensitive = t => t.sourceKind === "treatment" || t.sourceKind === "response" || /^(🌼|✂)/u.test(t.title || "");
+const taskOverdue = (t, todayIso) => t.status !== "completed" && t.status !== "requested" &&
+  (t.carriedOver === true || (isTimeSensitive(t) && !!t.targetDate && t.targetDate < todayIso));
+
 // Monday of ISO week N in year Y
 function weekMonday(year, week) {
   const jan4 = new Date(year, 0, 4);
@@ -498,16 +507,15 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
 
   // Overdue scope: anything carried-over this week that falls inside this
   // user's popup categories. Surfaces once per session per user.
-  const overdueTasks = useMemo(() =>
-    tasks.filter(t =>
-      t.status !== "completed" &&
-      t.status !== "requested" &&
-      t.carriedOver === true &&
+  const overdueTasks = useMemo(() => {
+    const todayIso = toISODate(new Date());
+    return tasks.filter(t =>
+      taskOverdue(t, todayIso) &&
       t.year === today.year &&
       t.weekNumber === today.week &&
       popupCategories.has(t.category || "production")
-    ).sort((a, b) => (b.priority || 0) - (a.priority || 0)),
-  [tasks, today, popupCategories]);
+    ).sort((a, b) => (b.priority || 0) - (a.priority || 0));
+  }, [tasks, today, popupCategories]);
 
   // Tasks assigned to me this week, not finished. Same per-user category
   // scope so e.g. Paul doesn't get pinged with production assignments.
@@ -787,14 +795,13 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       if (t.status === "completed" || t.status === "requested") return;
       const stale = t.year < today.year || (t.year === today.year && t.weekNumber < today.week);
       const needsTargetDate = !t.targetDate;
-      // null-bucket tasks (the system-generated weekly ones) must roll too — a Monday-dated
-      // PLANT task otherwise goes invisible from Tuesday on: current week (no carryover)
-      // but past-dated (fails the today filter). The 7/28 poinsettia disappearance.
-      const staleDate = t.targetDate && t.targetDate < todayISO && (!t.bucket || t.bucket === "today" || t.bucket === "tomorrow" || t.bucket === "check_tomorrow");
+      // Same-week rolls are BUCKET tasks only ("today"/"tomorrow" follow you forward,
+      // no badge). Dated week work keeps its day and files under its weekday section —
+      // per Caleb 7/29 it is NOT overdue until the week turns (prior-week `stale` roll).
+      const staleDate = t.targetDate && t.targetDate < todayISO && (t.bucket === "today" || t.bucket === "tomorrow" || t.bucket === "check_tomorrow");
       if (stale || needsTargetDate || staleDate) {
         const patch = { ...t };
         if (stale) { patch.year = today.year; patch.weekNumber = today.week; patch.carriedOver = true; }
-        if (staleDate) patch.carriedOver = true;   // same-week roll still deserves the OVERDUE badge
         if (needsTargetDate || staleDate) patch.targetDate = bucketToDate(t.bucket || "today");
         upsert(patch).catch(err => console.warn("Carryover upsert failed:", err));
       }
@@ -918,7 +925,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
 
   function renderTaskCard(t, idx) {
     const isDone = t.status === "completed";
-    const isOverdue = !!t.carriedOver && !isDone;
+    const isOverdue = taskOverdue(t, toISODate(new Date()));
 
     // ── COMPACT card for generator tasks with a structured payload ──
     // One line: kind · zone · total pots (+ per-size chips). Tap → bench-by-bench detail.
@@ -1008,6 +1015,13 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       else                                   locBarBg = "#7a8c74"; // muted
     }
 
+    // Type-led headline (Caleb 7/29: a card must SAY "Pot Fill", not just pot numbers) —
+    // fall pushes and Amanda's 📦 tasks now read like the cron's payload cards:
+    // "📦 Pot Fill · bluff · 3,000 pots — 9\" Pan CX Bk"
+    const TYPE_LABELS = { sow: "🌱 Sowing", stick: "🌱 Prop", potfill: "📦 Pot Fill", planting: "🌿 Planting", tags: "🏷 Tags" };
+    const typeLabel = (t.category || "production") === "production" ? (TYPE_LABELS[getProdType(t.title)] || null) : null;
+    const coreTitle = typeLabel ? displayTitle.replace(/^(📦|🌿|🌱|🏷️|🏷|✂️|✂)\s*/u, "").trim() : displayTitle;
+
     // ── COMPACT generic card (Caleb 7/29: "make all the tasks present like that") —
     // same idiom as the payload cards: one dense line + a small meta line, no location
     // banner (inline colored 📍 chip), no description preview — the detail lives on tap.
@@ -1034,7 +1048,9 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
             }}>{isDone ? "✓" : ""}</button>
           <div style={{ flex: 1 }} onClick={() => setSelectedTask(t)}>
             <div style={{ display: "flex", gap: 7, alignItems: "center", flexWrap: "wrap" }}>
-              <div style={{ fontSize: 14, fontWeight: 700, color: isOverdue ? "#d94f3d" : "#1e2d1a", textDecoration: isDone ? "line-through" : "none", lineHeight: 1.35 }}>{displayTitle}</div>
+              {typeLabel && <b style={{ fontSize: 14.5, color: isDone ? "#7a8c74" : "#1e2d1a", textDecoration: isDone ? "line-through" : "none" }}>{typeLabel}</b>}
+              {typeLabel && locText && <span style={{ fontSize: 13, fontWeight: 800, color: locBarBg || "#4a7a35" }}>{locText}</span>}
+              <div style={{ fontSize: 14, fontWeight: typeLabel ? 600 : 700, color: isOverdue ? "#d94f3d" : "#1e2d1a", textDecoration: isDone ? "line-through" : "none", lineHeight: 1.35 }}>{coreTitle}</div>
               {alertText && (
                 <span style={{ background: "#fff3c4", color: "#7a5a00", border: "1.5px solid #e89a3a", borderRadius: 999, padding: "2px 8px", fontSize: 11, fontWeight: 800 }}>⚠ {alertText}</span>
               )}
@@ -1060,7 +1076,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
             </div>
             {/* one quiet meta line — where, when, and tiny indicators; detail lives on tap */}
             <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 3, fontSize: 11 }}>
-              {locText && <span style={{ color: locBarBg || "#4a7a35", fontWeight: 800 }}>📍 {locText}</span>}
+              {locText && !typeLabel && <span style={{ color: locBarBg || "#4a7a35", fontWeight: 800 }}>📍 {locText}</span>}
               {t.targetDate && <span style={{ color: "#7a8c74", fontWeight: 600 }}>📅 {formatTargetDate(t.targetDate)}</span>}
               {(t.photos || []).length > 0 && <span style={{ color: "#4a90d9", fontWeight: 700 }}>📷 {t.photos.length}</span>}
               {t.notes && <span style={{ color: "#7a8c74", fontWeight: 600, fontStyle: "italic" }}>📝 note</span>}
@@ -1822,7 +1838,9 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
               const td = t.targetDate;
               if (isCurrentWeek && td === todayIso) {
                 ensure("today", "Today", "#7fb069", 0).tasks.push(t);
-              } else if (isCurrentWeek && td && td < todayIso && t.status !== "completed") {
+              } else if (isCurrentWeek && td && td < todayIso && taskOverdue(t, todayIso)) {
+                // red Overdue = prior-week carryovers + missed time-sensitive dates ONLY;
+                // ordinary week work with a passed day just files under its weekday below
                 ensure("overdue", "Overdue", "#d94f3d", 1).tasks.push(t);
               } else if (td) {
                 const d = new Date(td + "T00:00:00");
