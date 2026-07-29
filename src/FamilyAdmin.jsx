@@ -42,6 +42,7 @@ export default function FamilyAdmin({ plan, onClose, onChanged }) {
   const [msg, setMsg] = useState("");
   const [newFam, setNewFam] = useState(null);   // {crop, size, weeks}
   const [renaming, setRenaming] = useState(null);   // {id, val} — ✎ custom family name
+  const [sel, setSel] = useState(new Set());        // item names ticked for bulk assign
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
@@ -170,6 +171,53 @@ export default function FamilyAdmin({ plan, onClose, onChanged }) {
       } catch { /* audit must not block */ }
       setMsg(`✅ ${item} → ${dest ? `${dest.size_label} ${dest.crop_name}` : "family"}`);
     } catch (e) { window.alert("Move stopped: " + (e.message || e)); }
+    setBusy(false); setTick(t => t + 1); onChanged?.();
+  }
+
+  // bulk assign: tick items (any family, or orphans), pick the destination once
+  async function moveItems(items, toId) {
+    const dest = (recipes || []).find(r => r.id === toId);
+    if (!dest || !items.length) return;
+    const dl = dest.display_name || `${dest.size_label} ${dest.crop_name}`;
+    if (!window.confirm(`Assign ${items.length} item${items.length !== 1 ? "s" : ""} to ${dl}?\n\n${items.slice(0, 8).join("\n")}${items.length > 8 ? `\n… +${items.length - 8} more` : ""}\n\n(${plan.name} only)`)) return;
+    setBusy(true);
+    try {
+      for (const item of items) {
+        await sb.from("scheduled_crops").update({ recipe_id: toId }).eq("plan_id", plan.id).eq("item_name", item);
+        try {
+          await sb.from("item_change_log").insert({ plan_id: plan.id, item_name: item,
+            change_type: "family_move", detail: { to: dl, bulk_of: items.length },
+            changed_by: displayName || null, source: "family-admin" });
+        } catch { /* audit must not block */ }
+      }
+      setMsg(`✅ ${items.length} item${items.length !== 1 ? "s" : ""} → ${dl}`);
+      setSel(new Set());
+    } catch (e) { window.alert("Assign stopped: " + (e.message || e)); }
+    setBusy(false); setTick(t => t + 1); onChanged?.();
+  }
+
+  // delete a family — only when EMPTY everywhere (any plan). A wrongly-named family
+  // with items gets renamed or merged instead; delete is for husks and misfires.
+  async function deleteFamily(f) {
+    setBusy(true);
+    try {
+      const { count } = await sb.from("scheduled_crops").select("id", { count: "exact", head: true }).eq("recipe_id", f.id);
+      if (count > 0) {
+        window.alert(`${f.label} still has ${count} bench row${count !== 1 ? "s" : ""} across all plans — move its items out (or ⇒ merge the family) first.`);
+        setBusy(false); return;
+      }
+      if (!window.confirm(`Delete the empty family “${f.label}”?\n\nIts recipe + series settings go with it. This cannot be undone.`)) { setBusy(false); return; }
+      await sb.from("crop_recipe_overrides").delete().eq("recipe_id", f.id);
+      await sb.from("crop_recipe_series").delete().eq("recipe_id", f.id);
+      const { error } = await sb.from("crop_recipes").delete().eq("id", f.id);
+      if (error) throw error;
+      try {
+        await sb.from("item_change_log").insert({ plan_id: plan.id, item_name: `(family) ${f.size_label} ${f.crop_name}`,
+          change_type: "family_deleted", detail: { label: f.label },
+          changed_by: displayName || null, source: "family-admin" });
+      } catch { /* audit must not block */ }
+      setMsg(`🗑 ${f.label} deleted`);
+    } catch (e) { window.alert("Delete stopped: " + (e.message || e)); }
     setBusy(false); setTick(t => t + 1); onChanged?.();
   }
 
@@ -310,6 +358,16 @@ export default function FamilyAdmin({ plan, onClose, onChanged }) {
           ))}
         </div>
 
+        {sel.size > 0 && (
+          <div style={{ position: "sticky", top: 0, zIndex: 6, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap",
+            background: "#fdf6e2", border: "1.5px solid #ecd9b8", borderRadius: 10, padding: "8px 12px", marginBottom: 8 }}>
+            <b style={{ fontSize: 12.5, color: C.dark }}>☑ {sel.size} item{sel.size !== 1 ? "s" : ""} selected</b>
+            {famPicker(toId => moveItems([...sel], toId), null, "→ assign all to…")}
+            <button onClick={() => setSel(new Set())}
+              style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer", fontSize: 11.5, fontWeight: 700, color: C.muted, fontFamily: FONT }}>clear</button>
+          </div>
+        )}
+
         {recipes == null ? <div style={{ color: C.muted, fontSize: 13 }}>loading…</div> : (
           <>
             {Object.keys(orphanItems).length > 0 && (
@@ -319,6 +377,7 @@ export default function FamilyAdmin({ plan, onClose, onChanged }) {
                 </div>
                 {Object.keys(orphanItems).sort(plantOrder).map(it => (
                   <div key={it} style={{ display: "flex", gap: 8, alignItems: "center", padding: "3px 0", fontSize: 12.5 }}>
+                    <input type="checkbox" checked={sel.has(it)} onChange={() => setSel(s => { const n = new Set(s); n.has(it) ? n.delete(it) : n.add(it); return n; })} />
                     <span style={{ flex: 1, fontWeight: 700 }}>{it} <span style={{ color: C.muted, fontWeight: 500 }}>· {orphanItems[it]} row{orphanItems[it] > 1 ? "s" : ""}</span></span>
                     {famPicker(toId => moveItem(it, toId), null, "→ place in family…")}
                   </div>
@@ -354,13 +413,27 @@ export default function FamilyAdmin({ plan, onClose, onChanged }) {
                     {f.hitItems.length > 0 && <span style={{ fontSize: 10, fontWeight: 800, color: C.amber }}>{f.hitItems.length} match</span>}
                     <span style={{ marginLeft: "auto" }} />
                     {famPicker(toId => mergeFamily(f, toId), f.id, "⇒ merge into…")}
+                    <button title={f.n > 0 ? "delete needs an empty family — move or merge the items first" : "delete this empty family"}
+                      disabled={busy} onClick={() => deleteFamily(f)}
+                      style={{ background: "none", border: "none", cursor: "pointer", fontSize: 12, color: f.n > 0 ? "#d8ddd2" : C.red || "#c0392b", padding: 0 }}>🗑</button>
                   </div>
                   {isOpen && (
                     <div style={{ borderTop: `1px solid ${C.border}`, padding: "6px 12px 9px", background: "#fbfdf8" }}>
                       {Object.keys(f.items).length === 0 && <div style={{ fontSize: 11.5, color: C.muted }}>no items in this plan (recipe may serve other seasons)</div>}
+                      {Object.keys(f.items).length > 1 && (() => {
+                        const its = Object.keys(f.items); const all = its.every(it => sel.has(it));
+                        return (
+                          <label style={{ display: "flex", gap: 8, alignItems: "center", padding: "2px 0 5px", fontSize: 11, fontWeight: 700, color: C.muted, cursor: "pointer" }}>
+                            <input type="checkbox" checked={all}
+                              onChange={() => setSel(s => { const n = new Set(s); its.forEach(it => all ? n.delete(it) : n.add(it)); return n; })} />
+                            select all {its.length}
+                          </label>
+                        );
+                      })()}
                       {Object.keys(f.items).sort(plantOrder).map(it => (
                         <div key={it} style={{ display: "flex", gap: 8, alignItems: "center", padding: "3px 0", fontSize: 12.5,
                           background: f.hitItems.includes(it) ? "#fdf3dc" : "transparent", borderRadius: 6 }}>
+                          <input type="checkbox" checked={sel.has(it)} onChange={() => setSel(s => { const n = new Set(s); n.has(it) ? n.delete(it) : n.add(it); return n; })} />
                           <span style={{ flex: 1 }}>{it} <span style={{ color: C.muted }}>· {f.items[it]} row{f.items[it] > 1 ? "s" : ""}</span></span>
                           {famPicker(toId => moveItem(it, toId), f.id, "→ move to…")}
                         </div>
