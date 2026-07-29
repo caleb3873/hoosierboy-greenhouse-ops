@@ -12,6 +12,7 @@ import ItemDrill from "./ItemDrill";
 import ProgramsPanel from "./ProgramBuilder";
 import PropagationGuide from "./PropagationGuide";
 import AddPlantDoor from "./AddPlantDoor";
+import FamilyAdmin from "./FamilyAdmin";
 import OrderReconciliation from "./OrderReconciliation";
 import FamilyPage from "./FamilyPage";
 
@@ -2790,6 +2791,7 @@ function SalesVsPlanTab({ plan }) {
   const [perItems, setPerItems] = useState(new Set()); // item names whose family recipe is tagged 🌲 perennial
   const [perOnly, setPerOnly] = usePersistedState("gh_svp_perennials", false);
   const [rowCtx, setRowCtx] = useState(null);          // {x, y, r} — right-click action menu on a row
+  const [showFamAdmin, setShowFamAdmin] = useState(false);   // ⚙ merge/re-home families
   const [itemRecipe, setItemRecipe] = useState({});    // item_name -> recipe_id (🌿 open family from the menu)
 
   useEffect(() => {   // Escape closes the row menu; dismissal itself is the backdrop's job
@@ -3403,10 +3405,11 @@ function SalesVsPlanTab({ plan }) {
         {selSet.size > 0 && <button onClick={() => setSelSet(new Set())} style={{ padding: "6px 12px", borderRadius: 16, fontWeight: 700, cursor: "pointer", border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.muted }}>clear ({selSet.size})</button>}
         <button onClick={() => setShowAddDoor(true)} title="Add a plant — pick variety, size, ready-by and quantity; the recipe fills the rest"
           style={{ padding: "6px 12px", borderRadius: 16, fontWeight: 800, cursor: "pointer", border: `1.5px solid ${COLORS.light}`, background: COLORS.light, color: "#fff" }}>＋ Add a plant</button>
-        <select value="" onChange={e => { if (e.target.value) setShowFamily(e.target.value); }}
+        <select value="" onChange={e => { if (e.target.value === "__manage") setShowFamAdmin(true); else if (e.target.value) setShowFamily(e.target.value); }}
           title="Open a crop family — every color and planting group at one size"
           style={{ padding: "6px 10px", borderRadius: 16, fontWeight: 700, fontSize: 12, cursor: "pointer", border: `1.5px solid ${COLORS.light}`, background: "#fff", color: COLORS.dark, maxWidth: 210 }}>
           <option value="">🌿 Families…</option>
+          <option value="__manage">⚙ Manage families (merge / re-home)…</option>
           {famList.map(f => <option key={f.id} value={f.id}>{f.label} ({f.n})</option>)}
         </select>
         <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
@@ -3523,6 +3526,7 @@ function SalesVsPlanTab({ plan }) {
       {showAddDoor && <AddPlantDoor plan={plan} onClose={() => setShowAddDoor(false)} onCreated={() => setReloadTick(t => t + 1)}
         onOpenFamily={id => setShowFamily(id)} />}
       {showFamily && <FamilyPage plan={plan} recipeId={showFamily} onClose={() => { setShowFamily(null); setReloadTick(t => t + 1); }} />}
+      {showFamAdmin && <FamilyAdmin plan={plan} onClose={() => setShowFamAdmin(false)} onChanged={() => setReloadTick(t => t + 1)} />}
       {drill && (
         <ItemDrill plan={plan} row={drill} tgt={targets[drill.item]} weeks={season.weeks}
           onSaveTarget={patch => saveTarget(drill, patch)} onClose={() => setDrill(null)}
