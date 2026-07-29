@@ -331,7 +331,7 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
     });
     if (e1) throw new Error(`${name}: ${e1.message}`);
     const { error: e2 } = await sb.from("plan_targets").upsert({
-      plan_id: plan.id, item_name: name, target_units: unitsIn, decision: "grow",
+      plan_id: plan.id, item_name: name, target_units: uPots, decision: "grow",   // POTS (one unit, pots)
       note: "created via Add a plant", decided_by: displayName || null,
       decided_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     }, { onConflict: "plan_id,item_name" });

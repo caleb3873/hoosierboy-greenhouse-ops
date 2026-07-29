@@ -748,22 +748,22 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
   // targets live on their own item pages).
   const targetGaps = useMemo(() => {
     if (!rows || !recipe) return [];
-    const ppu = Math.max(1, Math.round(+recipe.pots_per_unit || 1));
     const potsByItem = {};
     rows.forEach(r => { if (!r.is_combo_component) potsByItem[r.item_name] = (potsByItem[r.item_name] || 0) + potsOf(r); });
     const out = [];
     Object.entries(potsByItem).forEach(([it, pots]) => {
       const t = tmap[it];
       if (!t || (t.target_units == null && t.decision !== "drop")) return;
+      // target_units is POTS now (Caleb 7/29 — one unit, pots)
       const wantU = t.target_units == null ? 0 : Math.max(0, Math.round(+t.target_units));
-      const wantPots = wantU * ppu;
+      const wantPots = wantU;
       // acknowledgment gate is VALUE-based: the line shows only when the walkthrough
       // NUMBER differs from the last number applied. Timestamps deliberately ignored —
       // notes, timing arrows and rounds edits bump updated_at and must not re-nag
       // (review finding), and deliberate production drift stays quiet.
       const stale = t.applied_at == null || (t.applied_units ?? null) !== wantU;
       out.push({ item: it, wantU, wantPots, pots, delta: wantPots - pots, by: t.decided_by,
-        drop: t.decision === "drop" || wantU === 0, ppu, stale });
+        drop: t.decision === "drop" || wantU === 0, ppu: 1, stale });
     });
     return out.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
   }, [rows, tmap, recipe]);

@@ -2549,13 +2549,14 @@ function ReadyDatesTab({ plan }) {
       const totalPots = rows.reduce((a, r) => a + potsOfR(r), 0);
       const pack = Math.max(1, ...rows.map(r => Math.round(+r.plants_per_unit || +r.pack_size || 1)));
       const isDrop = t.decision === "drop" || t.target_units === 0;
+      // target_units and rounds[].units are POTS now (Caleb 7/29 — one unit, pots)
       const rounds = (!isDrop && t.rounds && t.rounds.length)
-        ? t.rounds.map(w => ({ pots: Math.round((+w.units || 0) * pack), ready: +w.ready_week || null }))
+        ? t.rounds.map(w => ({ pots: Math.round(+w.units || 0), ready: +w.ready_week || null }))
             .filter(w => w.pots > 0).sort((a, b) => (a.ready ?? 99) - (b.ready ?? 99))
         : null;
       const targetPots = isDrop ? 0
         : rounds ? rounds.reduce((a, w) => a + w.pots, 0)
-        : (t.target_units != null ? Math.round(+t.target_units * pack) : totalPots);
+        : (t.target_units != null ? Math.round(+t.target_units) : totalPots);
       // rounds carry their own ready weeks — the plain shift only applies without them
       const shift = rounds ? 0 : (+t.ready_shift || 0);
       return { t, rows, totalPots, targetPots, pack, shift, rounds, isDrop };
@@ -2702,7 +2703,9 @@ function ReadyDatesTab({ plan }) {
         const cropWeeks = (bReady && bPlant) ? Math.max(1, bReady.abs - bPlant.abs) : 5;
         const propLead = (bPlant && bShip) ? Math.max(0, bPlant.abs - bShip.abs) : 2;
         const shift = +t.ready_shift || 0;
-        const target = t.target_units != null ? +t.target_units : plannedItems(rowsFor.reduce((a, r) => a + +r.qty_pots, 0), Math.max(...rowsFor.map(r => +r.ppp || 1)), Math.max(...rowsFor.map(r => +r.plants_per_unit || 1)));
+        // target is POTS now — fall back to the rows' own pot total (native-encoding aware)
+        const potsSum = rowsFor.reduce((a, r) => { const ppp = Math.max(1, +r.ppp || 1); const ppu = Math.max(1, +r.plants_per_unit || +r.pack_size || 1); return a + (+r.qty_pots || 0) * (ppp >= ppu && ppu > 1 ? ppu : 1); }, 0);
+        const target = t.target_units != null ? +t.target_units : potsSum;
         const waves = (t.rounds && t.rounds.length) ? t.rounds.map(w => ({ units: +w.units || 0, ready: +w.ready_week }))
           : [{ units: target, ready: baseReady != null ? baseReady + shift : null }];
         const comps = (compByItem[it] || []).map(k => ({ v: vmap[k.variety_id], plants: +k.qty_plants_ordered || 0, broker: k.broker, supplier: k.supplier }));
@@ -2976,7 +2979,11 @@ function SalesVsPlanTab({ plan }) {
         const cutoff = (peak != null && peak <= EARLY_PEAK_WK) ? EARLY_CUTOFF_WK : MD_CUTOFF_WK;
         const soldOut = s >= pItems && pItems > 0 && lastWk != null && lastWk < cutoff;
         const lostEst = soldOut ? Math.round((s / Math.max(1, lastWk - firstWk + 1)) * (cutoff - lastWk) * price) : 0;
-        out.push({ item: it, isNew: newItems.has(it), needsSourcing: needsSrc.has(it), size: sizeTokenForItem(it), converted: pItems !== planned, pack: Math.max(1, Math.round(+ppuByItem[it] || 1)), planRaw: planned, planned: pItems, sold: s, st: pItems ? s / pItems : 0, over, lostEst, soldOut, cutoff, lastWk, firstWk, price: s > 0 ? (rev[it] || 0) / s : (price || null), rev: Math.round(rev[it] || 0), wk: wkA, peak, ship: readyByItem[it] ?? shipByItem[it] ?? null, status: soldOut ? "SOLDOUT" : s >= pItems ? "HIT" : (s === 0 ? "NOSALE" : "SHORT") });
+        // ONE UNIT, POTS, EVERYWHERE (Caleb 7/29): planned & sold shown in pots (× pack).
+        // % and $ are invariant — sell-through = s/pItems either way, over/lost use the
+        // per-case math above. pack varies (4.5"=10, HB=1, Salvia stub=1) but pots reconcile.
+        const pack = Math.max(1, Math.round(+ppuByItem[it] || 1));
+        out.push({ item: it, isNew: newItems.has(it), needsSourcing: needsSrc.has(it), size: sizeTokenForItem(it), converted: pItems !== planned, pack, planRaw: planned, planned: pItems * pack, sold: s * pack, st: pItems ? s / pItems : 0, over, lostEst, soldOut, cutoff, lastWk, firstWk, price: s > 0 ? (rev[it] || 0) / (s * pack) : (price ? price / pack : null), rev: Math.round(rev[it] || 0), wk: wkA, peak, ship: readyByItem[it] ?? shipByItem[it] ?? null, status: soldOut ? "SOLDOUT" : s >= pItems ? "HIT" : (s === 0 ? "NOSALE" : "SHORT") });
       }
       // Dual-use rows: real retail sales, but planned volume mostly feeds combos,
       // so sell-through / over / lost are meaningless and deliberately left null.
@@ -3711,7 +3718,7 @@ function SalesVsPlanTab({ plan }) {
                 <th style={stickyTh}>Family</th>
                 <th style={{ ...stickyTh, textAlign: "right" }}>Colors</th>
                 <th style={{ ...stickyTh, textAlign: "right" }} title="items with a 2027 call / items in the family">Decided</th>
-                <th style={{ ...stickyTh, textAlign: "right" }} title="sellable units (cases for 4.5&quot;)">Planned</th>
+                <th style={{ ...stickyTh, textAlign: "right" }} title="pots">Planned</th>
                 <th style={{ ...stickyTh, textAlign: "right" }}>Sold '26</th>
                 <th style={{ ...stickyTh, textAlign: "right" }}>Sell-thru</th>
                 <th style={{ ...stickyTh, textAlign: "right" }}>2026 $</th>
@@ -3736,7 +3743,7 @@ function SalesVsPlanTab({ plan }) {
                           defaultValue={f.hasTgt && f.decided === f.items ? f.tgt : ""}
                           placeholder={f.hasTgt ? `${f.tgt.toLocaleString()}…` : "—"}
                           inputMode="numeric" disabled={!f.id}
-                          title="family 2027 target in sellable units — distributed across the colors by 2026 sales share; fine-tune per item afterwards"
+                          title="family 2027 target in POTS — distributed across the colors by 2026 sales share; fine-tune per item afterwards"
                           onBlur={e => { const s = e.target.value.trim(); if (s === "" || (f.hasTgt && f.decided === f.items && +s.replace(/[^0-9.]/g, "") === f.tgt)) return; saveFamilyTarget(f, s); }}
                           onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
                           style={{ width: 66, padding: "3px 6px", textAlign: "right", borderRadius: 6, fontSize: 12.5, fontFamily: "inherit", boxSizing: "border-box",
@@ -3768,7 +3775,7 @@ function SalesVsPlanTab({ plan }) {
             <SortHdr col="price" label="Avg $" align="right" />
             <SortHdr col="firstWk" label="1st sold" align="right" />
             <th style={stickyTh} title="Finish (ready) week vs demand peak — read-only here. Change timing on the family page (group ready week), or per round in Ready & Orders.">Timing</th>
-            <th style={{ ...stickyTh, textAlign: "right", right: 0, zIndex: 12, background: "#e4eedd", borderLeft: `2px solid ${COLORS.light}`, minWidth: 154 }} title="Left box = the walkthrough agreement (editable, in sellable cases/baskets/pots — never auto-changes). Right box = what production rows hold today (read-only here; edit on the family page). Compare the two at season end.">2027 target</th>
+            <th style={{ ...stickyTh, textAlign: "right", right: 0, zIndex: 12, background: "#e4eedd", borderLeft: `2px solid ${COLORS.light}`, minWidth: 154 }} title="Left box = the walkthrough agreement (editable, in POTS — never auto-changes). Right box = what production rows hold today (read-only here; edit on the family page). Compare the two at season end.">2027 target</th>
           </tr></thead>
           <tbody>
             {shown.slice(0, 500).map((r, i) => {
@@ -3832,8 +3839,8 @@ function TargetCell({ r, tgt, draft, saving, onDraft, onSave }) {
       style={{ padding: "1px 6px", borderRadius: 6, fontSize: 10, fontWeight: 700, cursor: "pointer",
         border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.muted }}>{label}</button>
   );
-  const pack = Math.max(1, Math.round(+r.pack || (r.converted && r.planned > 0 ? (r.planRaw || 0) / r.planned : 1)));
-  const unitWord = pack > 1 ? "cases" : /HB/i.test(r.size || "") ? "baskets" : "pots";
+  // ONE UNIT: POTS. No cases, anywhere (Caleb 7/29). planned/target are pots.
+  const unitWord = "pots";
   const boxLbl = { fontSize: 8, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: COLORS.muted, marginBottom: 2, textAlign: "right" };
   if (tgt?.archived_at) return (   // retired: no inputs — just the state and the way back
     <td style={{ ...td, textAlign: "right", background: "#f2f2ec", borderLeft: `2px solid ${COLORS.border}`, whiteSpace: "nowrap", position: "sticky", right: 0, zIndex: 1, minWidth: 154 }}>
@@ -3862,7 +3869,7 @@ function TargetCell({ r, tgt, draft, saving, onDraft, onSave }) {
             }}
             onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
             placeholder="—"
-            title={`the walkthrough agreement, in ${unitWord}${pack > 1 ? ` of ${pack}` : ""} — never auto-changes`}
+            title={`the walkthrough agreement, in ${unitWord} — never auto-changes`}
             style={{ width: 60, padding: "3px 6px", textAlign: "right", borderRadius: 6, fontSize: 12.5, boxSizing: "border-box",
               fontFamily: "inherit", border: `1.5px solid ${committed ? COLORS.light : COLORS.border}`,
               background: saving ? "#f0f0e8" : "#fff", fontWeight: committed ? 700 : 400 }} />
@@ -3872,7 +3879,7 @@ function TargetCell({ r, tgt, draft, saving, onDraft, onSave }) {
               ghost (dashed, faint, parenthesized) so it can't be mistaken for a call */}
           <div style={{ ...boxLbl, color: committed ? COLORS.muted : "#b3bfab" }}>{committed ? "in production" : "'26 replay"}</div>
           <div title={committed
-              ? `what the plan rows hold today — ${r.planned.toLocaleString()} ${unitWord}${pack > 1 ? ` = ${(r.planned * pack).toLocaleString()} pots` : ""}. Edit it on the family page or in the drill, not here.`
+              ? `what the plan rows hold today — ${r.planned.toLocaleString()} ${unitWord}. Edit it on the family page or in the drill, not here.`
               : `no decision yet — the rows just carry last year forward (${r.planned.toLocaleString()} ${unitWord}). This firms up once you set a target.`}
             style={{ width: 60, padding: "3px 6px", textAlign: "right", borderRadius: 6, fontSize: 12.5, boxSizing: "border-box", cursor: "default",
               ...(committed
@@ -3893,12 +3900,12 @@ function TargetCell({ r, tgt, draft, saving, onDraft, onSave }) {
         const typed = draft !== undefined ? (Math.round(+String(draft).replace(/[^0-9.]/g, "")) || null) : null;
         if (typed != null && typed > 0) return (
           <div style={{ fontSize: 9.5, color: COLORS.dark, marginTop: 2, textAlign: "right", fontWeight: 700 }}>
-            {typed.toLocaleString()} {unitWord}{pack > 1 ? ` = ${(typed * pack).toLocaleString()} pots` : ""}
+            {typed.toLocaleString()} {unitWord}
           </div>
         );
         if (t == null) return (
           <div style={{ fontSize: 9, color: COLORS.muted, marginTop: 2, textAlign: "right" }}>
-            enter {unitWord}{pack > 1 ? ` of ${pack}` : ""}
+            enter {unitWord}
           </div>
         );
         const diff = r.planned - t;   // production minus target

@@ -72,8 +72,9 @@ export default function PotOrders({ plan }) {
       const planned = itemPots[it];
       const pack = itemPack[it];
       const decided = t && (t.target_units != null || t.decision);
+      // target_units is POTS now (Caleb 7/29 — one unit, pots)
       const targetPots = archived || t?.decision === "drop" || t?.target_units === 0 ? 0
-        : (t?.target_units != null ? Math.round(+t.target_units * pack) : planned);
+        : (t?.target_units != null ? Math.round(+t.target_units) : planned);
       const usePots = basis === "planned" ? planned : targetPots;
       const key = rid || `__nofam__${sizeLabelForItem(it)}`;
       const f = fam[key] = fam[key] || { recipeId: rid || null, label: rid ? (recById[rid]?.label || it) : `(no family) ${sizeLabelForItem(it)}`,
