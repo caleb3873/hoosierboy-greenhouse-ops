@@ -8,7 +8,7 @@ import { getSupabase, getCultureClient } from "./supabase";
 import { useAuth } from "./Auth";
 import { rippleTasks, isoWeekOf } from "./ripple";
 import AddPlantDoor from "./AddPlantDoor";
-import { wrapWk } from "./shared";
+import { wrapWk, weeksInYear } from "./shared";
 
 const C = { dark: "#1e2d1a", light: "#7fb069", cream: "#f3f8ee", creamBr: "#cfe3bd",
   muted: "#7a8c74", text: "#2f3b2a", amber: "#c9812a", amberBg: "#fbf1df", red: "#c0492b",
@@ -38,6 +38,25 @@ function readyInPast(yr, wk) {
     return true;
   }
   return false;
+}
+// absolute week number (53-week-year aware) so gaps across the year wrap compute right
+function absWkNum(yr, wk) {
+  let n = +wk || 0;
+  for (let y = 2024; y < (+yr || 2024); y++) n += weeksInYear(y);
+  return n;
+}
+// finish weeks for chain re-derivation: the locked recipe when it has them, otherwise
+// the gap the rows already carry (plant→ready). The week knobs must NOT dead-end on an
+// unlocked recipe — Caleb 7/29: Dianthus ready 2715→2712 "kept snapping back" because
+// crop_weeks was null and the handler bailed silently.
+function finishWksOr(recipe, plantYr, plantWk, readyYr, readyWk) {
+  if (recipe?.crop_weeks != null) return Math.round(+recipe.crop_weeks);
+  if (plantWk != null && readyWk != null) {
+    const d = absWkNum(readyYr ?? plantYr, readyWk) - absWkNum(plantYr, plantWk);
+    if (d >= 0 && d < 80) return d;
+  }
+  window.alert("⚠ This recipe has no finish weeks yet, so the chain can't be re-derived. Unlock the recipe and set finish wks (plant→ready) — or use a group that already has both plant and ready weeks.");
+  return null;
 }
 // size label → item-name prefix, same convention the Add-a-plant door writes with
 function famSizePrefix(sizeLabel) {
@@ -308,10 +327,12 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
   // series' rooting), year-wrapped. Audit-logged per item. Floor tasks still don't move.
   async function applyGroupReady(g, raw) {
     const digits = String(raw || "").replace(/\D/g, "");
-    if (!digits || recipe?.crop_weeks == null) return;
+    if (!digits) return;
+    const finWks = finishWksOr(recipe, g.plantYear, g.plant, g.readyYear, g.ready);
+    if (finWks == null) return;
     const ready = digits.length <= 2 ? +digits : +digits.slice(2);
     const readyYear = digits.length <= 2 ? (g.readyYear ?? plan.year ?? 2027) : 2000 + +digits.slice(0, 2);
-    if (!ready || ready > 52) return;
+    if (!ready || ready > 53) return;
     if (readyInPast(readyYear, ready)) return;
     const wrap = wrapWk;
     const acc = { moved: 0, flags: [] };
@@ -319,13 +340,14 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
     for (const vr of g.vars) {
       const sSpec = seriesOf(vr.variety) || {};
       const rooted = /^(URC|CALL)/i.test(sSpec.form || "");
-      const p = wrap(ready - Math.round(+recipe.crop_weeks), readyYear);
+      const p = wrap(ready - finWks, readyYear);
       const sh = rooted ? wrap(p.wk - Math.round(+(sSpec.rooting_weeks ?? 0)), p.yr) : p;
       for (const r of vr.rows) {
-        await sb.from("scheduled_crops").update({
+        const { error } = await sb.from("scheduled_crops").update({
           ready_week: ready, ready_year: readyYear,
           plant_week: p.wk, plant_year: p.yr, ship_week: sh.wk, ship_year: sh.yr,
         }).eq("id", r.id);
+        if (error) { window.alert(`⚠ Week change did NOT save (${error.message}) — the group is unchanged in the database.`); setBusy(false); return; }
       }
       const its = [...new Set(vr.rows.map(r => r.item_name))];
       const old = vr.rows[0];
@@ -343,7 +365,7 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
           changed_by: displayName || null, source: "family-page" });
       }
     } catch { /* audit must not block */ }
-    const pNew = wrap(ready - Math.round(+recipe.crop_weeks), readyYear);
+    const pNew = wrap(ready - finWks, readyYear);
     setFlashKey(`${pNew.wk}|${ready}`);
     setRipple(acc.moved || acc.flags.length ? acc : null);
     setBusy(false); setTick(t => t + 1);
@@ -388,14 +410,17 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
   function moveToNewGroup(vr, raw) {   // inline input, no browser dialogs (they can wedge the page)
     const digits = String(raw || "").replace(/\D/g, "");
     if (!digits) return;
+    const r0 = vr.rows[0] || {};
+    const finWks = finishWksOr(recipe, r0.plant_year, r0.plant_week, r0.ready_year, r0.ready_week);
+    if (finWks == null) return;
     const ready = digits.length <= 2 ? +digits : +digits.slice(2);
     const readyYear = digits.length <= 2 ? (plan.year ?? 2027) : 2000 + +digits.slice(0, 2);
-    if (!ready || ready > 52 || recipe?.crop_weeks == null) return;
+    if (!ready || ready > 53) return;
     if (readyInPast(readyYear, ready)) return;
     const wrap = wrapWk;
     const sSpec = seriesOf(vr.variety) || {};
     const rooted = /^(URC|CALL)/i.test(sSpec.form || "");
-    const p = wrap(ready - Math.round(+recipe.crop_weeks), readyYear);
+    const p = wrap(ready - finWks, readyYear);
     const sh = rooted ? wrap(p.wk - Math.round(+(sSpec.rooting_weeks ?? 0)), p.yr) : p;
     moveToGroup(vr, { plant: p.wk, plantYear: p.yr, ready, readyYear });
   }
@@ -406,15 +431,17 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
   // benches unassigned, supply unordered: a new round is a new decision downstream.
   async function duplicateGroup(g, raw) {
     const digits = String(raw || "").replace(/\D/g, "");
-    if (!digits || recipe?.crop_weeks == null) return;
+    if (!digits) return;
+    const finWks = finishWksOr(recipe, g.plantYear, g.plant, g.readyYear, g.ready);
+    if (finWks == null) return;
     const ready = digits.length <= 2 ? +digits : +digits.slice(2);
     const readyYear = digits.length <= 2 ? (g.readyYear ?? plan.year ?? 2027) : 2000 + +digits.slice(0, 2);
-    if (!ready || ready > 52) return;
+    if (!ready || ready > 53) return;
     if (readyInPast(readyYear, ready)) return;
     const wrap = wrapWk;
     setBusy(true);
     const { data: full } = await sb.from("scheduled_crops").select("*").in("id", g.rows.map(r => r.id));
-    const p = wrap(ready - Math.round(+recipe.crop_weeks), readyYear);
+    const p = wrap(ready - finWks, readyYear);
     let made = 0;
     for (const src of full || []) {
       const v = vmap[src.variety_id];
