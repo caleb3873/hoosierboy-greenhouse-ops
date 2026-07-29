@@ -49,7 +49,9 @@ function canonical(desc) {
   else if (CROP[t0]) { toks = [CROP[t0], ...toks.slice(1)]; }
   // SunPatiens ride under ImpaEX with their own marker
   if (/^Impatiens$/i.test(toks[0]) && /^Sunpatns$/i.test(toks[1] || "")) toks = ["Sunpatiens", ...toks.slice(2)];
-  const out = toks.map(w => WORD[w] || w).join(" ");
+  const out = toks
+    .map(w => /^(.{4,})ipd$/i.test(w) ? w.replace(/ipd$/i, "") : w)   // glued "Tangerineipd"
+    .map(w => WORD[w] || w).join(" ");
   return out;
 }
 

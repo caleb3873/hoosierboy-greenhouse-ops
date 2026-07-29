@@ -12,6 +12,18 @@ const BALL_WORD = {
   Rd: "Red", Rn: "Rain", Frst: "Frost", Evergrn: "Evergreen", Strawb: "Strawberry",
   Choc: "Chocolate", Carml: "Caramel", Brt: "Bright", Gldn: "Golden", Snst: "Sunset",
   Brst: "Burst", Lav: "Lavender", Mag: "Magenta",
+  // 7/29 full-file audit of ball danziger.xlsx (vowel-less token sweep + near-miss keys):
+  Cmp: "Compact", Pk: "Pink", Dk: "Dark", Dp: "Deep", Wh: "White", Yl: "Yellow",
+  Lt: "Light", Ht: "Hot", Clrfl: "Colorful", Dnc: "Dance", Bcl: "Bicolor", Bcol: "Bicolor",
+  Snny: "Sunny", Sprks: "Sparks", Chry: "Cherry", Pnk: "Pink", Cndy: "Candy", Twst: "Twist",
+  Bty: "Beauty", Hrt: "Heart", Dyn: "Dynamic", Grp: "Grape", Spsh: "Splash", Snshn: "Sunshine",
+  Bry: "Berry", Jwl: "Jewel", Lmn: "Lemon", Swft: "Swift", Lf: "Leaf", Pstl: "Pastel",
+  Rsbry: "Raspberry", Brnz: "Bronze", Rsy: "Rosy", Rppl: "Ripple", Rple: "Ripple",
+  Splsh: "Splash", Crm: "Cream", Midnght: "Midnight", Blkber: "Blackberry", Chsk: "Cheesecake",
+  Calibskt: "Calibasket", Gull: "Gulliver", Blu: "Blue", Flos: "Floss",
+  Pik: "Pink", Blackbrry: "Blackberry", Tcol: "Tricolor", Mac: "Maculata",
+  Optiklav: "Optik Lavender", Optikgrp: "Optik Grape",
+  // deliberately NOT mapped (ambiguous — flag, don't guess): Str, Trst, Fnch
 };
 // CamelCase / known crop-echo lead tokens the price lists prepend
 const BALL_ABBREV = new Set(["geris", "gerzon", "geriv", "petveg", "calib", "impng", "impaex", "verbeveg"]);
