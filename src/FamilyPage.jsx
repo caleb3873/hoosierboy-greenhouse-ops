@@ -4,10 +4,11 @@
 // live spine (crop_recipes + crop_recipe_series). The page is a VIEW over the spine —
 // recipe + plan rows + sales — never a second place to enter a fact.
 import { useState, useEffect, useMemo, useRef } from "react";
-import { getSupabase } from "./supabase";
+import { getSupabase, getCultureClient } from "./supabase";
 import { useAuth } from "./Auth";
 import { rippleTasks, isoWeekOf } from "./ripple";
 import AddPlantDoor from "./AddPlantDoor";
+import { wrapWk } from "./shared";
 
 const C = { dark: "#1e2d1a", light: "#7fb069", cream: "#f3f8ee", creamBr: "#cfe3bd",
   muted: "#7a8c74", text: "#2f3b2a", amber: "#c9812a", amberBg: "#fbf1df", red: "#c0492b",
@@ -312,7 +313,7 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
     const readyYear = digits.length <= 2 ? (g.readyYear ?? plan.year ?? 2027) : 2000 + +digits.slice(0, 2);
     if (!ready || ready > 52) return;
     if (readyInPast(readyYear, ready)) return;
-    const wrap = (wk, yr) => wk <= 0 ? { wk: wk + 52, yr: yr - 1 } : { wk, yr };
+    const wrap = wrapWk;
     const acc = { moved: 0, flags: [] };
     setBusy(true);
     for (const vr of g.vars) {
@@ -359,7 +360,7 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
   // move a variety's rows in one group onto another group's week chain (or a new one)
   async function moveToGroup(vr, target) {
     setBusy(true);
-    const wrapW = (wk, yr) => wk <= 0 ? { wk: wk + 52, yr: yr - 1 } : { wk, yr };
+    const wrapW = wrapWk;
     const sSpec = seriesOf(vr.variety) || {};
     const rooted = /^(URC|CALL)/i.test(sSpec.form || "");
     const pYr = target.plantYear ?? plan.year ?? 2027;
@@ -391,7 +392,7 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
     const readyYear = digits.length <= 2 ? (plan.year ?? 2027) : 2000 + +digits.slice(0, 2);
     if (!ready || ready > 52 || recipe?.crop_weeks == null) return;
     if (readyInPast(readyYear, ready)) return;
-    const wrap = (wk, yr) => wk <= 0 ? { wk: wk + 52, yr: yr - 1 } : { wk, yr };
+    const wrap = wrapWk;
     const sSpec = seriesOf(vr.variety) || {};
     const rooted = /^(URC|CALL)/i.test(sSpec.form || "");
     const p = wrap(ready - Math.round(+recipe.crop_weeks), readyYear);
@@ -410,7 +411,7 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
     const readyYear = digits.length <= 2 ? (g.readyYear ?? plan.year ?? 2027) : 2000 + +digits.slice(0, 2);
     if (!ready || ready > 52) return;
     if (readyInPast(readyYear, ready)) return;
-    const wrap = (wk, yr) => wk <= 0 ? { wk: wk + 52, yr: yr - 1 } : { wk, yr };
+    const wrap = wrapWk;
     setBusy(true);
     const { data: full } = await sb.from("scheduled_crops").select("*").in("id", g.rows.map(r => r.id));
     const p = wrap(ready - Math.round(+recipe.crop_weeks), readyYear);
@@ -888,6 +889,8 @@ export default function FamilyPage({ plan, recipeId, onClose }) {
           </div>
         </div>
 
+        <CultureCard recipe={recipe} series={series} locked={locked} setRecipe={setRecipe} setSeries={setSeries} />
+
         {/* walkthrough targets not yet reflected in the rows — the SvP → dig-in bridge */}
         {pendingGaps.length > 0 && (
           <div style={{ ...card, border: `1.5px solid ${C.amber}` }}>
@@ -1205,6 +1208,107 @@ function Overlay({ children, onClose }) {
         padding: 18, boxShadow: "0 22px 60px rgba(0,0,0,.4)", maxHeight: "92vh", overflow: "auto" }}>
         {children}
       </div>
+    </div>
+  );
+}
+
+// ── 📖 Culture card — Caleb 7/29: "I thought finish and propagation weeks would
+// autopopulate from the culture guides… this is the moment we actually use it."
+// Reads culture_guides_public (cross-project, read-only) for this crop: breeder's
+// propagation weeks + the finish-time matrix at this recipe's pot size, one line per
+// series, with APPLY buttons that fill the recipe DRAFT (unlock → apply → save —
+// the recipe stays the committed truth; culture is the informed suggestion).
+function CultureCard({ recipe, series, locked, setRecipe, setSeries }) {
+  const cc = getCultureClient();
+  const [rows, setRows] = useState(null);
+  const [open, setOpen] = useState(false);
+  const [detail, setDetail] = useState(null);   // guide id whose prose is expanded
+
+  useEffect(() => {
+    if (!open || !cc || !recipe || rows) return;
+    (async () => {
+      const { data } = await cc.from("culture_guides_public")
+        .select("id,breeder_name,series_name,series_variety,propagation_weeks,finish_time_matrix,propagation_details,culture_details,requires_heat")
+        .ilike("crop_name", recipe.crop_name).limit(60);
+      setRows(data || []);
+    })();
+  }, [open, cc, recipe, rows]);
+
+  if (!cc || !recipe) return null;
+  const sizeWant = parseFloat(recipe.size_label) || 4.5;
+  const propOf = g => { const m = String(g.propagation_weeks || "").match(/(\d+)/); return m ? +m[1] : null; };
+  const finishOf = g => {
+    const out = [];
+    const re = /'size_([\d_]+)_inch':\s*\{'lower':\s*(\d+),\s*'upper':\s*(\d+)/g;
+    let x; while ((x = re.exec(String(g.finish_time_matrix || "")))) out.push({ size: parseFloat(x[1].replace(/_/g, ".")), lo: +x[2], hi: +x[3] });
+    if (!out.length) return null;
+    out.sort((a, b) => Math.abs(a.size - sizeWant) - Math.abs(b.size - sizeWant));
+    return out[0];
+  };
+  const proseOf = txt => {
+    const out = [];
+    const re = /'([^']+)':\s*'([^']*)'/g;
+    let x; while ((x = re.exec(String(txt || "")))) out.push([x[1], x[2]]);
+    return out;
+  };
+  // one line per series (dedupe guides by series_name)
+  const bySeries = {};
+  (rows || []).forEach(g => {
+    const k = String(g.series_name || g.series_variety || "?").replace(/[™®]/g, "").trim();
+    if (!bySeries[k] || (finishOf(g) && !finishOf(bySeries[k]))) bySeries[k] = g;
+  });
+
+  const btn = (label, onClick, title) => (
+    <button disabled={locked} onClick={onClick} title={locked ? "Unlock the recipe to apply" : title}
+      style={{ padding: "2px 8px", borderRadius: 7, border: `1px solid ${locked ? C.border : C.light}`, background: "#fff",
+        color: locked ? C.muted : C.dark, fontSize: 10.5, fontWeight: 800, cursor: locked ? "default" : "pointer", fontFamily: FONT }}>{label}</button>
+  );
+
+  return (
+    <div style={{ ...card }}>
+      <button onClick={() => setOpen(o => !o)}
+        style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", background: "none", border: "none", padding: "10px 14px", cursor: "pointer", fontFamily: FONT, textAlign: "left" }}>
+        <b style={{ fontSize: 12.5, color: C.text }}>📖 Culture — breeder guidance for {recipe.crop_name}</b>
+        <span style={{ fontSize: 10.5, color: C.muted }}>prop + finish from the culture library; apply into the recipe</span>
+        <span style={{ marginLeft: "auto", fontSize: 11, color: C.muted }}>{open ? "▾" : "▸"}</span>
+      </button>
+      {open && (
+        <div style={{ borderTop: `1px solid ${C.border}`, padding: "8px 14px 12px" }}>
+          {rows == null && <div style={{ fontSize: 12, color: C.muted }}>reading the culture library…</div>}
+          {rows != null && !Object.keys(bySeries).length && <div style={{ fontSize: 12, color: C.muted }}>no culture guides on file for {recipe.crop_name} — set the recipe from experience, or add the guide to the culture library.</div>}
+          {Object.entries(bySeries).sort().map(([name, g]) => {
+            const p = propOf(g), f = finishOf(g);
+            const mid = f ? Math.round((f.lo + f.hi) / 2) : null;
+            return (
+              <div key={g.id} style={{ padding: "6px 0", borderBottom: `1px solid #f0f4ec` }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 12.5 }}>
+                  <b>{name}</b>
+                  <span style={{ fontSize: 10.5, color: C.muted }}>{g.breeder_name}</span>
+                  {p != null && <span>prop <b>{p} wk</b> {btn(`→ prop ${p}`, () => setSeries(series.map(x =>
+                    (x.series_name !== "(unassigned)" && name.toLowerCase().startsWith(x.series_name.toLowerCase())) || /^(URC|CALL)/i.test(x.form || "")
+                      ? { ...x, rooting_weeks: p } : x)), `set ${p} prop weeks on this family's rooted series`)}</span>}
+                  {f && <span>finish <b>{f.lo}–{f.hi} wk</b> <span style={{ color: C.muted, fontSize: 10.5 }}>@{f.size}"</span>{" "}
+                    {btn(`→ finish ${mid}`, () => setRecipe({ ...recipe, crop_weeks: mid }), `set finish weeks to the midpoint (${mid})`)}</span>}
+                  {String(g.requires_heat) === "True" && <span style={{ fontSize: 10, color: C.amber, fontWeight: 800 }}>🔥 bottom heat</span>}
+                  <button onClick={() => setDetail(d => d === g.id ? null : g.id)}
+                    style={{ marginLeft: "auto", background: "none", border: "none", color: C.muted, fontSize: 10.5, cursor: "pointer", fontWeight: 700, fontFamily: FONT }}>
+                    {detail === g.id ? "hide details" : "full guide ▸"}
+                  </button>
+                </div>
+                {detail === g.id && (
+                  <div style={{ marginTop: 6, background: "#fbfdf8", border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 11px", fontSize: 11.5, lineHeight: 1.55 }}>
+                    {proseOf(g.propagation_details).map(([k, v]) => <div key={"p" + k}><b style={{ color: C.dark }}>{k}:</b> {v}</div>)}
+                    {proseOf(g.culture_details).map(([k, v]) => <div key={"c" + k}><b style={{ color: C.dark }}>{k}:</b> {v}</div>)}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          <div style={{ fontSize: 10, color: C.muted, marginTop: 6 }}>
+            Apply fills the recipe DRAFT — unlock, apply, then 💾 Save. Your committed recipe stays the one truth; culture is the breeder's suggestion, and nothing you've set gets overwritten without you.
+          </div>
+        </div>
+      )}
     </div>
   );
 }

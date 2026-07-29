@@ -13,6 +13,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { getSupabase } from "./supabase";
 import { useAuth } from "./Auth";
+import { wrapWk } from "./shared";
 
 const C = { dark: "#1e2d1a", light: "#7fb069", cream: "#f3f8ee", creamBr: "#cfe3bd",
   muted: "#7a8c74", text: "#2f3b2a", amber: "#c9812a", amberBg: "#fbf1df",
@@ -26,7 +27,7 @@ function isoWeekMonday(year, week) {
   if (dow <= 4) s.setUTCDate(s.getUTCDate() - dow + 1); else s.setUTCDate(s.getUTCDate() + 8 - dow);
   return s.toISOString().slice(0, 10);
 }
-const wrapWk = (wk, year) => wk <= 0 ? { wk: wk + 52, year: year - 1 } : { wk, year };
+// wrapWk now honors 53-week years (2026!) — shared implementation
 const yyww = (wk, year) => wk == null ? "—" : `${String(year).slice(2)}${String(wk).padStart(2, "0")}`;
 const FORM_TO_CLASS = f => /^URC/i.test(f || "") ? "urc" : /^(CALL|DIRECT)/i.test(f || "") ? "callused"
   : /^PLUG/i.test(f || "") ? "plug" : /^SEED/i.test(f || "") ? "seed" : null;

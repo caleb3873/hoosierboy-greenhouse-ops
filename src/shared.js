@@ -340,3 +340,17 @@ export function plantOrder(a, b) {
   if (av !== bv) return av - bv;
   return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
 }
+
+// ── ISO week-wrap that respects 53-week years (Caleb 7/29: prop 5 from plant wk5
+// landed on wk52 of 2026 = SIX real weeks — 2026 has 53 ISO weeks, Jan 1 is a
+// Thursday, and every inline wrap hardcoded "+52"). Use these, never "+52".
+export function weeksInYear(y) {
+  const jan1 = new Date(y, 0, 1).getDay();
+  const leap = (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+  return (jan1 === 4 || (leap && jan1 === 3)) ? 53 : 52;
+}
+export function wrapWk(wk, yr) {
+  while (wk <= 0) { yr -= 1; wk += weeksInYear(yr); }
+  while (wk > weeksInYear(yr)) { wk -= weeksInYear(yr); yr += 1; }
+  return { wk, yr, year: yr };   // both spellings — callers use .yr or .year
+}
