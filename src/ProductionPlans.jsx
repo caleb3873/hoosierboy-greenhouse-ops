@@ -2855,6 +2855,7 @@ function SalesVsPlanTab({ plan }) {
   const [basis, setBasis] = usePersistedState("gh_svp_basis", "pots"); // "pots" = normalized finished pots · "raw" = as-entered units
   const [cmpGroupBy, setCmpGroupBy] = usePersistedState("gh_cmp_groupby", "size");  // season comparison: by size or category
   const [showOverLost, setShowOverLost] = usePersistedState("gh_svp_overlost", false);  // the Over$/Lost$ columns (off by default — noise)
+  const [viewBy, setViewBy] = usePersistedState("gh_svp_viewby", "item");  // item | family — walkthroughs often decide at the family grain
   // Projection session: agreed 2027 targets live in plan_targets, keyed by item
   // name, so the sales conversation never has to answer bench questions.
   const [targets, setTargets] = useState({});   // item_name → row
@@ -3626,7 +3627,67 @@ function SalesVsPlanTab({ plan }) {
           onCommit={commitGroups} onClose={() => setShowGroup(false)} />
       )}
 
-      <div id="svp-table" style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, overflow: "auto", maxHeight: "72vh" }}>
+      {/* Family ⇄ Item lens — same filters and search feed both */}
+      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+        {["item", "family"].map(v => (
+          <button key={v} onClick={() => setViewBy(v)}
+            style={{ padding: "5px 14px", borderRadius: 8, cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 800,
+              border: `1.5px solid ${viewBy === v ? COLORS.light : COLORS.border}`,
+              background: viewBy === v ? "#eef6e8" : "#fff", color: viewBy === v ? COLORS.dark : COLORS.muted }}>
+            {v === "item" ? "By item" : "🌿 By family"}
+          </button>
+        ))}
+        {viewBy === "family" && <span style={{ fontSize: 11.5, color: COLORS.muted }}>click a family to open its page · filters and search apply here too</span>}
+      </div>
+      {viewBy === "family" && (() => {
+        const byFam = {};
+        shown.forEach(r => {
+          const rid = itemRecipe[r.item] || "un";
+          const f = byFam[rid] = byFam[rid] || { id: rid === "un" ? null : rid,
+            label: rid === "un" ? "— no family yet" : (famList.find(x => x.id === rid)?.label || "—"),
+            items: 0, planned: 0, sold: 0, rev: 0, decided: 0, tgt: 0, hasTgt: false };
+          f.items++; f.planned += dPlanned(r); f.sold += dSold(r); f.rev += r.rev;
+          const t = targetOf(r);
+          if (t != null) { f.decided++; f.tgt += t; f.hasTgt = true; }
+        });
+        const fams = Object.values(byFam).sort((a, b) => plantOrder(a.label, b.label));
+        return (
+          <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, overflow: "auto", maxHeight: "72vh" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead><tr>
+                <th style={stickyTh}>Family</th>
+                <th style={{ ...stickyTh, textAlign: "right" }}>Colors</th>
+                <th style={{ ...stickyTh, textAlign: "right" }} title="items with a 2027 call / items in the family">Decided</th>
+                <th style={{ ...stickyTh, textAlign: "right" }} title="sellable units (cases for 4.5&quot;)">Planned</th>
+                <th style={{ ...stickyTh, textAlign: "right" }}>Sold '26</th>
+                <th style={{ ...stickyTh, textAlign: "right" }}>Sell-thru</th>
+                <th style={{ ...stickyTh, textAlign: "right" }}>2026 $</th>
+                <th style={{ ...stickyTh, textAlign: "right" }} title="sum of the 2027 targets set so far">2027 target</th>
+              </tr></thead>
+              <tbody>
+                {fams.map(f => {
+                  const st = f.planned > 0 ? Math.round(f.sold / f.planned * 100) : null;
+                  return (
+                    <tr key={f.id || "un"} onClick={() => f.id && setShowFamily(f.id)}
+                      title={f.id ? "open the family page" : "these items aren't linked to a family yet (⚙ Manage families)"}
+                      style={{ cursor: f.id ? "pointer" : "default", borderTop: `1px solid ${COLORS.border}` }}>
+                      <td style={{ ...td, fontWeight: 800 }}>{f.label}</td>
+                      <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{f.items}</td>
+                      <td style={{ ...td, textAlign: "right", fontWeight: 700, color: f.decided === f.items ? "#2e7d32" : f.decided ? COLORS.amber : COLORS.muted }}>{f.decided}/{f.items}</td>
+                      <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{f.planned.toLocaleString()}</td>
+                      <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{f.sold.toLocaleString()}</td>
+                      <td style={{ ...td, textAlign: "right", fontWeight: 700, color: st == null ? COLORS.muted : st >= 95 ? "#2e7d32" : st >= 60 ? COLORS.dark : COLORS.amber }}>{st == null ? "—" : st + "%"}</td>
+                      <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtMoney(f.rev)}</td>
+                      <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>{f.hasTgt ? f.tgt.toLocaleString() : "—"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        );
+      })()}
+      <div id="svp-table" style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, overflow: "auto", maxHeight: "72vh", display: viewBy === "family" ? "none" : undefined }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead><tr>
             <th style={{ ...stickyTh, width: 28 }} title="Select shown items">
@@ -3643,7 +3704,7 @@ function SalesVsPlanTab({ plan }) {
             <SortHdr col="rev" label="2026 $" align="right" />
             <SortHdr col="price" label="Avg $" align="right" />
             <SortHdr col="firstWk" label="1st sold" align="right" />
-            <th style={stickyTh} title="Finish (ready) week vs demand peak. ◀ ▶ record a decision to bring it in earlier or later — production applies it by moving the plant week; the finish follows automatically.">Timing</th>
+            <th style={stickyTh} title="Finish (ready) week vs demand peak — read-only here. Change timing on the family page (group ready week), or per round in Ready & Orders.">Timing</th>
             <th style={{ ...stickyTh, textAlign: "right", right: 0, zIndex: 12, background: "#e4eedd", borderLeft: `2px solid ${COLORS.light}`, minWidth: 154 }} title="Left box = the walkthrough agreement (editable, in sellable cases/baskets/pots — never auto-changes). Right box = what production rows hold today (read-only here; edit on the family page). Compare the two at season end.">2027 target</th>
           </tr></thead>
           <tbody>
@@ -3675,7 +3736,7 @@ function SalesVsPlanTab({ plan }) {
                   <td style={{ ...td, textAlign: "right", color: COLORS.muted }}>{fmtMoney(r.rev)}</td>
                   <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{r.price != null && r.price > 0 ? "$" + (+r.price).toFixed(2) : "—"}</td>
                   <td style={{ ...td, textAlign: "right" }} title={r.peak ? `first sale — demand peaked wk${r.peak}` : ""}>{r.firstWk != null ? wkStartLabel(r.firstWk) : <span style={{ color: "#c8d0c0" }}>—</span>}</td>
-                  <TimingCell r={r} tgt={targets[r.item]} onShift={n => saveTarget(r, { ready_shift: n === 0 ? null : n })} />
+                  <TimingCell r={r} tgt={targets[r.item]} />
                   <TargetCell r={r} tgt={targets[r.item]} draft={draft[r.item]} saving={savingT[r.item]}
                     onDraft={v => setDraft(d => ({ ...d, [r.item]: v }))}
                     onSave={patch => saveTarget(r, patch)} />
@@ -3795,26 +3856,21 @@ function TargetCell({ r, tgt, draft, saving, onDraft, onSave }) {
 // Finish week vs demand peak, adjustable. The shift is a DECISION (plan_targets.
 // ready_shift), not a plan edit — production applies it by moving the plant week;
 // the ready date follows via crop_weeks, so it can never go stale.
-function TimingCell({ r, tgt, onShift }) {
+// Finish week vs demand peak — READ-ONLY intel. Timing changes happen where they're
+// real: the family page's group ready knob (immediate) or per-round in Ready & Orders.
+// The ◀ ▶ decision arrows lived here once and confused more than they helped (Caleb 7/29).
+function TimingCell({ r, tgt }) {
   const shift = tgt?.ready_shift || 0;
   const base = r.ship;                    // min ready week for the item
   if (base == null) return <td style={td}><span style={{ color: "#c8d0c0" }}>—</span></td>;
   const eff = base + shift;
   const late = r.peak != null && eff > r.peak;
-  const arrow = { border: `1px solid ${COLORS.border}`, background: "#fff", borderRadius: 6, cursor: "pointer",
-    fontSize: 11, fontWeight: 800, color: COLORS.muted, padding: "1px 6px", lineHeight: 1.4 };
   return (
     <td style={{ ...td, whiteSpace: "nowrap" }}>
-      <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-        <button title="one week earlier" style={arrow} onClick={() => onShift(shift - 1)}>◀</button>
-        <span style={{ fontSize: 11.5, fontWeight: 700, color: late ? COLORS.red : "#2e7d32" }}
-          title={`finishes wk${base}${shift ? ` → wk${eff} after the agreed move` : ""}${r.peak != null ? `, demand peaks wk${r.peak}` : ""}`}>
-          {late ? "⚠ " : "✓ "}wk{eff}
-          {shift !== 0 && <b style={{ color: shift < 0 ? "#2e7d32" : COLORS.amber }}> ({shift > 0 ? "+" : ""}{shift})</b>}
-        </span>
-        <button title="one week later" style={arrow} onClick={() => onShift(shift + 1)}>▶</button>
-        {shift !== 0 && <button title="clear the move" onClick={() => onShift(0)}
-          style={{ ...arrow, color: COLORS.red, border: "none", background: "none" }}>×</button>}
+      <span style={{ fontSize: 11.5, fontWeight: 700, color: late ? COLORS.red : "#2e7d32" }}
+        title={`finishes wk${base}${shift ? ` → wk${eff} (recorded move — applies via Ready & Orders)` : ""}${r.peak != null ? ` · demand peaks wk${r.peak}` : ""}. To change timing, open the family page (group ready week).`}>
+        {late ? "⚠ " : "✓ "}wk{eff}
+        {shift !== 0 && <b style={{ color: shift < 0 ? "#2e7d32" : COLORS.amber }}> ({shift > 0 ? "+" : ""}{shift})</b>}
       </span>
     </td>
   );
