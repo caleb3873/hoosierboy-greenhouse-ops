@@ -9,7 +9,7 @@ import { useAuth } from "./Auth";
 import { rippleTasks, isoWeekOf } from "./ripple";
 import AddPlantDoor from "./AddPlantDoor";
 import { QuotePicker } from "./ProgramBuilder";
-import { wrapWk, weeksInYear } from "./shared";
+import { wrapWk, weeksInYear, plantOrder } from "./shared";
 
 const C = { dark: "#1e2d1a", light: "#7fb069", cream: "#f3f8ee", creamBr: "#cfe3bd",
   muted: "#7a8c74", text: "#2f3b2a", amber: "#c9812a", amberBg: "#fbf1df", red: "#c0492b",
@@ -304,6 +304,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
   // "Don't see the variety quoted from your broker but know it's there? Search
   // and match it yourself so it's permanently attached for future ordering."
   const [potOpts, setPotOpts] = useState([]);   // finished containers for the pot picker (match a family to a pot)
+  const [allFams, setAllFams] = useState([]);   // every family — target list for "move to another family"
   const [cropSeriesSug, setCropSeriesSug] = useState([]);   // series names derived from ALL broker quotes for this crop
   const [quoteFor, setQuoteFor] = useState(null);   // {v} direct-to-variety, or {} free search
   const [pendingQuote, setPendingQuote] = useState(null);   // a picked quote awaiting "attach to which color?"
@@ -335,6 +336,30 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
       setPotOpts(opts);
     })();
   }, [sb, recipe?.default_container_id]);
+  // every family, for the "move a variety to another family" picker
+  useEffect(() => {
+    (async () => {
+      const { data } = await sb.from("crop_recipes").select("id,crop_name,size_label,display_name,default_container_id");
+      setAllFams((data || []).map(r => ({ ...r, label: r.display_name || `${r.size_label} ${r.crop_name}` })).sort((a, b) => plantOrder(a.label, b.label)));
+    })();
+  }, [sb]);
+  // reassign a variety's rows to a DIFFERENT family — takes its recipe + pot with it, so it
+  // stops showing in the old family (Caleb 7/30). Combo appearances stay put.
+  async function moveVarietyToFamily(vr, target) {
+    if (!target || target.id === recipeId) return;
+    setBusy(true);
+    try {
+      const ids = vr.rows.filter(r => !r.is_combo_component).map(r => r.id);
+      for (const id of ids) {
+        await sb.from("scheduled_crops").update({ recipe_id: target.id, container_id: target.default_container_id || null }).eq("id", id);
+      }
+      await sb.from("item_change_log").insert({ plan_id: plan.id, item_name: vr.rows[0]?.item_name || vr.variety,
+        variety_key: vr.vkey || null, change_type: "family_move",
+        detail: { variety: vr.variety, to: target.label, rows: ids.length }, changed_by: displayName || null, source: "family-page" });
+    } catch (e) { window.alert("Move stopped: " + (e.message || e)); }
+    setBusy(false); setCtx(null); setTick(t => t + 1);
+  }
+
   async function setFamilyPot(containerId) {
     setRecipe(r => ({ ...r, default_container_id: containerId || null }));
     await sb.from("crop_recipes").update({ default_container_id: containerId || null }).eq("id", recipeId);
@@ -351,7 +376,11 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
   // this crop (the key is word-sorted and useless for this; the display name isn't).
   useEffect(() => {
     const crop = recipe?.crop_name;
-    if (!crop) { setCropSeriesSug([]); return; }
+    // a CUSTOM-named family (display_name set) is series-specific — e.g. "Begonia Viking"
+    // whose crop_name is the generic "Begonia". Pulling every genus series would dump all
+    // 205 begonias into the dropdown (Caleb 7/30: "showing all these irrelevant varieties").
+    // For those, suggest only the family's OWN series; genus-level families still get quotes.
+    if (!crop || recipe?.display_name) { setCropSeriesSug([]); return; }
     (async () => {
       const { data } = await sb.from("broker_prices").select("variety").ilike("crop", `%${crop}%`).limit(2000);
       const genus = String(crop).toLowerCase().split(/\s+/)[0];
@@ -1291,6 +1320,27 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
                   → Move to <b>Group {g.n}</b> <span style={{ color: C.muted, fontSize: 11 }}>plant {wkFmt(g.plantYear, g.plant)} · ready {wkFmt(g.plantYear, g.ready)}</span>
                 </button>
               ))}
+              {/* move this variety to a DIFFERENT family (takes its recipe + pot) */}
+              {ctx.moveFam == null ? (
+                <button disabled={busy} onClick={() => setCtx({ ...ctx, moveFam: "" })}
+                  style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 12px", background: "#fff",
+                    border: "none", borderTop: `1px solid ${C.border}`, cursor: "pointer", fontFamily: FONT, fontSize: 12.5, fontWeight: 700, color: C.dark }}>
+                  🔀 Move to another family…
+                </button>
+              ) : (
+                <div style={{ padding: "8px 12px", borderTop: `1px solid ${C.border}` }}>
+                  <input autoFocus value={ctx.moveFam} onChange={e => setCtx({ ...ctx, moveFam: e.target.value })}
+                    placeholder="search families…" style={{ width: "100%", boxSizing: "border-box", padding: "6px 8px", borderRadius: 7, border: `1.5px solid ${C.creamBr}`, fontSize: 12, fontFamily: FONT, marginBottom: 5 }} />
+                  <div style={{ maxHeight: 200, overflow: "auto" }}>
+                    {allFams.filter(f => f.id !== recipeId && (!ctx.moveFam.trim() || f.label.toLowerCase().includes(ctx.moveFam.trim().toLowerCase()))).slice(0, 40).map(f => (
+                      <button key={f.id} disabled={busy} onClick={() => moveVarietyToFamily(ctx.vr, f)}
+                        style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 8px", background: "#fff", border: "none", borderBottom: `1px solid ${C.border}`, cursor: "pointer", fontFamily: FONT, fontSize: 12 }}>
+                        {f.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               {ctx.newWk == null ? (
                 <button disabled={busy} onClick={() => setCtx({ ...ctx, newWk: "" })}
                   style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 12px", background: "#fff",
