@@ -321,7 +321,9 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
   // finished-pot options for the header pot picker — match the family to the pot it ships in
   useEffect(() => {
     (async () => {
-      const { data } = await sb.from("containers").select("id,name,sku,cost_per_unit,diameter_in").eq("kind", "finished").order("diameter_in");
+      // include trays/prop containers — a crop that finishes in a 1801 landscape tray or a
+      // plug tray needs to match it (Caleb 7/30: the tray wasn't in the match-a-pot dropdown)
+      const { data } = await sb.from("containers").select("id,name,sku,cost_per_unit,diameter_in,kind").in("kind", ["finished", "tray", "propagation"]).order("diameter_in");
       setPotOpts(data || []);
     })();
   }, [sb]);
