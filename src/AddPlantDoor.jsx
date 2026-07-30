@@ -54,6 +54,7 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
   const [variety, setVariety] = useState(null);      // variety_library row (single-add)
   const [recipes, setRecipes] = useState([]);        // crop_recipes for the crop
   const [sizeSel, setSizeSel] = useState("");         // chosen SIZE label — the recipe is resolved/stubbed from it
+  const [newFamName, setNewFamName] = useState("");   // optional custom name when CREATING a new family
   const [series, setSeries] = useState([]);          // series of the chosen recipe
   const [quote, setQuote] = useState(null);          // {landed, broker, supplier, alts}
   const [mode, setMode] = useState(initialReadyWk != null ? "week" : "date");
@@ -278,6 +279,7 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
     if (existing) return existing;
     const { data: ins, error } = await sb.from("crop_recipes").upsert({
       crop_name: crop, size_label: sizeLabel, pots_per_unit: inferPPU(sizeLabel), ppp: 1,
+      display_name: newFamName.trim() || null,   // optional custom family name (Caleb 7/30)
       updated_by: displayName || "planner",
       seeded_from: { source: "add-door", note: "catalog stub — set crop weeks / prop on the family page" },
     }, { onConflict: "crop_name,size_label" }).select("*").single();
@@ -419,15 +421,29 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
       <input list="apd-sizes" value={sizeSel} onChange={e => setSizeSel(e.target.value)}
         placeholder={`pick or type a size — e.g. 4.5" Pot`} style={{ ...ctl, cursor: "text" }} />
       <datalist id="apd-sizes">{sizeOptions.map(s => <option key={s} value={s} />)}</datalist>
-      {sizeSel && !recipe && (
-        <div style={{ fontSize: 10.5, color: C.amber, background: C.amberBg, border: "1px solid #ecd9b8", borderRadius: 8, padding: "5px 8px", marginTop: 4 }}>
-          new size for {cropForSize} — added to the catalog now; crop weeks &amp; prop get set on the family page later
-        </div>
-      )}
-      {recipe && (
-        <div style={{ fontSize: 10.5, color: C.muted, marginTop: 3 }}>
-          {recipe.crop_weeks != null ? `crop ${recipe.crop_weeks}w` : "⚠ crop weeks not set — fill on the family page"}
-          {recipe.pots_per_unit > 1 ? ` · ${recipe.pots_per_unit} pots/unit` : ""}
+      {/* FAMILY choice (Caleb 7/30): add to an existing family, or create a new one */}
+      {sizeSel && (
+        <div style={{ marginTop: 5 }}>
+          {recipe ? (
+            <div style={{ fontSize: 11, color: C.dark, background: "#eef6e8", border: `1px solid ${C.light}`, borderRadius: 8, padding: "6px 9px" }}>
+              🌿 <b>Adds to</b> {recipe.display_name || `${recipe.size_label} ${recipe.crop_name}`}
+              {recipes.length > 1 && (
+                <select value={sizeSel} onChange={e => setSizeSel(e.target.value)} title="switch to a different existing family for this crop"
+                  style={{ marginLeft: 8, padding: "2px 5px", borderRadius: 6, border: `1px solid ${C.creamBr}`, fontSize: 11, fontWeight: 700, fontFamily: FONT, cursor: "pointer" }}>
+                  {recipes.map(r => <option key={r.id} value={r.size_label}>{r.display_name || `${r.size_label} ${r.crop_name}`}</option>)}
+                </select>
+              )}
+              <span style={{ color: C.muted, marginLeft: 6 }}>{recipe.crop_weeks != null ? `· crop ${recipe.crop_weeks}w` : "· crop weeks set later"}</span>
+            </div>
+          ) : (
+            <div style={{ fontSize: 11, color: C.amber, background: C.amberBg, border: "1px solid #ecd9b8", borderRadius: 8, padding: "6px 9px" }}>
+              🌿 <b>New family</b> for {cropForSize} — crop weeks &amp; prop set on the family page later.
+              <div style={{ marginTop: 4 }}>
+                <input value={newFamName} onChange={e => setNewFamName(e.target.value)} placeholder={`name it (optional) — default "${sizeSel} ${cropForSize}"`}
+                  style={{ width: "100%", boxSizing: "border-box", padding: "5px 8px", borderRadius: 7, border: `1.5px solid ${C.creamBr}`, fontSize: 12, fontFamily: FONT }} />
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -287,6 +287,21 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
     setQuoteFor(null);
   }
 
+  // edit a round's planned quantity right here (Caleb 7/30: planned is read-only in
+  // Sales vs Plan by design — this is the "edit in the drill" the tooltip promises)
+  async function saveRowQty(p, val) {
+    const q = Math.max(0, Math.round(+val || 0));
+    if (q === (+p.qty_pots || 0)) return;
+    setBusy(true);
+    try {
+      await sb.from("scheduled_crops").update({ qty_pots: q }).eq("id", p.id);
+      await logChange("qty_change", { round: p.id, before: +p.qty_pots || 0, after: q, plant_week: p.plant_week });
+      await load();
+      onMutated?.();
+    } catch (e) { window.alert("Couldn't update the quantity: " + (e.message || e)); }
+    setBusy(false);
+  }
+
   // Add a component straight from a broker quote — the quote brings the variety,
   // the form, the source AND the price in one pick. Lands at 1/basket, adjust after.
   const [addQuote, setAddQuote] = useState(false);
@@ -899,7 +914,11 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
                   {b ? <>{b.zone_label} · <span style={{ fontFamily: "monospace" }}>{b.code}</span>{b.position != null ? <span style={{ color: C.muted, fontWeight: 400 }}> (row {b.position})</span> : null}</>
                      : p.bench_id ? "unassigned bench" : "no bench yet"}
                 </span>
-                <span>{(+p.qty_pots).toLocaleString()} × ppp {p.ppp}</span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }} onClick={e => e.stopPropagation()}>
+                  <NumInput value={+p.qty_pots} onCommit={v => saveRowQty(p, v)}
+                    style={{ width: 66, padding: "3px 6px", textAlign: "right", borderRadius: 6, border: `1.5px solid ${C.light}`, fontSize: 12.5, fontWeight: 700, fontFamily: "inherit" }} />
+                  <span style={{ color: C.muted }}>pots × ppp {p.ppp}</span>
+                </span>
                 <span style={{ color: C.muted }}>plant wk{p.plant_week}/{String(p.plant_year).slice(2)} → ready wk{p.ready_week ?? "?"}</span>
                 <span style={{ color: C.muted, marginLeft: "auto" }}>{[p.prop_method, p.broker || p.supplier].filter(Boolean).join(" · ")}</span>
               </div>
