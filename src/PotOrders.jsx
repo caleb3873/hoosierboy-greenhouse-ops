@@ -40,7 +40,7 @@ export default function PotOrders({ plan }) {
         sb.from("crop_recipes").select("id,crop_name,size_label,display_name,default_container_id"),
         // finished pots AND propagation/plug trays — a crop that finishes in a 72-cell tray
         // (Juncus, Dracaena spikes) orders that tray as its "pot". carrier trays stay finished.
-        sb.from("containers").select("id,name,sku,kind,diameter_in,units_per_case,case_size,qty_per_pallet,cells_per_flat,cost_per_unit,stock_qty,primary_supplier,supplier,has_wire,wire_cost,wire_supplier,wire_sku,has_saucer,saucer_cost,has_sleeve,sleeve_cost,is_hb_tagged,tag_cost_per_unit,has_carrier,carrier_name,carrier_cost,carrier_sku,carrier_supplier,pots_per_carrier").in("kind", ["finished", "tray", "propagation"]).order("diameter_in"),
+        sb.from("containers").select("id,name,sku,kind,diameter_in,units_per_case,case_size,qty_per_pallet,cells_per_flat,cost_per_unit,stock_qty,primary_supplier,supplier,has_wire,wire_cost,wire_supplier,wire_sku,has_saucer,saucer_cost,saucer_sku,saucer_supplier,has_sleeve,sleeve_cost,sleeve_sku,sleeve_supplier,is_hb_tagged,tag_cost_per_unit,tag_sku,tag_supplier,has_carrier,carrier_name,carrier_cost,carrier_sku,carrier_supplier,pots_per_carrier").in("kind", ["finished", "tray", "propagation"]).order("diameter_in"),
         page("scheduled_crops", "id,item_name,recipe_id,qty_pots,ppp,plants_per_unit,pack_size,is_combo_component,container_id", q => q.eq("plan_id", plan.id)),
         sb.from("plan_targets").select("item_name,target_units,decision,archived_at").eq("plan_id", plan.id),
       ]);
@@ -127,9 +127,9 @@ export default function PotOrders({ plan }) {
       // pots/tray → 0.1 tray each; 1801 = 1 insert/flat → 1 flat each). perUnit splits the cost.
       const acc = [];
       if (c.has_wire && +c.wire_cost) acc.push({ label: "wire", price: +c.wire_cost, perUnit: 1, supplier: c.wire_supplier, sku: c.wire_sku });
-      if (c.has_saucer && +c.saucer_cost) acc.push({ label: "saucer", price: +c.saucer_cost, perUnit: 1 });
-      if (c.has_sleeve && +c.sleeve_cost) acc.push({ label: "sleeve", price: +c.sleeve_cost, perUnit: 1 });
-      if (c.is_hb_tagged && +c.tag_cost_per_unit) acc.push({ label: "tag", price: +c.tag_cost_per_unit, perUnit: 1 });
+      if (c.has_saucer && +c.saucer_cost) acc.push({ label: "saucer", price: +c.saucer_cost, perUnit: 1, supplier: c.saucer_supplier, sku: c.saucer_sku });
+      if (c.has_sleeve && +c.sleeve_cost) acc.push({ label: "sleeve", price: +c.sleeve_cost, perUnit: 1, supplier: c.sleeve_supplier, sku: c.sleeve_sku });
+      if (c.is_hb_tagged && +c.tag_cost_per_unit) acc.push({ label: "tag", price: +c.tag_cost_per_unit, perUnit: 1, supplier: c.tag_supplier, sku: c.tag_sku });
       if (c.has_carrier && +c.carrier_cost) { const per = Math.max(1, Math.round(+c.pots_per_carrier || 1)); acc.push({ label: c.carrier_name || "tray", price: +c.carrier_cost, perUnit: 1 / per, per, tray: true, supplier: c.carrier_supplier, sku: c.carrier_sku }); }
       const unit = potCost + acc.reduce((a, x) => a + x.price * x.perUnit, 0);
       // accessories needed for ALL production of this pot (a tray per 10 pots, a wire per
