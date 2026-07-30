@@ -190,6 +190,12 @@ export default function PotOrders({ plan }) {
   if (!ledger) return <div style={{ padding: 20, color: C.muted }}>Loading the pot ledger…</div>;
   const { groups, unmatched, tot, accList } = ledger;
   const saved = tot.gross - tot.cost;
+  // priced containers not used by any 2027 family and not an accessory — shown as a
+  // reference so you can "use what we have instead of ordering something different"
+  const usedIds = new Set(groups.map(g => g.container.id));
+  const carrierSkus = new Set(containers.flatMap(c => [c.carrier_sku, c.wire_sku].filter(Boolean)));
+  const available = containers.filter(c => !usedIds.has(c.id) && (c.sku ? !carrierSkus.has(c.sku) : true) && c.cost_per_unit != null)
+    .sort((a, b) => (a.diameter_in || 99) - (b.diameter_in || 99) || plantOrder(a.name, b.name));
 
   const th = { textAlign: "left", padding: "7px 10px", fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px", borderBottom: `2px solid ${C.border}`, position: "sticky", top: 0, background: C.cream, whiteSpace: "nowrap" };
   const td = { padding: "7px 10px", fontSize: 12.5, borderBottom: `1px solid ${C.border}`, verticalAlign: "middle" };
@@ -376,8 +382,31 @@ export default function PotOrders({ plan }) {
         </div>
       )}
 
+      {/* priced containers we could use instead of ordering — reference, no order */}
+      {available.length > 0 && (
+        <details style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10 }}>
+          <summary style={{ cursor: "pointer", padding: "10px 13px", fontSize: 11.5, fontWeight: 800, color: C.dark, listStyle: "none" }}>
+            🗂 Available containers <span style={{ color: C.muted, fontWeight: 500 }}>— {available.length} priced but not matched to a 2027 family. Options to use instead of ordering something new; match one on any family row above.</span>
+          </summary>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead><tr>{["Container", "Size", "Price", "Case / pallet", "Supplier"].map((h, i) => <th key={h} style={{ ...th, textAlign: i >= 2 ? "right" : "left" }}>{h}</th>)}</tr></thead>
+            <tbody>
+              {available.map(c => (
+                <tr key={c.id} style={{ borderTop: `1px solid ${C.border}` }}>
+                  <td style={{ ...td, fontWeight: 700 }}>{c.name}{c.sku ? <span style={{ color: C.muted, fontWeight: 500 }}> · {c.sku}</span> : ""}</td>
+                  <td style={{ ...td, color: C.muted }}>{c.diameter_in ? `${c.diameter_in}"` : c.cells_per_flat ? `${c.cells_per_flat} cell` : "—"}</td>
+                  <td style={{ ...td, textAlign: "right", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{money(c.cost_per_unit)}</td>
+                  <td style={{ ...td, textAlign: "right", color: C.muted, whiteSpace: "nowrap" }}>{c.units_per_case ? `${c.units_per_case}/cs` : ""}{c.qty_per_pallet ? `${c.units_per_case ? " · " : ""}${(+c.qty_per_pallet).toLocaleString()}/pal` : (c.units_per_case ? "" : "—")}</td>
+                  <td style={{ ...td, textAlign: "right", color: C.muted }}>{c.primary_supplier || c.supplier || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </details>
+      )}
+
       <div style={{ fontSize: 11, color: C.muted, lineHeight: 1.5 }}>
-        Pots needed comes from the projection: each family's 2027 target (in pots) where you've decided, otherwise last year's plan — so it firms up live as you and Mario walk the families. Match a family to a pot here or on its family page; enter on-hand inventory in the <b>On hand</b> column and the order nets it out, rounded up to whole cases. <b>Saved by inventory</b> = the cash you're NOT tying up by ordering over what you already have.
+        Pots needed comes from the projection: each family's 2027 target (in pots) where you've decided, otherwise last year's plan — so it firms up live as you and Mario walk the families. Match a family to a pot here or on its family page; enter on-hand inventory in the <b>On hand</b> column and the order nets it out. <b>Saved by inventory</b> = the cash you're NOT tying up by ordering over what you already have. The 🗂 <b>Available containers</b> list is everything priced you could match a family to instead of buying new.
       </div>
     </div>
   );
