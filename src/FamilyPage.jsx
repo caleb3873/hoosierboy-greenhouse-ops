@@ -318,15 +318,23 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
     });
     return Object.values(by).sort((a, b) => String(a.variety).localeCompare(String(b.variety)));
   }, [rows, vmap]);
-  // finished-pot options for the header pot picker — match the family to the pot it ships in
+  // pot options for the header picker — match the family to the pot it ships in. Include
+  // trays/prop (a crop can finish in a 1801 landscape tray), and ALWAYS include the family's
+  // currently-assigned pot even if it's some other kind, so the dropdown never shows blank
+  // when a pot IS set (Caleb 7/30: "the dropdown must always match the pot we determined").
   useEffect(() => {
     (async () => {
-      // include trays/prop containers — a crop that finishes in a 1801 landscape tray or a
-      // plug tray needs to match it (Caleb 7/30: the tray wasn't in the match-a-pot dropdown)
-      const { data } = await sb.from("containers").select("id,name,sku,cost_per_unit,diameter_in,kind").in("kind", ["finished", "tray", "propagation"]).order("diameter_in");
-      setPotOpts(data || []);
+      const sel = "id,name,sku,cost_per_unit,diameter_in,kind";
+      const { data } = await sb.from("containers").select(sel).in("kind", ["finished", "tray", "propagation", "ring", "other"]).order("diameter_in");
+      let opts = data || [];
+      const cur = recipe?.default_container_id;
+      if (cur && !opts.some(c => c.id === cur)) {
+        const { data: c } = await sb.from("containers").select(sel).eq("id", cur).maybeSingle();
+        if (c) opts = [...opts, c];
+      }
+      setPotOpts(opts);
     })();
-  }, [sb]);
+  }, [sb, recipe?.default_container_id]);
   async function setFamilyPot(containerId) {
     setRecipe(r => ({ ...r, default_container_id: containerId || null }));
     await sb.from("crop_recipes").update({ default_container_id: containerId || null }).eq("id", recipeId);
