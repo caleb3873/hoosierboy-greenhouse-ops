@@ -376,11 +376,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
   // this crop (the key is word-sorted and useless for this; the display name isn't).
   useEffect(() => {
     const crop = recipe?.crop_name;
-    // a CUSTOM-named family (display_name set) is series-specific — e.g. "Begonia Viking"
-    // whose crop_name is the generic "Begonia". Pulling every genus series would dump all
-    // 205 begonias into the dropdown (Caleb 7/30: "showing all these irrelevant varieties").
-    // For those, suggest only the family's OWN series; genus-level families still get quotes.
-    if (!crop || recipe?.display_name) { setCropSeriesSug([]); return; }
+    if (!crop) { setCropSeriesSug([]); return; }
     (async () => {
       const { data } = await sb.from("broker_prices").select("variety").ilike("crop", `%${crop}%`).limit(2000);
       const genus = String(crop).toLowerCase().split(/\s+/)[0];
