@@ -38,7 +38,7 @@ export default function PotOrders({ plan }) {
       const page = async (tbl, sel, filt) => { let out = [], f = 0; for (;;) { let q = sb.from(tbl).select(sel).range(f, f + 999); if (filt) q = filt(q); const { data } = await q; out = out.concat(data || []); if (!data || data.length < 1000) break; f += 1000; } return out; };
       const [recs, cons, sc, tg] = await Promise.all([
         sb.from("crop_recipes").select("id,crop_name,size_label,display_name,default_container_id"),
-        sb.from("containers").select("id,name,sku,kind,diameter_in,units_per_case,case_size,cost_per_unit,stock_qty,primary_supplier,supplier").eq("kind", "finished").order("diameter_in"),
+        sb.from("containers").select("id,name,sku,kind,diameter_in,units_per_case,case_size,cost_per_unit,stock_qty,primary_supplier,supplier,has_wire,wire_cost,wire_supplier,wire_sku,has_saucer,saucer_cost,has_sleeve,sleeve_cost,is_hb_tagged,tag_cost_per_unit,has_carrier,carrier_cost,pots_per_carrier").eq("kind", "finished").order("diameter_in"),
         page("scheduled_crops", "id,item_name,recipe_id,qty_pots,ppp,plants_per_unit,pack_size,is_combo_component,container_id", q => q.eq("plan_id", plan.id)),
         sb.from("plan_targets").select("item_name,target_units,decision,archived_at").eq("plan_id", plan.id),
       ]);
@@ -105,8 +105,17 @@ export default function PotOrders({ plan }) {
       const cs = caseOf(c);
       const cases = Math.ceil(net / cs);
       const orderUnits = cases * cs;
-      const unit = +c.cost_per_unit || 0;
-      return { ...g, onHand, net, cs, cases, orderUnits, unit, cost: orderUnits * unit, grossCost: g.needed * unit };
+      const potCost = +c.cost_per_unit || 0;
+      // all-in per basket/pot: the pot PLUS every bundled hard good it needs (wire hanger,
+      // saucer, sleeve, tag, carrier). A 10" HB is $0.58 pot + $0.22 wire = $0.80 real.
+      const acc = [];
+      if (c.has_wire && +c.wire_cost) acc.push({ label: "wire", cost: +c.wire_cost, supplier: c.wire_supplier, sku: c.wire_sku });
+      if (c.has_saucer && +c.saucer_cost) acc.push({ label: "saucer", cost: +c.saucer_cost });
+      if (c.has_sleeve && +c.sleeve_cost) acc.push({ label: "sleeve", cost: +c.sleeve_cost });
+      if (c.is_hb_tagged && +c.tag_cost_per_unit) acc.push({ label: "tag", cost: +c.tag_cost_per_unit });
+      if (c.has_carrier && +c.carrier_cost) acc.push({ label: "carrier", cost: +c.carrier_cost / Math.max(1, +c.pots_per_carrier || 1) });
+      const unit = potCost + acc.reduce((a, x) => a + x.cost, 0);
+      return { ...g, onHand, net, cs, cases, orderUnits, unit, potCost, acc, cost: orderUnits * unit, grossCost: g.needed * unit };
     }).sort((a, b) => (a.container.diameter_in || 99) - (b.container.diameter_in || 99) || plantOrder(a.container.name, b.container.name));
     const tot = groups.reduce((a, g) => ({
       needed: a.needed + g.needed, onHand: a.onHand + g.onHand, order: a.order + g.orderUnits,
@@ -207,6 +216,7 @@ export default function PotOrders({ plan }) {
                       {c.name}{c.sku ? <span style={{ color: C.muted, fontWeight: 500 }}> · {c.sku}</span> : ""}
                       <div style={{ fontSize: 10.5, color: C.muted, fontWeight: 500, marginLeft: 15 }}>
                         {g.fams.length} famil{g.fams.length === 1 ? "y" : "ies"}{c.primary_supplier || c.supplier ? ` · ${c.primary_supplier || c.supplier}` : ""}{g.cs > 1 ? ` · ${g.cs}/case` : ""}
+                        {g.acc.length > 0 && <span style={{ color: C.amber, fontWeight: 700 }}> · +{g.acc.map(a => `${a.label} ${money(a.cost)}${a.supplier ? ` (${a.supplier})` : ""}`).join(" +")} — order {g.net > 0 ? g.orderUnits.toLocaleString() : "0"} each</span>}
                       </div>
                     </td>
                     <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>{g.needed.toLocaleString()}</td>
@@ -219,7 +229,9 @@ export default function PotOrders({ plan }) {
                     </td>
                     <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 800, color: g.net > 0 ? C.dark : C.green }}>{g.net > 0 ? g.orderUnits.toLocaleString() : "✓ covered"}</td>
                     <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", color: C.muted }}>{g.net > 0 && g.cs > 1 ? g.cases.toLocaleString() : "—"}</td>
-                    <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", color: C.muted }}>{money(g.unit)}</td>
+                    <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", color: C.muted }} title={g.acc.length ? `pot ${money(g.potCost)} + ${g.acc.map(a => `${a.label} ${money(a.cost)}`).join(" + ")} = ${money(g.unit)} all-in` : undefined}>
+                      {money(g.unit)}{g.acc.length > 0 && <span style={{ fontSize: 8.5, color: C.amber, fontWeight: 800 }}> ✚</span>}
+                    </td>
                     <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>{g.net > 0 ? money0(g.cost) : "—"}</td>
                   </tr>
                   {open && g.fams.sort((a, b) => plantOrder(a.label, b.label)).map(f => (
