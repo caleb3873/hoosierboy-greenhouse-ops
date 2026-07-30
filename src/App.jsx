@@ -8,6 +8,7 @@ import { CROP_STATUS } from "./shared";
 import PlannerHome      from "./PlannerHome";
 import SpaceManagement  from "./SpaceManagement";
 import Libraries        from "./Libraries";
+import Containers        from "./Containers";
 import OperatorView     from "./OperatorView";
 import ManagerTasksView from "./ManagerTasksView";
 import InventoryReport from "./InventoryReport";
@@ -72,6 +73,7 @@ const NAV_GROUPS = [
       { id: "fall",      label: "Fall Program" },
       { id: "receiving", label: "Receiving" },
       { id: "soil",      label: "Soil Calculator" },
+      { id: "containers", label: "🪴 Containers" },
     ],
   },
   {
@@ -276,6 +278,7 @@ function PlannerShell() {
         {page === "photos"     && <PhotoLibrary embedded />}
         {page === "export"     && <Export          />}
         {page === "soil"       && <SoilCalculator />}
+        {page === "containers" && <Containers />}
         {page === "fall"       && <FallProgram />}
         {page === "plans"      && <ProductionPlans />}
         {page === "sourcing"   && <SourcingPage />}
