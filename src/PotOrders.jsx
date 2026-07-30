@@ -38,7 +38,9 @@ export default function PotOrders({ plan }) {
       const page = async (tbl, sel, filt) => { let out = [], f = 0; for (;;) { let q = sb.from(tbl).select(sel).range(f, f + 999); if (filt) q = filt(q); const { data } = await q; out = out.concat(data || []); if (!data || data.length < 1000) break; f += 1000; } return out; };
       const [recs, cons, sc, tg] = await Promise.all([
         sb.from("crop_recipes").select("id,crop_name,size_label,display_name,default_container_id"),
-        sb.from("containers").select("id,name,sku,kind,diameter_in,units_per_case,case_size,qty_per_pallet,cells_per_flat,cost_per_unit,stock_qty,primary_supplier,supplier,has_wire,wire_cost,wire_supplier,wire_sku,has_saucer,saucer_cost,has_sleeve,sleeve_cost,is_hb_tagged,tag_cost_per_unit,has_carrier,carrier_name,carrier_cost,carrier_sku,carrier_supplier,pots_per_carrier").eq("kind", "finished").order("diameter_in"),
+        // finished pots AND propagation/plug trays — a crop that finishes in a 72-cell tray
+        // (Juncus, Dracaena spikes) orders that tray as its "pot". carrier trays stay finished.
+        sb.from("containers").select("id,name,sku,kind,diameter_in,units_per_case,case_size,qty_per_pallet,cells_per_flat,cost_per_unit,stock_qty,primary_supplier,supplier,has_wire,wire_cost,wire_supplier,wire_sku,has_saucer,saucer_cost,has_sleeve,sleeve_cost,is_hb_tagged,tag_cost_per_unit,has_carrier,carrier_name,carrier_cost,carrier_sku,carrier_supplier,pots_per_carrier").in("kind", ["finished", "tray", "propagation"]).order("diameter_in"),
         page("scheduled_crops", "id,item_name,recipe_id,qty_pots,ppp,plants_per_unit,pack_size,is_combo_component,container_id", q => q.eq("plan_id", plan.id)),
         sb.from("plan_targets").select("item_name,target_units,decision,archived_at").eq("plan_id", plan.id),
       ]);
@@ -135,7 +137,10 @@ export default function PotOrders({ plan }) {
       // happens in the roll-up. The pot's own Cost column is pot-only; accessories roll up separately.
       const accOrder = acc.map(x => ({ ...x, qty: Math.ceil(needed * x.perUnit) }));
       const potOrderCost = orderUnits * potCost, potGross = needed * potCost;
-      return { ...g, cells, neededPlants, needed, decided: Math.round(g.decided / cells), replay: Math.round(g.replay / cells), onHand, net, cs, cases, orderUnits, pallet, pallets, unit, potCost, acc, accOrder, cost: potOrderCost, grossCost: potGross };
+      // cash tied up in pots ALREADY on hand, and the slice of that that's EXCESS (more than
+      // this season needs) — the "dead money in extra pots" Caleb wants to surface
+      const onHandVal = onHand * potCost, excess = Math.max(0, onHand - needed), excessVal = excess * potCost;
+      return { ...g, cells, neededPlants, needed, decided: Math.round(g.decided / cells), replay: Math.round(g.replay / cells), onHand, net, cs, cases, orderUnits, pallet, pallets, unit, potCost, acc, accOrder, cost: potOrderCost, grossCost: potGross, onHandVal, excess, excessVal };
     }).sort((a, b) => (a.container.diameter_in || 99) - (b.container.diameter_in || 99) || plantOrder(a.container.name, b.container.name));
     // accessory roll-up (trays, wire, hangers…) resolved to their OWN container so on-hand is
     // editable and netted, exactly like pots. Need is based on production; net = need − on-hand.
@@ -150,15 +155,18 @@ export default function PotOrders({ plan }) {
     const accList = Object.values(accByCon).map(a => {
       const onHand = Math.max(0, +a.con?.stock_qty || 0);
       const net = Math.max(0, a.need - onHand);
-      return { ...a, onHand, net, cost: net * a.price, gross: a.need * a.price };
+      return { ...a, onHand, net, cost: net * a.price, gross: a.need * a.price, onHandVal: onHand * a.price, excessVal: Math.max(0, onHand - a.need) * a.price };
     }).sort((x, y) => y.cost - x.cost);
     const accCash = accList.reduce((s, x) => s + x.cost, 0), accGross = accList.reduce((s, x) => s + x.gross, 0);
+    const accOnHandVal = accList.reduce((s, x) => s + x.onHandVal, 0), accExcessVal = accList.reduce((s, x) => s + x.excessVal, 0);
     const tot = groups.reduce((a, g) => ({
       needed: a.needed + g.needed, onHand: a.onHand + g.onHand, order: a.order + g.orderUnits,
       cost: a.cost + g.cost, gross: a.gross + g.grossCost, decided: a.decided + g.decided, replay: a.replay + g.replay,
-    }), { needed: 0, onHand: 0, order: 0, cost: 0, gross: 0, decided: 0, replay: 0 });
+      onHandVal: a.onHandVal + g.onHandVal, excessVal: a.excessVal + g.excessVal,
+    }), { needed: 0, onHand: 0, order: 0, cost: 0, gross: 0, decided: 0, replay: 0, onHandVal: 0, excessVal: 0 });
     // pot cash + netted accessory cash = the true order total (keep pot-only for the pot table footer)
     tot.potCost = tot.cost; tot.cost += accCash; tot.gross += accGross;
+    tot.onHandVal += accOnHandVal; tot.excessVal += accExcessVal;   // cash tied up in on-hand pots + accessories
     const famCount = famList.length, decidedFams = famList.filter(f => f.decidedItems > 0).length;
     return { groups, unmatched, tot, famCount, decidedFams, accList };
   }, [recipes, rows, targets, conById, conBySku, recById, basis]);
@@ -202,10 +210,11 @@ export default function PotOrders({ plan }) {
         <Stat label="Pots needed" value={tot.needed.toLocaleString()} sub={`${ledger.decidedFams}/${ledger.famCount} families decided`} accent={C.dark} />
         {basis === "target" && <Stat label="🎯 Your projection" value={tot.decided.toLocaleString()} sub={tot.needed ? `${Math.round(tot.decided / tot.needed * 100)}% of the need is decided` : "decided targets"} accent={C.green} />}
         {basis === "target" && tot.replay > 0 && <Stat label="↩ Replay placeholder" value={tot.replay.toLocaleString()} sub="undecided — still last year's plan" accent={C.amber} />}
-        <Stat label="On hand (entered)" value={tot.onHand.toLocaleString()} sub="your in-house inventory" accent={C.light} />
-        <Stat label="To order" value={tot.order.toLocaleString()} sub="after netting inventory, whole cases" accent={C.dark} />
-        <Stat label="Cash to order" value={money0(tot.cost)} sub="at current pot costs" accent={C.amber} />
-        <Stat label="Saved by inventory" value={money0(saved)} sub="cash NOT tied up in over-ordering" accent={C.green} />
+        <Stat label="On hand (entered)" value={tot.onHand.toLocaleString()} sub={`${money0(tot.onHandVal)} tied up in inventory`} accent={C.light} />
+        <Stat label="To order" value={tot.order.toLocaleString()} sub="after netting inventory" accent={C.dark} />
+        <Stat label="Cash to order" value={money0(tot.cost)} sub="net — what you'd actually buy" accent={C.amber} />
+        <Stat label="💰 Cash in on-hand pots" value={money0(tot.onHandVal)} sub={tot.excessVal > 0 ? `incl. ${money0(tot.excessVal)} in EXCESS (beyond this season)` : "hard-goods cash sitting on the shelf"} accent={tot.excessVal > 0 ? C.red : C.light} />
+        <Stat label="Saved by inventory" value={money0(saved)} sub="cash NOT re-spent — covered by stock" accent={C.green} />
       </div>
 
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", fontSize: 12 }}>
@@ -277,6 +286,7 @@ export default function PotOrders({ plan }) {
                         onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
                         title="how many of this pot you already have — netted out of the order"
                         style={{ width: 66, padding: "4px 6px", textAlign: "right", borderRadius: 6, border: `1.5px solid ${c.stock_qty ? C.light : C.creamBr}`, fontSize: 12, fontFamily: "inherit", fontWeight: c.stock_qty ? 700 : 400 }} />
+                      {g.onHand > 0 && <div style={{ fontSize: 9, fontWeight: 700, color: g.excess > 0 ? C.red : C.muted }} title={g.excess > 0 ? `${g.excess.toLocaleString()} more than this season needs — ${money0(g.excessVal)} of dead cash` : "cash tied up in this on-hand stock"}>{money0(g.onHandVal)}{g.excess > 0 ? " ⚠" : ""}</div>}
                     </td>
                     <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 800, color: g.net > 0 ? C.dark : C.green }}>
                       {g.net > 0 ? g.orderUnits.toLocaleString() : "✓ covered"}
