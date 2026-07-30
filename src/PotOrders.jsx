@@ -50,6 +50,7 @@ export default function PotOrders({ plan }) {
   }, [sb, plan.id, tick]);
 
   const conById = useMemo(() => Object.fromEntries(containers.map(c => [c.id, c])), [containers]);
+  const conBySku = useMemo(() => { const m = {}; containers.forEach(c => { if (c.sku) m[c.sku] = c; }); return m; }, [containers]);
   const recById = useMemo(() => Object.fromEntries((recipes || []).map(r => [r.id, r])), [recipes]);
 
   // pots needed per family, off the projection (target where decided, else the current plan)
@@ -129,21 +130,38 @@ export default function PotOrders({ plan }) {
       if (c.is_hb_tagged && +c.tag_cost_per_unit) acc.push({ label: "tag", price: +c.tag_cost_per_unit, perUnit: 1 });
       if (c.has_carrier && +c.carrier_cost) { const per = Math.max(1, Math.round(+c.pots_per_carrier || 1)); acc.push({ label: c.carrier_name || "tray", price: +c.carrier_cost, perUnit: 1 / per, per, tray: true, supplier: c.carrier_supplier, sku: c.carrier_sku }); }
       const unit = potCost + acc.reduce((a, x) => a + x.price * x.perUnit, 0);
-      // order quantity + cost per accessory (rounds up per the ordered container count)
-      const accOrder = acc.map(x => { const qty = Math.ceil(orderUnits * x.perUnit); return { ...x, qty, cost: qty * x.price }; });
-      return { ...g, cells, neededPlants, needed, decided: Math.round(g.decided / cells), replay: Math.round(g.replay / cells), onHand, net, cs, cases, orderUnits, pallet, pallets, unit, potCost, acc, accOrder, cost: orderUnits * unit, grossCost: needed * unit };
+      // accessories needed for ALL production of this pot (a tray per 10 pots, a wire per
+      // basket) — independent of pot inventory. Netting against the accessory's OWN on-hand
+      // happens in the roll-up. The pot's own Cost column is pot-only; accessories roll up separately.
+      const accOrder = acc.map(x => ({ ...x, qty: Math.ceil(needed * x.perUnit) }));
+      const potOrderCost = orderUnits * potCost, potGross = needed * potCost;
+      return { ...g, cells, neededPlants, needed, decided: Math.round(g.decided / cells), replay: Math.round(g.replay / cells), onHand, net, cs, cases, orderUnits, pallet, pallets, unit, potCost, acc, accOrder, cost: potOrderCost, grossCost: potGross };
     }).sort((a, b) => (a.container.diameter_in || 99) - (b.container.diameter_in || 99) || plantOrder(a.container.name, b.container.name));
-    // accessory roll-up (trays, wire, …) — the hard goods you order ALONGSIDE the pots
-    const accTotals = {};
-    groups.forEach(g => (g.accOrder || []).forEach(x => { if (g.net <= 0) return; const k = `${x.label}|${x.sku || ""}`; const a = accTotals[k] || (accTotals[k] = { label: x.label, sku: x.sku, supplier: x.supplier, price: x.price, qty: 0, cost: 0 }); a.qty += x.qty; a.cost += x.cost; }));
+    // accessory roll-up (trays, wire, hangers…) resolved to their OWN container so on-hand is
+    // editable and netted, exactly like pots. Need is based on production; net = need − on-hand.
+    const accByCon = {};
+    groups.forEach(g => (g.acc || []).forEach(x => {
+      const need = Math.ceil(g.needed * x.perUnit);
+      const con = conBySku[x.sku] || null;
+      const k = con?.id || x.sku || x.label;
+      const a = accByCon[k] || (accByCon[k] = { label: x.label, sku: x.sku, supplier: x.supplier, price: x.price, con, need: 0 });
+      a.need += need;
+    }));
+    const accList = Object.values(accByCon).map(a => {
+      const onHand = Math.max(0, +a.con?.stock_qty || 0);
+      const net = Math.max(0, a.need - onHand);
+      return { ...a, onHand, net, cost: net * a.price, gross: a.need * a.price };
+    }).sort((x, y) => y.cost - x.cost);
+    const accCash = accList.reduce((s, x) => s + x.cost, 0), accGross = accList.reduce((s, x) => s + x.gross, 0);
     const tot = groups.reduce((a, g) => ({
       needed: a.needed + g.needed, onHand: a.onHand + g.onHand, order: a.order + g.orderUnits,
       cost: a.cost + g.cost, gross: a.gross + g.grossCost, decided: a.decided + g.decided, replay: a.replay + g.replay,
     }), { needed: 0, onHand: 0, order: 0, cost: 0, gross: 0, decided: 0, replay: 0 });
+    // pot cash + netted accessory cash = the true order total (keep pot-only for the pot table footer)
+    tot.potCost = tot.cost; tot.cost += accCash; tot.gross += accGross;
     const famCount = famList.length, decidedFams = famList.filter(f => f.decidedItems > 0).length;
-    const accList = Object.values(accTotals).sort((a, b) => b.cost - a.cost);
     return { groups, unmatched, tot, famCount, decidedFams, accList };
-  }, [recipes, rows, targets, conById, recById, basis]);
+  }, [recipes, rows, targets, conById, conBySku, recById, basis]);
 
   async function setStock(container, val) {
     const q = val === "" ? null : Math.max(0, Math.round(+val));
@@ -238,7 +256,7 @@ export default function PotOrders({ plan }) {
                       {c.name}{c.sku ? <span style={{ color: C.muted, fontWeight: 500 }}> · {c.sku}</span> : ""}
                       <div style={{ fontSize: 10.5, color: C.muted, fontWeight: 500, marginLeft: 15 }}>
                         {g.fams.length} famil{g.fams.length === 1 ? "y" : "ies"}{c.primary_supplier || c.supplier ? ` · ${c.primary_supplier || c.supplier}` : ""}{g.pallet > 1 ? ` · pallets of ${g.pallet.toLocaleString()}` : g.cs > 1 ? ` · ${g.cs}/case` : ""}
-                        {g.accOrder.length > 0 && <span style={{ color: C.amber, fontWeight: 700 }}> · {g.accOrder.map(a => `+ ${a.label} ${money(a.price)}${a.per > 1 ? `/${a.per}` : ""}${a.supplier ? ` (${a.supplier})` : ""} → order ${g.net > 0 ? a.qty.toLocaleString() : "0"}`).join(" ")}</span>}
+                        {g.accOrder.length > 0 && <span style={{ color: C.amber, fontWeight: 700 }}> · {g.accOrder.map(a => `+ ${a.label} ${money(a.price)}${a.per > 1 ? `/${a.per}` : ""} → need ${a.qty.toLocaleString()}`).join(" ")}<span style={{ fontWeight: 500, color: C.muted }}> (netted below)</span></span>}
                       </div>
                     </td>
                     <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>
@@ -302,7 +320,7 @@ export default function PotOrders({ plan }) {
               <td style={{ ...td, textAlign: "right", fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{tot.order.toLocaleString()}</td>
               <td style={td}></td>
               <td style={td}></td>
-              <td style={{ ...td, textAlign: "right", fontWeight: 800, fontVariantNumeric: "tabular-nums", color: C.amber }}>{money0(tot.cost)}</td>
+              <td style={{ ...td, textAlign: "right", fontWeight: 800, fontVariantNumeric: "tabular-nums", color: C.amber }} title="pots only — trays/wire total in the section below">{money0(tot.potCost)}</td>
             </tr></tfoot>
           )}
         </table>
@@ -317,6 +335,8 @@ export default function PotOrders({ plan }) {
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead><tr>
               <th style={th}>Item</th><th style={th}>Supplier</th>
+              <th style={{ ...th, textAlign: "right" }}>Needed</th>
+              <th style={{ ...th, textAlign: "right" }}>On hand</th>
               <th style={{ ...th, textAlign: "right" }}>To order</th>
               <th style={{ ...th, textAlign: "right" }}>Unit</th>
               <th style={{ ...th, textAlign: "right" }}>Cost</th>
@@ -326,9 +346,19 @@ export default function PotOrders({ plan }) {
                 <tr key={a.label + (a.sku || "")}>
                   <td style={{ ...td, fontWeight: 700, textTransform: "capitalize" }}>{a.label}{a.sku ? <span style={{ color: C.muted, fontWeight: 500 }}> · {a.sku}</span> : ""}</td>
                   <td style={{ ...td, color: C.muted }}>{a.supplier || "—"}</td>
-                  <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 800 }}>{Math.round(a.qty).toLocaleString()}</td>
+                  <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>{Math.round(a.need).toLocaleString()}</td>
+                  <td style={{ ...td, textAlign: "right" }}>
+                    {a.con ? (
+                      <input defaultValue={a.con.stock_qty ?? ""} placeholder="0" inputMode="numeric"
+                        onBlur={e => { if (e.target.value.trim() !== String(a.con.stock_qty ?? "")) setStock(a.con, e.target.value.trim()); }}
+                        onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                        title="how many of these you already have — netted out of the order"
+                        style={{ width: 64, padding: "4px 6px", textAlign: "right", borderRadius: 6, border: `1.5px solid ${a.con.stock_qty ? C.light : C.creamBr}`, fontSize: 12, fontFamily: "inherit", fontWeight: a.con.stock_qty ? 700 : 400 }} />
+                    ) : <span style={{ color: C.muted, fontSize: 10 }}>no container</span>}
+                  </td>
+                  <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 800, color: a.net > 0 ? C.dark : C.green }}>{a.net > 0 ? Math.round(a.net).toLocaleString() : "✓ covered"}</td>
                   <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", color: C.muted }}>{money(a.price)}</td>
-                  <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>{money0(a.cost)}</td>
+                  <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>{a.net > 0 ? money0(a.cost) : "—"}</td>
                 </tr>
               ))}
             </tbody>
