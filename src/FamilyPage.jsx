@@ -305,6 +305,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
   // and match it yourself so it's permanently attached for future ordering."
   const [potOpts, setPotOpts] = useState([]);   // finished containers for the pot picker (match a family to a pot)
   const [allFams, setAllFams] = useState([]);   // every family — target list for "move to another family"
+  const [resize, setResize] = useState(null);   // {size, pot, price} — transfer the whole family to a new size
   const [cropSeriesSug, setCropSeriesSug] = useState([]);   // series names derived from ALL broker quotes for this crop
   const [quoteFor, setQuoteFor] = useState(null);   // {v} direct-to-variety, or {} free search
   const [pendingQuote, setPendingQuote] = useState(null);   // a picked quote awaiting "attach to which color?"
@@ -358,6 +359,59 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
         detail: { variety: vr.variety, to: target.label, rows: ids.length }, changed_by: displayName || null, source: "family-page" });
     } catch (e) { window.alert("Move stopped: " + (e.message || e)); }
     setBusy(false); setCtx(null); setTick(t => t + 1);
+  }
+
+  // TRANSFER the whole family to a new size (Caleb 7/30: "the mix is nice but too big for its
+  // basket — move it to the 12" Athena"). Renames every item's size prefix, moves them to the
+  // new-size family (resolve or create), swaps the pot, optionally sets a new price — cascades
+  // through scheduled_crops, targets, the sku map, history and the B2B catalog + pot ordering.
+  const resizePreview = useMemo(() => {
+    if (!resize?.size?.trim() || !recipe) return [];
+    const newPrefix = famSizePrefix(resize.size.trim());
+    const oldPrefix = famSizePrefix(recipe.size_label);
+    const items = [...new Set((rows || []).map(r => r.item_name))];
+    return items.map(it => ({ from: it, to: it.startsWith(oldPrefix) ? newPrefix + it.slice(oldPrefix.length) : `${newPrefix} ${it}` }));
+  }, [resize?.size, rows, recipe]); // eslint-disable-line
+  async function doResize() {
+    const targetSize = String(resize?.size || "").trim();
+    if (!targetSize || busy) return;
+    if (!window.confirm(`Transfer all ${resizePreview.length} item${resizePreview.length !== 1 ? "s" : ""} from ${recipe.size_label} to ${targetSize}?\n\nItems are renamed, moved to the ${targetSize} family, and re-potted${resize.price ? `, priced at $${resize.price}` : ""}. This cascades through the plan and pot ordering.`)) return;
+    setBusy(true);
+    try {
+      const crop = recipe.crop_name;
+      let target = allFams.find(f => f.size_label === targetSize && String(f.crop_name || "").toLowerCase() === String(crop || "").toLowerCase());
+      if (!target) {
+        const { data: ins, error } = await sb.from("crop_recipes").upsert({
+          crop_name: crop, size_label: targetSize, pots_per_unit: recipe.pots_per_unit || 1, ppp: recipe.ppp || 1,
+          crop_weeks: recipe.crop_weeks ?? null, default_container_id: resize.pot || null, plant_class: recipe.plant_class || null,
+          updated_by: displayName || "planner", seeded_from: { source: "resize", from: `${recipe.size_label} ${crop}` },
+        }, { onConflict: "crop_name,size_label" }).select("*").single();
+        if (error) throw error;
+        target = ins;
+        await sb.from("crop_recipe_series").upsert({ recipe_id: ins.id, series_name: "(unassigned)" }, { onConflict: "recipe_id,series_name" });
+      } else if (resize.pot && resize.pot !== target.default_container_id) {
+        await sb.from("crop_recipes").update({ default_container_id: resize.pot }).eq("id", target.id);
+      }
+      const container = resize.pot || target.default_container_id || null;
+      const price = resize.price !== "" && resize.price != null ? +String(resize.price).replace(/[^0-9.]/g, "") : null;
+      for (const { from, to } of resizePreview) {
+        const patch = { item_name: to, recipe_id: target.id, container_id: container };
+        if (price != null) patch.sale_price_per_pot = price;
+        await sb.from("scheduled_crops").update(patch).eq("plan_id", plan.id).eq("item_name", from);
+        if (to !== from) {
+          await sb.from("plan_targets").update({ item_name: to }).eq("plan_id", plan.id).eq("item_name", from);
+          await sb.from("sales_sku_map").update({ plan_item_name: to }).eq("plan_item_name", from);
+          await sb.from("item_change_log").update({ item_name: to }).eq("plan_id", plan.id).eq("item_name", from);
+        }
+        try {
+          await sb.from("item_change_log").insert({ plan_id: plan.id, item_name: to, change_type: "resized",
+            detail: { from, from_size: recipe.size_label, to_size: targetSize, container, price }, changed_by: displayName || null, source: "family-page" });
+        } catch { /* audit must not block */ }
+      }
+      try { await sb.rpc("reconcile_production_items", { p_plan: plan.id }); } catch { /* cron catches it */ }
+      setResize(null); setBusy(false);
+      onClose && onClose();   // the old family is now empty — close; the new-size family holds everything
+    } catch (e) { window.alert("Transfer stopped: " + (e.message || e)); setBusy(false); }
   }
 
   async function setFamilyPot(containerId) {
@@ -902,6 +956,9 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
               {potOpts.map(c => <option key={c.id} value={c.id}>{c.name}{c.sku ? ` (${c.sku})` : ""}</option>)}
             </select>
           </span>
+          <button onClick={() => setResize({ size: "", pot: "", price: "" })}
+            title="move this whole family to a different size — renames items, re-pots, re-prices, cascades everywhere"
+            style={{ padding: "5px 11px", borderRadius: 8, border: `1.5px solid ${C.creamBr}`, background: "#fff", color: C.dark, fontWeight: 800, fontSize: 11.5, cursor: "pointer", fontFamily: FONT }}>⇧ Transfer to a new size</button>
           <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: C.muted }}>✕</button>
         </div>
 
@@ -1387,6 +1444,60 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
             onClose={() => setAddDoor(null)}
             onCreated={() => setTick(t => t + 1)}
             onOpenFamily={() => { /* already here — the reload shows the new color */ }} />
+        )}
+
+        {/* ⇧ Transfer to a new size — preview + new price, cascades everywhere */}
+        {resize && (
+          <div onClick={() => !busy && setResize(null)} style={{ position: "fixed", inset: 0, background: "rgba(20,30,16,.55)", zIndex: 9400, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 14px", overflow: "auto" }}>
+            <div onClick={e => e.stopPropagation()} style={{ background: "#fbfdf8", borderRadius: 14, width: "min(620px,96vw)", padding: 20, boxShadow: "0 20px 60px rgba(0,0,0,.4)", fontFamily: FONT }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 8 }}>
+                <div style={{ fontSize: 18, fontWeight: 800, color: C.dark, fontFamily: "'DM Serif Display',Georgia,serif" }}>⇧ Transfer to a new size</div>
+                <span style={{ fontSize: 12, color: C.muted }}>from {recipe.size_label} {recipe.crop_name}</span>
+                <button onClick={() => !busy && setResize(null)} style={{ marginLeft: "auto", background: "none", border: "none", fontSize: 20, color: C.muted, cursor: "pointer" }}>✕</button>
+              </div>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 10 }}>
+                <div style={{ flex: 1, minWidth: 150 }}>
+                  <label style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", color: C.muted }}>New size</label>
+                  <input list="fp-resize-sizes" value={resize.size} onChange={e => setResize(r => ({ ...r, size: e.target.value }))} autoFocus placeholder={`e.g. 12" HB`}
+                    style={{ width: "100%", boxSizing: "border-box", padding: "8px 10px", borderRadius: 8, border: `1.5px solid ${C.light}`, fontSize: 13, fontFamily: FONT, marginTop: 3 }} />
+                  <datalist id="fp-resize-sizes">{[...new Set(allFams.map(f => f.size_label))].sort().map(s => <option key={s} value={s} />)}</datalist>
+                </div>
+                <div style={{ minWidth: 180 }}>
+                  <label style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", color: C.muted }}>Pot for the new size</label>
+                  <select value={resize.pot} onChange={e => setResize(r => ({ ...r, pot: e.target.value }))}
+                    style={{ width: "100%", boxSizing: "border-box", padding: "8px 6px", borderRadius: 8, border: `1.5px solid ${C.creamBr}`, fontSize: 12, fontFamily: FONT, marginTop: 3, cursor: "pointer" }}>
+                    <option value="">— use the size's pot —</option>
+                    {potOpts.map(c => <option key={c.id} value={c.id}>{c.name}{c.sku ? ` (${c.sku})` : ""}</option>)}
+                  </select>
+                </div>
+                <div style={{ width: 110 }}>
+                  <label style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", color: C.muted }}>New price</label>
+                  <input value={resize.price} onChange={e => setResize(r => ({ ...r, price: e.target.value }))} placeholder="optional" inputMode="decimal"
+                    style={{ width: "100%", boxSizing: "border-box", padding: "8px 10px", borderRadius: 8, border: `1.5px solid ${C.creamBr}`, fontSize: 13, fontFamily: FONT, marginTop: 3 }} />
+                </div>
+              </div>
+              {resizePreview.length > 0 && resize.size.trim() && (
+                <div style={{ background: "#fff", border: `1px solid ${C.border}`, borderRadius: 10, maxHeight: 280, overflow: "auto" }}>
+                  <div style={{ padding: "7px 11px", fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", borderBottom: `1px solid ${C.border}` }}>
+                    {resizePreview.length} item{resizePreview.length !== 1 ? "s" : ""} will become
+                  </div>
+                  {resizePreview.map(p => (
+                    <div key={p.from} style={{ display: "flex", gap: 8, alignItems: "center", padding: "5px 11px", fontSize: 12, borderBottom: `1px solid ${C.border}` }}>
+                      <span style={{ color: C.muted, textDecoration: "line-through", flex: 1 }}>{p.from}</span>
+                      <span style={{ color: C.muted }}>→</span>
+                      <span style={{ fontWeight: 700, color: C.dark, flex: 1 }}>{p.to}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 14 }}>
+                <span style={{ fontSize: 10.5, color: C.muted, flex: 1 }}>Moves items to the new-size family, re-pots them{resize.price ? `, prices at $${resize.price}` : ""}, and cascades into the plan, orders and pot buying.</span>
+                <button onClick={() => setResize(null)} style={{ padding: "9px 15px", borderRadius: 9, border: `1.5px solid ${C.border}`, background: "#fff", color: C.text, fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: FONT }}>Cancel</button>
+                <button disabled={busy || !resize.size.trim()} onClick={doResize}
+                  style={{ padding: "9px 18px", borderRadius: 9, border: "none", background: resize.size.trim() ? C.light : "#c9d4c2", color: "#fff", fontWeight: 800, fontSize: 13, cursor: resize.size.trim() ? "pointer" : "default", fontFamily: FONT }}>{busy ? "Transferring…" : "Transfer"}</button>
+              </div>
+            </div>
+          </div>
         )}
 
         {/* search the broker catalog and lock a quote to a color. From a color's 🔗 it
