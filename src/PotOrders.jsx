@@ -78,8 +78,10 @@ export default function PotOrders({ plan }) {
       const usePots = basis === "planned" ? planned : targetPots;
       const key = rid || `__nofam__${sizeLabelForItem(it)}`;
       const f = fam[key] = fam[key] || { recipeId: rid || null, label: rid ? (recById[rid]?.label || it) : `(no family) ${sizeLabelForItem(it)}`,
-        containerId: rid ? recById[rid]?.default_container_id : null, pots: 0, planned: 0, items: 0, decidedItems: 0, size: rid ? recById[rid]?.size_label : sizeLabelForItem(it) };
-      f.pots += usePots; f.planned += planned; f.items += 1; if (decided) f.decidedItems += 1;
+        containerId: rid ? recById[rid]?.default_container_id : null, pots: 0, planned: 0, decidedPots: 0, replayPots: 0, items: 0, decidedItems: 0, size: rid ? recById[rid]?.size_label : sizeLabelForItem(it) };
+      // in target mode, split the need: decided (your 2027 call) vs replay (last year's placeholder)
+      f.pots += usePots; f.planned += planned; f.items += 1;
+      if (decided) { f.decidedItems += 1; f.decidedPots += usePots; } else { f.replayPots += usePots; }
     });
     // infer container from row-level container_id when the family has no default
     const famList = Object.values(fam).filter(f => f.pots > 0 || f.planned > 0);
@@ -95,8 +97,8 @@ export default function PotOrders({ plan }) {
     const unmatched = [];
     famList.forEach(f => {
       if (!f.containerId || !conById[f.containerId]) { if (f.pots > 0) unmatched.push(f); return; }
-      const g = byCon[f.containerId] = byCon[f.containerId] || { container: conById[f.containerId], fams: [], needed: 0 };
-      g.fams.push(f); g.needed += f.pots;
+      const g = byCon[f.containerId] = byCon[f.containerId] || { container: conById[f.containerId], fams: [], needed: 0, decided: 0, replay: 0 };
+      g.fams.push(f); g.needed += f.pots; g.decided += f.decidedPots; g.replay += f.replayPots;
     });
     const groups = Object.values(byCon).map(g => {
       const c = g.container;
@@ -126,8 +128,8 @@ export default function PotOrders({ plan }) {
     groups.forEach(g => (g.accOrder || []).forEach(x => { if (g.net <= 0) return; const k = `${x.label}|${x.sku || ""}`; const a = accTotals[k] || (accTotals[k] = { label: x.label, sku: x.sku, supplier: x.supplier, price: x.price, qty: 0, cost: 0 }); a.qty += x.qty; a.cost += x.cost; }));
     const tot = groups.reduce((a, g) => ({
       needed: a.needed + g.needed, onHand: a.onHand + g.onHand, order: a.order + g.orderUnits,
-      cost: a.cost + g.cost, gross: a.gross + g.grossCost,
-    }), { needed: 0, onHand: 0, order: 0, cost: 0, gross: 0 });
+      cost: a.cost + g.cost, gross: a.gross + g.grossCost, decided: a.decided + g.decided, replay: a.replay + g.replay,
+    }), { needed: 0, onHand: 0, order: 0, cost: 0, gross: 0, decided: 0, replay: 0 });
     const famCount = famList.length, decidedFams = famList.filter(f => f.decidedItems > 0).length;
     const accList = Object.values(accTotals).sort((a, b) => b.cost - a.cost);
     return { groups, unmatched, tot, famCount, decidedFams, accList };
@@ -170,6 +172,8 @@ export default function PotOrders({ plan }) {
       {/* the cash story up top — needed, netted against inventory, what it costs, what inventory saved */}
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
         <Stat label="Pots needed" value={tot.needed.toLocaleString()} sub={`${ledger.decidedFams}/${ledger.famCount} families decided`} accent={C.dark} />
+        {basis === "target" && <Stat label="🎯 Your projection" value={tot.decided.toLocaleString()} sub={tot.needed ? `${Math.round(tot.decided / tot.needed * 100)}% of the need is decided` : "decided targets"} accent={C.green} />}
+        {basis === "target" && tot.replay > 0 && <Stat label="↩ Replay placeholder" value={tot.replay.toLocaleString()} sub="undecided — still last year's plan" accent={C.amber} />}
         <Stat label="On hand (entered)" value={tot.onHand.toLocaleString()} sub="your in-house inventory" accent={C.light} />
         <Stat label="To order" value={tot.order.toLocaleString()} sub="after netting inventory, whole cases" accent={C.dark} />
         <Stat label="Cash to order" value={money0(tot.cost)} sub="at current pot costs" accent={C.amber} />
@@ -227,7 +231,17 @@ export default function PotOrders({ plan }) {
                         {g.accOrder.length > 0 && <span style={{ color: C.amber, fontWeight: 700 }}> · {g.accOrder.map(a => `+ ${a.label} ${money(a.price)}${a.per > 1 ? `/${a.per}` : ""}${a.supplier ? ` (${a.supplier})` : ""} → order ${g.net > 0 ? a.qty.toLocaleString() : "0"}`).join(" ")}</span>}
                       </div>
                     </td>
-                    <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>{g.needed.toLocaleString()}</td>
+                    <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>
+                      {g.needed.toLocaleString()}
+                      {basis === "target" && g.replay > 0 && (
+                        <div style={{ fontSize: 9.5, fontWeight: 700, color: C.amber }} title="part of this need is still last year's plan — decide those families and it turns green">
+                          {g.decided > 0 ? `${g.decided.toLocaleString()} decided · ` : ""}↩ {g.replay.toLocaleString()} replay
+                        </div>
+                      )}
+                      {basis === "target" && g.replay === 0 && g.decided > 0 && (
+                        <div style={{ fontSize: 9.5, fontWeight: 700, color: C.green }}>🎯 all decided</div>
+                      )}
+                    </td>
                     <td style={{ ...td, textAlign: "right" }} onClick={e => e.stopPropagation()}>
                       <input defaultValue={c.stock_qty ?? ""} placeholder="0" inputMode="numeric"
                         onBlur={e => { if (e.target.value.trim() !== String(c.stock_qty ?? "")) setStock(c, e.target.value.trim()); }}
@@ -242,16 +256,25 @@ export default function PotOrders({ plan }) {
                     </td>
                     <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>{g.net > 0 ? money0(g.cost) : "—"}</td>
                   </tr>
-                  {open && g.fams.sort((a, b) => plantOrder(a.label, b.label)).map(f => (
+                  {open && g.fams.sort((a, b) => plantOrder(a.label, b.label)).map(f => {
+                    const state = basis !== "target" ? "plan" : f.decidedItems === 0 ? "replay" : f.decidedItems === f.items ? "decided" : "partial";
+                    const mark = { decided: { icon: "🎯", color: C.green, tip: "decided — your 2027 projection" },
+                      partial: { icon: "◐", color: C.amber, tip: `${f.decidedItems}/${f.items} colors decided — the rest are still replay` },
+                      replay: { icon: "↩", color: C.amber, tip: "not decided yet — still last year's plan" },
+                      plan: { icon: "", color: C.muted, tip: "" } }[state];
+                    return (
                     <tr key={c.id + "|" + (f.recipeId || f.label)} style={{ background: "#fafcf7" }}>
                       <td style={{ ...td, paddingLeft: 30, fontSize: 11.5, color: C.text }}>
-                        {f.label}
+                        {mark.icon && <span title={mark.tip} style={{ marginRight: 5, color: mark.color, fontWeight: 800 }}>{mark.icon}</span>}
+                        <span style={state === "replay" ? { color: C.muted, fontStyle: "italic" } : undefined}>{f.label}</span>
                         {f.recipeId && <span onClick={e => e.stopPropagation()} style={{ marginLeft: 8 }}>{conPicker(cid => matchFamily(f, cid), f.containerId)}</span>}
                       </td>
-                      <td style={{ ...td, textAlign: "right", fontSize: 11.5, fontVariantNumeric: "tabular-nums", color: C.muted }}>{f.pots.toLocaleString()}</td>
+                      <td style={{ ...td, textAlign: "right", fontSize: 11.5, fontVariantNumeric: "tabular-nums", ...(state === "replay" ? { color: C.amber, fontStyle: "italic" } : { color: C.muted }) }}>
+                        {state === "replay" ? `(${f.pots.toLocaleString()})` : f.pots.toLocaleString()}
+                      </td>
                       <td style={td} colSpan={5}></td>
                     </tr>
-                  ))}
+                  ); })}
                 </>
               );
             })}
