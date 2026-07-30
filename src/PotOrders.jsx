@@ -102,26 +102,31 @@ export default function PotOrders({ plan }) {
     });
     const groups = Object.values(byCon).map(g => {
       const c = g.container;
-      const onHand = Math.max(0, +c.stock_qty || 0);
-      const net = Math.max(0, g.needed - onHand);
+      // MULTI-CELL containers hold more than one plant: a 1801 retail insert is ONE ordered
+      // unit for 18 plants (cells_per_flat). So the container count = plants / cells. Single
+      // pots (4.5", baskets) have cells_per_flat null → 1, so nothing changes for them.
+      const cells = Math.max(1, Math.round(+c.cells_per_flat || 1));
+      const neededPlants = g.needed;
+      const needed = Math.ceil(neededPlants / cells);   // finished containers (inserts) needed
+      const onHand = Math.max(0, +c.stock_qty || 0);     // containers (inserts) on hand
+      const net = Math.max(0, needed - onHand);
       const cs = caseOf(c);
       const cases = Math.ceil(net / cs);
-      const orderUnits = cases * cs;
-      const potCost = +c.cost_per_unit || 0;
-      // all-in per basket/pot: the pot PLUS every bundled hard good it needs. Two kinds —
-      // per-pot goods (wire hanger, saucer, sleeve, tag: 1 each) and CARRIERS/TRAYS shared
-      // across N pots (4.5" = 1 flat filler tray per 10 pots). Each carries `perPot` so its
-      // cost splits correctly ($0.85 tray / 10 = $0.085/pot) AND its own order count rolls up.
+      const orderUnits = cases * cs;                     // containers to order
+      const potCost = +c.cost_per_unit || 0;             // per container
+      // all-in per finished container: the container PLUS every bundled hard good. Per-unit
+      // goods (wire, saucer, sleeve, tag: 1 each) and CARRIERS held N-per-carrier (4.5" = 10
+      // pots/tray → 0.1 tray each; 1801 = 1 insert/flat → 1 flat each). perUnit splits the cost.
       const acc = [];
-      if (c.has_wire && +c.wire_cost) acc.push({ label: "wire", price: +c.wire_cost, perPot: 1, supplier: c.wire_supplier, sku: c.wire_sku });
-      if (c.has_saucer && +c.saucer_cost) acc.push({ label: "saucer", price: +c.saucer_cost, perPot: 1 });
-      if (c.has_sleeve && +c.sleeve_cost) acc.push({ label: "sleeve", price: +c.sleeve_cost, perPot: 1 });
-      if (c.is_hb_tagged && +c.tag_cost_per_unit) acc.push({ label: "tag", price: +c.tag_cost_per_unit, perPot: 1 });
-      if (c.has_carrier && +c.carrier_cost) { const per = Math.max(1, Math.round(+c.pots_per_carrier || 1)); acc.push({ label: c.carrier_name || "tray", price: +c.carrier_cost, perPot: 1 / per, per, tray: true, supplier: c.carrier_supplier, sku: c.carrier_sku }); }
-      const unit = potCost + acc.reduce((a, x) => a + x.price * x.perPot, 0);
-      // order quantity + cost per accessory (trays round up per the ordered pot count)
-      const accOrder = acc.map(x => { const qty = Math.ceil(orderUnits * x.perPot); return { ...x, qty, cost: qty * x.price }; });
-      return { ...g, onHand, net, cs, cases, orderUnits, unit, potCost, acc, accOrder, cost: orderUnits * unit, grossCost: g.needed * unit };
+      if (c.has_wire && +c.wire_cost) acc.push({ label: "wire", price: +c.wire_cost, perUnit: 1, supplier: c.wire_supplier, sku: c.wire_sku });
+      if (c.has_saucer && +c.saucer_cost) acc.push({ label: "saucer", price: +c.saucer_cost, perUnit: 1 });
+      if (c.has_sleeve && +c.sleeve_cost) acc.push({ label: "sleeve", price: +c.sleeve_cost, perUnit: 1 });
+      if (c.is_hb_tagged && +c.tag_cost_per_unit) acc.push({ label: "tag", price: +c.tag_cost_per_unit, perUnit: 1 });
+      if (c.has_carrier && +c.carrier_cost) { const per = Math.max(1, Math.round(+c.pots_per_carrier || 1)); acc.push({ label: c.carrier_name || "tray", price: +c.carrier_cost, perUnit: 1 / per, per, tray: true, supplier: c.carrier_supplier, sku: c.carrier_sku }); }
+      const unit = potCost + acc.reduce((a, x) => a + x.price * x.perUnit, 0);
+      // order quantity + cost per accessory (rounds up per the ordered container count)
+      const accOrder = acc.map(x => { const qty = Math.ceil(orderUnits * x.perUnit); return { ...x, qty, cost: qty * x.price }; });
+      return { ...g, cells, neededPlants, needed, decided: Math.round(g.decided / cells), replay: Math.round(g.replay / cells), onHand, net, cs, cases, orderUnits, unit, potCost, acc, accOrder, cost: orderUnits * unit, grossCost: needed * unit };
     }).sort((a, b) => (a.container.diameter_in || 99) - (b.container.diameter_in || 99) || plantOrder(a.container.name, b.container.name));
     // accessory roll-up (trays, wire, …) — the hard goods you order ALONGSIDE the pots
     const accTotals = {};
@@ -233,6 +238,7 @@ export default function PotOrders({ plan }) {
                     </td>
                     <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>
                       {g.needed.toLocaleString()}
+                      {g.cells > 1 && <div style={{ fontSize: 9.5, fontWeight: 500, color: C.muted }}>inserts · {g.neededPlants.toLocaleString()} plants @ {g.cells}/insert</div>}
                       {basis === "target" && g.replay > 0 && (
                         <div style={{ fontSize: 9.5, fontWeight: 700, color: C.amber }} title="part of this need is still last year's plan — decide those families and it turns green">
                           {g.decided > 0 ? `${g.decided.toLocaleString()} decided · ` : ""}↩ {g.replay.toLocaleString()} replay
@@ -270,7 +276,7 @@ export default function PotOrders({ plan }) {
                         {f.recipeId && <span onClick={e => e.stopPropagation()} style={{ marginLeft: 8 }}>{conPicker(cid => matchFamily(f, cid), f.containerId)}</span>}
                       </td>
                       <td style={{ ...td, textAlign: "right", fontSize: 11.5, fontVariantNumeric: "tabular-nums", ...(state === "replay" ? { color: C.amber, fontStyle: "italic" } : { color: C.muted }) }}>
-                        {state === "replay" ? `(${f.pots.toLocaleString()})` : f.pots.toLocaleString()}
+                        {(() => { const u = Math.ceil(f.pots / g.cells); return state === "replay" ? `(${u.toLocaleString()})` : u.toLocaleString(); })()}
                       </td>
                       <td style={td} colSpan={5}></td>
                     </tr>
