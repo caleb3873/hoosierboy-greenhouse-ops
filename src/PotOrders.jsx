@@ -382,28 +382,53 @@ export default function PotOrders({ plan }) {
         </div>
       )}
 
-      {/* priced containers we could use instead of ordering — reference, no order */}
-      {available.length > 0 && (
-        <details style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10 }}>
-          <summary style={{ cursor: "pointer", padding: "10px 13px", fontSize: 11.5, fontWeight: 800, color: C.dark, listStyle: "none" }}>
-            🗂 Available containers <span style={{ color: C.muted, fontWeight: 500 }}>— {available.length} priced but not matched to a 2027 family. Options to use instead of ordering something new; match one on any family row above.</span>
+      {/* off-plan inventory: pots you OWN that no 2027 family uses. Enter on-hand here to
+          catch "we already have 1,500 of a similar pot — use those before ordering new." */}
+      {available.length > 0 && (() => {
+        const availOnHand = available.reduce((s, c) => s + Math.max(0, +c.stock_qty || 0), 0);
+        const availVal = available.reduce((s, c) => s + Math.max(0, +c.stock_qty || 0) * (+c.cost_per_unit || 0), 0);
+        return (
+        <details open={availOnHand > 0} style={{ background: C.card, border: `1.5px solid ${availOnHand > 0 ? C.amber : C.border}`, borderRadius: 10 }}>
+          <summary style={{ cursor: "pointer", padding: "10px 13px", fontSize: 12, fontWeight: 800, color: C.dark, listStyle: "none" }}>
+            🗂 Pots on hand — NOT in the 2027 plan
+            <span style={{ color: C.muted, fontWeight: 500 }}> — {available.length} priced pots no family uses. {availOnHand > 0 ? <b style={{ color: C.amber }}>{availOnHand.toLocaleString()} on hand = {money0(availVal)} sitting in inventory</b> : "enter what you have"} · use these before ordering something new</span>
           </summary>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead><tr>{["Container", "Size", "Price", "Case / pallet", "Supplier"].map((h, i) => <th key={h} style={{ ...th, textAlign: i >= 2 ? "right" : "left" }}>{h}</th>)}</tr></thead>
+            <thead><tr>{["Container", "Size", "On hand", "Value", "Price", "Case / pallet", "Supplier"].map((h, i) => <th key={h} style={{ ...th, textAlign: i >= 2 && i <= 4 ? "right" : i >= 5 ? "right" : "left" }}>{h}</th>)}</tr></thead>
             <tbody>
-              {available.map(c => (
-                <tr key={c.id} style={{ borderTop: `1px solid ${C.border}` }}>
+              {available.map(c => {
+                const oh = Math.max(0, +c.stock_qty || 0);
+                return (
+                <tr key={c.id} style={{ borderTop: `1px solid ${C.border}`, background: oh > 0 ? "#fbf6e9" : undefined }}>
                   <td style={{ ...td, fontWeight: 700 }}>{c.name}{c.sku ? <span style={{ color: C.muted, fontWeight: 500 }}> · {c.sku}</span> : ""}</td>
                   <td style={{ ...td, color: C.muted }}>{c.diameter_in ? `${c.diameter_in}"` : c.cells_per_flat ? `${c.cells_per_flat} cell` : "—"}</td>
-                  <td style={{ ...td, textAlign: "right", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{money(c.cost_per_unit)}</td>
+                  <td style={{ ...td, textAlign: "right" }}>
+                    <input defaultValue={c.stock_qty ?? ""} placeholder="0" inputMode="numeric"
+                      onBlur={e => { if (e.target.value.trim() !== String(c.stock_qty ?? "")) setStock(c, e.target.value.trim()); }}
+                      onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                      title="how many of this pot you have in inventory — surfaces it as usable before you order new"
+                      style={{ width: 64, padding: "4px 6px", textAlign: "right", borderRadius: 6, border: `1.5px solid ${oh ? C.amber : C.creamBr}`, fontSize: 12, fontFamily: "inherit", fontWeight: oh ? 700 : 400 }} />
+                  </td>
+                  <td style={{ ...td, textAlign: "right", fontWeight: 700, fontVariantNumeric: "tabular-nums", color: oh > 0 ? C.amber : C.muted }}>{oh > 0 ? money0(oh * (+c.cost_per_unit || 0)) : "—"}</td>
+                  <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money(c.cost_per_unit)}</td>
                   <td style={{ ...td, textAlign: "right", color: C.muted, whiteSpace: "nowrap" }}>{c.units_per_case ? `${c.units_per_case}/cs` : ""}{c.qty_per_pallet ? `${c.units_per_case ? " · " : ""}${(+c.qty_per_pallet).toLocaleString()}/pal` : (c.units_per_case ? "" : "—")}</td>
                   <td style={{ ...td, textAlign: "right", color: C.muted }}>{c.primary_supplier || c.supplier || "—"}</td>
                 </tr>
-              ))}
+              ); })}
             </tbody>
+            {availOnHand > 0 && (
+              <tfoot><tr style={{ background: C.cream }}>
+                <td style={{ ...td, fontWeight: 800 }} colSpan={2}>Off-plan inventory total</td>
+                <td style={{ ...td, textAlign: "right", fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{availOnHand.toLocaleString()}</td>
+                <td style={{ ...td, textAlign: "right", fontWeight: 800, fontVariantNumeric: "tabular-nums", color: C.amber }}>{money0(availVal)}</td>
+                <td style={td} colSpan={3}></td>
+              </tr></tfoot>
+            )}
           </table>
+          <div style={{ padding: "8px 13px", fontSize: 10.5, color: C.muted }}>These pots aren't in the 2027 plan — enter what you have so nobody orders new when there's stock to use. Match a family to any of them on a family row above and it moves into the order (and nets automatically).</div>
         </details>
-      )}
+        );
+      })()}
 
       <div style={{ fontSize: 11, color: C.muted, lineHeight: 1.5 }}>
         Pots needed comes from the projection: each family's 2027 target (in pots) where you've decided, otherwise last year's plan — so it firms up live as you and Mario walk the families. Match a family to a pot here or on its family page; enter on-hand inventory in the <b>On hand</b> column and the order nets it out. <b>Saved by inventory</b> = the cash you're NOT tying up by ordering over what you already have. The 🗂 <b>Available containers</b> list is everything priced you could match a family to instead of buying new.
