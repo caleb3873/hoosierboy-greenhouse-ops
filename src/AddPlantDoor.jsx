@@ -264,11 +264,13 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
 
   const u = Math.max(0, parseInt(units, 10) || 0);
   const ppu = recipe ? Math.max(1, Math.round(+recipe.pots_per_unit || 1)) : inferPPU(sizeSel);
-  const pots = u * ppu;
+  // the quantity is POTS now (one unit, pots — Caleb 8/3: "320 was translating to 3200").
+  const pots = u;
   const plants = pots * (recipe ? Math.max(1, Math.round(+recipe.ppp || 1)) : 1);
-  // ready week must be valid and not in the past; the recipe/crop-weeks can come LATER
+  // ready week must be valid and not in the past; the recipe/crop-weeks can come LATER.
+  // qty 0 is allowed — it adds the variety as a SUGGESTION that doesn't touch the plan number.
   const readyOk = chain && chain.readyWk && !chain.past;
-  const canConfirm = variety && sizeSel && readyOk && u > 0 && itemName.trim() && !busy;
+  const canConfirm = variety && sizeSel && readyOk && itemName.trim() && !busy;
   const canFamConfirm = famMode && sel.length > 0 && sizeSel && readyOk && !busy;
 
   // resolve the recipe for this crop+size, or STUB one silently — you add products to the
@@ -309,8 +311,9 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
     const name = nameOverride || `${sizePrefix(recipeRow.size_label)} ${v.crop_name} ${v.variety}`.toUpperCase();
     const { data: clash } = await sb.from("scheduled_crops").select("id").eq("plan_id", plan.id).eq("item_name", name).limit(1);
     if (clash?.length) return { name, skipped: true };
-    const uPots = unitsIn * Math.max(1, Math.round(+recipeRow.pots_per_unit || 1));
+    const uPots = unitsIn;   // POTS (one unit, pots) — no × pack
     const uPlants = uPots * Math.max(1, Math.round(+recipeRow.ppp || 1));
+    const suggestion = unitsIn <= 0;   // 0 = a varietal suggestion; doesn't touch the plan number
     const { error: e1 } = await sb.from("scheduled_crops").insert({
       id: crypto.randomUUID(), plan_id: plan.id, item_name: name,
       variety_id: v.id, recipe_id: recipeRow.id,
@@ -329,9 +332,11 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
       liner_unit_cost: best?.landed != null ? +best.landed : null,
       bench_id: null,                          // space assigned later, same as duplicates
       is_combo_component: false, sellable: true, status: "planned",
-      notes: "added via Add a plant",
+      notes: suggestion ? "varietal suggestion — added at 0, swap in later" : "added via Add a plant",
     });
     if (e1) throw new Error(`${name}: ${e1.message}`);
+    // a SUGGESTION (qty 0) writes NO plan target — it must not move the planned number
+    if (suggestion) return { name, skipped: false, suggestion: true };
     const { error: e2 } = await sb.from("plan_targets").upsert({
       plan_id: plan.id, item_name: name, target_units: uPots, decision: "grow",   // POTS (one unit, pots)
       note: "created via Add a plant", decided_by: displayName || null,
@@ -588,7 +593,7 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
                 {sizeSelect}
               </div>
               <div>
-                <label style={lbl}>Units per variety (start)</label>
+                <label style={lbl}>Pots per variety (0 = suggestion)</label>
                 <input value={units} onChange={e => setUnits(e.target.value)} inputMode="numeric" placeholder="0 — set each on the family page" style={ctl} />
                 {sizeSel && <div style={{ fontSize: 10.5, color: C.muted, marginTop: 3 }}>
                   {u > 0 ? `= ${pots.toLocaleString()} pots each${chain?.weeksUnknown ? "" : " · tasks created"}` : "0 is fine — quantities land on the family page next"}
@@ -630,9 +635,11 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
               {sizeSelect}
             </div>
             <div>
-              <label style={lbl}>Quantity (units)</label>
-              <input value={units} onChange={e => setUnits(e.target.value)} inputMode="numeric" placeholder="e.g. 120" style={ctl} />
-              {sizeSel && u > 0 && <div style={{ fontSize: 10.5, color: C.muted, marginTop: 3 }}>= {pots.toLocaleString()} pots · {plants.toLocaleString()} plants{ppu > 1 ? ` (${ppu}/unit)` : ""}</div>}
+              <label style={lbl}>Quantity (pots)</label>
+              <input value={units} onChange={e => setUnits(e.target.value)} inputMode="numeric" placeholder="e.g. 320 — or 0 to suggest" style={ctl} />
+              {sizeSel && (u > 0
+                ? <div style={{ fontSize: 10.5, color: C.muted, marginTop: 3 }}>{pots.toLocaleString()} pots{plants !== pots ? ` · ${plants.toLocaleString()} plants` : ""}{ppu > 1 ? ` (sold ${ppu}/case)` : ""}</div>
+                : <div style={{ fontSize: 10.5, color: C.amber, fontWeight: 700, marginTop: 3 }}>💡 0 = add as a suggestion — doesn't change the plan number</div>)}
             </div>
             <div style={{ gridColumn: "1 / -1" }}>
               <label style={lbl}>Ready by</label>
@@ -691,8 +698,8 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
                 {busy ? "Adding…" : `Confirm — add ${sel.length} & open the family`}
               </button>
             : <button disabled={!canConfirm} onClick={confirm}
-                style={{ padding: "10px 18px", borderRadius: 10, border: "none", background: canConfirm ? C.light : "#c9d4c2", color: "#fff", fontWeight: 800, cursor: canConfirm ? "pointer" : "default", fontFamily: FONT }}>
-                {busy ? "Adding…" : `Confirm — add to ${plan.name}`}
+                style={{ padding: "10px 18px", borderRadius: 10, border: "none", background: canConfirm ? (u > 0 ? C.light : C.amber) : "#c9d4c2", color: "#fff", fontWeight: 800, cursor: canConfirm ? "pointer" : "default", fontFamily: FONT }}>
+                {busy ? "Adding…" : u > 0 ? `Confirm — add to ${plan.name}` : "Add as a suggestion"}
               </button>}
         </div>
       </div>

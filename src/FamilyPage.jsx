@@ -98,7 +98,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
       const { data: ser } = await sb.from("crop_recipe_series").select("*").eq("recipe_id", recipeId).order("series_name");
       setSeries(ser || []);
       const { data: sc } = await sb.from("scheduled_crops")
-        .select("id,item_name,variety_id,qty_pots,ppp,pack_size,plants_per_unit,qty_plants_ordered,plant_week,plant_year,ship_week,ship_year,ready_week,ready_year,broker,supplier,liner_unit_cost,prop_method,bench_id,is_combo_component")
+        .select("id,item_name,variety_id,qty_pots,ppp,pack_size,plants_per_unit,qty_plants_ordered,plant_week,plant_year,ship_week,ship_year,ready_week,ready_year,broker,supplier,liner_unit_cost,prop_method,bench_id,is_combo_component,notes")
         .eq("plan_id", plan.id).eq("recipe_id", recipeId).not("is_combo_component", "is", true).limit(2000);
       setRows(sc || []);
       const vids = [...new Set((sc || []).map(r => r.variety_id).filter(Boolean))];
@@ -231,9 +231,10 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
         const v = vmap[r.variety_id];
         const key = v?.variety || r.item_name;
         const o = byVar[key] || (byVar[key] = { variety: key, vkey: v?.variety_key, rows: [], pots: 0,
-          liner: null, broker: null, items: new Set(), benches: new Set() });
+          liner: null, broker: null, items: new Set(), benches: new Set(), suggested: false });
         o.rows.push(r);
         o.pots += potsOf(r);
+        if (/varietal suggestion/i.test(r.notes || "")) o.suggested = true;
         o.items.add(r.item_name);
         if (r.bench_id && bmap[r.bench_id]) o.benches.add(bmap[r.bench_id]);
         if (r.liner_unit_cost != null && r.liner_unit_cost !== 1) o.liner = +r.liner_unit_cost;
@@ -284,10 +285,12 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
   const tucked = useMemo(() => {
     const by = {};
     groups.forEach(g => g.vars.forEach(vr => {
-      const o = by[vr.variety] || (by[vr.variety] = { variety: vr.variety, vkey: vr.vkey, rows: [], pots: 0, sold: 0, items: new Set() });
+      const o = by[vr.variety] || (by[vr.variety] = { variety: vr.variety, vkey: vr.vkey, rows: [], pots: 0, sold: 0, items: new Set(), suggested: false });
       o.rows.push(...vr.rows); o.pots += vr.pots; o.sold += vr.sold || 0; vr.items.forEach(i => o.items.add(i));
+      if (vr.suggested) o.suggested = true;
     }));
-    return Object.values(by).filter(v => v.pots === 0 && !growIntent(v)).sort((a, b) => b.sold - a.sold);
+    // suggestions (added at 0 on purpose) stay in the roster as candidates — never tucked
+    return Object.values(by).filter(v => v.pots === 0 && !growIntent(v) && !v.suggested).sort((a, b) => b.sold - a.sold);
   }, [groups, tmap]); // eslint-disable-line
   const tuckedNames = useMemo(() => new Set(tucked.map(t => t.variety)), [tucked]);
 
@@ -1257,6 +1260,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
                               <span onClick={onOpenItem ? (e => { e.stopPropagation(); onOpenItem([...vr.items][0]); }) : undefined}
                                 title={onOpenItem ? "open the item page" : undefined}
                                 style={onOpenItem ? { cursor: "pointer", textDecoration: "underline dotted", textUnderlineOffset: 3 } : undefined}>{vr.variety}</span>
+                              {vr.suggested && vr.pots === 0 && <span title="added as a suggestion — not in the plan number. Give it pots (and trim the one it replaces) to bring it in." style={{ marginLeft: 5, fontSize: 9, fontWeight: 800, color: C.amber, background: C.amberBg, borderRadius: 5, padding: "1px 6px" }}>💡 suggestion</span>}
                               {vr.items.size > 1 && <span title={[...vr.items].join(" · ")} style={{ marginLeft: 5, fontSize: 9, fontWeight: 800, color: C.amber, background: C.amberBg, borderRadius: 5, padding: "1px 5px" }}>{vr.items.size} lines</span>}
                               {!!vr.benches.size && <div style={{ fontSize: 9.5, fontWeight: 500, color: C.muted, fontFamily: "ui-monospace,Menlo,monospace" }}>{[...vr.benches].sort().join(" ")}</div>}
                             </td>
