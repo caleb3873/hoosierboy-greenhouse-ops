@@ -80,6 +80,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
   const [brokerStats, setBrokerStats] = useState({});   // series_name -> [{broker, supplier, min, cov, tot}]
   const [soldByItem, setSoldByItem] = useState({});   // plan item_name -> '26 units (via sku map)
   const [tmap, setTmap] = useState({});               // plan item_name -> plan_targets row (walkthrough decisions)
+  const [ref26ByItem, setRef26ByItem] = useState({}); // plan item_name -> FROZEN '26 planned pots (reference, never edited)
   const [famSold, setFamSold] = useState(null);       // whole-family 2026 sales incl. removed varieties (name-matched)
   const [confirmRm, setConfirmRm] = useState(null);   // variety pending delete in the "not returning" strip
   const addedSeries = useRef([]);                     // placeholder series rows created this edit session — Cancel takes them back
@@ -119,10 +120,11 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
       // '26 sales via the CANONICAL join: item_name → sales_sku_map → sku → sales_totals
       // (SKU is the durable match key — combo-modeled lines like "GERANIUM COMBO RED" attach correctly)
       const itemNames = [...new Set((sc || []).map(r => r.item_name))];
-      let soldMap = {};
+      let soldMap = {}, tgs = [];
       if (itemNames.length) {
-        // walkthrough decisions (Sales vs Plan 2027 targets) — the dig-in surface must greet you with them
-        const { data: tgs } = await sb.from("plan_targets").select("item_name,target_units,decision,decided_by,applied_at,applied_units").eq("plan_id", plan.id).in("item_name", itemNames);
+        // walkthrough decisions (Sales vs Plan 2027 targets) — the dig-in surface must greet you with them.
+        // current_units = the plan quantity captured when the decision was made = the frozen '26 baseline.
+        ({ data: tgs } = await sb.from("plan_targets").select("item_name,target_units,current_units,decision,decided_by,applied_at,applied_units").eq("plan_id", plan.id).in("item_name", itemNames));
         setTmap(Object.fromEntries((tgs || []).map(t => [t.item_name, t])));
         const { data: maps } = await sb.from("sales_sku_map").select("sku,plan_item_name").in("plan_item_name", itemNames);
         const skuToItem = Object.fromEntries((maps || []).map(m => [m.sku, m.plan_item_name]));
@@ -141,6 +143,22 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
       });
       Object.keys(soldMap).forEach(it => { soldMap[it] = soldMap[it] * (packByItem[it] || 1); });
       setSoldByItem(soldMap);
+      // Frozen "Planned '26" reference — what each item was planned for going into the projection.
+      // Source: plan_targets.current_units (captured at decision time, in sellable units → ×pack =
+      // pots). Anything the walkthrough never touched falls back to its current planned pots. This
+      // number is READ-ONLY and never moves as the 2027 plan is edited/applied, so it stays a fixed
+      // point of comparison next to '26 sold.
+      const potsByItem = {};
+      (sc || []).forEach(r => { potsByItem[r.item_name] = (potsByItem[r.item_name] || 0) + (+r.qty_pots || 0); });
+      const tByItem = Object.fromEntries((tgs || []).map(t => [t.item_name, t]));
+      const refMap = {};
+      itemNames.forEach(it => {
+        const t = tByItem[it];
+        refMap[it] = (t && t.current_units != null)
+          ? Math.round(+t.current_units * (packByItem[it] || 1))
+          : (potsByItem[it] || 0);
+      });
+      setRef26ByItem(refMap);
     })();
   }, [sb, plan.id, recipeId, tick]); // eslint-disable-line
 
@@ -275,8 +293,38 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
         });
       });
     });
+    // Planned '26 reference — allocate each item's frozen baseline the same FIFO-across-rounds,
+    // pot-share-within-round way as '26 sold, so the two line up round-for-round.
+    const remRef = { ...ref26ByItem };
+    gs.forEach(g => {
+      const itemPots = {};
+      g.rows.forEach(r => { itemPots[r.item_name] = (itemPots[r.item_name] || 0) + potsOf(r); });
+      g.itemRef = {};
+      Object.entries(itemPots).forEach(([it, pots]) => {
+        const take = Math.min(remRef[it] || 0, pots > 0 ? pots : (remRef[it] || 0));
+        g.itemRef[it] = take; remRef[it] = (remRef[it] || 0) - take;
+      });
+    });
+    gs.slice().reverse().forEach(g => {
+      Object.keys(g.itemRef || {}).forEach(it => {
+        if ((remRef[it] || 0) > 0) { g.itemRef[it] += remRef[it]; remRef[it] = 0; }
+      });
+    });
+    gs.forEach(g => {
+      const itemPots = {};
+      g.rows.forEach(r => { itemPots[r.item_name] = (itemPots[r.item_name] || 0) + potsOf(r); });
+      g.vars.forEach(vr => {
+        vr.ref26 = 0;
+        const mine = {};
+        vr.rows.forEach(r => { mine[r.item_name] = (mine[r.item_name] || 0) + potsOf(r); });
+        Object.entries(mine).forEach(([it, p]) => {
+          const tot = itemPots[it] || 1;
+          vr.ref26 += Math.round((g.itemRef[it] || 0) * (tot > 0 ? p / tot : 1));
+        });
+      });
+    });
     return gs;
-  }, [rows, vmap, soldByItem, seriesOf, bmap]);
+  }, [rows, vmap, soldByItem, ref26ByItem, seriesOf, bmap]);
 
   // "not returning" tuck: a variety with ZERO pots family-wide and no grow intent
   // (no positive target, no grow decision) leaves the roster — the 2027 view shows
@@ -1252,7 +1300,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
               {open && (
                 <div style={{ padding: "4px 10px 10px", overflowX: "auto" }}>
                   <table style={{ borderCollapse: "collapse", width: "100%" }}>
-                    <thead><tr>{["Variety", "Series", "Form", "'26 sold", "Sell-thru", "Planned (pots)", "$/liner", "Broker"].map(h => <th key={h} style={th}>{h}</th>)}</tr></thead>
+                    <thead><tr>{["Variety", "Series", "Form", "Planned '26", "'26 sold", "Sell-thru", "Planned (pots)", "$/liner", "Broker"].map(h => <th key={h} style={th}>{h}</th>)}</tr></thead>
                     <tbody>
                       {liveVars.map(vr => {
                         const s = seriesOf(vr.variety);
@@ -1271,6 +1319,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
                             </td>
                             <td style={{ ...td, color: C.muted, fontSize: 11 }}>{s?.series_name || "—"}</td>
                             <td style={td}><span style={{ fontFamily: "ui-monospace,Menlo,monospace", fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 5, background: /CALL/.test(s?.form || "") ? C.amberBg : C.chip, color: /CALL/.test(s?.form || "") ? C.amber : C.green }}>{s?.form || "—"}</span></td>
+                            <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", color: C.muted }} title="what this color was planned for in 2026 — a frozen reference; it does NOT change as you edit or apply the 2027 plan">{vr.ref26 ? vr.ref26.toLocaleString() : "—"}</td>
                             <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{vr.sold ? vr.sold.toLocaleString() : "—"}</td>
                             <td style={{ ...td, minWidth: 90 }}>
                               {pct == null ? <span style={{ color: C.muted, fontSize: 10 }}>—</span> : (
