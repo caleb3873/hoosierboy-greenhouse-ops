@@ -733,8 +733,13 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
       const need = Math.ceil(vr.pots * ppp * (100 + ov) / 100);
       plants += need;
       liner += need * (vr.liner ?? 0);
-      const cells = s?.prop_tray_id ? (+trays[s.prop_tray_id]?.cells_per_flat || 105) : 105;
-      if (/^(URC|CALL|SEED)/i.test(s?.form || "")) traysN += need / cells;
+      // A prop tray is only ordered when a series actually has one assigned. Callused
+      // cuttings stuck straight into the finished pot (direct stick — no prop_tray_id)
+      // never consume a tray, whatever their form.
+      if (s?.prop_tray_id && /^(URC|CALL|SEED)/i.test(s?.form || "")) {
+        const cells = +trays[s.prop_tray_id]?.cells_per_flat || 105;
+        traysN += need / cells;
+      }
     }));
     return { pots, plants, liner, traysN };
   }, [groups, recipe, seriesOf, trays]);
@@ -1076,7 +1081,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
                       <td style={td}>
                         <select value={s.form || ""} onChange={e => setSeries(series.map(x => x.id === s.id ? { ...x, form: e.target.value || null } : x))}
                           style={{ padding: "3px 5px", borderRadius: 6, border: `1.5px solid ${C.creamBr}`, fontSize: 11.5, fontWeight: 700, fontFamily: "ui-monospace,Menlo,monospace" }}>
-                          {["", "URC", "CALL", "PLUG", "SEED", "BULB", "LINER", "DIRECT STICK"].map(f => <option key={f} value={f}>{f || "—"}</option>)}
+                          {["", "URC", "CALL", "PLUG", "SEED", "BULB", "LINER"].map(f => <option key={f} value={f}>{f || "—"}</option>)}
                         </select>
                       </td>
                       <td style={td}>
@@ -1087,7 +1092,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
                         <select value={s.prop_tray_id || ""}
                           onChange={e => setSeries(series.map(x => x.id === s.id ? { ...x, prop_tray_id: e.target.value || null } : x))}
                           style={{ padding: "3px 5px", borderRadius: 6, border: `1.5px solid ${C.creamBr}`, fontSize: 11.5, fontWeight: 700, fontFamily: FONT, maxWidth: 170 }}>
-                          <option value="">—</option>
+                          <option value="">— direct stick (no tray)</option>
                           {trayOpts.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
                         </select>
                       </td>
