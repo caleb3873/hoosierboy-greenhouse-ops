@@ -90,6 +90,12 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
   const [savedMsg, setSavedMsg] = useState("");
   const [busy, setBusy] = useState(false);
   const [tick, setTick] = useState(0);
+  const [famTgt, setFamTgt] = useState(null);          // family_targets row — the STATIC family projection
+  const [viewMode, setViewMode] = useState("colors");  // "colors" = one row per color, season totals (default) · "rounds" = the planting-group cards
+  const [selVars, setSelVars] = useState(() => new Set());  // season-view checkboxes for bulk broker/supplier
+  const [bulkBroker, setBulkBroker] = useState("");    // bulk-assign picks
+  const [quotesByKey, setQuotesByKey] = useState({});  // variety_key -> broker_prices rows (raw, for bulk pricing)
+  const [divideFor, setDivideFor] = useState(null);    // {variety, n, gap} — inline divide-into-rounds UI
 
   useEffect(() => {
     (async () => {
@@ -98,6 +104,8 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
       if (!rec) { setRows([]); return; }
       const { data: ser } = await sb.from("crop_recipe_series").select("*").eq("recipe_id", recipeId).order("series_name");
       setSeries(ser || []);
+      const { data: ftRow } = await sb.from("family_targets").select("*").eq("plan_id", plan.id).eq("recipe_id", recipeId).maybeSingle();
+      setFamTgt(ftRow || null);
       const { data: sc } = await sb.from("scheduled_crops")
         .select("id,item_name,variety_id,qty_pots,ppp,pack_size,plants_per_unit,qty_plants_ordered,plant_week,plant_year,ship_week,ship_year,ready_week,ready_year,broker,supplier,liner_unit_cost,prop_method,bench_id,is_combo_component,notes")
         .eq("plan_id", plan.id).eq("recipe_id", recipeId).not("is_combo_component", "is", true).limit(2000);
@@ -144,19 +152,17 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
       Object.keys(soldMap).forEach(it => { soldMap[it] = soldMap[it] * (packByItem[it] || 1); });
       setSoldByItem(soldMap);
       // Frozen "Planned '26" reference — what each item was planned for going into the projection.
-      // Source: plan_targets.current_units (captured at decision time, in sellable units → ×pack =
-      // pots). Anything the walkthrough never touched falls back to its current planned pots. This
-      // number is READ-ONLY and never moves as the 2027 plan is edited/applied, so it stays a fixed
-      // point of comparison next to '26 sold.
+      // Source: plan_targets.current_units, now pinned to POTS (grain migration 8/4 converted the
+      // flats-era captures). Anything the walkthrough never touched falls back to its current
+      // planned pots (pot-factor aware — flat-native rows carry factor ppu). READ-ONLY: it never
+      // moves as the 2027 plan is edited, so it stays a fixed point of comparison next to '26 sold.
       const potsByItem = {};
-      (sc || []).forEach(r => { potsByItem[r.item_name] = (potsByItem[r.item_name] || 0) + (+r.qty_pots || 0); });
+      (sc || []).forEach(r => { potsByItem[r.item_name] = (potsByItem[r.item_name] || 0) + (+r.qty_pots || 0) * potFactor(r); });
       const tByItem = Object.fromEntries((tgs || []).map(t => [t.item_name, t]));
       const refMap = {};
       itemNames.forEach(it => {
         const t = tByItem[it];
-        refMap[it] = (t && t.current_units != null)
-          ? Math.round(+t.current_units * (packByItem[it] || 1))
-          : (potsByItem[it] || 0);
+        refMap[it] = (t && t.current_units != null) ? Math.round(+t.current_units) : (potsByItem[it] || 0);
       });
       setRef26ByItem(refMap);
     })();
@@ -185,6 +191,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
       const FORM_TO_CLASS = f => /^URC/i.test(f || "") ? "urc" : /^(CALL|DIRECT)/i.test(f || "") ? "callused" : /^PLUG/i.test(f || "") ? "plug" : /^SEED/i.test(f || "") ? "seed" : null;
       const byKey = {};
       quotes.forEach(q => (byKey[q.variety_key] = byKey[q.variety_key] || []).push(q));
+      setQuotesByKey(byKey);   // kept raw for the season view's bulk broker/supplier assign
       const stats = {};
       series.forEach(s => {
         const fc = FORM_TO_CLASS(s.form);
@@ -333,8 +340,8 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
   const tucked = useMemo(() => {
     const by = {};
     groups.forEach(g => g.vars.forEach(vr => {
-      const o = by[vr.variety] || (by[vr.variety] = { variety: vr.variety, vkey: vr.vkey, rows: [], pots: 0, sold: 0, items: new Set(), suggested: false });
-      o.rows.push(...vr.rows); o.pots += vr.pots; o.sold += vr.sold || 0; vr.items.forEach(i => o.items.add(i));
+      const o = by[vr.variety] || (by[vr.variety] = { variety: vr.variety, vkey: vr.vkey, rows: [], pots: 0, sold: 0, ref26: 0, items: new Set(), suggested: false });
+      o.rows.push(...vr.rows); o.pots += vr.pots; o.sold += vr.sold || 0; o.ref26 += vr.ref26 || 0; vr.items.forEach(i => o.items.add(i));
       if (vr.suggested) o.suggested = true;
     }));
     // suggestions (added at 0 on purpose) stay in the roster as candidates — never tucked
@@ -350,6 +357,32 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
     vis.forEach((g, i) => { g.n = i + 1; });
     return vis;
   }, [groups, tuckedNames]);
+
+  // SEASON VIEW (Caleb 8/4: "total up the amounts of each variety … whole season for a
+  // specific color"): one aggregate per color across every planting group. The rounds
+  // are carried along as chips — the season total is the number you plan with, and
+  // "Divide" splits it back across rounds only when you choose to.
+  const seasonVars = useMemo(() => {
+    const by = {};
+    displayGroups.forEach(g => g.vars.forEach(vr => {
+      if (tuckedNames.has(vr.variety)) return;
+      const o = by[vr.variety] || (by[vr.variety] = { variety: vr.variety, vkey: vr.vkey, rows: [], pots: 0, sold: 0, ref26: 0,
+        liner: null, broker: null, items: new Set(), benches: new Set(), suggested: false, rounds: [] });
+      o.rows.push(...vr.rows);
+      o.pots += vr.pots; o.sold += vr.sold; o.ref26 += vr.ref26;
+      if (vr.liner != null) o.liner = vr.liner;
+      if (vr.broker) o.broker = vr.broker;
+      vr.items.forEach(i => o.items.add(i));
+      vr.benches.forEach(b => o.benches.add(b));
+      o.suggested = o.suggested || vr.suggested;
+      o.rounds.push({ n: g.n, key: g.key, ready: g.ready, readyYear: g.readyYear, pots: vr.pots });
+    }));
+    return Object.values(by).sort((a, b) => {
+      const sa = seriesOf(a.variety)?.series_name || "~", sbn = seriesOf(b.variety)?.series_name || "~";
+      return sa.localeCompare(sbn) || a.variety.localeCompare(b.variety);
+    });
+  }, [displayGroups, tuckedNames, seriesOf]);
+  const famLabel = recipe ? (recipe.display_name || `${recipe.size_label} ${recipe.crop_name}`) : "";
 
   // ── manual quote search + lock (Caleb 7/29) ───────────────────────────────
   // "Don't see the variety quoted from your broker but know it's there? Search
@@ -744,6 +777,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
         await sb.from("plan_targets").upsert({
           plan_id: plan.id, item_name: it, target_units: 0, decision: "drop",
           note: "discontinued on the family page", decided_by: displayName || null,
+          applied_at: new Date().toISOString(), applied_by: displayName || null, applied_units: 0,   // rows are gone — the decision IS reality
           decided_at: new Date().toISOString(), updated_at: new Date().toISOString(),
         }, { onConflict: "plan_id,item_name" });
         try {
@@ -920,35 +954,21 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
   async function applyTarget(g) {
     const its = (rows || []).filter(r => r.item_name === g.item && !r.is_combo_component);
     if (!its.length) return;
-    // wantPots is POTS; rows write back in their native unit (pots or whole flats)
-    const factors = its.map(potFactor);
-    const cur = its.reduce((a, r, i) => a + (+r.qty_pots || 0) * factors[i], 0);
-    const exactNative = its.map((r, i) =>
-      cur > 0 ? (g.wantPots * ((+r.qty_pots || 0) * factors[i]) / cur) / factors[i] : (g.wantPots / its.length) / factors[i]);
-    const flo = exactNative.map(Math.floor);
-    let remPots = g.wantPots - flo.reduce((a, n, i) => a + n * factors[i], 0);
-    for (const o of exactNative.map((e, i) => ({ i, fr: e - flo[i] })).sort((a, b) => b.fr - a.fr)) {
-      if (remPots >= factors[o.i]) { flo[o.i]++; remPots -= factors[o.i]; }
-    }
     setBusy(true);
-    let failed = 0;
-    for (let i = 0; i < its.length; i++) {
-      if (flo[i] === +its[i].qty_pots) continue;
-      // .select() so a 0-row match (deleted/RLS) counts as a failure, not silent success
-      const { data: ok, error } = await sb.from("scheduled_crops").update({ qty_pots: flo[i] }).eq("id", its[i].id).select("id");
-      if (error || !ok?.length) failed++;
-    }
     try {
-      await sb.from("item_change_log").insert({ plan_id: plan.id, item_name: g.item,
-        change_type: "target_applied", detail: { target_units: g.wantU, pots_from: cur, pots_to: g.wantPots, ...(failed ? { rows_failed: failed } : {}) },
-        changed_by: displayName || null, source: "family-page" });
-    } catch { /* audit must not block */ }
-    if (!failed) {
-      // acknowledge ONLY a clean apply: value snapshot + stamp. A partial apply leaves
-      // the line in the banner so it self-heals (review finding).
-      await sb.from("plan_targets").update({ applied_at: new Date().toISOString(), applied_units: g.wantU }).eq("plan_id", plan.id).eq("item_name", g.item);
-    } else {
-      window.alert(`${g.item}: ${failed} row update${failed > 1 ? "s" : ""} didn't stick — the target stays in the banner. Try Apply again.`);
+      // same engine as every other write path: multi-pass native distribution + combo-kid
+      // scaling, and the stamp records what actually LANDED (native units can't always
+      // hold the exact request), so the banner clears only when rows truly match.
+      const res = await distributePotsCore(its, g.wantPots);
+      try {
+        await sb.from("item_change_log").insert({ plan_id: plan.id, item_name: g.item,
+          change_type: "target_applied", detail: { target_units: g.wantU, pots_from: res.from, pots_to: res.achieved },
+          changed_by: displayName || null, source: "family-page" });
+      } catch { /* audit must not block */ }
+      await sb.from("plan_targets").update({ applied_at: new Date().toISOString(), applied_units: res.achieved, target_units: res.achieved })
+        .eq("plan_id", plan.id).eq("item_name", g.item);
+    } catch (e) {
+      window.alert(`${g.item}: the apply didn't stick (${e.message || e}) — the target stays in the banner. Try again.`);
     }
     setBusy(false); setTick(t => t + 1);
   }
@@ -956,29 +976,202 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
   // plan-qty edit: the input speaks POTS; rows store their native unit (pots OR flats) —
   // distribute by pot share, write back native, keep whole flats whole (largest remainder
   // measured in pots, granted one native unit at a time)
-  async function setVarQty(vr, newTotal) {
-    const tot = Math.max(0, Math.round(newTotal));   // POTS
-    const factors = vr.rows.map(potFactor);
-    const curPots = vr.rows.reduce((a, r, i) => a + (+r.qty_pots || 0) * factors[i], 0);
-    if (tot === curPots) return;
-    const cur = curPots;
-    const exactNative = vr.rows.map((r, i) =>
-      cur > 0 ? (tot * ((+r.qty_pots || 0) * factors[i]) / cur) / factors[i] : (tot / vr.rows.length) / factors[i]);
+  // core distribution: spread POTS across a set of rows proportionally (multi-pass
+  // largest remainder in each row's native encoding, so mixed pot/flat rows land as
+  // close to the request as native units allow). Scales combo kids' plants by the
+  // same factor — a basket edit here must move its components exactly like the
+  // walkthrough path does. No busy/tick — callers batch it.
+  async function distributePotsCore(rowsArr, tot) {
+    const factors = rowsArr.map(potFactor);
+    const curPots = rowsArr.reduce((a, r, i) => a + (+r.qty_pots || 0) * factors[i], 0);
+    if (tot === curPots) return { from: curPots, achieved: tot };
+    const exactNative = rowsArr.map((r, i) =>
+      curPots > 0 ? (tot * ((+r.qty_pots || 0) * factors[i]) / curPots) / factors[i] : (tot / rowsArr.length) / factors[i]);
     const flo = exactNative.map(Math.floor);
     let remPots = tot - flo.reduce((a, n, i) => a + n * factors[i], 0);
-    for (const o of exactNative.map((e, i) => ({ i, fr: e - flo[i] })).sort((a, b) => b.fr - a.fr)) {
-      if (remPots >= factors[o.i]) { flo[o.i]++; remPots -= factors[o.i]; }
+    const order = exactNative.map((e, i) => ({ i, fr: e - flo[i] })).sort((a, b) => b.fr - a.fr);
+    let granted = true;
+    while (remPots > 0 && granted) {
+      granted = false;
+      for (const o of order) { if (remPots >= factors[o.i]) { flo[o.i]++; remPots -= factors[o.i]; granted = true; } }
     }
+    for (let i = 0; i < rowsArr.length; i++) {
+      if (flo[i] !== +rowsArr[i].qty_pots) {
+        const { error } = await sb.from("scheduled_crops").update({ qty_pots: flo[i] }).eq("id", rowsArr[i].id);
+        if (error) throw new Error(error.message);
+        rowsArr[i].qty_pots = flo[i];
+      }
+    }
+    const achieved = tot - remPots;
+    const factor = curPots > 0 ? achieved / curPots : 0;
+    const { data: kids } = await sb.from("scheduled_crops").select("id,qty_plants_ordered").in("combo_parent_id", rowsArr.map(r => r.id));
+    for (const k of (kids || [])) {
+      if (k.qty_plants_ordered != null) await sb.from("scheduled_crops").update({ qty_plants_ordered: Math.round((+k.qty_plants_ordered || 0) * factor) }).eq("id", k.id);
+    }
+    return { from: curPots, achieved };
+  }
+
+  // ONE NUMBER: after rows change, the walkthrough decision record follows suit —
+  // target = planned, stamped applied, decision classified against the frozen '26
+  // baseline. Keeps the scorecard/YoY honest without a second number to maintain.
+  async function stampItems(itemNames) {
+    const stamp = new Date().toISOString();
+    for (const it of [...new Set(itemNames)].filter(Boolean)) {
+      const { data: cur } = await sb.from("scheduled_crops").select("qty_pots,ppp,pack_size,plants_per_unit")
+        .eq("plan_id", plan.id).eq("item_name", it).not("is_combo_component", "is", true);
+      const pots = (cur || []).reduce((a, r) => a + (+r.qty_pots || 0) * potFactor(r), 0);
+      const frozen = tmap[it]?.current_units;
+      const base = frozen ?? ref26ByItem[it] ?? pots;
+      const rec = { plan_id: plan.id, item_name: it, target_units: pots,
+        decision: pots === 0 ? "drop" : pots > base ? "grow" : pots < base ? "cut" : "hold",
+        applied_at: stamp, applied_by: displayName || "planner", applied_units: pots,
+        decided_by: displayName || "planner", decided_at: stamp, updated_at: stamp };
+      if (frozen == null) rec.current_units = ref26ByItem[it] ?? pots;
+      await sb.from("plan_targets").upsert(rec, { onConflict: "plan_id,item_name" });
+    }
+  }
+
+  async function setVarQty(vr, newTotal) {
+    const tot = Math.max(0, Math.round(newTotal));   // POTS
+    const curPots = vr.rows.reduce((a, r) => a + (+r.qty_pots || 0) * potFactor(r), 0);
+    if (tot === curPots) return;
     setBusy(true);
-    for (let i = 0; i < vr.rows.length; i++) {
-      if (flo[i] !== +vr.rows[i].qty_pots) await sb.from("scheduled_crops").update({ qty_pots: flo[i] }).eq("id", vr.rows[i].id);
+    try {
+      const res = await distributePotsCore(vr.rows, tot);
+      try {
+        await sb.from("item_change_log").insert({ plan_id: plan.id, item_name: vr.rows[0]?.item_name || vr.variety,
+          variety_key: vr.vkey || null, change_type: "family_qty", detail: { variety: vr.variety, from: curPots, to: res.achieved },
+          changed_by: displayName || null, source: "family-page" });
+      } catch { /* audit must not block */ }
+      await stampItems([...vr.items]);
+    } catch (e) { window.alert("Quantity didn't fully save: " + (e.message || e)); }
+    setBusy(false); setTick(t => t + 1);
+  }
+
+  // the STATIC family projection — the number agreed at the family grain
+  async function saveFamProjection(raw) {
+    const total = Math.max(0, Math.round(+String(raw).replace(/[^0-9.]/g, "")));
+    if (isNaN(total)) return;
+    const stamp = new Date().toISOString();
+    const rec = { plan_id: plan.id, recipe_id: recipeId, planned_pots: total,
+      decided_by: displayName || "planner", decided_at: stamp, updated_at: stamp };
+    const { error } = await sb.from("family_targets").upsert(rec, { onConflict: "plan_id,recipe_id" });
+    if (error) { window.alert("Projection didn't save: " + error.message); return; }
+    setFamTgt(f => ({ ...(f || {}), ...rec }));
+  }
+
+  // allocate the family projection across colors — evenly, or by 2026 sales share.
+  // Suggestions at 0 stay at 0 (they're references, not plan).
+  async function disperse(mode) {
+    const total = Math.max(0, Math.round(+famTgt?.planned_pots || 0));
+    const live = seasonVars.filter(v => !(v.suggested && v.pots === 0));
+    if (!live.length || !famTgt) return;
+    const weights = live.map(v => mode === "sold" ? v.sold : 1);
+    const W = weights.reduce((a, b) => a + b, 0);
+    const exact = live.map((v, i) => W > 0 ? total * weights[i] / W : total / live.length);
+    const units = exact.map(Math.floor);
+    let rem = total - units.reduce((a, b) => a + b, 0);
+    exact.map((e, i) => ({ i, fr: e - units[i] })).sort((a, b) => b.fr - a.fr).forEach(o => { if (rem > 0) { units[o.i]++; rem--; } });
+    if (!window.confirm(`Disperse ${total.toLocaleString()} pots across ${live.length} colors ${mode === "sold" ? "by 2026 sales share" : "evenly"}?\n\nThis overwrites each color's season quantity — fine-tune any of them afterwards. The family projection itself stays put.`)) return;
+    setBusy(true);
+    try {
+      const touched = new Set();
+      for (let i = 0; i < live.length; i++) {
+        await distributePotsCore(live[i].rows, units[i]);
+        live[i].items.forEach(it => touched.add(it));
+      }
+      await stampItems([...touched]);
+      try {
+        await sb.from("item_change_log").insert({ plan_id: plan.id, item_name: `family: ${famLabel}`,
+          change_type: "family_dispersed", detail: { total, mode, colors: live.length },
+          changed_by: displayName || null, source: "family-page" });
+      } catch { /* audit must not block */ }
+    } catch (e) { window.alert("Disperse stopped partway (colors already written stay written): " + (e.message || e)); }
+    setBusy(false); setTick(t => t + 1);
+  }
+
+  // ⑃ Divide a color's season total into N rounds, G weeks apart. Existing rounds are
+  // reused (earliest first); missing ones are cloned from the color's first row; rounds
+  // beyond N go to zero. The season total is preserved exactly.
+  async function divideColor(vr, nRounds, gapWks) {
+    const n = Math.max(1, Math.round(+nRounds || 0));
+    const gap = Math.max(1, Math.round(+gapWks || 2));
+    const tot = vr.pots;
+    if (!n || !vr.rows.length) return;
+    setBusy(true);
+    // bucket the color's rows into its existing rounds (same key the group view uses)
+    const keyOf = r => `${r.plant_week ?? "?"}|${r.ready_week ?? r.ship_week ?? "?"}`;
+    const byKey = {};
+    vr.rows.forEach(r => { (byKey[keyOf(r)] = byKey[keyOf(r)] || []).push(r); });
+    const ordered = vr.rounds.slice().sort((a, b) => ((a.readyYear ?? 0) * 100 + (a.ready ?? 0)) - ((b.readyYear ?? 0) * 100 + (b.ready ?? 0)))
+      .map(rd => ({ ...rd, rows: byKey[rd.key] || [] })).filter(rd => rd.rows.length);
+    const sets = ordered.slice(0, n).map(rd => rd.rows);
+    // mint missing rounds by cloning the color's first row at ready + gap steps
+    let last = ordered.length ? { wk: ordered[ordered.length - 1].ready, yr: ordered[ordered.length - 1].readyYear ?? plan.year ?? 2027 }
+      : { wk: vr.rows[0].ready_week, yr: vr.rows[0].ready_year ?? plan.year ?? 2027 };
+    if (sets.length < n) {
+      const { data: full } = await sb.from("scheduled_crops").select("*").eq("id", vr.rows[0].id).maybeSingle();
+      if (!full || full.ready_week == null) { setBusy(false); window.alert("Can't divide: this color has no ready week to anchor new rounds on — set the group's finish week first."); return; }
+      const finWks = finishWksOr(recipe, full.plant_year, full.plant_week, full.ready_year, full.ready_week);
+      const sSpec = seriesOf(vr.variety) || {};
+      const rooted = /^(URC|CALL)/i.test(sSpec.form || "");
+      for (let k = sets.length; k < n; k++) {
+        const nx = wrapWk((last.wk ?? 10) + gap, last.yr);
+        const p = finWks != null ? wrapWk(nx.wk - finWks, nx.yr) : { wk: full.plant_week, yr: full.plant_year };
+        const sh = rooted ? wrapWk(p.wk - Math.round(+(sSpec.rooting_weeks ?? 0)), p.yr) : p;
+        const row = { ...full, id: crypto.randomUUID(), qty_pots: 0,
+          ready_week: nx.wk, ready_year: nx.yr, plant_week: p.wk, plant_year: p.yr,
+          ship_week: sh.wk, ship_year: sh.yr, bench_id: null, qty_plants_ordered: null,
+          notes: `round ${k + 1} — divided on the family page` };
+        delete row.created_at; delete row.updated_at;
+        const { error } = await sb.from("scheduled_crops").insert(row);
+        if (error) { setBusy(false); window.alert("Couldn't create round " + (k + 1) + ": " + error.message); return; }
+        sets.push([row]);
+        last = nx;
+      }
+    }
+    // equal split of the season total across the N rounds (largest remainder)
+    try {
+      const per = sets.map(() => Math.floor(tot / n));
+      for (let i = 0; i < tot - per.reduce((a, b) => a + b, 0); i++) per[i % n]++;
+      for (let i = 0; i < sets.length; i++) await distributePotsCore(sets[i], per[i]);
+      for (const rd of ordered.slice(n)) await distributePotsCore(rd.rows, 0);   // rounds beyond N empty out
+      try {
+        await sb.from("item_change_log").insert({ plan_id: plan.id, item_name: vr.rows[0]?.item_name || vr.variety,
+          variety_key: vr.vkey || null, change_type: "divided_rounds", detail: { variety: vr.variety, total: tot, rounds: n, gap_weeks: gap },
+          changed_by: displayName || null, source: "family-page" });
+      } catch { /* audit must not block */ }
+      await stampItems([...vr.items]);
+    } catch (e) { window.alert("Divide stopped partway: " + (e.message || e)); }
+    setBusy(false); setDivideFor(null); setTick(t => t + 1);
+  }
+
+  // bulk broker/supplier: price every selected color from ONE broker's best quote
+  async function applyBulkBroker() {
+    const sel = seasonVars.filter(v => selVars.has(v.variety));
+    if (!sel.length || !bulkBroker) return;
+    const FORM_TO_CLASS = f => /^URC/i.test(f || "") ? "urc" : /^(CALL|DIRECT)/i.test(f || "") ? "callused" : /^PLUG/i.test(f || "") ? "plug" : /^SEED/i.test(f || "") ? "seed" : null;
+    if (!window.confirm(`Price ${sel.length} color${sel.length !== 1 ? "s" : ""} from ${bulkBroker}?\n\nEach color gets the broker, supplier and $/liner of its cheapest matching ${bulkBroker} quote (and locks to it for repricing). Colors with no matching quote are left unchanged.`)) return;
+    setBusy(true);
+    const misses = []; let hits = 0;
+    for (const v of sel) {
+      const vRec = Object.values(vmap).find(x => x.variety === v.variety);
+      const keys = [...new Set([vRec?.variety_key, v.vkey, ...(vRec?.match_aliases || [])].filter(Boolean))];
+      const fc = FORM_TO_CLASS(seriesOf(v.variety)?.form);
+      const qs = keys.flatMap(k => quotesByKey[k] || []).filter(q => q.broker === bulkBroker && (!fc || q.form_class === fc));
+      if (!qs.length) { misses.push(v.variety); continue; }
+      const best = qs.reduce((a, b) => +b.landed < +a.landed ? b : a);
+      await sb.from("scheduled_crops").update({ broker: best.broker, supplier: best.supplier, liner_unit_cost: +best.landed, sourcing_locked: true })
+        .in("id", v.rows.map(r => r.id));
+      hits++;
     }
     try {
-      await sb.from("item_change_log").insert({ plan_id: plan.id, item_name: vr.rows[0]?.item_name || vr.variety,
-        variety_key: vr.vkey || null, change_type: "family_qty", detail: { variety: vr.variety, from: cur, to: tot },
+      await sb.from("item_change_log").insert({ plan_id: plan.id, item_name: `family: ${famLabel}`,
+        change_type: "bulk_broker", detail: { broker: bulkBroker, colors: hits, missed: misses.length },
         changed_by: displayName || null, source: "family-page" });
     } catch { /* audit must not block */ }
-    setBusy(false); setTick(t => t + 1);
+    setBusy(false); setSelVars(new Set()); setTick(t => t + 1);
+    window.alert(`${hits} color${hits !== 1 ? "s" : ""} priced from ${bulkBroker}.${misses.length ? `\n\nNo matching quote for:\n• ${misses.join("\n• ")}` : ""}`);
   }
 
   const card = { background: "#fff", border: `1px solid ${C.border}`, borderRadius: 12, marginBottom: 12 };
@@ -1020,6 +1213,20 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
 
         {/* hero */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", gap: 8, margin: "10px 0 12px" }}>
+          {/* the STATIC family projection — the number agreed at the family grain.
+              Editing colors below never moves it; the delta chip shows what's left to allocate. */}
+          <div style={{ background: famTgt ? "#eef6e8" : C.cream, border: `1.5px solid ${famTgt ? C.light : C.creamBr}`, borderRadius: 10, padding: "9px 12px" }}
+            title="the family projection (pots) — a fixed reference; disperse or type per color below without moving it">
+            <input key={famTgt?.planned_pots ?? "none"} defaultValue={famTgt?.planned_pots ?? ""} placeholder="—" inputMode="numeric"
+              onBlur={e => { const s = e.target.value.trim(); if (s === "" || +s.replace(/[^0-9.]/g, "") === +famTgt?.planned_pots) return; saveFamProjection(s); }}
+              onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
+              style={{ ...wkStyle, fontSize: 17, color: C.dark, width: "100%", border: "none", background: "transparent", padding: 0, outline: "none" }} />
+            <div style={{ fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".5px", color: C.muted, marginTop: 2 }}>
+              family projection{famTgt && totals.pots !== +famTgt.planned_pots
+                ? <span style={{ color: C.amber }}> · {totals.pots > +famTgt.planned_pots ? `${(totals.pots - famTgt.planned_pots).toLocaleString()} over` : `${(famTgt.planned_pots - totals.pots).toLocaleString()} to allocate`}</span>
+                : famTgt ? <span style={{ color: "#2e7d32" }}> · ✓ allocated</span> : null}
+            </div>
+          </div>
           {[[totals.pots.toLocaleString(), "planned (pots/flats)"],
             [totals.plants.toLocaleString(), `plants to order${recipe.overage_pct ? ` (+${recipe.overage_pct}% ov)` : ""}`],
             [totals.traysN.toFixed(1), "prop trays to stick"],
@@ -1237,8 +1444,150 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
           </div>
         )}
 
+        {/* view toggle: colors (season totals — the planning surface) vs rounds (the timing surface) */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "2px 0 10px", flexWrap: "wrap" }}>
+          {[["colors", "🎨 By color — season totals"], ["rounds", "📅 By round"]].map(([m, label]) => (
+            <button key={m} onClick={() => setViewMode(m)}
+              style={{ padding: "6px 13px", borderRadius: 8, fontWeight: 800, fontSize: 12, cursor: "pointer", fontFamily: FONT,
+                border: `1.5px solid ${viewMode === m ? C.light : C.border}`,
+                background: viewMode === m ? "#eef6e8" : "#fff", color: viewMode === m ? C.dark : C.muted }}>
+              {label}
+            </button>
+          ))}
+          {famTgt && totals.pots !== +famTgt.planned_pots && (
+            <>
+              <span style={{ fontSize: 11.5, color: C.muted, marginLeft: 6 }}>disperse the projection:</span>
+              <button disabled={busy} onClick={() => disperse("sold")}
+                title="allocate the family projection across colors weighted by 2026 sales"
+                style={{ padding: "5px 11px", borderRadius: 8, border: `1.5px solid ${C.light}`, background: "#fff", color: C.dark, fontWeight: 800, fontSize: 11.5, cursor: "pointer", fontFamily: FONT }}>⇢ by '26 sales</button>
+              <button disabled={busy} onClick={() => disperse("even")}
+                title="allocate the family projection evenly across colors"
+                style={{ padding: "5px 11px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: "#fff", color: C.dark, fontWeight: 800, fontSize: 11.5, cursor: "pointer", fontFamily: FONT }}>⇢ evenly</button>
+            </>
+          )}
+          <span style={{ flex: 1 }} />
+          {viewMode === "colors" && (
+            <button disabled={busy} onClick={() => setAddDoor({ readyWk: displayGroups[0]?.ready })}
+              style={{ padding: "5px 11px", borderRadius: 8, border: `1.5px solid ${C.light}`, background: "#fff", color: C.dark, fontWeight: 800, fontSize: 11.5, cursor: "pointer", fontFamily: FONT }}>
+              ＋ Add a color
+            </button>
+          )}
+        </div>
+
+        {/* SEASON VIEW — one row per color, whole-season totals. This is the planning
+            surface: type the number, divide into rounds when you want them, bulk-price. */}
+        {viewMode === "colors" && (
+          <div style={card}>
+            {selVars.size > 0 && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: "#eef6e8", borderBottom: `1px solid ${C.border}`, flexWrap: "wrap" }}>
+                <b style={{ fontSize: 12 }}>{selVars.size} color{selVars.size !== 1 ? "s" : ""} selected</b>
+                <select value={bulkBroker} onChange={e => setBulkBroker(e.target.value)}
+                  style={{ padding: "5px 8px", borderRadius: 7, border: `1.5px solid ${C.border}`, fontSize: 12, fontFamily: FONT, fontWeight: 700 }}>
+                  <option value="">— broker —</option>
+                  {[...new Set(Object.values(quotesByKey).flat().map(q => q.broker).filter(Boolean))].sort().map(b => <option key={b} value={b}>{b}</option>)}
+                </select>
+                <button disabled={busy || !bulkBroker} onClick={applyBulkBroker}
+                  title="assign this broker + its best matching quote's supplier and $/liner to every selected color"
+                  style={{ padding: "5px 12px", borderRadius: 8, border: "none", background: C.dark, color: "#c8e6b8", fontWeight: 800, fontSize: 11.5, cursor: "pointer", fontFamily: FONT }}>
+                  Assign broker & price
+                </button>
+                <button onClick={() => setSelVars(new Set())} style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", fontSize: 11.5, fontWeight: 700 }}>clear</button>
+              </div>
+            )}
+            <div style={{ padding: "4px 10px 10px", overflowX: "auto" }}>
+              <table style={{ borderCollapse: "collapse", width: "100%" }}>
+                <thead><tr>
+                  <th style={{ ...th, width: 26 }}>
+                    <input type="checkbox" checked={seasonVars.length > 0 && seasonVars.every(v => selVars.has(v.variety))}
+                      onChange={e => setSelVars(e.target.checked ? new Set(seasonVars.map(v => v.variety)) : new Set())} />
+                  </th>
+                  {["Variety", "Series", "Form", "Planned '26", "'26 sold", "Sell-thru", "Season (pots)", "Rounds", "$/liner", "Broker"].map(h => <th key={h} style={th}>{h}</th>)}
+                </tr></thead>
+                <tbody>
+                  {seasonVars.map(vr => {
+                    const s = seriesOf(vr.variety);
+                    const pct = vr.pots > 0 && vr.sold != null ? Math.round(vr.sold * 100 / vr.pots) : null;
+                    const dividing = divideFor?.variety === vr.variety;
+                    return (
+                      <tr key={vr.variety}>
+                        <td style={td}>
+                          <input type="checkbox" checked={selVars.has(vr.variety)}
+                            onChange={e => setSelVars(sv => { const n = new Set(sv); if (e.target.checked) n.add(vr.variety); else n.delete(vr.variety); return n; })} />
+                        </td>
+                        <td style={{ ...td, fontWeight: 700 }}>
+                          <span onClick={onOpenItem ? (e => { e.stopPropagation(); onOpenItem([...vr.items][0]); }) : undefined}
+                            title={onOpenItem ? "open the item page" : undefined}
+                            style={onOpenItem ? { cursor: "pointer", textDecoration: "underline dotted", textUnderlineOffset: 3 } : undefined}>{vr.variety}</span>
+                          {vr.suggested && vr.pots === 0 && <span title="added as a suggestion — not in the plan number" style={{ marginLeft: 5, fontSize: 9, fontWeight: 800, color: C.amber, background: C.amberBg, borderRadius: 5, padding: "1px 6px" }}>💡 suggestion</span>}
+                          {!!vr.benches.size && <div style={{ fontSize: 9.5, fontWeight: 500, color: C.muted, fontFamily: "ui-monospace,Menlo,monospace" }}>{[...vr.benches].sort().join(" ")}</div>}
+                        </td>
+                        <td style={{ ...td, color: C.muted, fontSize: 11 }}>{s?.series_name || "—"}</td>
+                        <td style={td}><span style={{ fontFamily: "ui-monospace,Menlo,monospace", fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 5, background: /CALL/.test(s?.form || "") ? C.amberBg : C.chip, color: /CALL/.test(s?.form || "") ? C.amber : C.green }}>{s?.form || "—"}</span></td>
+                        <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", color: C.muted }} title="what this color was planned for in 2026 — frozen reference">{vr.ref26 ? vr.ref26.toLocaleString() : "—"}</td>
+                        <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{vr.sold ? vr.sold.toLocaleString() : "—"}</td>
+                        <td style={{ ...td, minWidth: 84 }}>
+                          {pct == null ? <span style={{ color: C.muted, fontSize: 10 }}>—</span> : (
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                              <span style={{ width: 46, height: 8, background: C.chip, borderRadius: 4, overflow: "hidden", display: "inline-block" }}>
+                                <span style={{ display: "block", height: "100%", width: `${Math.min(100, pct)}%`, background: pct >= 95 ? C.light : pct >= 60 ? "#a8c95d" : C.amber }} />
+                              </span>
+                              <b style={{ fontSize: 11, color: pct < 60 ? C.amber : C.dark, fontVariantNumeric: "tabular-nums" }}>{pct}%</b>
+                            </span>
+                          )}
+                        </td>
+                        <td style={{ ...td, textAlign: "right" }} title="the whole-season total for this color — distributes across its rounds proportionally">
+                          <QtyInput value={vr.pots} disabled={busy} onCommit={v => setVarQty(vr, v)} />
+                        </td>
+                        <td style={{ ...td, whiteSpace: "nowrap" }}>
+                          {vr.rounds.filter(r => r.pots > 0).map(r => (
+                            <span key={r.key} title={`Group ${r.n}`} style={{ display: "inline-block", marginRight: 4, fontSize: 10, fontWeight: 700, fontFamily: "ui-monospace,Menlo,monospace", background: C.chip, borderRadius: 5, padding: "1.5px 6px", color: C.text }}>
+                              {r.ready != null ? `${String((r.readyYear ?? 0) % 100).padStart(2, "0")}${String(r.ready).padStart(2, "0")}` : "?"}·{r.pots.toLocaleString()}
+                            </span>
+                          ))}
+                          {dividing ? (
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                              <input autoFocus type="number" min="1" max="8" value={divideFor.n} onChange={e => setDivideFor(d => ({ ...d, n: e.target.value }))}
+                                title="rounds" style={{ width: 36, padding: "2px 4px", borderRadius: 5, border: `1.5px solid ${C.light}`, fontSize: 11, fontFamily: "ui-monospace,Menlo,monospace", fontWeight: 700 }} />
+                              <span style={{ fontSize: 10, color: C.muted }}>rounds,</span>
+                              <input type="number" min="1" max="12" value={divideFor.gap} onChange={e => setDivideFor(d => ({ ...d, gap: e.target.value }))}
+                                title="weeks apart" style={{ width: 36, padding: "2px 4px", borderRadius: 5, border: `1.5px solid ${C.border}`, fontSize: 11, fontFamily: "ui-monospace,Menlo,monospace", fontWeight: 700 }} />
+                              <span style={{ fontSize: 10, color: C.muted }}>wks apart</span>
+                              <button disabled={busy} onClick={() => divideColor(vr, divideFor.n, divideFor.gap)}
+                                style={{ padding: "2px 8px", borderRadius: 6, border: "none", background: C.dark, color: "#c8e6b8", fontWeight: 800, fontSize: 10.5, cursor: "pointer", fontFamily: FONT }}>Go</button>
+                              <button onClick={() => setDivideFor(null)} style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", fontSize: 11 }}>✕</button>
+                            </span>
+                          ) : (
+                            <button disabled={busy || vr.pots === 0} onClick={() => setDivideFor({ variety: vr.variety, n: Math.max(2, vr.rounds.filter(r => r.pots > 0).length), gap: 2 })}
+                              title="split this color's season total equally into N rounds (existing rounds reused, new ones cloned at the chosen spacing)"
+                              style={{ padding: "2px 8px", borderRadius: 6, border: `1px solid ${C.border}`, background: "#fff", color: C.muted, fontWeight: 800, fontSize: 10.5, cursor: vr.pots === 0 ? "default" : "pointer", fontFamily: FONT }}>⑃ Divide</button>
+                          )}
+                        </td>
+                        <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                          {vr.liner != null ? `$${vr.liner.toFixed(3)}`
+                            : <button onClick={() => setQuoteFor({ v: { variety_id: vr.rows.map(r => r.variety_id).find(Boolean), variety: vr.variety, vkey: vr.vkey, rows: vr.rows } })}
+                                title="search the broker catalog and lock a quote to this color"
+                                style={{ border: `1px solid ${C.amber}`, background: C.amberBg, color: C.amber, borderRadius: 6, fontSize: 9.5, fontWeight: 800, padding: "1px 6px", cursor: "pointer", fontFamily: FONT }}>🔗 find quote</button>}
+                        </td>
+                        <td style={{ ...td, color: C.muted, fontSize: 11 }}>
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                            {vr.broker || "—"}
+                            <button onClick={() => setQuoteFor({ v: { variety_id: vr.rows.map(r => r.variety_id).find(Boolean), variety: vr.variety, vkey: vr.vkey, rows: vr.rows } })}
+                              title="search the broker catalog and lock a quote to this color"
+                              style={{ border: "none", background: "none", cursor: "pointer", fontSize: 11, padding: 0, opacity: 0.6 }}>🔗</button>
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {!seasonVars.length && <tr><td style={{ ...td, color: C.muted }} colSpan={11}>No colors in this family yet — ＋ Add a color.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
         {/* planting groups */}
-        {displayGroups.map(g => {
+        {viewMode === "rounds" && displayGroups.map(g => {
           const open = openG[g.key] ?? true;
           const liveVars = g.vars.filter(vr => !tuckedNames.has(vr.variety));
           if (!liveVars.length) return null;   // a round of only not-returning varieties has nothing to say
@@ -1370,6 +1719,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
               {tucked.map(t => (
                 <span key={t.variety} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#fff", border: `1px solid ${C.border}`, borderRadius: 12, padding: "2px 9px", fontSize: 11, fontWeight: 700 }}>
                   {t.variety}
+                  {t.ref26 > 0 && <span style={{ color: C.muted, fontWeight: 500 }} title="what it was planned for in 2026 — reference for sizing a similar replacement color">'26 planned {t.ref26.toLocaleString()}</span>}
                   {t.sold > 0 && <span style={{ color: C.muted, fontWeight: 500 }}>'26 sold {t.sold.toLocaleString()}</span>}
                   {confirmRm === t.variety ? (
                     <>
@@ -1385,6 +1735,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
                           for (const it of [...t.items]) {
                             await sb.from("plan_targets").upsert({ plan_id: plan.id, item_name: it, decision: "grow",
                               note: "restored on the family page", decided_by: displayName || null,
+                              applied_at: new Date().toISOString(), applied_by: displayName || null, applied_units: 0,   // rows sit at 0 until a quantity is typed
                               decided_at: new Date().toISOString(), updated_at: new Date().toISOString() }, { onConflict: "plan_id,item_name" });
                           }
                           setBusy(false); setTick(x => x + 1);

@@ -354,3 +354,56 @@ export function wrapWk(wk, yr) {
   while (wk > weeksInYear(yr)) { wk -= weeksInYear(yr); yr += 1; }
   return { wk, yr, year: yr };   // both spellings — callers use .yr or .year
 }
+
+// ── ONE-NUMBER write-through (Caleb 8/4: "no more targeted, just planned") ──────
+// Distribute POTS across an item's bench rows proportionally, in each row's native
+// encoding (pot-native factor 1; flat-native factor ppu), and scale combo kids the
+// same way. Multi-pass remainder grant so mixed-factor items land as close to the
+// requested total as native units allow; returns { achieved } — CALLERS MUST record
+// achieved (not requested) as the target, so plan and decision never diverge.
+// Throws on any write error so callers don't stamp "applied" over a failed push.
+export async function pushTargetToRows(sb, planId, itemName, pots) {
+  let { data: rows0, error: e0 } = await sb.from("scheduled_crops")
+    .select("id,qty_pots,ppp,plants_per_unit,pack_size")
+    .eq("plan_id", planId).eq("item_name", itemName).not("is_combo_component", "is", true);
+  if (e0) throw new Error(`read rows: ${e0.message}`);
+  if (!rows0 || !rows0.length) return { rows: 0, achieved: null };
+  // combo items: distribute over the TRUE parent rows only — sibling "phantom" basket
+  // rows (mix baskets entered once per color bench) are excluded from every planned
+  // total the app displays, so scaling them here would land the real parents short
+  const { data: kidRefs } = await sb.from("scheduled_crops").select("combo_parent_id").in("combo_parent_id", rows0.map(r => r.id));
+  const parentIds = new Set((kidRefs || []).map(k => k.combo_parent_id));
+  if (parentIds.size && parentIds.size < rows0.length) rows0 = rows0.filter(r => parentIds.has(r.id));
+  const pf = r => { const ppu = Math.max(1, +r.plants_per_unit || +r.pack_size || 1); const ppp = +r.ppp || 1; return (ppp >= ppu && ppu > 1) ? ppu : 1; };
+  const factors = rows0.map(pf);
+  const curPots = rows0.reduce((a, r, i) => a + (+r.qty_pots || 0) * factors[i], 0);
+  // proportional when the item has shape; even when all rows are zero (a re-grown
+  // drop — the old apply engine's qty>0 filter could never resurrect those)
+  const exact = rows0.map((r, i) =>
+    curPots > 0 ? (pots * ((+r.qty_pots || 0) * factors[i]) / curPots) / factors[i] : (pots / rows0.length) / factors[i]);
+  const flo = exact.map(Math.floor);
+  let rem = pots - flo.reduce((a, n, i) => a + n * factors[i], 0);
+  const order = exact.map((e, i) => ({ i, fr: e - flo[i] })).sort((a, b) => b.fr - a.fr);
+  let granted = true;
+  while (rem > 0 && granted) {          // multi-pass: keep granting native units while any fits
+    granted = false;
+    for (const o of order) { if (rem >= factors[o.i]) { flo[o.i]++; rem -= factors[o.i]; granted = true; } }
+  }
+  const achieved = pots - rem;          // what native units could actually hold
+  for (let i = 0; i < rows0.length; i++) {
+    if (flo[i] !== +rows0[i].qty_pots) {
+      const { error } = await sb.from("scheduled_crops").update({ qty_pots: flo[i] }).eq("id", rows0[i].id);
+      if (error) throw new Error(`row update: ${error.message}`);
+      rows0[i].qty_pots = flo[i];
+    }
+  }
+  const factor = curPots > 0 ? achieved / curPots : 0;
+  const { data: kids } = await sb.from("scheduled_crops").select("id,qty_plants_ordered").in("combo_parent_id", rows0.map(r => r.id));
+  for (const k of (kids || [])) {
+    if (k.qty_plants_ordered != null) {
+      const { error } = await sb.from("scheduled_crops").update({ qty_plants_ordered: Math.round((+k.qty_plants_ordered || 0) * factor) }).eq("id", k.id);
+      if (error) throw new Error(`kid update: ${error.message}`);
+    }
+  }
+  return { rows: rows0.length, from: curPots, achieved };
+}

@@ -19,7 +19,7 @@ const C = { dark: "#1e2d1a", light: "#7fb069", card: "#fff", border: "#dfe7d8",
 const money = n => n == null ? "—" : (Math.abs(n) >= 1000 ? `$${Math.round(n).toLocaleString()}` : `$${(+n).toFixed(2)}`);
 const pct = n => n == null ? "—" : `${Math.round(n * 100)}%`;
 // Baskets and made-up containers — anything built from components rather than grown as one plant
-import { sizeLabelForItem } from "./shared";
+import { sizeLabelForItem, pushTargetToRows } from "./shared";
 const sizeOf = n => sizeLabelForItem(n);
 
 const DIRECTIONS = [
@@ -72,13 +72,31 @@ export default function BasketPlanner({ plan, onOpenCombos }) {
   // Same decision store as the item projection — a basket target is not a
   // proposal, it's a projection decision like any other item's.
   async function saveTarget(b, patch) {
-    // partial writes only — unsent columns keep their DB values (see ProductionPlans)
+    // ONE-NUMBER saver, same contract as Sales vs Plan: partial write, frozen '26
+    // baseline set once (never trampled), push-first write-through so a basket
+    // target IS the planned basket count (kids scale inside pushTargetToRows).
+    const stamp = new Date().toISOString();
+    const wantsQty = patch.target_units != null;
     const next = {
       plan_id: plan.id, item_name: b.name, ...patch,
-      prior_units: b.sold, current_units: b.baskets,
-      decided_by: displayName || "planner", decided_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      prior_units: b.sold,
+      decided_by: displayName || "planner", decided_at: stamp,
+      updated_at: stamp,
     };
+    const frozen = targets[b.name]?.current_units;
+    if (frozen == null) next.current_units = b.baskets;
+    if (patch.target_units === null && patch.decision === null) { next.applied_at = null; next.applied_by = null; next.applied_units = null; }
+    if (wantsQty) {
+      const want = Math.max(0, Math.round(+patch.target_units));
+      let res;
+      try { res = await pushTargetToRows(sb, plan.id, b.name, want); }
+      catch (e) { window.alert("The plan rows did NOT update: " + (e.message || e)); return; }
+      const n = res.achieved ?? want;
+      next.target_units = n;
+      const base = frozen ?? b.baskets;
+      if (patch.decision === undefined || patch.decision != null) next.decision = n === 0 ? "drop" : n > base ? "grow" : n < base ? "cut" : "hold";
+      next.applied_at = stamp; next.applied_by = displayName || "planner"; next.applied_units = n;
+    }
     setTargets(t => ({ ...t, [b.name]: { ...(t[b.name] || {}), ...next } }));
     const { error } = await sb.from("plan_targets").upsert(next, { onConflict: "plan_id,item_name" });
     if (error) window.alert("Decision did NOT save: " + error.message);

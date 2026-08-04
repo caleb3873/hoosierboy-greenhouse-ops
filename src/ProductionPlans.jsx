@@ -5,7 +5,7 @@
 import { useState, useEffect, useMemo, useRef, Fragment } from "react";
 import { getSupabase, getCultureClient } from "./supabase";
 import { useAuth } from "./Auth";
-import { sizeLabelForItem, wrapWk, weeksInYear } from "./shared";
+import { sizeLabelForItem, wrapWk, weeksInYear, pushTargetToRows } from "./shared";
 import CategoryProfiles from "./CategoryProfiles";
 import BasketPlanner from "./BasketPlanner";
 import ItemDrill from "./ItemDrill";
@@ -1834,7 +1834,9 @@ function YearOverYearTab({ plan }) {
       const withParents = new Set(sc.filter(r => parentIds.has(r.id)).map(r => r.item_name));
       const plan27 = {}, ppp = {}, ppu = {}, ready = {}, newSet = new Set(), srcSet = new Set();
       for (const r of sc) {
-        if (!(+r.qty_pots > 0) || r.is_combo_component || COMPONENT.test(r.item_name)) continue;
+        // zero-qty rows stay: a write-through DROP zeroes the rows, and the item must
+        // remain reviewable (✕ Dropped) instead of vanishing into the missing-gaps list
+        if (r.is_combo_component || COMPONENT.test(r.item_name)) continue;
         if (withParents.has(r.item_name) && !parentIds.has(r.id)) continue;
         plan27[r.item_name] = (plan27[r.item_name] || 0) + +r.qty_pots;
         ppp[r.item_name] = Math.max(ppp[r.item_name] || 0, +r.ppp || 1);
@@ -1854,14 +1856,32 @@ function YearOverYearTab({ plan }) {
     })();
   }, [sb, plan.id, tick]); // eslint-disable-line
 
-  // same partial-write decision saver as Sales vs Plan — never clobbers unsent columns
+  // same single-number saver as Sales vs Plan — push first, record what landed.
+  // NOTE: this tab speaks POTS end-to-end now (units26/planItems converted above),
+  // so target_units from the drill's buttons are pots — safe to write through.
   async function saveTarget(r, patch) {
+    const stamp = new Date().toISOString();
+    const wantsQty = patch.target_units != null;
     const next = {
       plan_id: plan.id, item_name: r.item, ...patch,
-      prior_units: r.sold, current_units: r.planned,
-      decided_by: displayName || "planner", decided_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      prior_units: r.sold,
+      decided_by: displayName || "planner", decided_at: stamp,
+      updated_at: stamp,
     };
+    const frozen = targets[r.item]?.current_units;
+    if (frozen == null) next.current_units = r.planned;
+    if (patch.target_units === null && patch.decision === null) { next.applied_at = null; next.applied_by = null; next.applied_units = null; }
+    if (wantsQty && !patch.archived_at) {
+      const want = Math.max(0, Math.round(+patch.target_units));
+      let res;
+      try { res = await pushTargetToRows(sb, plan.id, r.item, want); }
+      catch (e) { window.alert("The plan rows did NOT update: " + (e.message || e)); return; }
+      const n = res.achieved ?? want;
+      next.target_units = n;
+      const base = frozen ?? r.planned;
+      if (patch.decision === undefined || patch.decision != null) next.decision = n === 0 ? "drop" : n > base ? "grow" : n < base ? "cut" : "hold";
+      next.applied_at = stamp; next.applied_by = displayName || "planner"; next.applied_units = n;
+    }
     setTargets(t => ({ ...t, [r.item]: { ...(t[r.item] || {}), ...next } }));
     const { error } = await sb.from("plan_targets").upsert(next, { onConflict: "plan_id,item_name" });
     if (error) window.alert("Decision did NOT save: " + error.message);
@@ -1871,9 +1891,14 @@ function YearOverYearTab({ plan }) {
     if (!base) return null;
     return Object.keys(base.plan27).map(it => {
       const planned = base.plan27[it];
-      const units26 = base.sold[it] || 0, rev26 = base.rev[it] || 0;
-      const price = units26 > 0 ? rev26 / units26 : null;
-      const planItems = plannedItems(planned, base.ppp[it], base.ppu[it]);
+      // ONE UNIT, POTS (Caleb 7/29): sales arrive in sellable units (flats for 4.5")
+      // — convert here so units26/units27/planItems/price all speak pots. Targets are
+      // pots; comparing them to flat counts made pack items read ±10x wrong, and the
+      // drill's quick buttons would have written a flats number through to the rows.
+      const pack = Math.max(1, Math.round(+base.ppu[it] || 1));
+      const units26 = (base.sold[it] || 0) * pack, rev26 = base.rev[it] || 0;
+      const price = units26 > 0 ? rev26 / units26 : null;   // per POT
+      const planItems = plannedItems(planned, base.ppp[it], base.ppu[it]) * pack;
       const t = targets[it] || {};
       // 2027 projected reflects ONLY confirmed Sales-vs-Plan decisions — not last
       // year's plan for items nobody has decided on yet (those show blank).
@@ -2521,136 +2546,10 @@ function ReadyDatesTab({ plan }) {
   const [data, setData] = useState(null);
   const [open, setOpen] = useState(null);
   const [tick, setTick] = useState(0);
-  const [applying, setApplying] = useState(false);
 
-  // One-click apply: push the decided quantities + timing into scheduled_crops
-  // (the bench rows the order tabs read) and stamp applied_at. Wave-splitting onto
-  // separate benches stays a production step — this makes the totals + dates real.
-  async function applyDecisions() {
-    const [{ data: tgs }, sc] = await Promise.all([
-      sb.from("plan_targets").select("*").eq("plan_id", plan.id),
-      srcPageAll(sb, "scheduled_crops", "id,item_name,qty_pots,ppp,plants_per_unit,pack_size,ready_week,ready_year,plant_week,plant_year,ship_week,ship_year,combo_parent_id,is_combo_component", q => q.eq("plan_id", plan.id)),
-    ]);
-    const decided = (tgs || []).filter(t => t.target_units != null || t.decision || (t.rounds && t.rounds.length));
-    const parents = {}; const kids = {};
-    for (const r of sc) {
-      if (r.is_combo_component && r.combo_parent_id) (kids[r.combo_parent_id] = kids[r.combo_parent_id] || []).push(r);
-      else if (+r.qty_pots > 0) (parents[r.item_name] = parents[r.item_name] || []).push(r);
-    }
-    // all math in POTS — rows arrive in two native encodings (pot-entered vs flat-entered)
-    // and targets arrive in sellable units (cases for 4.5"). Mixing the grains silently
-    // scaled pot-native items by a cases number (same class as the family-page fix).
-    const potFacOf = r => { const ppp = Math.max(1, +r.ppp || 1); const ppu = Math.max(1, +r.plants_per_unit || +r.pack_size || 1); return ppp >= ppu && ppu > 1 ? ppu : 1; };
-    const potsOfR = r => (+r.qty_pots || 0) * potFacOf(r);
-    let qChanged = 0, dropped = 0, timed = 0, waved = 0, skipped = 0, rowsTouched = 0, rowsAdded = 0;
-    const plan27 = decided.map(t => {
-      const rows = parents[t.item_name];
-      if (!rows || !rows.length) { skipped++; return null; }
-      const totalPots = rows.reduce((a, r) => a + potsOfR(r), 0);
-      const pack = Math.max(1, ...rows.map(r => Math.round(+r.plants_per_unit || +r.pack_size || 1)));
-      const isDrop = t.decision === "drop" || t.target_units === 0;
-      // target_units and rounds[].units are POTS now (Caleb 7/29 — one unit, pots)
-      const rounds = (!isDrop && t.rounds && t.rounds.length)
-        ? t.rounds.map(w => ({ pots: Math.round(+w.units || 0), ready: +w.ready_week || null }))
-            .filter(w => w.pots > 0).sort((a, b) => (a.ready ?? 99) - (b.ready ?? 99))
-        : null;
-      const targetPots = isDrop ? 0
-        : rounds ? rounds.reduce((a, w) => a + w.pots, 0)
-        : (t.target_units != null ? Math.round(+t.target_units) : totalPots);
-      // rounds carry their own ready weeks — the plain shift only applies without them
-      const shift = rounds ? 0 : (+t.ready_shift || 0);
-      return { t, rows, totalPots, targetPots, pack, shift, rounds, isDrop };
-    }).filter(Boolean);
-    plan27.forEach(g => { if (g.isDrop) dropped++; else if (g.targetPots !== g.totalPots) qChanged++; if (g.shift) timed++; if (g.rounds && g.rounds.length > 1) waved++; });
-    if (!plan27.length) { window.alert("Nothing to apply — no decided items have bench rows yet. New items need a plant week/bench in production first."); return; }
-    if (!window.confirm(`Apply ${plan27.length} decision${plan27.length !== 1 ? "s" : ""} to the production plan?\n\n• ${qChanged} quantity change${qChanged !== 1 ? "s" : ""}\n• ${dropped} drop${dropped !== 1 ? "s" : ""} (set to 0)\n• ${timed} timing shift${timed !== 1 ? "s" : ""}\n• ${waved} item${waved !== 1 ? "s" : ""} split into rounds (extra rounds land as new rows, bench TBD)\n${skipped ? `• ${skipped} new item(s) skipped — need a bench/plant week in production first\n` : ""}\nThis rewrites the bench-row quantities the order tabs read. Assigning benches to new rounds stays a production step.`)) return;
-    setApplying(true);
-    const stamp = new Date().toISOString();
-    // timing shifts must wrap across the year boundary (53-week years included) —
-    // raw week addition wrote "wk 54" / "wk -1" when a chain straddled New Year's
-    const shiftedWeeks = (row, shift) => {
-      if (!shift) return {};
-      const p = {};
-      if (row.ready_week != null) { const w = wrapWk(row.ready_week + shift, row.ready_year ?? plan.year ?? 2027); p.ready_week = w.wk; p.ready_year = w.yr; }
-      if (row.plant_week != null) { const w = wrapWk(row.plant_week + shift, row.plant_year ?? plan.year ?? 2027); p.plant_week = w.wk; p.plant_year = w.yr; }
-      if (row.ship_week != null) { const w = wrapWk(row.ship_week + shift, row.ship_year ?? row.plant_year ?? plan.year ?? 2027); p.ship_week = w.wk; p.ship_year = w.yr; }
-      return p;
-    };
-    // rows minted by a previous rounds apply carry a "round N" tag in notes — on
-    // re-apply they ARE that round's rows (rescaled/re-timed), never cloned twice
-    const roundTag = r => { const m = /^round (\d+) — split from Sales vs Plan apply/.exec(String(r.notes || "")); return m ? +m[1] : 1; };
-    // scale a set of rows to a pot total (largest remainder, native units) and slide
-    // their chains — readyTo re-times to an absolute week, shiftBy slides uniformly
-    const scaleAndTime = async (rowsArr, potsWant, { isDrop = false, shiftBy = 0, readyTo = null } = {}) => {
-      const tot = rowsArr.reduce((a, r) => a + potsOfR(r), 0);
-      const factor = tot > 0 ? potsWant / tot : 0;
-      let assigned = 0;
-      for (let i = 0; i < rowsArr.length; i++) {
-        const r = rowsArr[i]; const pf = potFacOf(r);
-        const nq = isDrop ? 0
-          : (i === rowsArr.length - 1 ? Math.max(0, Math.round((potsWant - assigned) / pf)) : Math.round(+r.qty_pots * factor));
-        assigned += nq * pf;
-        const delta = (readyTo != null && r.ready_week != null) ? readyTo - r.ready_week : shiftBy;
-        await sb.from("scheduled_crops").update({ qty_pots: Math.max(0, nq), ...shiftedWeeks(r, delta) }).eq("id", r.id);
-        rowsTouched++;
-        // this parent's combo components ride along
-        for (const k of (kids[r.id] || [])) {
-          await sb.from("scheduled_crops").update({ qty_plants_ordered: isDrop ? 0 : Math.round((+k.qty_plants_ordered || 0) * factor), ...shiftedWeeks(k, delta) }).eq("id", k.id);
-          rowsTouched++;
-        }
-      }
-    };
-    try {
-      for (const g of plan27) {
-        if (!g.rounds) {
-          await scaleAndTime(g.rows, g.targetPots, { isDrop: g.isDrop, shiftBy: g.shift });
-        } else {
-          // tagged rows belong to their tagged round; untagged rows (incl. family-page
-          // ⧉ New round splits) go to the round whose ready week is CLOSEST — never
-          // collapse an existing stagger onto round 1's timing
-          const roundIdxFor = r => {
-            const m = roundTag(r);
-            if (m > 1) return m - 1;   // may exceed the current rounds — zeroed below
-            if (r.ready_week == null || g.rounds.length === 1) return 0;
-            let best = 0, bd = Infinity;
-            g.rounds.forEach((w, i) => { const d = Math.abs((w.ready ?? 1e9) - r.ready_week); if (d < bd) { bd = d; best = i; } });
-            return best;
-          };
-          const byRound = {};
-          g.rows.forEach(r => { const n = roundIdxFor(r); (byRound[n] = byRound[n] || []).push(r); });
-          for (let wi = 0; wi < g.rounds.length; wi++) {
-            const w = g.rounds[wi];
-            const wRows = byRound[wi];
-            if (wRows && wRows.length) {
-              await scaleAndTime(wRows, w.pots, { readyTo: w.ready });
-            } else {
-              // brand-new round: clone from a round-1 row (bench TBD, supply unordered)
-              const srcId = (byRound[0] || g.rows)[0].id;
-              const { data: src } = await sb.from("scheduled_crops").select("*").eq("id", srcId).single();
-              const pf = potFacOf(src);
-              const delta = (w.ready != null && src.ready_week != null) ? w.ready - src.ready_week : 0;
-              const row = { ...src, id: crypto.randomUUID(),
-                qty_pots: Math.max(1, Math.round(w.pots / pf)), ...shiftedWeeks(src, delta),
-                bench_id: null, qty_plants_ordered: null,
-                notes: `round ${wi + 1} — split from Sales vs Plan apply` };
-              delete row.created_at; delete row.updated_at;
-              const { error } = await sb.from("scheduled_crops").insert(row);
-              if (!error) rowsAdded++;
-            }
-          }
-          // rounds that were removed since the last apply: zero their rows so they
-          // leave the order tabs (a returning round mints a fresh row later)
-          for (const [n, wRows] of Object.entries(byRound)) {
-            if (+n >= g.rounds.length) await scaleAndTime(wRows, 0, { isDrop: true });
-          }
-        }
-        await sb.from("plan_targets").update({ applied_at: stamp, applied_by: displayName || "planner", applied_units: g.t.target_units != null ? +g.t.target_units : null }).eq("plan_id", plan.id).eq("item_name", g.t.item_name);
-      }
-      window.alert(`Applied ${plan27.length} decisions · ${rowsTouched} bench rows updated${rowsAdded ? ` · ${rowsAdded} new round row${rowsAdded !== 1 ? "s" : ""} (bench TBD)` : ""}. The order tabs (Propagation, Materials) and dashboard now reflect them.`);
-      setTick(x => x + 1);
-    } catch (e) { window.alert("Apply stopped partway: " + (e.message || e)); }
-    setApplying(false);
-  }
+  // The old "⚡ Apply decisions" engine is gone (Caleb 8/4): targets write straight
+  // through to the bench rows the moment they're saved (pushTargetToRows), so there is
+  // no deferred bridge to run — and no stale-rounds path to zero an item on re-apply.
 
   useEffect(() => {
     if (!sb) return;
@@ -2766,12 +2665,8 @@ function ReadyDatesTab({ plan }) {
     <div style={{ display: "grid", gap: 14 }}>
       <div style={{ display: "flex", gap: 10, alignItems: "center", background: "#eef4e9", border: `1.5px solid ${COLORS.dark}`, borderRadius: 10, padding: "11px 14px" }}>
         <div style={{ fontSize: 12.5, color: COLORS.text }}>
-          <b style={{ color: COLORS.dark }}>{data.items.length} decided items</b> ready to hand to production — push these quantities & dates into the plan the order tabs read.
+          <b style={{ color: COLORS.dark }}>{data.items.length} decided items</b> — quantities are already live in the plan (targets write straight to the bench rows when saved; there's no apply step anymore). The ◀▶ timing nudges here are <b>advisory</b> — they shape this tab's buy-list preview only. To actually retime or split rounds, open the item's family page (finish-week knob · ⑃ Divide).
         </div>
-        <button onClick={applyDecisions} disabled={applying}
-          style={{ marginLeft: "auto", padding: "9px 16px", borderRadius: 9, border: "none", background: COLORS.dark, color: "#c8e6b8", fontWeight: 800, cursor: "pointer", fontFamily: "inherit", fontSize: 13 }}>
-          {applying ? "Applying…" : "⚡ Apply decisions to production"}
-        </button>
       </div>
       <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "11px 14px", fontSize: 12, color: COLORS.muted }}>
         Decided items only. <b>Ready</b> (finish) week is the anchor — it should coincide with the 2026 <b>first-sale</b> week. <b>Plant</b> = ready − crop weeks; <b>Order</b> = plant − prop lead, from this plan's own inherited timing. Adjust ready with ◀▶ and plant/order follow. Amber ⚠ = finishing 2+ weeks after it first sold in 2026 (late).
@@ -2865,6 +2760,7 @@ function SalesVsPlanTab({ plan }) {
   // Projection session: agreed 2027 targets live in plan_targets, keyed by item
   // name, so the sales conversation never has to answer bench questions.
   const [targets, setTargets] = useState({});   // item_name → row
+  const [famTgts, setFamTgts] = useState({});   // recipe_id → family_targets row (the STATIC family projection)
   const [missing, setMissing] = useState([]);   // sold in 2026, absent from this plan
   const [bulkBusy, setBulkBusy] = useState(false);
   const [drill, setDrill] = useState(null);          // item row opened in the drawer
@@ -2919,7 +2815,7 @@ function SalesVsPlanTab({ plan }) {
     // ivy/vinca GERANIUMS, which are real sellable varieties, not the vine component
     const COMPONENT = /^(?!.*\bgeranium\b).*(?:\bVINE\b|\bIVY\b|HEDERA|MU[EH]+LENBECKIA|CAREX)/i;
     (async () => {
-      const [xw, tot, wk, sc, tgRes, benchRows, gapRes] = await Promise.all([
+      const [xw, tot, wk, sc, tgRes, benchRows, gapRes, ftRes] = await Promise.all([
         srcPageAll(sb, "sales_sku_map", "sku,plan_item_name"),
         srcPageAll(sb, "sales_totals", "sku,description,units,revenue,avg_price"),
         srcPageAll(sb, "sales_weekly", "sku,wk,units,revenue"),
@@ -2927,7 +2823,9 @@ function SalesVsPlanTab({ plan }) {
         sb.from("plan_targets").select("*").eq("plan_id", plan.id),
         srcPageAll(sb, "benches", "id,zone_label,spring_footprint"),
         sb.from("plan_gap_decisions").select("gap_key").eq("plan_id", plan.id),
+        sb.from("family_targets").select("*").eq("plan_id", plan.id),
       ]);
+      setFamTgts(Object.fromEntries((ftRes.data || []).map(f => [f.recipe_id, f])));
       const skuToItem = {}; xw.forEach(x => { if (x.plan_item_name) skuToItem[x.sku] = x.plan_item_name; });
       const zoneOf = {}; (benchRows || []).forEach(b => { zoneOf[b.id] = b.zone_label; });
       const weeks = [...new Set(wk.map(w => +w.wk))].sort((a, b) => a - b);
@@ -2946,8 +2844,10 @@ function SalesVsPlanTab({ plan }) {
       // they're visible for target-setting instead of silently disappearing.
       const dualUse = {};
       for (const r of sc) {
-        if (!(+r.qty_pots > 0) || r.is_combo_component) continue;
-        if (COMPONENT.test(r.item_name)) { dualUse[r.item_name] = (dualUse[r.item_name] || 0) + +r.qty_pots; continue; }
+        // zero-qty rows stay in the table build: a write-through DROP zeroes the rows
+        // and the item must stay reviewable under ✕ Dropped (not vanish into gaps)
+        if (r.is_combo_component) continue;
+        if (COMPONENT.test(r.item_name)) { if (+r.qty_pots > 0) dualUse[r.item_name] = (dualUse[r.item_name] || 0) + +r.qty_pots; continue; }
         if (itemsWithParents.has(r.item_name) && !parentIds.has(r.id)) continue; // drop phantom duplicate basket rows
         planByItem[r.item_name] = (planByItem[r.item_name] || 0) + +r.qty_pots;
         pppByItem[r.item_name] = Math.max(pppByItem[r.item_name] || 0, +r.ppp || 1);
@@ -3039,16 +2939,28 @@ function SalesVsPlanTab({ plan }) {
   // Group builder → a target + waves (rounds) on each selected color at once.
   async function commitGroups(groups) {
     const stamp = new Date().toISOString();
-    const payload = groups.map(g => ({
-      plan_id: plan.id, item_name: g.item, target_units: g.target,
-      decision: g.target === 0 ? "drop" : g.target > g.planned ? "grow" : g.target < g.planned ? "cut" : "hold",
-      rounds: g.waves, note: `group builder — ${g.waves.length} wave${g.waves.length > 1 ? "s" : ""}`,
-      prior_units: null, current_units: g.planned, decided_by: displayName || "planner", decided_at: stamp, updated_at: stamp,
-    }));
     try {
+      // push first, record achieved; current_units ALWAYS present in every object
+      // (bulk upsert columns union — a missing key would NULL the frozen baseline)
+      const payload = [];
+      for (const g of groups) {
+        const res = await pushTargetToRows(sb, plan.id, g.item, Math.max(0, Math.round(+g.target || 0)));
+        const t = res.achieved ?? g.target;
+        const frozen = targets[g.item]?.current_units;
+        const base = frozen ?? g.planned;
+        payload.push({ plan_id: plan.id, item_name: g.item, target_units: t,
+          decision: t === 0 ? "drop" : t > base ? "grow" : t < base ? "cut" : "hold",
+          rounds: g.waves, note: `group builder — ${g.waves.length} wave${g.waves.length > 1 ? "s" : ""}`,
+          prior_units: null,
+          current_units: frozen ?? g.planned,
+          applied_at: stamp, applied_by: displayName || "planner", applied_units: t,
+          decided_by: displayName || "planner", decided_at: stamp, updated_at: stamp });
+      }
       for (let i = 0; i < payload.length; i += 200) await sb.from("plan_targets").upsert(payload.slice(i, i + 200), { onConflict: "plan_id,item_name" });
+      // (Splitting rows into per-wave rounds is done on the family page — ⑃ Divide.)
       setTargets(t => { const n = { ...t }; payload.forEach(p => { n[p.item_name] = { ...(n[p.item_name] || {}), ...p }; }); return n; });
-    } catch (e) { window.alert("Couldn't save the group: " + (e.message || e)); }
+      setRows(rs => (rs || []).map(x => { const p = payload.find(q => q.item_name === x.item); return p ? { ...x, planned: p.target_units } : x; }));
+    } catch (e) { window.alert("Couldn't save the group (rows already written stay written): " + (e.message || e)); }
   }
   async function dismissGap(m, status = "dismissed") {
     setGapDismissed(s => new Set([...s, m.key]));
@@ -3057,21 +2969,61 @@ function SalesVsPlanTab({ plan }) {
       { onConflict: "plan_id,gap_key" });
   }
 
-  // Save a decision. Snapshots what it sold and what the plan held, so the
-  // production session can see the reasoning later without recomputing it.
+  // Save a decision — and make it REAL in the same act. The number you type IS the
+  // planned number: it writes plan_targets (the recorded decision, for the scorecard)
+  // and pushes straight into the bench rows. No separate "apply" step, no second
+  // number to reconcile (Caleb 8/4).
   async function saveTarget(r, patch) {
     // PARTIAL writes only. The old version rebuilt the WHOLE row from browser
     // state, so a timing-arrow click or blur before targets finished loading
     // overwrote saved values with null (wiped two real decisions). On-conflict
     // updates only the columns sent; unsent fields keep their DB values.
+    const stamp = new Date().toISOString();
+    const wantsQty = patch.target_units != null;
     const next = {
       plan_id: plan.id, item_name: r.item, ...patch,
-      prior_units: r.sold, current_units: r.planned,
-      decided_by: displayName || "planner", decided_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      prior_units: r.sold,
+      decided_by: displayName || "planner", decided_at: stamp,
+      updated_at: stamp,
     };
-    setTargets(t => ({ ...t, [r.item]: { ...(t[r.item] || {}), ...next } }));
+    // '26 baseline freezes on FIRST decision and never moves — it's the fixed
+    // reference "Planned '26" reads, and what grow/cut classify against. POTS.
+    const frozen = targets[r.item]?.current_units;
+    if (frozen == null) next.current_units = r.planned;
+    // explicit clear (empty target box) un-applies too — otherwise the row reads
+    // "undecided" while silently keeping stale applied stamps
+    if (patch.target_units === null && patch.decision === null) { next.applied_at = null; next.applied_by = null; next.applied_units = null; }
     setSavingT(s => ({ ...s, [r.item]: true }));
+    if (wantsQty && !patch.archived_at) {
+      // PUSH FIRST, then record what actually landed — native units can't always
+      // hold the exact request (flat-native rows move in steps of ppu), and a
+      // failed push must never leave an "applied" stamp lying about the rows.
+      const want = Math.max(0, Math.round(+patch.target_units));
+      let res;
+      try { res = await pushTargetToRows(sb, plan.id, r.item, want); }
+      catch (e) { window.alert("The plan rows did NOT update: " + (e.message || e)); setSavingT(s => { const n = { ...s }; delete n[r.item]; return n; }); return; }
+      const n = res.achieved ?? want;
+      next.target_units = n;
+      const base = frozen ?? r.planned;
+      // classify vs the FROZEN baseline, not live planned — write-through makes
+      // planned==target instantly, so live comparison would read "hold" forever
+      if (patch.decision === undefined || patch.decision != null) next.decision = n === 0 ? "drop" : n > base ? "grow" : n < base ? "cut" : "hold";
+      next.applied_at = stamp; next.applied_by = displayName || "planner"; next.applied_units = n;
+      if (res.rows) {
+        setRows(rs => (rs || []).map(x => x.item === r.item ? { ...x, planned: n } : x));
+        try {
+          await sb.from("item_change_log").insert({ plan_id: plan.id, item_name: r.item,
+            change_type: "target_applied", detail: { pots_from: res.from, pots_to: n, target_units: n, write_through: true },
+            changed_by: displayName || null, source: "sales-vs-plan" });
+        } catch { /* audit must not block */ }
+      }
+    } else if (wantsQty) {
+      // retire path: rows are zeroed by retireItem itself
+      const n = Math.max(0, Math.round(+patch.target_units));
+      const base = frozen ?? r.planned;
+      if (patch.decision === undefined || patch.decision != null) next.decision = n === 0 ? "drop" : n > base ? "grow" : n < base ? "cut" : "hold";
+    }
+    setTargets(t => ({ ...t, [r.item]: { ...(t[r.item] || {}), ...next } }));
     const { error } = await sb.from("plan_targets").upsert(next, { onConflict: "plan_id,item_name" });
     if (error) window.alert("Decision did NOT save: " + error.message);
     setSavingT(s => { const n = { ...s }; delete n[r.item]; return n; });
@@ -3129,10 +3081,14 @@ function SalesVsPlanTab({ plan }) {
     if (t.decision === "drop") return 0;
     return t.target_units == null ? null : +t.target_units;
   };
+  // impact diffs the decision against the FROZEN '26 baseline — under write-through
+  // the live planned equals the target the moment it's saved, so target−planned
+  // would read 0 forever and the running footprint change would freeze
+  const baseOf = r => { const cu = targets[r.item]?.current_units; return cu != null ? +cu : r.planned; };
   const impact = rows.reduce((acc, r) => {
     const t = targetOf(r);
     if (t == null) return acc;
-    const d = t - r.planned;
+    const d = t - baseOf(r);
     acc.units += d;
     acc.rev += d * (r.sold && r.rev ? r.rev / r.sold : 0);
     acc.bySize[r.size] = (acc.bySize[r.size] || 0) + d;
@@ -3142,6 +3098,9 @@ function SalesVsPlanTab({ plan }) {
 
   // ── The projection scorecard (the quantifiable finish line) ──
   const rowByItem = Object.fromEntries(rows.map(r => [r.item, r]));
+  // fill-strip multiplier: target vs LIVE planned — bench occupancy is live rows, so
+  // once write-through has landed the target this is 1 (already reflected). Using the
+  // frozen baseline here would double-scale (t²/frozen) after a reload.
   const scaleOf = it => { const r = rowByItem[it]; if (!r) return 1; const t = targetOf(r); return t == null || !r.planned ? 1 : t / r.planned; };
   const scorecard = scorecardFrom(rows, targets, gapDismissed, missing);
   const projRev = rows.filter(r => !r.dualUse).reduce((a, r) => { const t = targetOf(r); return a + (t == null ? r.planned : t) * (r.price || 0); }, 0);
@@ -3163,20 +3122,33 @@ function SalesVsPlanTab({ plan }) {
     if (!window.confirm(`${verb.charAt(0).toUpperCase() + verb.slice(1)} — ${targetRows.length} ${selSet.size ? "selected" : "shown"} item${targetRows.length !== 1 ? "s" : ""}.\n\nThis records a 2027 target on each one. You can still change any of them individually.`)) return;
     setBulkBusy(true);
     const stamp = new Date().toISOString();
-    const payload = targetRows.map(r => {
-      const t = Math.max(0, Math.round(r.planned * (1 + pct / 100)));
-      return { plan_id: plan.id, item_name: r.item, target_units: t,
-        decision: t === 0 ? "drop" : t > r.planned ? "grow" : t < r.planned ? "cut" : "hold",
-        note: pct === 0 ? "bulk: hold" : `bulk ${pct > 0 ? "+" : ""}${pct}%`,
-        prior_units: r.sold, current_units: r.planned,
-        decided_by: displayName || "planner", decided_at: stamp, updated_at: stamp };
-    });
     try {
+      // PUSH FIRST, per item, and build the decision records from what actually
+      // landed. Every payload object carries current_units EXPLICITLY — postgrest
+      // bulk upserts union columns across the batch and default missing keys to
+      // NULL, so a conditional key would wipe the frozen baseline of every
+      // already-decided item sharing the batch.
+      const payload = [];
+      for (const r of targetRows) {
+        const want = Math.max(0, Math.round(r.planned * (1 + pct / 100)));
+        const res = await pushTargetToRows(sb, plan.id, r.item, want);
+        const t = res.achieved ?? want;
+        const frozen = targets[r.item]?.current_units;
+        const base = frozen ?? r.planned;
+        payload.push({ plan_id: plan.id, item_name: r.item, target_units: t,
+          decision: t === 0 ? "drop" : t > base ? "grow" : t < base ? "cut" : "hold",
+          note: pct === 0 ? "bulk: hold" : `bulk ${pct > 0 ? "+" : ""}${pct}%`,
+          prior_units: r.sold,
+          current_units: frozen ?? r.planned,   // always sent: frozen value preserved verbatim
+          applied_at: stamp, applied_by: displayName || "planner", applied_units: t,
+          decided_by: displayName || "planner", decided_at: stamp, updated_at: stamp });
+      }
       for (let i = 0; i < payload.length; i += 200) {
         await sb.from("plan_targets").upsert(payload.slice(i, i + 200), { onConflict: "plan_id,item_name" });
       }
       setTargets(t => { const n = { ...t }; payload.forEach(p => { n[p.item_name] = { ...(n[p.item_name] || {}), ...p }; }); return n; });
-    } catch (e) { window.alert("Couldn't apply: " + (e.message || e)); }
+      setRows(rs => (rs || []).map(x => { const p = payload.find(q => q.item_name === x.item); return p ? { ...x, planned: p.target_units } : x; }));
+    } catch (e) { window.alert("Apply stopped partway (rows already written stay written): " + (e.message || e)); }
     setBulkBusy(false);
   }
 
@@ -3218,33 +3190,21 @@ function SalesVsPlanTab({ plan }) {
     setReloadTick(t => t + 1);
   }
 
-  // Family-grain target: one number for the family, distributed across its colors by
-  // 2026 sales share (planned share when nothing sold; largest remainder so the sum is
-  // exact). Writes ordinary per-item plan_targets — dig into any color later.
+  // Family-grain projection: ONE static number for the family ("Mario, how many
+  // lantana?"). Stored as its own family_targets record — a fixed reference that
+  // digging into colors never moves. It does NOT fan out to item targets anymore
+  // (the old fan-out meant the family number lived only as its pieces and drifted
+  // with every item edit). Allocation across colors happens ON the family page —
+  // disperse evenly / by '26 sales, or type per color.
   async function saveFamilyTarget(f, raw) {
     const total = Math.max(0, Math.round(+String(raw).replace(/[^0-9.]/g, "")));
     if (isNaN(total) || !f.id) return;
-    const famRows = rows.filter(r => itemRecipe[r.item] === f.id && !targets[r.item]?.archived_at);
-    if (!famRows.length) return;
-    const already = famRows.filter(r => targetOf(r) != null).length;
-    if (already > 0 && !window.confirm(`Distribute ${total.toLocaleString()} across ${famRows.length} color${famRows.length !== 1 ? "s" : ""} by 2026 sales?\n\nThis replaces ${already} existing item target${already !== 1 ? "s" : ""} in this family — fine-tune per item afterwards.`)) return;
-    const wSold = famRows.reduce((a, r) => a + r.sold, 0);
-    const weights = famRows.map(r => wSold > 0 ? r.sold : r.planned);
-    const W = weights.reduce((a, b) => a + b, 0);
-    const exact = famRows.map((r, i) => W > 0 ? total * weights[i] / W : total / famRows.length);
-    const units = exact.map(Math.floor);
-    let rem = total - units.reduce((a, b) => a + b, 0);
-    exact.map((e, i) => ({ i, fr: e - units[i] })).sort((a, b) => b.fr - a.fr).forEach(o => { if (rem > 0) { units[o.i]++; rem--; } });
     const stamp = new Date().toISOString();
-    const payload = famRows.map((r, i) => ({ plan_id: plan.id, item_name: r.item, target_units: units[i],
-      decision: units[i] === 0 ? "drop" : units[i] > r.planned ? "grow" : units[i] < r.planned ? "cut" : "hold",
-      note: `family target ${total.toLocaleString()} — split by ${wSold > 0 ? "2026 sales" : "planned share"}`,
-      prior_units: r.sold, current_units: r.planned,
-      decided_by: displayName || "planner", decided_at: stamp, updated_at: stamp }));
-    try {
-      for (let i = 0; i < payload.length; i += 200) await sb.from("plan_targets").upsert(payload.slice(i, i + 200), { onConflict: "plan_id,item_name" });
-      setTargets(t => { const n = { ...t }; payload.forEach(p => { n[p.item_name] = { ...(n[p.item_name] || {}), ...p }; }); return n; });
-    } catch (e) { window.alert("Family target didn't save: " + (e.message || e)); }
+    const rec = { plan_id: plan.id, recipe_id: f.id, planned_pots: total,
+      decided_by: displayName || "planner", decided_at: stamp, updated_at: stamp };
+    const { error } = await sb.from("family_targets").upsert(rec, { onConflict: "plan_id,recipe_id" });
+    if (error) { window.alert("Family projection didn't save: " + error.message); return; }
+    setFamTgts(t => ({ ...t, [f.id]: { ...(t[f.id] || {}), ...rec } }));
   }
 
   const shown = rows.filter(r => {
@@ -3421,7 +3381,11 @@ function SalesVsPlanTab({ plan }) {
           const rev27 = units27 * price;
           u26 += r.sold; r26 += r.rev; u27 += units27; r27 += rev27;
           if (r.isNew) news++;
-          else if (t.target_units != null) { if (t.target_units === 0) drops++; else if (t.target_units > r.planned) grows++; else if (t.target_units < r.planned) cuts++; }
+          else if (t.target_units != null) {
+            // grow/cut vs the FROZEN '26 baseline — live planned equals the target under write-through
+            const b = t.current_units != null ? +t.current_units : r.planned;
+            if (t.target_units === 0) drops++; else if (t.target_units > b) grows++; else if (t.target_units < b) cuts++;
+          }
           if (!(units27 > 0) || !price) continue;
           // weekly spread: rounds win; else last year's shape shifted by the timing move;
           // no history → everything lands on the finish week (honest, if lumpy)
@@ -3707,6 +3671,7 @@ function SalesVsPlanTab({ plan }) {
             label: rid === "un" ? "— no family yet" : (famList.find(x => x.id === rid)?.label || "—"),
             items: 0, planned: 0, sold: 0, rev: 0, decided: 0, tgt: 0, hasTgt: false };
           f.items++; f.planned += dPlanned(r); f.sold += dSold(r); f.rev += r.rev;
+          f.pots = (f.pots || 0) + r.planned;   // ALWAYS pots — the allocation delta must not follow the units toggle
           const t = targetOf(r);
           if (t != null) { f.decided++; f.tgt += t; f.hasTgt = true; }
         });
@@ -3722,11 +3687,13 @@ function SalesVsPlanTab({ plan }) {
                 <th style={{ ...stickyTh, textAlign: "right" }}>Sold '26</th>
                 <th style={{ ...stickyTh, textAlign: "right" }}>Sell-thru</th>
                 <th style={{ ...stickyTh, textAlign: "right" }}>2026 $</th>
-                <th style={{ ...stickyTh, textAlign: "right" }} title="sum of the 2027 targets set so far">2027 target</th>
+                <th style={{ ...stickyTh, textAlign: "right" }} title="THE family number (pots) — a static reference; allocating colors inside the family never moves it">2027 projection</th>
               </tr></thead>
               <tbody>
                 {fams.map(f => {
                   const st = f.planned > 0 ? Math.round(f.sold / f.planned * 100) : null;
+                  const proj = f.id ? famTgts[f.id]?.planned_pots : null;
+                  const delta = proj != null ? (f.pots || 0) - proj : null;   // allocated (live planned POTS) vs the static projection
                   return (
                     <tr key={f.id || "un"} onClick={() => f.id && setShowFamily(f.id)}
                       title={f.id ? "open the family page" : "these items aren't linked to a family yet (⚙ Manage families)"}
@@ -3738,16 +3705,23 @@ function SalesVsPlanTab({ plan }) {
                       <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{f.sold.toLocaleString()}</td>
                       <td style={{ ...td, textAlign: "right", fontWeight: 700, color: st == null ? COLORS.muted : st >= 95 ? "#2e7d32" : st >= 60 ? COLORS.dark : COLORS.amber }}>{st == null ? "—" : st + "%"}</td>
                       <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtMoney(f.rev)}</td>
-                      <td style={{ ...td, textAlign: "right" }} onClick={e => e.stopPropagation()}>
-                        <input key={(f.id || "un") + "|" + f.decided + "|" + f.tgt}
-                          defaultValue={f.hasTgt && f.decided === f.items ? f.tgt : ""}
-                          placeholder={f.hasTgt ? `${f.tgt.toLocaleString()}…` : "—"}
+                      <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap" }} onClick={e => e.stopPropagation()}>
+                        <input key={(f.id || "un") + "|" + (proj ?? "")}
+                          defaultValue={proj ?? ""}
+                          placeholder="—"
                           inputMode="numeric" disabled={!f.id}
-                          title="family 2027 target in POTS — distributed across the colors by 2026 sales share; fine-tune per item afterwards"
-                          onBlur={e => { const s = e.target.value.trim(); if (s === "" || (f.hasTgt && f.decided === f.items && +s.replace(/[^0-9.]/g, "") === f.tgt)) return; saveFamilyTarget(f, s); }}
+                          title="the family projection in POTS — static reference agreed at the family grain; allocate colors on the family page (disperse evenly / by '26 sales, or type per color)"
+                          onBlur={e => { const s = e.target.value.trim(); if (s === "" || +s.replace(/[^0-9.]/g, "") === proj) return; saveFamilyTarget(f, s); }}
                           onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
-                          style={{ width: 66, padding: "3px 6px", textAlign: "right", borderRadius: 6, fontSize: 12.5, fontFamily: "inherit", boxSizing: "border-box",
-                            border: `1.5px solid ${f.hasTgt && f.decided === f.items ? COLORS.light : COLORS.border}`, fontWeight: f.hasTgt ? 700 : 400 }} />
+                          style={{ width: 72, padding: "3px 6px", textAlign: "right", borderRadius: 6, fontSize: 12.5, fontFamily: "inherit", boxSizing: "border-box",
+                            border: `1.5px solid ${proj != null ? COLORS.light : COLORS.border}`, fontWeight: proj != null ? 700 : 400 }} />
+                        {delta != null && delta !== 0 && (
+                          <div style={{ fontSize: 10, fontWeight: 700, color: COLORS.amber, marginTop: 2 }}
+                            title="allocated across colors vs the projection — open the family page to disperse the remainder">
+                            {delta > 0 ? `+${delta.toLocaleString()} over` : `${(-delta).toLocaleString()} to allocate`}
+                          </div>
+                        )}
+                        {delta === 0 && <div style={{ fontSize: 10, fontWeight: 700, color: "#2e7d32", marginTop: 2 }}>✓ allocated</div>}
                       </td>
                     </tr>
                   );
