@@ -13,7 +13,7 @@ import { QuotePicker } from "./ProgramBuilder";
 import { BasketDesigner } from "./ProductionPlans";
 import { useAuth } from "./Auth";
 import { makeKey } from "./brokerKey";
-import { plantOrder, wrapWk, weeksInYear } from "./shared";
+import { plantOrder, wrapWk, weeksInYear, FinishWkInput } from "./shared";
 import { rippleTasks } from "./ripple";
 
 const C = { dark: "#1e2d1a", light: "#7fb069", border: "#dfe7d8", muted: "#7a8c74",
@@ -852,13 +852,9 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
               return (
                 <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
                   <span style={{ fontSize: 12.5 }}>Finish:</span>
-                  <NumInput value={`${String(aYr % 100).padStart(2, "0")}${String(anchor.ready_week).padStart(2, "0")}`} placeholder="YYWW"
-                    onCommit={async v => {
-                      const digits = String(v).replace(/\D/g, "");
-                      if (!digits) return;
-                      const wk = digits.length <= 2 ? +digits : +digits.slice(2);
-                      const yr = digits.length <= 2 ? aYr : 2000 + +digits.slice(0, 2);
-                      if (!wk || wk > 53) return;
+                  <FinishWkInput wk={anchor.ready_week} yr={aYr} width={62}
+                    title="this item's finish — type a week (18 or 2718) or 📅 pick a calendar date; the rows' whole chain shifts"
+                    onCommit={async (wk, yr) => {
                       if (`${yr}|${wk}` === `${aYr}|${anchor.ready_week}`) return;   // unchanged — never a surprise shift
                       // exact ISO-week delta across years (53-week years included)
                       let delta = wk - anchor.ready_week;
@@ -899,9 +895,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
                       } catch { /* audit must not block */ }
                       load();
                       onMutated?.();
-                    }}
-                    style={{ width: 62, padding: "5px 6px", textAlign: "center", borderRadius: 7, fontSize: 13, fontWeight: 700,
-                      fontFamily: "ui-monospace,Menlo,monospace", border: `1.5px solid ${C.border}`, boxSizing: "border-box" }} />
+                    }} />
                   <span style={{ fontSize: 10.5, color: C.muted }}>moves the rows — plant & ship follow{parents.length > 1 ? " · rounds keep their spacing" : ""}</span>
                 </div>
               );

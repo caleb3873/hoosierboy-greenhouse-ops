@@ -1,3 +1,5 @@
+import { useEffect, useRef, useState } from "react";
+import { isoWeekMonday } from "./ripple";
 // ── SUPABASE CLIENT ───────────────────────────────────────────────────────────
 // Replace these with your actual Supabase project values after setup
 // Get them from: supabase.com → your project → Settings → API
@@ -406,4 +408,61 @@ export async function pushTargetToRows(sb, planId, itemName, pots) {
     }
   }
   return { rows: rows0.length, from: curPots, achieved };
+}
+
+// ── FINISH DATE ↔ WEEK (Caleb 8/5: "finish needs to be finish DATE — mini calendar
+// or a week number") ────────────────────────────────────────────────────────────
+// ISO week+year of a calendar date (the Thursday decides the ISO year).
+export function isoWkYrOf(dateStr) {
+  const t = new Date(dateStr + "T00:00:00");
+  const dn = (t.getDay() + 6) % 7;
+  t.setDate(t.getDate() - dn + 3);
+  const yr = t.getFullYear();
+  const f = new Date(yr, 0, 4);
+  const wk = 1 + Math.round(((t - f) / 864e5 - 3 + (f.getDay() + 6) % 7) / 7);
+  return { wk, yr };
+}
+
+// One finish control everywhere: type a week ("18" or "2718") OR hit 📅 for a native
+// mini calendar — a picked date converts to its ISO week. Commits (wk, yr) only on a
+// real change; shows the week's Monday so weeks and dates stay one language.
+export function FinishWkInput({ wk, yr, onCommit, disabled, placeholder = "YYWW", width = 58, amber = false, title, showDate = true }) {
+  const dateRef = useRef(null);
+  const cur = wk != null ? `${String((yr ?? 2027) % 100).padStart(2, "0")}${String(wk).padStart(2, "0")}` : "";
+  const [draft, setDraft] = useState(cur);
+  const [focus, setFocus] = useState(false);
+  useEffect(() => { if (!focus) setDraft(cur); }, [cur, focus]);   // eslint-disable-line
+  const monday = wk != null ? isoWeekMonday(yr ?? 2027, wk) : null;
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, position: "relative" }} onClick={e => e.stopPropagation()}>
+      <input value={draft} disabled={disabled} inputMode="numeric" placeholder={placeholder} title={title}
+        onFocus={() => setFocus(true)}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={() => {
+          setFocus(false);
+          const digits = draft.replace(/\D/g, "");
+          if (!digits || draft === cur) { setDraft(cur); return; }
+          const w = digits.length <= 2 ? +digits : +digits.slice(2);
+          const y = digits.length <= 2 ? (yr ?? 2027) : 2000 + +digits.slice(0, 2);
+          if (!w || w > 53) { setDraft(cur); return; }
+          if (w === wk && y === (yr ?? y)) { setDraft(cur); return; }
+          onCommit(w, y);
+        }}
+        onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
+        style={{ width, padding: "3px 5px", textAlign: "center", borderRadius: 6,
+          border: `1.5px solid ${amber ? "#e0b45e" : "#cfe3bd"}`, fontFamily: "ui-monospace,Menlo,monospace",
+          fontSize: 11.5, fontWeight: 700, color: "#2e7d32", background: "#fff", boxSizing: "border-box" }} />
+      <button type="button" disabled={disabled} title="pick a calendar date — it becomes that date's finish week"
+        onClick={() => { const el = dateRef.current; if (!el) return; try { el.showPicker(); } catch { el.click(); } }}
+        style={{ border: "none", background: "none", cursor: "pointer", fontSize: 13, padding: 0, lineHeight: 1 }}>📅</button>
+      <input ref={dateRef} type="date" value={monday || ""} tabIndex={-1} aria-hidden
+        onChange={e => { if (!e.target.value) return; const r = isoWkYrOf(e.target.value); onCommit(r.wk, r.yr); }}
+        style={{ position: "absolute", left: 0, bottom: 0, width: 1, height: 1, opacity: 0, pointerEvents: "none", border: 0, padding: 0 }} />
+      {showDate && monday && (
+        <span style={{ fontSize: 10, color: "#7a8c74", whiteSpace: "nowrap" }}>
+          {new Date(monday + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+        </span>
+      )}
+    </span>
+  );
 }

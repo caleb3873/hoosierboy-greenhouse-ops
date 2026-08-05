@@ -9,7 +9,7 @@ import { useAuth } from "./Auth";
 import { rippleTasks, isoWeekOf } from "./ripple";
 import AddPlantDoor from "./AddPlantDoor";
 import { QuotePicker } from "./ProgramBuilder";
-import { wrapWk, weeksInYear, plantOrder } from "./shared";
+import { wrapWk, weeksInYear, plantOrder, FinishWkInput } from "./shared";
 
 const C = { dark: "#1e2d1a", light: "#7fb069", cream: "#f3f8ee", creamBr: "#cfe3bd",
   muted: "#7a8c74", text: "#2f3b2a", amber: "#c9812a", amberBg: "#fbf1df", red: "#c0492b",
@@ -1186,55 +1186,75 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
     setBusy(false); setTick(t => t + 1);
   }
 
-  // ⑃ Divide a color's season total into N rounds, G weeks apart. Existing rounds are
-  // reused (earliest first); missing ones are cloned from the color's first row; rounds
-  // beyond N go to zero. The season total is preserved exactly.
-  async function divideColor(vr, nRounds, gapWks) {
-    const n = Math.max(1, Math.round(+nRounds || 0));
-    const gap = Math.max(1, Math.round(+gapWks || 2));
+  // ⑃ Divide a color's season total into rounds AT THE WEEKS YOU NAME (Caleb 8/5:
+  // "i want this group to finish week 18 and this group to finish week 19").
+  // Existing rounds are reused earliest-first and RETIMED onto the requested weeks
+  // (chain re-derived per series); missing rounds are cloned; rounds beyond the list
+  // go to zero. Quantities split equally across the rounds.
+  async function divideColor(vr, wksList) {
+    const wks = (wksList || []).filter(w => w && +w.wk >= 1 && +w.wk <= 53)
+      .map(w => ({ wk: +w.wk, yr: +w.yr || (plan.year ?? 2027) }))
+      .sort((a, b) => (a.yr * 100 + a.wk) - (b.yr * 100 + b.wk));
+    const n = wks.length;
     const tot = vr.pots;
     if (!n || !vr.rows.length) return;
+    for (const w of wks) if (readyInPast(w.yr, w.wk)) return;   // it alerts with the fix-it hint
     setBusy(true);
-    // bucket the color's rows into its existing rounds (same key the group view uses)
-    const keyOf = r => `${r.plant_week ?? "?"}|${r.ready_week ?? r.ship_week ?? "?"}`;
-    const byKey = {};
-    vr.rows.forEach(r => { (byKey[keyOf(r)] = byKey[keyOf(r)] || []).push(r); });
-    const ordered = vr.rounds.slice().sort((a, b) => ((a.readyYear ?? 0) * 100 + (a.ready ?? 0)) - ((b.readyYear ?? 0) * 100 + (b.ready ?? 0)))
-      .map(rd => ({ ...rd, rows: byKey[rd.key] || [] })).filter(rd => rd.rows.length);
-    const sets = ordered.slice(0, n).map(rd => rd.rows);
-    // mint missing rounds by cloning the color's first row at ready + gap steps
-    let last = ordered.length ? { wk: ordered[ordered.length - 1].ready, yr: ordered[ordered.length - 1].readyYear ?? plan.year ?? 2027 }
-      : { wk: vr.rows[0].ready_week, yr: vr.rows[0].ready_year ?? plan.year ?? 2027 };
-    if (sets.length < n) {
-      const { data: full } = await sb.from("scheduled_crops").select("*").eq("id", vr.rows[0].id).maybeSingle();
-      if (!full || full.ready_week == null) { setBusy(false); window.alert("Can't divide: this color has no ready week to anchor new rounds on — set the group's finish week first."); return; }
-      const finWks = finishWksOr(recipe, full.plant_year, full.plant_week, full.ready_year, full.ready_week);
+    try {
+      // bucket the color's rows into its existing rounds (same key the group view uses)
+      const keyOf = r => `${r.plant_week ?? "?"}|${r.ready_week ?? r.ship_week ?? "?"}`;
+      const byKey = {};
+      vr.rows.forEach(r => { (byKey[keyOf(r)] = byKey[keyOf(r)] || []).push(r); });
+      const ordered = vr.rounds.slice().sort((a, b) => ((a.readyYear ?? 0) * 100 + (a.ready ?? 0)) - ((b.readyYear ?? 0) * 100 + (b.ready ?? 0)))
+        .map(rd => ({ ...rd, rows: byKey[rd.key] || [] })).filter(rd => rd.rows.length);
       const sSpec = seriesOf(vr.variety) || {};
       const rooted = /^(URC|CALL)/i.test(sSpec.form || "");
-      for (let k = sets.length; k < n; k++) {
-        const nx = wrapWk((last.wk ?? 10) + gap, last.yr);
-        const p = finWks != null ? wrapWk(nx.wk - finWks, nx.yr) : { wk: full.plant_week, yr: full.plant_year };
-        const sh = rooted ? wrapWk(p.wk - Math.round(+(sSpec.rooting_weeks ?? 0)), p.yr) : p;
-        const row = { ...full, id: crypto.randomUUID(), qty_pots: 0,
-          ready_week: nx.wk, ready_year: nx.yr, plant_week: p.wk, plant_year: p.yr,
-          ship_week: sh.wk, ship_year: sh.yr, bench_id: null, qty_plants_ordered: null,
-          notes: `round ${k + 1} — divided on the family page` };
-        delete row.created_at; delete row.updated_at;
-        const { error } = await sb.from("scheduled_crops").insert(row);
-        if (error) { setBusy(false); window.alert("Couldn't create round " + (k + 1) + ": " + error.message); return; }
-        sets.push([row]);
-        last = nx;
+      const f0 = ordered[0];
+      const finWks = finishWksOr(recipe, f0?.rows[0]?.plant_week != null ? (f0.rows[0].plant_year ?? null) : null,
+        f0?.rows[0]?.plant_week ?? null, f0?.readyYear ?? null, f0?.ready ?? null);
+      if (finWks == null) { setBusy(false); return; }   // finishWksOr alerts with what to set
+      const chainFor = w => {
+        const pl = wrapWk(w.wk - finWks, w.yr);
+        const sh = rooted ? wrapWk(pl.wk - Math.round(+(sSpec.rooting_weeks ?? 0)), pl.yr) : pl;
+        return { pl, sh };
+      };
+      const sets = [];
+      // reuse existing rounds, RETIMED onto the requested weeks
+      for (let k = 0; k < Math.min(n, ordered.length); k++) {
+        const w = wks[k], { pl, sh } = chainFor(w);
+        for (const r of ordered[k].rows) {
+          const { error } = await sb.from("scheduled_crops").update({
+            ready_week: w.wk, ready_year: w.yr, plant_week: pl.wk, plant_year: pl.yr, ship_week: sh.wk, ship_year: sh.yr,
+          }).eq("id", r.id);
+          if (error) throw new Error(error.message);
+        }
+        sets.push(ordered[k].rows);
       }
-    }
-    // equal split of the season total across the N rounds (largest remainder)
-    try {
+      // mint the missing rounds from the color's first row
+      if (sets.length < n) {
+        const { data: full } = await sb.from("scheduled_crops").select("*").eq("id", vr.rows[0].id).maybeSingle();
+        if (!full) throw new Error("the color's source row vanished — reload and try again");
+        for (let k = sets.length; k < n; k++) {
+          const w = wks[k], { pl, sh } = chainFor(w);
+          const row = { ...full, id: crypto.randomUUID(), qty_pots: 0,
+            ready_week: w.wk, ready_year: w.yr, plant_week: pl.wk, plant_year: pl.yr,
+            ship_week: sh.wk, ship_year: sh.yr, bench_id: null, qty_plants_ordered: null,
+            notes: `round ${k + 1} — divided on the family page` };
+          delete row.created_at; delete row.updated_at;
+          const { error } = await sb.from("scheduled_crops").insert(row);
+          if (error) throw new Error(error.message);
+          sets.push([row]);
+        }
+      }
+      // equal split of the season total across the rounds (largest remainder)
       const per = sets.map(() => Math.floor(tot / n));
       for (let i = 0; i < tot - per.reduce((a, b) => a + b, 0); i++) per[i % n]++;
       for (let i = 0; i < sets.length; i++) await distributePotsCore(sets[i], per[i]);
-      for (const rd of ordered.slice(n)) await distributePotsCore(rd.rows, 0);   // rounds beyond N empty out
+      for (const rd of ordered.slice(n)) await distributePotsCore(rd.rows, 0);   // rounds beyond the list empty out
       try {
         await sb.from("item_change_log").insert({ plan_id: plan.id, item_name: vr.rows[0]?.item_name || vr.variety,
-          variety_key: vr.vkey || null, change_type: "divided_rounds", detail: { variety: vr.variety, total: tot, rounds: n, gap_weeks: gap },
+          variety_key: vr.vkey || null, change_type: "divided_rounds",
+          detail: { variety: vr.variety, total: tot, rounds: n, weeks: wks.map(w => `${w.yr}w${w.wk}`) },
           changed_by: displayName || null, source: "family-page" });
       } catch { /* audit must not block */ }
       await stampItems([...vr.items]);
@@ -1564,17 +1584,15 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
           {/* family finish week — cascades to EVERY color and round; per-item changes
               live on the item page, per-color via right-click → New group */}
           {(() => {
-            const wks = [...new Set(displayGroups.filter(g => g.ready != null).map(g => `${String((g.readyYear ?? plan.year ?? 2027) % 100).padStart(2, "0")}${String(g.ready).padStart(2, "0")}`))];
-            const one = wks.length === 1 ? wks[0] : "";
+            const wks = [...new Set(displayGroups.filter(g => g.ready != null).map(g => `${g.readyYear ?? plan.year ?? 2027}|${g.ready}`))];
+            const one = wks.length === 1 ? wks[0].split("|") : null;
             return (
-              <span title="finish (ready) week for the WHOLE family — sets every color and round; the plant/ship chain re-derives per series. Change one item on its item page, or one color via right-click → New group."
+              <span title="finish DATE for the WHOLE family — type a week (18 or 2718) or 📅 pick a calendar date; sets every color and round, the plant/ship chain re-derives per series. Change one item on its item page, one color via right-click → New group, or per-group in the By-round view."
                 style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 700, color: C.muted, marginLeft: 4 }}>
                 🗓 Finish
-                <input key={`famready-${one}-${wks.length}`} defaultValue={one} placeholder={wks.length > 1 ? `${wks.length} wks` : "YYWW"}
-                  disabled={busy} inputMode="numeric"
-                  onBlur={e => { const s = e.target.value.trim(); if (!s || s === one) return; setFamilyReady(s); }}
-                  onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
-                  style={{ width: 58, padding: "4px 6px", borderRadius: 7, border: `1.5px solid ${wks.length > 1 ? C.amber : C.creamBr}`, fontFamily: "ui-monospace,Menlo,monospace", fontSize: 12, fontWeight: 700, textAlign: "center" }} />
+                <FinishWkInput wk={one ? +one[1] : null} yr={one ? +one[0] : (plan.year ?? 2027)} disabled={busy}
+                  amber={wks.length > 1} placeholder={wks.length > 1 ? `${wks.length} wks` : "YYWW"}
+                  onCommit={(w, y) => setFamilyReady(`${String(y % 100).padStart(2, "0")}${String(w).padStart(2, "0")}`)} />
               </span>
             );
           })()}
@@ -1669,20 +1687,47 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
                             </span>
                           ))}
                           {dividing ? (
-                            <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                              <input autoFocus type="number" min="1" max="8" value={divideFor.n} onChange={e => setDivideFor(d => ({ ...d, n: e.target.value }))}
-                                title="rounds" style={{ width: 36, padding: "2px 4px", borderRadius: 5, border: `1.5px solid ${C.light}`, fontSize: 11, fontFamily: "ui-monospace,Menlo,monospace", fontWeight: 700 }} />
-                              <span style={{ fontSize: 10, color: C.muted }}>rounds,</span>
-                              <input type="number" min="1" max="12" value={divideFor.gap} onChange={e => setDivideFor(d => ({ ...d, gap: e.target.value }))}
-                                title="weeks apart" style={{ width: 36, padding: "2px 4px", borderRadius: 5, border: `1.5px solid ${C.border}`, fontSize: 11, fontFamily: "ui-monospace,Menlo,monospace", fontWeight: 700 }} />
-                              <span style={{ fontSize: 10, color: C.muted }}>wks apart</span>
-                              <button disabled={busy} onClick={() => divideColor(vr, divideFor.n, divideFor.gap)}
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+                              {/* one finish per round — "this group wk 18, this group wk 19"; type a week or 📅 pick a date */}
+                              <input type="number" min="1" max="8" value={divideFor.wks.length}
+                                onChange={e => {
+                                  const want = Math.max(1, Math.min(8, Math.round(+e.target.value || 1)));
+                                  setDivideFor(d => {
+                                    let wksL = d.wks.slice(0, want);
+                                    while (wksL.length < want) {
+                                      const last = wksL[wksL.length - 1];
+                                      const nx = wrapWk((last?.wk ?? 14) + 2, last?.yr ?? (plan.year ?? 2027));
+                                      wksL = [...wksL, { wk: nx.wk, yr: nx.yr }];
+                                    }
+                                    return { ...d, wks: wksL };
+                                  });
+                                }}
+                                title="how many rounds" style={{ width: 34, padding: "2px 4px", borderRadius: 5, border: `1.5px solid ${C.light}`, fontSize: 11, fontFamily: "ui-monospace,Menlo,monospace", fontWeight: 700 }} />
+                              <span style={{ fontSize: 10, color: C.muted }}>rounds finishing</span>
+                              {divideFor.wks.map((w, i) => (
+                                <FinishWkInput key={i} wk={w.wk} yr={w.yr} width={46} showDate={false} disabled={busy}
+                                  title={`round ${i + 1} finish — week or 📅 date`}
+                                  onCommit={(nw, ny) => setDivideFor(d => ({ ...d, wks: d.wks.map((x, j) => j === i ? { wk: nw, yr: ny } : x) }))} />
+                              ))}
+                              <button disabled={busy} onClick={() => divideColor(vr, divideFor.wks)}
                                 style={{ padding: "2px 8px", borderRadius: 6, border: "none", background: C.dark, color: "#c8e6b8", fontWeight: 800, fontSize: 10.5, cursor: "pointer", fontFamily: FONT }}>Go</button>
                               <button onClick={() => setDivideFor(null)} style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", fontSize: 11 }}>✕</button>
                             </span>
                           ) : (
-                            <button disabled={busy || vr.pots === 0} onClick={() => setDivideFor({ variety: vr.variety, n: Math.max(2, vr.rounds.filter(r => r.pots > 0).length), gap: 2 })}
-                              title="split this color's season total equally into N rounds (existing rounds reused, new ones cloned at the chosen spacing)"
+                            <button disabled={busy || vr.pots === 0} onClick={() => {
+                                const have = vr.rounds.filter(r => r.pots > 0 && r.ready != null)
+                                  .sort((a, b) => ((a.readyYear ?? 0) * 100 + a.ready) - ((b.readyYear ?? 0) * 100 + b.ready))
+                                  .map(r => ({ wk: r.ready, yr: r.readyYear ?? (plan.year ?? 2027) }));
+                                let wksL = have.length ? have
+                                  : (vr.rows[0]?.ready_week != null ? [{ wk: vr.rows[0].ready_week, yr: vr.rows[0].ready_year ?? (plan.year ?? 2027) }] : [{ wk: 14, yr: plan.year ?? 2027 }]);
+                                while (wksL.length < 2) {
+                                  const last = wksL[wksL.length - 1];
+                                  const nx = wrapWk(last.wk + 2, last.yr);
+                                  wksL = [...wksL, { wk: nx.wk, yr: nx.yr }];
+                                }
+                                setDivideFor({ variety: vr.variety, wks: wksL });
+                              }}
+                              title="split this color's season total into rounds at the finish weeks/dates you name — existing rounds are reused and retimed, new ones cloned"
                               style={{ padding: "2px 8px", borderRadius: 6, border: `1px solid ${C.border}`, background: "#fff", color: C.muted, fontWeight: 800, fontSize: 10.5, cursor: vr.pots === 0 ? "default" : "pointer", fontFamily: FONT }}>⑃ Divide</button>
                           )}
                         </td>
@@ -1728,9 +1773,9 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
                 {flashKey === g.key && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.amber, background: C.amberBg, borderRadius: 5, padding: "2px 7px" }}>you just edited this — groups number by finish order</span>}
                 <span style={{ fontSize: 11, color: C.muted }} onClick={e => e.stopPropagation()}>
                   ship <b style={wkStyle}>{g.shipMin == null ? "—" : g.shipMinAbs === g.shipMaxAbs ? wkFmt(g.shipMinYr, g.shipMin) : `${wkFmt(g.shipMinYr, g.shipMin)}–${wkFmt(g.shipMaxYr, g.shipMax)}`}</b> → plant <b style={wkStyle}>{wkFmt(g.plantYear, g.plant)}</b> → ready{" "}
-                  <GroupWkInput key={`${g.key}|${g.ready}`} value={g.ready != null ? wkFmt(g.readyYear ?? g.plantYear, g.ready) : ""} disabled={busy}
-                    onCommit={raw => applyGroupReady(g, raw)} />
-                  <span title="edit the finish week — the whole group's chain re-derives from the recipe" style={{ marginLeft: 3, fontSize: 9, color: C.muted }}>✎</span>
+                  <FinishWkInput key={`${g.key}|${g.ready}`} wk={g.ready} yr={g.readyYear ?? g.plantYear} disabled={busy}
+                    title="this group's finish — type a week or 📅 pick a date; the whole group's chain re-derives from the recipe"
+                    onCommit={(w, y) => applyGroupReady(g, `${String(y % 100).padStart(2, "0")}${String(w).padStart(2, "0")}`)} />
                 </span>
                 <span style={{ flex: 1 }} />
                 {(() => {   // drift referee: does the actual plant week agree with ready − recipe crop weeks? (year-wrap aware)
@@ -2082,21 +2127,6 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
 }
 
 // group ready-week input: shorthand ok ("18" or "2718"), commits on blur/Enter
-function GroupWkInput({ value, onCommit, disabled }) {
-  const [draft, setDraft] = useState(String(value));
-  const [focus, setFocus] = useState(false);
-  useEffect(() => { if (!focus) setDraft(String(value)); }, [value, focus]);
-  return (
-    <input value={draft} disabled={disabled} inputMode="numeric"
-      onClick={e => e.stopPropagation()}
-      onFocus={() => setFocus(true)}
-      onChange={e => setDraft(e.target.value)}
-      onBlur={() => { setFocus(false); if (draft.trim() && draft !== String(value)) onCommit(draft); else setDraft(String(value)); }}
-      onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
-      style={{ width: 52, padding: "2px 5px", textAlign: "center", borderRadius: 6, border: "1.5px solid #cfe3bd",
-        fontFamily: "ui-monospace,Menlo,monospace", fontSize: 11.5, fontWeight: 700, color: "#2e7d32", background: "#fff" }} />
-  );
-}
 
 // commit-on-blur qty input (never resets mid-typing)
 function QtyInput({ value, onCommit, disabled }) {
