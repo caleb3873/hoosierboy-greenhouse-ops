@@ -24,6 +24,7 @@ import TreatmentPlan from "./TreatmentPlan";
 import { NewWorkModal, ReiBanner, logWorkCompliance } from "./WorkHub";
 import PhotoLibrary from "./PhotoLibrary";
 import PropagationGuide from "./PropagationGuide";
+import SalesVisits from "./SalesVisits";
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
 
@@ -426,7 +427,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
   // Remember the open module across a page refresh so reloading (e.g. inside Trade Show)
   // keeps you where you were instead of dumping you back to the hub. Only restore modules
   // that have a back-to-hub and aren't tightly role-gated, so a reload can't strand anyone.
-  const PERSISTABLE_VIEWS = ["tasks", "tradeshow", "photos", "hotlist", "treatment", "today", "week", "messages", "vacation", "evaluations", "receiving", "inventory", "reference-docs", "driver-schedule", "prop-guide"];
+  const PERSISTABLE_VIEWS = ["tasks", "tradeshow", "photos", "hotlist", "treatment", "today", "week", "messages", "vacation", "evaluations", "receiving", "inventory", "reference-docs", "driver-schedule", "prop-guide", "sales-visits"];
   const [currentView, setCurrentView] = useState(() => { try { const v = sessionStorage.getItem("mtv_view_v1"); return v && PERSISTABLE_VIEWS.includes(v) ? v : "hub"; } catch { return "hub"; } }); // hub | tasks | vacation | messages | today | week | hr-inbox
   useEffect(() => { try { sessionStorage.setItem("mtv_view_v1", currentView); } catch {} }, [currentView]); // sessionStorage → survives refresh, resets on fresh open
   useEffect(() => { try { localStorage.setItem("mtv_cat_v1", category); } catch {} }, [category]);
@@ -1416,6 +1417,13 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
                   <div className="hub-card-sub">Photo sessions + quick shots</div>
                 </div>
 
+                {/* Sales Visits — customer-facing deal pages (ops.hoosierboy.com links) */}
+                <div className="hub-card" onClick={() => setCurrentView("sales-visits")} style={{ borderTopColor: "#e89a3a", borderTopWidth: 4 }}>
+                  <div className="hub-card-emoji">💼</div>
+                  <div className="hub-card-title">Sales Visits</div>
+                  <div className="hub-card-sub">Deal pages · share with customers</div>
+                </div>
+
                 {/* Photo Library — every marketing photo, one door */}
                 <div className="hub-card" onClick={() => setCurrentView("photos")} style={{ borderTopColor: "#4a90d9", borderTopWidth: 4 }}>
                   <div className="hub-card-emoji">🖼</div>
@@ -1964,6 +1972,15 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
 
       {currentView === "prop-guide" && (
         <PropagationGuide mobile onBack={() => setCurrentView("hub")} />
+      )}
+      {currentView === "sales-visits" && (
+        <div>
+          <button onClick={() => setCurrentView("hub")} style={{ background: "#1e2d1a", color: "#c8e6b8", border: "none", padding: "11px 16px", fontSize: 14, fontWeight: 700, cursor: "pointer", width: "100%", textAlign: "left", fontFamily: "inherit" }}>← Hub</button>
+          <div style={{ padding: "12px 14px" }}>
+            <div style={{ fontFamily: "'DM Serif Display',Georgia,serif", fontSize: 22, color: "#1e2d1a", margin: "2px 2px 10px" }}>💼 Sales Visits</div>
+            <SalesVisits />
+          </div>
+        </div>
       )}
       {currentView === "photos" && (
         <PhotoLibrary onBack={() => setCurrentView("hub")} />
