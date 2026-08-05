@@ -19,3 +19,7 @@ scripts/.sentinel-state.json
 
 # Culture-link proposals (local review artifact)
 scripts/culture-link-proposals.json
+
+# broker quote drop zone (xlsx don't belong in git)
+quotes/
+.tmp_broker_prices.json

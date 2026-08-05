@@ -9,11 +9,33 @@ const path = require('path');
 // Persistent manual variety aliases (scripts/broker_aliases.json) — reapplied every run.
 const ALIASES = (() => { try { const a = JSON.parse(fs.readFileSync(path.join(__dirname, 'broker_aliases.json'), 'utf8')); delete a._comment; const o = {}; for (const k in a) o[k.toLowerCase()] = a[k]; return o; } catch { return {}; } })();
 
-const QUOTE_DIRS = {
-  Ball:    "/Users/caleb/Desktop/Ball Quotes",
-  EHR:     "/Users/caleb/Desktop/EHR Quotes",
-  Express: "/Users/caleb/Desktop/Express Quotes",
+// Quote folders live in the repo's quotes/ dir when present, falling back to the
+// Desktop (8/5/2026: macOS revoked Desktop access for the app's process tree —
+// drag "Ball Quotes"/"EHR Quotes"/"Express Quotes" into <repo>/quotes/ and
+// everything works again, for both Caleb's shell and the assistant's).
+const QUOTE_ROOT_LOCAL = path.join(__dirname, "..", "quotes");
+const dirFor = name => {
+  const local = path.join(QUOTE_ROOT_LOCAL, name);
+  try { if (fs.existsSync(local)) return local; } catch { /* fall through */ }
+  return path.join("/Users/caleb/Desktop", name);
 };
+const QUOTE_DIRS = {
+  Ball:    dirFor("Ball Quotes"),
+  EHR:     dirFor("EHR Quotes"),
+  Express: dirFor("Express Quotes"),
+};
+// Fail FAST if any folder is unreadable — the loader wipes the season before
+// reloading, so a silently-skipped broker would erase that broker's rows.
+{
+  const bad = [];
+  for (const [broker, dir] of Object.entries(QUOTE_DIRS)) {
+    try { fs.readdirSync(dir); } catch (e) { bad.push(`  ${broker}: ${dir} (${e.code})`); }
+  }
+  if (bad.length) {
+    console.error(`✗ Can't read these quote folders:\n${bad.join("\n")}\n\nFix: drag the folder(s) into ${QUOTE_ROOT_LOCAL}/ — or restore the app's Desktop permission in System Settings → Privacy & Security → Files & Folders / Full Disk Access.\nNothing was parsed or loaded; the database is untouched.`);
+    process.exit(1);
+  }
+}
 
 // EHR negotiated terms per genetics supplier (volume tier Schlegel hits + discount)
 const EHR_TERMS = {

@@ -25,19 +25,32 @@ const fs = require("fs");
 const path = require("path");
 
 const ROOT = path.join(__dirname, "..");
+// bash + pipefail: a crashed step must ABORT the chain. (8/5/2026: the parse died on
+// a permissions error but `| tail`'s exit-0 masked it, so the loader quietly reran
+// stale JSON and the sync printed a green checkmark over a failed load.)
 const run = (cmd, label) => {
   console.log(`\n━━ ${label} ━━`);
-  execSync(cmd, { cwd: ROOT, stdio: "inherit" });
+  execSync(`set -o pipefail; ${cmd}`, { cwd: ROOT, stdio: "inherit", shell: "/bin/bash" });
 };
+// WebTrack exports may have been dragged into <repo>/quotes/ (Desktop access is
+// unreliable) — prefer the local copy by basename, or the same subpath under quotes/.
+const localize = f => {
+  const cands = [path.join(ROOT, "quotes", path.basename(f)),
+    path.join(ROOT, "quotes", ...f.split(path.sep).slice(-2))];
+  for (const c of cands) { try { if (fs.existsSync(c)) return c; } catch { /* keep looking */ } }
+  return f;
+};
+const TMP_JSON = path.join(ROOT, ".tmp_broker_prices.json");
 
 (async () => {
-  run("node scripts/parse_broker_quotes.js --json /tmp/broker_prices.json | tail -6", "1/5 parse (recency + freight + names)");
-  run("node scripts/load_broker_prices.js /tmp/broker_prices.json | tail -1", "2/5 load broker_prices");
+  run(`node scripts/parse_broker_quotes.js --json ${JSON.stringify(TMP_JSON)} | tail -6`, "1/5 parse (recency + freight + names)");
+  run(`node scripts/load_broker_prices.js ${JSON.stringify(TMP_JSON)} | tail -1`, "2/5 load broker_prices");
 
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "webtrack_manifest.json"), "utf8"));
   for (const m of manifest.files) {
-    if (!fs.existsSync(m.file)) { console.log(`\n━━ 3/5 SKIP (file gone): ${m.file}`); continue; }
-    run(`node scripts/import_ball_innovaplant.js ${JSON.stringify(m.file)} --supplier ${JSON.stringify(m.supplier)}${m.freight ? ` --freight ${m.freight}` : ""} --apply | tail -3`,
+    const file = localize(m.file);
+    if (!fs.existsSync(file)) { console.log(`\n━━ 3/5 SKIP (file gone): ${file}`); continue; }
+    run(`node scripts/import_ball_innovaplant.js ${JSON.stringify(file)} --supplier ${JSON.stringify(m.supplier)}${m.freight ? ` --freight ${m.freight}` : ""} --apply | tail -3`,
       `3/5 WebTrack import — ${m.supplier}`);
   }
 
