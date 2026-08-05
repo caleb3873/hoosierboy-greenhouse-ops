@@ -3696,9 +3696,30 @@ function SalesVsPlanTab({ plan }) {
                   const delta = proj != null ? (f.pots || 0) - proj : null;   // allocated (live planned POTS) vs the static projection
                   return (
                     <tr key={f.id || "un"} onClick={() => f.id && setShowFamily(f.id)}
-                      title={f.id ? "open the family page" : "these items aren't linked to a family yet (⚙ Manage families)"}
+                      onContextMenu={e => {
+                        // right-click = family note (Caleb 8/5) — lives on family_targets.note
+                        if (!f.id) return;
+                        e.preventDefault();
+                        const cur = famTgts[f.id]?.note || "";
+                        const txt = window.prompt(`Note on ${f.label}:`, cur);
+                        if (txt == null || txt.trim() === cur) return;
+                        const note = txt.trim() || null;
+                        (async () => {
+                          const { error } = await sb.from("family_targets").upsert(
+                            { plan_id: plan.id, recipe_id: f.id, note, updated_at: new Date().toISOString() },
+                            { onConflict: "plan_id,recipe_id" });
+                          if (error) window.alert("Note didn't save: " + error.message);
+                          else setFamTgts(t => ({ ...t, [f.id]: { ...(t[f.id] || { plan_id: plan.id, recipe_id: f.id }), note } }));
+                        })();
+                      }}
+                      title={f.id ? "open the family page · right-click to add a note" : "these items aren't linked to a family yet (⚙ Manage families)"}
                       style={{ cursor: f.id ? "pointer" : "default", borderTop: `1px solid ${COLORS.border}` }}>
-                      <td style={{ ...td, fontWeight: 800 }}>{f.label}</td>
+                      <td style={{ ...td, fontWeight: 800 }}>
+                        {f.label}
+                        {f.id && famTgts[f.id]?.note && (
+                          <div style={{ fontSize: 10.5, fontWeight: 500, color: COLORS.muted, maxWidth: 340, whiteSpace: "normal" }}>📝 {famTgts[f.id].note}</div>
+                        )}
+                      </td>
                       <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{f.items}</td>
                       <td style={{ ...td, textAlign: "right", fontWeight: 700, color: f.decided === f.items ? "#2e7d32" : f.decided ? COLORS.amber : COLORS.muted }}>{f.decided}/{f.items}</td>
                       <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{f.planned.toLocaleString()}</td>

@@ -77,7 +77,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
   const [vmap, setVmap] = useState({});
   const [trays, setTrays] = useState({});      // container id -> {name, cells_per_flat}
   const [bmap, setBmap] = useState({});        // bench id -> code
-  const [brokerStats, setBrokerStats] = useState({});   // series_name -> [{broker, supplier, min, cov, tot}]
+  const lockedRef = useRef(true);                       // mirrors `locked` for the loader — reloads must not clobber in-flight recipe edits
   const [soldByItem, setSoldByItem] = useState({});   // plan item_name -> '26 units (via sku map)
   const [tmap, setTmap] = useState({});               // plan item_name -> plan_targets row (walkthrough decisions)
   const [ref26ByItem, setRef26ByItem] = useState({}); // plan item_name -> FROZEN '26 planned pots (reference, never edited)
@@ -97,13 +97,18 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
   const [quotesByKey, setQuotesByKey] = useState({});  // variety_key -> broker_prices rows (raw, for bulk pricing)
   const [divideFor, setDivideFor] = useState(null);    // {variety, n, gap} — inline divide-into-rounds UI
 
+  lockedRef.current = locked;
   useEffect(() => {
     (async () => {
       const { data: rec } = await sb.from("crop_recipes").select("*").eq("id", recipeId).single();
-      setRecipe(rec || null);
+      // While the recipe card is UNLOCKED (mid-edit), a reload (quote lock, qty edit —
+      // anything that bumps tick) must NOT replace recipe/series state: that's what
+      // reverted a typed series rename back to its DB value. Rows/prices still refresh.
+      if (lockedRef.current) setRecipe(rec || null);
+      else if (!rec) return;
       if (!rec) { setRows([]); return; }
       const { data: ser } = await sb.from("crop_recipe_series").select("*").eq("recipe_id", recipeId).order("series_name");
-      setSeries(ser || []);
+      if (lockedRef.current) setSeries(ser || []);
       const { data: ftRow } = await sb.from("family_targets").select("*").eq("plan_id", plan.id).eq("recipe_id", recipeId).maybeSingle();
       setFamTgt(ftRow || null);
       const { data: sc } = await sb.from("scheduled_crops")
@@ -185,32 +190,15 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
       if (!allKeys.length) return;
       const quotes = [];
       for (let i = 0; i < allKeys.length; i += 100) {
-        const { data } = await sb.from("broker_prices").select("variety_key,broker,supplier,form_class,landed").in("variety_key", allKeys.slice(i, i + 100));
+        const { data } = await sb.from("broker_prices").select("variety_key,broker,supplier,form_class,form_raw,landed").in("variety_key", allKeys.slice(i, i + 100));
         quotes.push(...(data || []));
       }
-      const FORM_TO_CLASS = f => /^URC/i.test(f || "") ? "urc" : /^(CALL|DIRECT)/i.test(f || "") ? "callused" : /^PLUG/i.test(f || "") ? "plug" : /^SEED/i.test(f || "") ? "seed" : null;
+      // raw quotes by key — the season view's bulk broker assign + tray auto-fill read
+      // these. (The old per-series broker-pin stats are gone: broker/supplier now live
+      // ONLY on the color rows — one source of truth, set by bulk assign or 🔗 lock.)
       const byKey = {};
       quotes.forEach(q => (byKey[q.variety_key] = byKey[q.variety_key] || []).push(q));
-      setQuotesByKey(byKey);   // kept raw for the season view's bulk broker/supplier assign
-      const stats = {};
-      series.forEach(s => {
-        const fc = FORM_TO_CLASS(s.form);
-        const vs = vinfo.filter(v => v.series === s.series_name);
-        const byBroker = {};
-        vs.forEach(v => {
-          const vq = v.keys.flatMap(k => byKey[k] || []).filter(q => !fc || q.form_class === fc);
-          vq.forEach(q => {
-            const b = byBroker[q.broker] || (byBroker[q.broker] = { broker: q.broker, supplier: q.supplier, min: +q.landed, covered: new Set() });
-            b.min = Math.min(b.min, +q.landed);
-            b.covered.add(v.key0);   // count the VARIETY, not the key, so aliases don't double it
-            if (!b.supplier && q.supplier) b.supplier = q.supplier;
-          });
-        });
-        stats[s.series_name] = Object.values(byBroker)
-          .map(b => ({ broker: b.broker, supplier: b.supplier, min: b.min, cov: b.covered.size, tot: vs.length }))
-          .sort((a, b) => b.cov - a.cov || a.min - b.min);
-      });
-      setBrokerStats(stats);
+      setQuotesByKey(byKey);
     })();
   }, [series, vmap, rows, sb]); // eslint-disable-line
 
@@ -383,6 +371,39 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
     });
   }, [displayGroups, tuckedNames, seriesOf]);
   const famLabel = recipe ? (recipe.display_name || `${recipe.size_label} ${recipe.crop_name}`) : "";
+  const [cropSeriesSug, setCropSeriesSug] = useState([]);   // series names derived from ALL broker quotes for this crop
+  // series-name choices = every series the BROKERS quote for this crop, unioned with
+  // this family's own variety-name prefixes — one list feeds the series-name select
+  // AND the "colors without a series" quick-add chips
+  const seriesNameSug = useMemo(() => {
+    const names = Object.values(vmap).map(v => String(v.variety || "").replace(/[™®]/g, " ").replace(/\s+/g, " ").trim()).filter(Boolean);
+    const two = {};
+    names.forEach(n => { const t = n.split(" "); if (t.length >= 3) two[`${t[0]} ${t[1]}`] = (two[`${t[0]} ${t[1]}`] || 0) + 1; });
+    const sug = new Set(cropSeriesSug);
+    names.forEach(n => {
+      const t = n.split(" ");
+      const p2 = t.length >= 3 ? `${t[0]} ${t[1]}` : null;
+      if (p2 && two[p2] >= 2) sug.add(p2);
+      else if (t.length >= 2) sug.add(t[0]);
+    });
+    return [...sug].sort((a, b) => a.localeCompare(b));
+  }, [vmap, cropSeriesSug]);
+  // colors no series row claims (seriesOf falls through) → offer one-click creation,
+  // named by the best matching suggestion. Series EMERGE from the colors — the table
+  // shouldn't need free-typing for a series the plan already implies.
+  const missingSeries = useMemo(() => {
+    const have = new Set(series.map(s => s.series_name.toLowerCase()).filter(n => n !== "(unassigned)"));
+    const by = {};
+    seasonVars.forEach(v => {
+      if (seriesOf(v.variety)?.series_name && seriesOf(v.variety)?.series_name !== "(unassigned)") return;
+      const vn = String(v.variety).replace(/[™®]/g, " ").replace(/\s+/g, " ").trim();
+      const hit = seriesNameSug.filter(n => vn.toLowerCase().startsWith(n.toLowerCase())).sort((a, b) => b.length - a.length)[0]
+        || vn.split(" ")[0];
+      if (!hit || have.has(hit.toLowerCase())) return;
+      (by[hit] = by[hit] || []).push(v.variety);
+    });
+    return Object.entries(by).map(([name, vars]) => ({ name, n: vars.length })).sort((a, b) => b.n - a.n);
+  }, [seasonVars, series, seriesOf, seriesNameSug]);
 
   // ── manual quote search + lock (Caleb 7/29) ───────────────────────────────
   // "Don't see the variety quoted from your broker but know it's there? Search
@@ -390,7 +411,6 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
   const [potOpts, setPotOpts] = useState([]);   // finished containers for the pot picker (match a family to a pot)
   const [allFams, setAllFams] = useState([]);   // every family — target list for "move to another family"
   const [resize, setResize] = useState(null);   // {size, pot, price} — transfer the whole family to a new size
-  const [cropSeriesSug, setCropSeriesSug] = useState([]);   // series names derived from ALL broker quotes for this crop
   const [quoteFor, setQuoteFor] = useState(null);   // {v} direct-to-variety, or {} free search
   const [pendingQuote, setPendingQuote] = useState(null);   // a picked quote awaiting "attach to which color?"
   // every plannable color in this family (variety_id → its plan rows), for the attach chooser
@@ -543,6 +563,36 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
 
   // lock a broker quote onto a color: stamp its cost/source on the plan rows AND
   // remember the matched key on the variety so it keeps matching after re-uploads.
+  // ONE source of truth: the quote you pick on a COLOR feeds the series spec upward.
+  // Fill the series' form (from the quote's form class) and prop tray (from a cell
+  // count in the quote text, e.g. "Plug 144") — NULL fields only, never overwrite.
+  async function fillSeriesFromQuote(varietyName, q) {
+    const s0 = seriesOf(varietyName);
+    if (!s0 || !s0.id || s0.series_name === "(unassigned)") return;
+    // re-read the row fresh: in a bulk loop, two colors of one series would otherwise
+    // both see the render-time nulls and the second would overwrite the first's fill
+    const { data: s } = await sb.from("crop_recipe_series").select("id,form,prop_tray_id").eq("id", s0.id).maybeSingle();
+    if (!s) return;
+    const upd = {};
+    const FORM_FROM_CLASS = { urc: "URC", callused: "CALL", plug: "PLUG", liner: "LINER", seed: "SEED", bareroot: "BULB" };
+    if (!s.form && FORM_FROM_CLASS[q.form_class]) upd.form = FORM_FROM_CLASS[q.form_class];
+    if (!s.prop_tray_id) {
+      // quote text carries the cell count ("Plug 144", "Lin 72", "50 Cell Tray") — match a
+      // tray we actually stock, by cells OR by the digits in its NAME (the "105" tray
+      // holds 100 cells, so name digits are the vocabulary brokers actually use)
+      const m = String(q.form_raw || "").match(/(\d{2,4})/);
+      if (m) {
+        const n = +m[1];
+        const tray = trayOpts.find(t => +t.cells_per_flat === n)
+          || trayOpts.find(t => new RegExp(`(^|\\D)${n}(\\D|$)`).test(String(t.name || "")));
+        if (tray) upd.prop_tray_id = tray.id;
+      }
+    }
+    if (!Object.keys(upd).length) return;
+    await sb.from("crop_recipe_series").update({ ...upd, updated_at: new Date().toISOString() }).eq("id", s.id);
+    setSeries(sr => sr.map(x => x.id === s.id ? { ...x, ...upd } : x));
+  }
+
   async function lockQuote(v, r) {
     if (!v || !r) return;
     const vid = v.variety_id || v.rows?.map(x => x.variety_id).find(Boolean);
@@ -563,6 +613,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
           await sb.from("variety_library").update({ match_aliases: [...cur, r.variety_key] }).eq("id", vid);
         }
       }
+      await fillSeriesFromQuote(v.variety, r);   // series form/tray follow the picked quote (null fields only)
       try {
         await sb.from("item_change_log").insert({ plan_id: plan.id, item_name: targetRows[0]?.item_name || v.variety,
           variety_key: r.variety_key || null, change_type: "quote_locked",
@@ -720,6 +771,51 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
   // finish week — the family page's way to ADD groups (the right-click menu only MOVES).
   // Quantities copy as-is (adjust after — the 🎯 target banner will show any overage);
   // benches unassigned, supply unordered: a new round is a new decision downstream.
+  // FAMILY-level finish week (Caleb 8/5: "a ready date on a family should go to all
+  // the individual items"): one week for EVERY color and round in the family — the
+  // plant/ship chain re-derives per series. Per-item tweaks: the item page (real
+  // finish editor there) or right-click → New group for one color.
+  async function setFamilyReady(raw) {
+    const digits = String(raw || "").replace(/\D/g, "");
+    if (!digits) return;
+    const ready = digits.length <= 2 ? +digits : +digits.slice(2);
+    const readyYear = digits.length <= 2 ? (plan.year ?? 2027) : 2000 + +digits.slice(0, 2);
+    if (!ready || ready > 53) { window.alert("Week must be 1–53 (or YYWW like 2712)."); return; }
+    if (readyInPast(readyYear, ready)) return;   // it alerts with the fix-it hint itself
+    const acc = { moved: 0, flags: [] };
+    let touched = 0;
+    setBusy(true);
+    for (const g of displayGroups) {
+      const finWks = finishWksOr(recipe, g.plantYear, g.plant, g.readyYear, g.ready);
+      if (finWks == null) continue;   // a weeks-unknown stub group keeps its dates
+      for (const vr of g.vars) {
+        const sSpec = seriesOf(vr.variety) || {};
+        const rooted = /^(URC|CALL)/i.test(sSpec.form || "");
+        const p = wrapWk(ready - finWks, readyYear);
+        const sh = rooted ? wrapWk(p.wk - Math.round(+(sSpec.rooting_weeks ?? 0)), p.yr) : p;
+        for (const r of vr.rows) {
+          const { error } = await sb.from("scheduled_crops").update({
+            ready_week: ready, ready_year: readyYear,
+            plant_week: p.wk, plant_year: p.yr, ship_week: sh.wk, ship_year: sh.yr,
+          }).eq("id", r.id);
+          if (error) { window.alert(`⚠ Week change stopped partway (${error.message}).`); setBusy(false); setTick(t => t + 1); return; }
+        }
+        const res = await rippleTasks(sb, plan.id, [...new Set(vr.rows.map(r => r.item_name))],
+          { ship: sh.wk, shipYear: sh.yr, plant: p.wk, plantYear: p.yr },
+          { wk: vr.rows[0]?.ship_week, yr: vr.rows[0]?.ship_year ?? vr.rows[0]?.plant_year }, displayName);
+        acc.moved += res.moved; acc.flags.push(...res.flags);
+        touched += vr.rows.length;
+      }
+    }
+    if (touched) try {
+      await sb.from("item_change_log").insert({ plan_id: plan.id, item_name: `family: ${famLabel}`,
+        change_type: "group_ready_change", detail: { ready: `${readyYear}w${ready}`, rows: touched, note: "family-wide finish week — every color and round" },
+        changed_by: displayName || null, source: "family-page" });
+    } catch { /* audit must not block */ }
+    setRipple(acc.moved || acc.flags.length ? acc : null);
+    setBusy(false); setTick(t => t + 1);
+  }
+
   async function duplicateGroup(g, raw) {
     const digits = String(raw || "").replace(/\D/g, "");
     if (!digits) return;
@@ -1163,6 +1259,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
       const best = qs.reduce((a, b) => +b.landed < +a.landed ? b : a);
       await sb.from("scheduled_crops").update({ broker: best.broker, supplier: best.supplier, liner_unit_cost: +best.landed, sourcing_locked: true })
         .in("id", v.rows.map(r => r.id));
+      await fillSeriesFromQuote(v.variety, best);   // series form/tray follow the quote (null fields only)
       hits++;
     }
     try {
@@ -1170,8 +1267,11 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
         change_type: "bulk_broker", detail: { broker: bulkBroker, colors: hits, missed: misses.length },
         changed_by: displayName || null, source: "family-page" });
     } catch { /* audit must not block */ }
-    setBusy(false); setSelVars(new Set()); setTick(t => t + 1);
-    window.alert(`${hits} color${hits !== 1 ? "s" : ""} priced from ${bulkBroker}.${misses.length ? `\n\nNo matching quote for:\n• ${misses.join("\n• ")}` : ""}`);
+    // misses STAY SELECTED so the find-&-match pass is right there — the 🔗 on each
+    // row searches the raw quote text and locks a match permanently (match_aliases),
+    // so the next bulk assign (and every future upload) hits automatically.
+    setBusy(false); setSelVars(new Set(misses)); setTick(t => t + 1);
+    window.alert(`${hits} color${hits !== 1 ? "s" : ""} priced from ${bulkBroker}.${misses.length ? `\n\n${misses.length} with no matching ${bulkBroker} quote (kept selected):\n• ${misses.join("\n• ")}\n\nIf the broker HAS these but under a different name, use the 🔗 button on each row to search & match once — it's remembered for every future upload. If the quote file isn't loaded yet, no match can exist.` : ""}`);
   }
 
   const card = { background: "#fff", border: `1px solid ${C.border}`, borderRadius: 12, marginBottom: 12 };
@@ -1194,6 +1294,12 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
             {recipe.display_name || `${recipe.size_label} ${recipe.crop_name}`} — the whole family
           </div>
           <div style={{ fontSize: 12, color: C.muted }}>{groups.length} planting group{groups.length === 1 ? "" : "s"} · {Object.keys(vmap).length} varieties · {plan.name}</div>
+          {famTgt?.note && (
+            <span title="family note — right-click the family in the By-family list to edit"
+              style={{ fontSize: 11.5, color: C.text, background: C.amberBg, border: `1px solid #ecd9b8`, borderRadius: 8, padding: "2px 9px", maxWidth: 380, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              📝 {famTgt.note}
+            </span>
+          )}
           <span style={{ flex: 1 }} />
           {/* match this family to the pot it ships in — feeds the 🪴 Pot Orders ledger live */}
           <span title="the physical pot this family ships in — drives the pot-order worksheet"
@@ -1297,41 +1403,32 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
             </div>
             <div style={{ overflowX: "auto" }}>
               <table style={{ borderCollapse: "collapse", width: "100%" }}>
-                <thead><tr>{["Series", "Broker 📌", "Form", "Prop (wks)", "Tray", "Total wks"].map(h => <th key={h} style={th}>{h}</th>)}</tr></thead>
+                <thead><tr>{["Series", "Form", "Prop (wks)", "Tray", "Total wks", ""].map((h, i) => <th key={i} style={th}>{h}</th>)}</tr></thead>
                 <tbody>
                   {series.filter(s => s.series_name !== "(unassigned)").map(s => (
                     <tr key={s.id}>
                       <td style={{ ...td, fontWeight: 700 }}>
-                        <input value={s.series_name} list="fp-series-suggest"
-                          onChange={e => setSeries(series.map(x => x.id === s.id ? { ...x, series_name: e.target.value } : x))}
-                          title={`pick from the family's own series (derived from its variety names) or type — "(unassigned)" just means nothing derived it yet`}
-                          style={{ width: 130, padding: "3px 6px", borderRadius: 6, border: `1.5px solid ${C.creamBr}`, fontSize: 12, fontWeight: 700, fontFamily: FONT }} />
-                      </td>
-                      <td style={td}>
-                        {(() => {
-                          if (locked) return <>{s.pinned_broker || "—"}{s.pinned_supplier ? ` · ${s.pinned_supplier}` : ""}</>;
-                          const opts = brokerStats[s.series_name] || [];
-                          // pinning is ALWAYS allowed — quote coverage annotates, it doesn't gate
-                          const known = [...new Set([...opts.map(o => o.broker),
-                            ...(s.pinned_broker ? [s.pinned_broker] : []),
-                            "Ball", "EHR", "Express", "Foremost"])];
-                          return (
-                            <select value={s.pinned_broker || ""}
-                              onChange={e => {
-                                const pick = opts.find(o => o.broker === e.target.value);
-                                setSeries(series.map(x => x.id === s.id ? { ...x, pinned_broker: e.target.value || null, pinned_supplier: pick?.supplier ?? x.pinned_supplier } : x));
-                              }}
-                              style={{ padding: "3px 5px", borderRadius: 6, border: `1.5px solid ${C.creamBr}`, fontSize: 11.5, fontWeight: 700, fontFamily: FONT, maxWidth: 230, cursor: "pointer" }}>
-                              <option value="">— no pin —</option>
-                              {known.map(b => {
-                                const o = opts.find(x => x.broker === b);
-                                return <option key={b} value={b}>{o
-                                  ? `${b}${o.supplier ? ` · ${o.supplier}` : ""} — from $${o.min.toFixed(3)} · ${o.cov}/${o.tot} colors`
-                                  : `${b} — no ${s.form || ""} quotes on file`}</option>;
-                              })}
-                            </select>
-                          );
-                        })()}
+                        {/* pick from the broker catalog's series for this crop + this family's own
+                            prefixes — the current name always stays selectable; ✎ for a one-off */}
+                        <select value={s.series_name}
+                          onChange={e => {
+                            let nm = e.target.value;
+                            if (nm === "✎custom") {
+                              const typed = window.prompt("Series name:", s.series_name);
+                              if (!typed || !typed.trim()) return;
+                              nm = typed.trim();
+                            }
+                            // one row per series name — a duplicate would bounce off the DB's
+                            // unique constraint at Save time and silently not stick
+                            if (series.some(x => x.id !== s.id && x.series_name.trim().toLowerCase() === nm.toLowerCase())) {
+                              window.alert(`"${nm}" is already a series in this family.`); return;
+                            }
+                            setSeries(series.map(x => x.id === s.id ? { ...x, series_name: nm } : x));
+                          }}
+                          style={{ width: 150, padding: "3px 6px", borderRadius: 6, border: `1.5px solid ${C.creamBr}`, fontSize: 12, fontWeight: 700, fontFamily: FONT, cursor: "pointer" }}>
+                          {[...new Set([s.series_name, ...seriesNameSug])].map(nm => <option key={nm} value={nm}>{nm}</option>)}
+                          <option value="✎custom">✎ custom…</option>
+                        </select>
                       </td>
                       <td style={td}>
                         <select value={s.form || ""} onChange={e => setSeries(series.map(x => x.id === s.id ? { ...x, form: e.target.value || null } : x))}
@@ -1357,29 +1454,39 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
                           ? `${Math.round(+recipe.crop_weeks) + (/^(URC|CALL)/i.test(s.form || "") && s.rooting_weeks != null ? Math.round(+s.rooting_weeks) : 0)}w`
                           : "—"}
                       </td>
+                      <td style={td}>
+                        <button disabled={busy} title="delete this series row — its colors fall back to (unassigned); the colors themselves are untouched"
+                          onClick={async () => {
+                            if (!window.confirm(`Delete the series "${s.series_name}"?\n\nIts colors stay in the plan — they just lose the series spec until another row claims them.`)) return;
+                            await sb.from("crop_recipe_series").delete().eq("id", s.id);
+                            setSeries(sr => sr.filter(x => x.id !== s.id));
+                          }}
+                          style={{ background: "none", border: "none", color: C.red, cursor: "pointer", fontSize: 13, fontWeight: 800, padding: "0 4px" }}>✕</button>
+                      </td>
                     </tr>
                   ))}
-                  {!series.filter(s => s.series_name !== "(unassigned)").length && <tr><td style={{ ...td, color: C.muted }} colSpan={6}>No series yet — ＋ Add series, or add colors from the catalog and they'll group by name.</td></tr>}
+                  {!series.filter(s => s.series_name !== "(unassigned)").length && <tr><td style={{ ...td, color: C.muted }} colSpan={6}>No series yet — add colors below and use the "colors without a series" chips, or ＋ Add series.</td></tr>}
                 </tbody>
               </table>
-              {/* series suggestions = every series the BROKERS quote for this crop (Caleb 7/29:
-                  Cuphea should show FloriGlory, Sweet Talk, Cubano… not just our Enchantia),
-                  unioned with the family's own variety-name prefixes so nothing's lost */}
-              <datalist id="fp-series-suggest">
-                {(() => {
-                  const names = Object.values(vmap).map(v => String(v.variety || "").replace(/[™®]/g, " ").replace(/\s+/g, " ").trim()).filter(Boolean);
-                  const two = {};
-                  names.forEach(n => { const t = n.split(" "); if (t.length >= 3) two[`${t[0]} ${t[1]}`] = (two[`${t[0]} ${t[1]}`] || 0) + 1; });
-                  const sug = new Set(cropSeriesSug);
-                  names.forEach(n => {
-                    const t = n.split(" ");
-                    const p2 = t.length >= 3 ? `${t[0]} ${t[1]}` : null;
-                    if (p2 && two[p2] >= 2) sug.add(p2);
-                    else if (t.length >= 2) sug.add(t[0]);
-                  });
-                  return [...sug].sort((a, b) => a.localeCompare(b)).map(nm => <option key={nm} value={nm} />);
-                })()}
-              </datalist>
+              {/* series EMERGE from the colors: any color no row claims gets a one-click chip */}
+              {missingSeries.length > 0 && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", padding: "7px 2px 2px", fontSize: 11.5 }}>
+                  <span style={{ color: C.muted, fontWeight: 700 }}>Colors without a series:</span>
+                  {missingSeries.map(m => (
+                    <button key={m.name} disabled={busy}
+                      title={`create the "${m.name}" series row — ${m.n} color${m.n !== 1 ? "s" : ""} will group under it; set its form/tray after (or lock a quote and they auto-fill)`}
+                      onClick={async () => {
+                        const { data: ins, error } = await sb.from("crop_recipe_series")
+                          .upsert({ recipe_id: recipeId, series_name: m.name }, { onConflict: "recipe_id,series_name" }).select().single();
+                        if (error) { window.alert("Couldn't create the series: " + error.message); return; }
+                        setSeries(sr => sr.some(x => x.id === ins.id) ? sr : [...sr, ins]);
+                      }}
+                      style={{ padding: "3px 10px", borderRadius: 14, border: `1.5px solid ${C.amber}`, background: C.amberBg, color: C.amber, fontWeight: 800, fontSize: 11, cursor: "pointer", fontFamily: FONT }}>
+                      ＋ {m.name} <span style={{ fontWeight: 500 }}>·{m.n}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
               <button disabled={busy} onClick={async () => {
                   // one placeholder at a time — a second upsert would land on the SAME
                   // (recipe_id,'New series') row and clobber unsaved local edits
@@ -1454,6 +1561,23 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
               {label}
             </button>
           ))}
+          {/* family finish week — cascades to EVERY color and round; per-item changes
+              live on the item page, per-color via right-click → New group */}
+          {(() => {
+            const wks = [...new Set(displayGroups.filter(g => g.ready != null).map(g => `${String((g.readyYear ?? plan.year ?? 2027) % 100).padStart(2, "0")}${String(g.ready).padStart(2, "0")}`))];
+            const one = wks.length === 1 ? wks[0] : "";
+            return (
+              <span title="finish (ready) week for the WHOLE family — sets every color and round; the plant/ship chain re-derives per series. Change one item on its item page, or one color via right-click → New group."
+                style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 700, color: C.muted, marginLeft: 4 }}>
+                🗓 Finish
+                <input key={`famready-${one}-${wks.length}`} defaultValue={one} placeholder={wks.length > 1 ? `${wks.length} wks` : "YYWW"}
+                  disabled={busy} inputMode="numeric"
+                  onBlur={e => { const s = e.target.value.trim(); if (!s || s === one) return; setFamilyReady(s); }}
+                  onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                  style={{ width: 58, padding: "4px 6px", borderRadius: 7, border: `1.5px solid ${wks.length > 1 ? C.amber : C.creamBr}`, fontFamily: "ui-monospace,Menlo,monospace", fontSize: 12, fontWeight: 700, textAlign: "center" }} />
+              </span>
+            );
+          })()}
           {famTgt && totals.pots !== +famTgt.planned_pots && (
             <>
               <span style={{ fontSize: 11.5, color: C.muted, marginLeft: 6 }}>disperse the projection:</span>

@@ -13,7 +13,8 @@ import { QuotePicker } from "./ProgramBuilder";
 import { BasketDesigner } from "./ProductionPlans";
 import { useAuth } from "./Auth";
 import { makeKey } from "./brokerKey";
-import { plantOrder } from "./shared";
+import { plantOrder, wrapWk, weeksInYear } from "./shared";
+import { rippleTasks } from "./ripple";
 
 const C = { dark: "#1e2d1a", light: "#7fb069", border: "#dfe7d8", muted: "#7a8c74",
   text: "#2f3b2a", red: "#c0392b", amber: "#c98a2e", green: "#2e7d32" };
@@ -838,15 +839,73 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
               {row.sold > 0 && <button style={chip} onClick={() => onSaveTarget({ target_units: row.sold, decision: row.sold > row.planned ? "grow" : row.sold < row.planned ? "cut" : "hold" })}>=sold</button>}
               <button style={{ ...chip, color: C.red }} onClick={() => onSaveTarget({ target_units: 0, decision: "drop" })}>drop</button>
             </div>
-            {baseReady != null && (
-              <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
-                <span style={{ fontSize: 12.5 }}>Finish:</span>
-                <button style={chip} onClick={() => onSaveTarget({ ready_shift: (shift - 1) === 0 ? null : shift - 1 })}>◀</button>
-                <b style={{ fontSize: 14, color: shift < 0 ? C.green : shift > 0 ? C.amber : C.text }}>wk{effReady}{shift ? ` (${shift > 0 ? "+" : ""}${shift})` : ""}</b>
-                <button style={chip} onClick={() => onSaveTarget({ ready_shift: (shift + 1) === 0 ? null : shift + 1 })}>▶</button>
-                {shift !== 0 && <button style={{ ...chip, border: "none", color: C.red }} onClick={() => onSaveTarget({ ready_shift: null })}>×</button>}
-              </div>
-            )}
+            {baseReady != null && (() => {
+              // REAL finish edit (Caleb 8/5) — moves this item's actual bench rows; the whole
+              // chain (plant/ship) shifts by the same delta so multi-round items keep their
+              // spacing. Anchor = the EARLIEST round by (year, week) — display and commit use
+              // the same anchor, so an unchanged blur is always a no-op (cross-year safe).
+              const parents = detail?.parents || [];
+              const anchor = parents.filter(p => p.ready_week != null)
+                .sort((a, b) => ((a.ready_year ?? 0) * 100 + a.ready_week) - ((b.ready_year ?? 0) * 100 + b.ready_week))[0];
+              if (!anchor) return null;
+              const aYr = anchor.ready_year ?? 2027;
+              return (
+                <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
+                  <span style={{ fontSize: 12.5 }}>Finish:</span>
+                  <NumInput value={`${String(aYr % 100).padStart(2, "0")}${String(anchor.ready_week).padStart(2, "0")}`} placeholder="YYWW"
+                    onCommit={async v => {
+                      const digits = String(v).replace(/\D/g, "");
+                      if (!digits) return;
+                      const wk = digits.length <= 2 ? +digits : +digits.slice(2);
+                      const yr = digits.length <= 2 ? aYr : 2000 + +digits.slice(0, 2);
+                      if (!wk || wk > 53) return;
+                      if (`${yr}|${wk}` === `${aYr}|${anchor.ready_week}`) return;   // unchanged — never a surprise shift
+                      // exact ISO-week delta across years (53-week years included)
+                      let delta = wk - anchor.ready_week;
+                      for (let y = aYr; y < yr; y++) delta += weeksInYear(y);
+                      for (let y = yr; y < aYr; y++) delta -= weeksInYear(y);
+                      const now = new Date();
+                      const nowYr = now.getFullYear();
+                      const nowWk = Math.ceil((((now - new Date(Date.UTC(nowYr, 0, 1))) / 86400000) + 1) / 7);
+                      if (yr < nowYr || (yr === nowYr && wk < nowWk)) { window.alert(`⚠ ${yr}w${wk} is in the past — we're around wk${nowWk} of ${nowYr}.`); return; }
+                      let moved = 0, failed = null;
+                      for (const p of parents) {
+                        const upd = {};
+                        if (p.ready_week != null) { const w = wrapWk(p.ready_week + delta, p.ready_year ?? aYr); upd.ready_week = w.wk; upd.ready_year = w.yr; }
+                        if (p.plant_week != null) { const w = wrapWk(p.plant_week + delta, p.plant_year ?? 2027); upd.plant_week = w.wk; upd.plant_year = w.yr; }
+                        if (p.ship_week != null) { const w = wrapWk(p.ship_week + delta, p.ship_year ?? p.plant_year ?? 2027); upd.ship_week = w.wk; upd.ship_year = w.yr; }
+                        if (Object.keys(upd).length) {
+                          const { error } = await sb.from("scheduled_crops").update(upd).eq("id", p.id);
+                          if (error) { failed = error.message; break; }
+                          moved++;
+                        }
+                      }
+                      if (failed) window.alert(`Finish change stopped partway (${moved} of ${parents.length} rows moved): ${failed}`);
+                      // the rows moved for REAL — clear any stale advisory shift so charts and
+                      // buy-week math don't double-count old ◀▶ nudges on top of this
+                      if (moved && (tgt?.ready_shift || 0) !== 0) onSaveTarget({ ready_shift: null });
+                      if (moved) {
+                        const sh = wrapWk((anchor.ship_week ?? anchor.plant_week ?? wk) + delta, anchor.ship_year ?? anchor.plant_year ?? yr);
+                        const pl = wrapWk((anchor.plant_week ?? wk) + delta, anchor.plant_year ?? yr);
+                        try {
+                          await rippleTasks(sb, plan.id, [row.item], { ship: sh.wk, shipYear: sh.yr, plant: pl.wk, plantYear: pl.yr },
+                            { wk: anchor.ship_week, yr: anchor.ship_year ?? anchor.plant_year }, displayName);
+                        } catch { /* task ripple must not block the move */ }
+                      }
+                      try {
+                        await sb.from("item_change_log").insert({ plan_id: plan.id, item_name: row.item,
+                          change_type: "ready_change", detail: { to: `${yr}w${wk}`, shifted_by: delta, rows_moved: moved, note: "item finish moved — whole chain shifted" },
+                          changed_by: displayName || null, source: "item-drill" });
+                      } catch { /* audit must not block */ }
+                      load();
+                      onMutated?.();
+                    }}
+                    style={{ width: 62, padding: "5px 6px", textAlign: "center", borderRadius: 7, fontSize: 13, fontWeight: 700,
+                      fontFamily: "ui-monospace,Menlo,monospace", border: `1.5px solid ${C.border}`, boxSizing: "border-box" }} />
+                  <span style={{ fontSize: 10.5, color: C.muted }}>moves the rows — plant & ship follow{parents.length > 1 ? " · rounds keep their spacing" : ""}</span>
+                </div>
+              );
+            })()}
           </div>
 
           {/* planting rounds — one total in the projection, split into waves with their
