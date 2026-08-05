@@ -21,5 +21,6 @@ scripts/.sentinel-state.json
 scripts/culture-link-proposals.json
 
 # broker quote drop zone (xlsx don't belong in git)
-quotes/
+quotes/*
+!quotes/README.md
 .tmp_broker_prices.json
