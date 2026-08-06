@@ -26,7 +26,7 @@ export function SalesVisitViewer({ slug }) {
   if (row === null) return (
     <div style={{ fontFamily: FONT, padding: 40, textAlign: "center", color: "#7a8c74" }}>
       <div style={{ fontSize: 40, marginBottom: 10 }}>🌼</div>
-      This link isn't active. Reach out to Schlegel Greenhouse for a fresh one.
+      This link isn't active. Reach out to Hoosier Boy for a fresh one.
     </div>
   );
   return (
@@ -41,17 +41,20 @@ export default function SalesVisits() {
   const { displayName } = useAuth();
   const [copied, setCopied] = useState(null);
   const [confirmRm, setConfirmRm] = useState(null);
-  const linkFor = v => `${window.location.origin}/?sv=${v.slug}`;
+  // two doors, one page: the CUSTOMER link is clean (no notes tab renders on it);
+  // Open adds &prep=1 so YOUR view always shows the private meeting-notes tab
+  const custLinkFor = v => `${window.location.origin}/?sv=${v.slug}`;
+  const openLinkFor = v => `${window.location.origin}/?sv=${v.slug}&prep=1`;
 
   const copy = async v => {
-    try { await navigator.clipboard.writeText(linkFor(v)); setCopied(v.id); setTimeout(() => setCopied(null), 1600); }
-    catch { window.prompt("Copy the link:", linkFor(v)); }
+    try { await navigator.clipboard.writeText(custLinkFor(v)); setCopied(v.id); setTimeout(() => setCopied(null), 1600); }
+    catch { window.prompt("Copy the customer link:", custLinkFor(v)); }
   };
 
   return (
     <div style={{ fontFamily: FONT, padding: "4px 2px 30px" }}>
       <div style={{ fontSize: 13, color: C.muted, margin: "2px 2px 14px" }}>
-        Customer-facing deal pages on <b>ops.hoosierboy.com</b> — send the link, it stays current when the page is updated.
+        Customer-facing deal pages on <b>ops.hoosierboy.com</b>. <b>Open</b> = your view (private meeting-notes tab included) · <b>Copy customer link</b> = the clean page you send out. Pages stay current when updated.
       </div>
       {loading && <div style={{ color: C.muted, padding: 20 }}>Loading…</div>}
       {!loading && !(rows || []).length && (
@@ -69,16 +72,18 @@ export default function SalesVisits() {
             <div style={{ fontSize: 11, color: C.muted }}>{v.createdAt ? new Date(v.createdAt).toLocaleDateString() : ""}</div>
           </div>
           <div style={{ fontSize: 11.5, color: C.muted, margin: "4px 0 10px", fontFamily: "ui-monospace,Menlo,monospace", wordBreak: "break-all" }}>
-            {linkFor(v)}
+            {custLinkFor(v)}
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <a href={linkFor(v)} target="_blank" rel="noreferrer"
+            <a href={openLinkFor(v)} target="_blank" rel="noreferrer"
+              title="opens YOUR view — includes the private meeting-notes tab when the page has one"
               style={{ padding: "8px 16px", borderRadius: 9, background: C.dark, color: C.cream, fontWeight: 800, fontSize: 13, textDecoration: "none" }}>
               Open
             </a>
             <button onClick={() => copy(v)}
+              title="copies the CLEAN link — no notes tab ever shows on it; this is what you send out"
               style={{ padding: "8px 16px", borderRadius: 9, border: `1.5px solid ${C.light}`, background: "#fff", color: C.dark, fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: FONT }}>
-              {copied === v.id ? "✓ Copied" : "🔗 Copy link"}
+              {copied === v.id ? "✓ Copied" : "🔗 Copy customer link"}
             </button>
             <span style={{ flex: 1 }} />
             {confirmRm === v.id ? (
