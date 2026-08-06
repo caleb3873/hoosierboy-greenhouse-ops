@@ -53,16 +53,26 @@ async function compute(sb) {
   }
 
   // ── Fall Program ──
-  const fp = await pageAll(sb, "fall_program_items", "category,qty,cost,container_cost,status");
+  const fp = await pageAll(sb, "fall_program_items", "category,qty,cost,container_cost,container_sku,status");
   const { data: pricing } = await sb.from("category_pricing").select("category,proposed_price");
   const priceMap = {};
   (pricing || []).forEach(p => { priceMap[String(p.category || "").trim().toUpperCase()] = parseFloat(p.proposed_price) || 0; });
+  // authoritative per-pot container cost from the Containers catalog (fall rows'
+  // container_cost column is MIXED GRAIN — some rows hold the per-pot price, some
+  // the per-CASE price, which inflated containers ~$880k on first compute)
+  const { data: conCat } = await sb.from("containers").select("sku,cost_per_unit");
+  const conBySku = {};
+  (conCat || []).forEach(c => { if (c.sku) conBySku[String(c.sku).trim().toUpperCase()] = +c.cost_per_unit || 0; });
   let fUnits = 0, fLiner = 0, fCont = 0, fRev = 0, unpricedUnits = 0;
   const unpricedCats = new Set();
   fp.forEach(r => {
     if (String(r.status || "").toUpperCase() === "CANCELLED") return;
     const q = +r.qty || 0;
-    fUnits += q; fLiner += +r.cost || 0; fCont += q * (+r.container_cost || 0);
+    fUnits += q; fLiner += +r.cost || 0;
+    const catalog = conBySku[String(r.container_sku || "").trim().toUpperCase()];
+    const perPot = catalog != null && catalog > 0 ? catalog
+      : (+r.container_cost > 0 && +r.container_cost <= 5 ? +r.container_cost : 0);   // sanity cap: no fall pot costs >$5
+    fCont += q * perPot;
     const price = priceMap[String(r.category || "").trim().toUpperCase()];
     if (price > 0) fRev += q * price;
     else { unpricedUnits += q; unpricedCats.add(r.category || "?"); }
@@ -90,7 +100,8 @@ async function compute(sb) {
   if (hgVal > 0) sections.push({ key: "hardgoods", label: "Hard goods (pots & trays on hand)", kind: "hardgoods", units: hgUnits, cost: hgVal, revenue: null, notes: "at cost — not revenue-valued" });
 
   const totals = sections.reduce((a, s) => ({
-    units: a.units + (s.units || 0), cost: a.cost + (s.cost || 0), revenue: a.revenue + (s.revenue || 0),
+    units: a.units + (s.kind === "hardgoods" ? 0 : (s.units || 0)),   // crop units only — empty pots aren't sellable units
+    cost: a.cost + (s.cost || 0), revenue: a.revenue + (s.revenue || 0),
   }), { units: 0, cost: 0, revenue: 0 });
   totals.pct = pct;
   totals.valAtPct = Math.round(totals.revenue * pct / 100);          // % of projected revenue
