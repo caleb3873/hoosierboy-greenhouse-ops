@@ -2,6 +2,7 @@ import { useState } from "react";
 import { AuthProvider, LoginScreen, UserMenu, useAuth, RecoveryPasswordForm } from "./Auth";
 import { SharedGalleryViewer } from "./Sharing";
 import { SalesVisitViewer } from "./SalesVisits";
+import InventoryValuation from "./InventoryValuation";
 import { ExtractionProvider, useExtraction } from "./ExtractionContext";
 import { CROP_STATUS } from "./shared";
 
@@ -75,6 +76,7 @@ const NAV_GROUPS = [
       { id: "receiving", label: "Receiving" },
       { id: "soil",      label: "Soil Calculator" },
       { id: "containers", label: "🪴 Containers" },
+      { id: "inventory-value", label: "📊 Inventory Value" },
     ],
   },
   {
@@ -280,6 +282,7 @@ function PlannerShell() {
         {page === "export"     && <Export          />}
         {page === "soil"       && <SoilCalculator />}
         {page === "containers" && <Containers />}
+        {page === "inventory-value" && <InventoryValuation />}
         {page === "fall"       && <FallProgram />}
         {page === "plans"      && <ProductionPlans />}
         {page === "sourcing"   && <SourcingPage />}

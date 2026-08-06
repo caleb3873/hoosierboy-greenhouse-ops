@@ -39,6 +39,10 @@
     {
       "path": "/api/campaign-cron",
       "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/inventory-snapshot?save=1",
+      "schedule": "0 11 * * 1"
     }
   ]
 }
