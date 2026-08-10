@@ -8166,7 +8166,111 @@ async function recomputeOrderTotals(sb, orderId) {
   }).eq("id", orderId);
 }
 
-function DraftOrderCard({ o, oLines, onChanged }) {
+// 🌱 By item — every line on order, flat: search, sort, multi-select → production
+// notes (internal; broker-facing line notes stay separate and go on the XLSX).
+function OrderItemsView({ lines, orders, famMap, onChanged, onOpenFamily }) {
+  const sb = getSupabase();
+  const [q, setQ] = useState("");
+  const [sort, setSort] = useState({ key: "variety", dir: 1 });
+  const [sel, setSel] = useState(() => new Set());
+  const [busy, setBusy] = useState(false);
+  const omap = Object.fromEntries(orders.map(o => [o.id, o]));
+  const all = lines.filter(l => l.status === "active").map(l => {
+    const o = omap[l.purchase_order_id] || {};
+    return { ...l, _o: o, _fam: famMap[l.variety_id] || null };
+  });
+  const qq = q.trim().toLowerCase();
+  const rows = all.filter(r => !qq || [r.variety_name, r.material, r._o.farm, r._o.supplier, r._o.broker, r._o.order_number, r.prod_note, r.notes, r._fam?.label]
+    .some(x => String(x || "").toLowerCase().includes(qq)));
+  const val = r => {
+    switch (sort.key) {
+      case "qty": return +r.qty_ordered || 0;
+      case "price": return +r.unit_price || 0;
+      case "ext": return +r.ext_price || 0;
+      case "wk": return (+r._o.ship_year || 0) * 100 + (+r._o.ship_week || 0);
+      case "src": return `${r._o.broker || ""} ${r._o.farm || r._o.supplier || ""}`;
+      case "status": return r._o.status || "";
+      default: return r.variety_name || "";
+    }
+  };
+  rows.sort((a, b) => { const x = val(a), y = val(b); return (typeof x === "number" ? x - y : String(x).localeCompare(String(y))) * sort.dir; });
+  const H = (label, key, right) => (
+    <th key={key} onClick={() => setSort(s => ({ key, dir: s.key === key ? -s.dir : 1 }))}
+      style={{ textAlign: right ? "right" : "left", padding: "6px 8px", fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px",
+        color: sort.key === key ? COLORS.dark : COLORS.muted, borderBottom: `2px solid ${COLORS.border}`, cursor: "pointer", whiteSpace: "nowrap", position: "sticky", top: 0, background: COLORS.card }}>
+      {label}{sort.key === key ? (sort.dir > 0 ? " ▲" : " ▼") : ""}</th>
+  );
+  async function bulkNote() {
+    const txt = window.prompt(`Production note to add to ${sel.size} item(s):`);
+    if (!txt || !txt.trim()) return;
+    setBusy(true);
+    for (const id of sel) {
+      const l = all.find(x => x.id === id);
+      const merged = l?.prod_note ? `${l.prod_note} · ${txt.trim()}` : txt.trim();
+      await sb.from("purchase_order_lines").update({ prod_note: merged }).eq("id", id);
+    }
+    setBusy(false); setSel(new Set()); onChanged();
+  }
+  const totQ = rows.reduce((s, r) => s + (+r.qty_ordered || 0), 0);
+  const totC = rows.reduce((s, r) => s + (+r.ext_price || 0), 0);
+  const td2 = { padding: "5px 8px", borderBottom: `1px solid ${COLORS.border}` };
+  return (
+    <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 14 }}>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder="search variety, material #, farm, order, note…"
+          style={{ flex: 1, minWidth: 220, maxWidth: 380, padding: "7px 11px", borderRadius: 8, border: `1.5px solid ${COLORS.border}`, fontFamily: "inherit", fontSize: 12.5 }} />
+        <span style={{ fontSize: 12, color: COLORS.muted }}>{rows.length} items · <b>{totQ.toLocaleString()}</b> plants · <b>{fmtMoney(totC)}</b></span>
+        {sel.size > 0 && (
+          <button disabled={busy} onClick={bulkNote}
+            style={{ background: COLORS.dark, color: "#c8e6b8", border: "none", borderRadius: 8, padding: "7px 14px", fontWeight: 800, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+            ✎ Production note → {sel.size} selected</button>
+        )}
+      </div>
+      <div style={{ overflowX: "auto", maxHeight: "62vh", overflowY: "auto" }}>
+        <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12.5 }}>
+          <thead><tr>
+            <th style={{ padding: "6px 8px", borderBottom: `2px solid ${COLORS.border}`, position: "sticky", top: 0, background: COLORS.card }}>
+              <input type="checkbox" checked={rows.length > 0 && rows.every(r => sel.has(r.id))}
+                onChange={e => setSel(e.target.checked ? new Set(rows.map(r => r.id)) : new Set())} />
+            </th>
+            {H("Variety", "variety")}{H("Qty", "qty", true)}{H("$/unit", "price", true)}{H("Ext $", "ext", true)}{H("Wk", "wk", true)}{H("Broker · Farm", "src")}{H("Status", "status")}
+            <th style={{ textAlign: "left", padding: "6px 8px", fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: COLORS.muted, borderBottom: `2px solid ${COLORS.border}`, position: "sticky", top: 0, background: COLORS.card }}>Production note</th>
+          </tr></thead>
+          <tbody>
+            {rows.map(r => (
+              <tr key={r.id} style={{ background: sel.has(r.id) ? "#eef6e8" : undefined }}>
+                <td style={td2}><input type="checkbox" checked={sel.has(r.id)}
+                  onChange={e => setSel(sv => { const n = new Set(sv); if (e.target.checked) n.add(r.id); else n.delete(r.id); return n; })} /></td>
+                <td style={{ ...td2, fontWeight: 600 }}>
+                  {r.variety_name}
+                  {r.material && <span style={{ fontFamily: "ui-monospace,Menlo,monospace", fontSize: 10, color: COLORS.muted, marginLeft: 6 }}>{r.material}</span>}
+                  {r._fam && <button onClick={() => onOpenFamily(r._fam.rid)} title={`open the ${r._fam.label} family page`}
+                    style={{ background: "none", border: "none", color: COLORS.light, fontWeight: 800, fontSize: 10.5, cursor: "pointer", fontFamily: "inherit", padding: "0 4px" }}>→ {r._fam.label}</button>}
+                </td>
+                <td style={{ ...td2, textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>{(+r.qty_ordered || 0).toLocaleString()}</td>
+                <td style={{ ...td2, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.unit_price != null ? "$" + (+r.unit_price).toFixed(3) : "—"}</td>
+                <td style={{ ...td2, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.ext_price != null ? fmtMoney(+r.ext_price) : "—"}</td>
+                <td style={{ ...td2, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r._o.ship_week || "—"}</td>
+                <td style={{ ...td2, fontSize: 11.5, color: COLORS.muted }}>{r._o.broker}{(r._o.farm || r._o.supplier) ? ` · ${r._o.farm || r._o.supplier}` : ""}</td>
+                <td style={td2}>
+                  <span style={{ fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", padding: "2px 7px", borderRadius: 6,
+                    background: r._o.status === "draft" ? "#fdf3e0" : "#e8f2e2", color: r._o.status === "draft" ? COLORS.amber : "#2e7d32" }}>{r._o.status}</span>
+                </td>
+                <td style={td2}>
+                  <input defaultValue={r.prod_note || ""} placeholder="—" disabled={busy}
+                    onBlur={e => { const v = e.target.value.trim() || null; if ((v || "") !== (r.prod_note || "")) sb.from("purchase_order_lines").update({ prod_note: v }).eq("id", r.id).then(onChanged); }}
+                    style={{ width: 180, padding: "4px 7px", borderRadius: 6, border: `1px solid ${COLORS.border}`, fontFamily: "inherit", fontSize: 12 }} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function DraftOrderCard({ o, oLines, families, onOpenFamily, onChanged }) {
   const sb = getSupabase();
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(false);   // collapsed by default — header carries totals + the min warning
@@ -8236,6 +8340,15 @@ function DraftOrderCard({ o, oLines, onChanged }) {
             {o.broker}{o.supplier ? ` → ${o.supplier}` : ""}{o.farm ? <b style={{ color: COLORS.dark }}> · {o.farm}</b> : ""} · {act.length} line{act.length !== 1 ? "s" : ""}
           </div>
           {underMin && <div style={{ fontSize: 11, fontWeight: 800, color: COLORS.red, marginTop: 4 }}>⚠ {(+o.total_qty || 0).toLocaleString()} of 2,000 farm minimum — {(2000 - (+o.total_qty || 0)).toLocaleString()} short; add items or combine weeks</div>}
+          {underMin && families?.length > 0 && (
+            <div onClick={e => e.stopPropagation()} style={{ display: "flex", gap: 6, marginTop: 5, flexWrap: "wrap" }}>
+              {families.map(f => (
+                <button key={f.rid} onClick={() => onOpenFamily(f.rid)} title="open the family page to add items or shift weeks"
+                  style={{ background: "#fff", border: `1.5px solid ${COLORS.light}`, color: COLORS.dark, borderRadius: 7, padding: "3px 10px", fontWeight: 800, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>
+                  → adjust {f.label}</button>
+              ))}
+            </div>
+          )}
         </div>
         <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
           <div style={{ textAlign: "right" }}>
@@ -8299,6 +8412,9 @@ function OrdersTab({ plan }) {
   const [lines,  setLines]  = useState([]);
   const [expanded, setExpanded] = useState(null);
   const [tick, setTick] = useState(0);
+  const [view, setView] = useState("orders");        // 📦 by order | 🌱 by item
+  const [famMap, setFamMap] = useState({});          // variety_id → {rid, label} for the adjust path
+  const [showFamily, setShowFamily] = useState(null);
 
   useEffect(() => {
     if (!sb) return;
@@ -8311,6 +8427,17 @@ function OrdersTab({ plan }) {
         const { data: pol } = await sb.from("purchase_order_lines")
           .select("*").in("purchase_order_id", ids).order("line_no");
         setLines(pol || []);
+        const vids = [...new Set((pol || []).map(l => l.variety_id).filter(Boolean))];
+        if (vids.length) {
+          const { data: scr } = await sb.from("scheduled_crops").select("variety_id,recipe_id")
+            .eq("plan_id", plan.id).in("variety_id", vids).not("recipe_id", "is", null).limit(2000);
+          const rids = [...new Set((scr || []).map(x => x.recipe_id))];
+          const { data: recs } = rids.length ? await sb.from("crop_recipes").select("id,crop_name,size_label").in("id", rids) : { data: [] };
+          const rname = Object.fromEntries((recs || []).map(r => [r.id, `${r.size_label || ""} ${r.crop_name || ""}`.trim() || "family"]));
+          const fm = {};
+          (scr || []).forEach(x => { if (!fm[x.variety_id]) fm[x.variety_id] = { rid: x.recipe_id, label: rname[x.recipe_id] }; });
+          setFamMap(fm);
+        } else setFamMap({});
       } else setLines([]);
     })();
   }, [sb, plan.id, tick]);
@@ -8331,18 +8458,36 @@ function OrdersTab({ plan }) {
   const grandTotal = orders.reduce((s, o) => s + (+o.total_cost || 0), 0);
   const grandQty   = orders.reduce((s, o) => s + (+o.total_qty || 0), 0);
 
+  const famsOf = o => {
+    const seen = {};
+    lines.filter(l => l.purchase_order_id === o.id && l.variety_id && famMap[l.variety_id])
+      .forEach(l => { const f = famMap[l.variety_id]; seen[f.rid] = f; });
+    return Object.values(seen);
+  };
+
   return (
     <div style={{ display: "grid", gap: 16 }}>
-      {drafts.length > 0 && (
+      <div style={{ display: "flex", gap: 8 }}>
+        {[["orders", "📦 By order"], ["items", "🌱 By item"]].map(([m, label]) => (
+          <button key={m} onClick={() => setView(m)}
+            style={{ padding: "6px 14px", borderRadius: 8, fontWeight: 800, fontSize: 12.5, cursor: "pointer", fontFamily: "inherit",
+              border: `1.5px solid ${view === m ? COLORS.light : COLORS.border}`,
+              background: view === m ? "#eef6e8" : COLORS.card, color: view === m ? COLORS.dark : COLORS.muted }}>{label}</button>
+        ))}
+      </div>
+      {view === "items" && <OrderItemsView lines={lines} orders={orders} famMap={famMap} onChanged={() => setTick(t => t + 1)} onOpenFamily={setShowFamily} />}
+      {view === "orders" && drafts.length > 0 && (
         <>
           <div style={{ fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".5px", color: COLORS.amber }}>
             ✏️ Drafts to finalize — edit quantities, add notes, download, send, then ✓ Mark sent
           </div>
           {drafts.map(o => (
-            <DraftOrderCard key={o.id} o={o} oLines={lines.filter(l => l.purchase_order_id === o.id)} onChanged={() => setTick(t => t + 1)} />
+            <DraftOrderCard key={o.id} o={o} oLines={lines.filter(l => l.purchase_order_id === o.id)}
+              families={famsOf(o)} onOpenFamily={setShowFamily} onChanged={() => setTick(t => t + 1)} />
           ))}
         </>
       )}
+      {view === "orders" && <>
       {/* Banner */}
       <div style={{ background: COLORS.dark, color: "#fff", borderRadius: 10, padding: 16, display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
         <Stat label="Orders"        value={orders.length}                                              dark />
@@ -8434,7 +8579,8 @@ function OrdersTab({ plan }) {
             )}
           </div>
         );
-      })}
+      })}</>}
+      {showFamily && <FamilyPage plan={plan} recipeId={showFamily} onClose={() => { setShowFamily(null); setTick(t => t + 1); }} />}
     </div>
   );
 }
