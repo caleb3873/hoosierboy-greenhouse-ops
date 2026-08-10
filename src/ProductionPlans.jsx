@@ -8477,7 +8477,9 @@ function OrdersTab({ plan }) {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Orders");
     const brokers = [...new Set(chosen.map(o => o.broker))].join("+");
-    XLSX.writeFile(wb, `Orders-${brokers}-${chosen.length}.xlsx`);
+    const wks = chosen.map(o => +o.ship_week).filter(Boolean);
+    const wkTag = wks.length ? ` wk${Math.min(...wks)}${Math.max(...wks) !== Math.min(...wks) ? "-" + Math.max(...wks) : ""}` : "";
+    XLSX.writeFile(wb, `${brokers} orders${wkTag} (${chosen.length}).xlsx`);
   }
 
   if (orders.length === 0) {
