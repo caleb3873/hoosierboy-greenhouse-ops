@@ -121,6 +121,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
   const [bulkBroker, setBulkBroker] = useState("");    // bulk-assign picks
   const [quotesByKey, setQuotesByKey] = useState({});  // variety_key -> broker_prices rows (raw, for bulk pricing)
   const [divideFor, setDivideFor] = useState(null);    // {variety, n, gap} — inline divide-into-rounds UI
+  const [recipeOpen, setRecipeOpen] = useState(false); // recipe card collapsed by default — planning first, spec on demand
 
   lockedRef.current = locked;
   useEffect(() => {
@@ -1424,14 +1425,22 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
 
         {/* recipe card — lock/save */}
         <div style={card}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", flexWrap: "wrap",
-            background: locked ? C.chip : C.amberBg, borderBottom: `1px solid ${C.border}`, borderRadius: "12px 12px 0 0" }}>
+          <div onClick={() => setRecipeOpen(o => !o)}
+            style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", flexWrap: "wrap", cursor: "pointer",
+            background: locked ? C.chip : C.amberBg, borderBottom: (recipeOpen || !locked) ? `1px solid ${C.border}` : "none", borderRadius: (recipeOpen || !locked) ? "12px 12px 0 0" : 12 }}>
+            <span style={{ color: C.muted, fontSize: 11, transform: (recipeOpen || !locked) ? "rotate(90deg)" : "none", display: "inline-block", transition: "transform .15s" }}>▶</span>
             <b style={{ fontSize: 12.5, color: locked ? C.text : C.amber }}>
               {locked ? "🔒 Family recipe — source of truth; edits cascade everywhere" : "✏️ EDITING THE RECIPE — nothing commits until you save"}
             </b>
+            {locked && !recipeOpen && recipe && (
+              <span style={{ fontSize: 11, color: C.muted }}>
+                {recipe.crop_weeks != null ? `${Math.round(+recipe.crop_weeks)} finish wks` : "finish wks —"} · {series.filter(x => x.series_name !== "(unassigned)").length} series
+              </span>
+            )}
             {savedMsg && <span style={{ fontSize: 11.5, color: /^(⚠|couldn't)/i.test(savedMsg) ? C.red : C.green }}>{savedMsg}</span>}
             {recipe && (
-              <button onClick={async () => {
+              <button onClick={async (e) => {
+                  e.stopPropagation();
                   const next = recipe.plant_class === "perennial" ? null : "perennial";
                   setRecipe({ ...recipe, plant_class: next });
                   await sb.from("crop_recipes").update({ plant_class: next }).eq("id", recipe.id);
@@ -1448,12 +1457,13 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
             )}
             <span style={{ flex: 1 }} />
             {locked
-              ? <button onClick={unlock} style={{ background: C.dark, color: C.cream, border: 0, borderRadius: 8, padding: "6px 12px", fontWeight: 800, fontSize: 12, cursor: "pointer", fontFamily: FONT }}>Unlock to edit</button>
+              ? <button onClick={(e) => { e.stopPropagation(); setRecipeOpen(true); unlock(); }} style={{ background: C.dark, color: C.cream, border: 0, borderRadius: 8, padding: "6px 12px", fontWeight: 800, fontSize: 12, cursor: "pointer", fontFamily: FONT }}>Unlock to edit</button>
               : <>
-                <button disabled={busy} onClick={save} style={{ background: C.light, color: "#fff", border: 0, borderRadius: 8, padding: "6px 12px", fontWeight: 800, fontSize: 12, cursor: "pointer", fontFamily: FONT }}>💾 Save recipe</button>
-                <button onClick={cancel} style={{ background: "none", color: C.muted, border: `1.5px solid ${C.border}`, borderRadius: 8, padding: "6px 12px", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: FONT }}>Cancel</button>
+                <button disabled={busy} onClick={(e) => { e.stopPropagation(); save(); }} style={{ background: C.light, color: "#fff", border: 0, borderRadius: 8, padding: "6px 12px", fontWeight: 800, fontSize: 12, cursor: "pointer", fontFamily: FONT }}>💾 Save recipe</button>
+                <button onClick={(e) => { e.stopPropagation(); cancel(); }} style={{ background: "none", color: C.muted, border: `1.5px solid ${C.border}`, borderRadius: 8, padding: "6px 12px", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: FONT }}>Cancel</button>
               </>}
           </div>
+          {(recipeOpen || !locked) && (
           <div style={{ padding: "10px 14px", opacity: locked ? .65 : 1, pointerEvents: locked ? "none" : "auto" }}>
             <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 12.5, marginBottom: 8 }}>
               {[["crop_weeks", "finish wks (plant→ready)"], ["ppp", "ppp"], ["pots_per_unit", "pots/unit"], ["overage_pct", "overage %"], ["hold_tolerance_wks", "hold tol. wks"]].map(([k, l]) => (
@@ -1573,6 +1583,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
               </button>
             </div>
           </div>
+          )}
         </div>
 
         <CultureCard recipe={recipe} series={series} locked={locked} setRecipe={setRecipe} setSeries={setSeries} />
