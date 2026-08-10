@@ -60,6 +60,113 @@ function colorBucketOf(name) {
   return { label: "Other", hex: "#a9b3a1" };
 }
 
+// ── 🎨 interactive color-mix explorer (pop-out) ──────────────────────────────
+// Filter by color bucket, series, or search; bars and the per-variety table
+// recompute over the filtered set so "how much of X" is always answerable.
+function ColorMixModal({ seasonVars, seriesOf, famLabel, onClose }) {
+  const [buckets, setBuckets] = useState(() => new Set());   // empty = all
+  const [seriesSel, setSeriesSel] = useState(() => new Set());
+  const [q, setQ] = useState("");
+  const C2 = { dark: "#1e2d1a", light: "#7fb069", muted: "#7a8c74", border: "#dfe7d8", chip: "#eef3e8", amber: "#e89a3a" };
+  const all = seasonVars.map(vr => ({ ...vr, bucket: colorBucketOf(vr.variety), seriesName: seriesOf(vr.variety)?.series_name || "—" }));
+  const allSeries = [...new Set(all.map(v => v.seriesName))].sort();
+  const qq = q.trim().toLowerCase();
+  const rows = all.filter(v =>
+    (!buckets.size || buckets.has(v.bucket.label)) &&
+    (!seriesSel.size || seriesSel.has(v.seriesName)) &&
+    (!qq || v.variety.toLowerCase().includes(qq)));
+  const totP = rows.reduce((a, v) => a + v.pots, 0) || 1;
+  const totS = rows.reduce((a, v) => a + (v.sold || 0), 0) || 1;
+  const famP = all.reduce((a, v) => a + v.pots, 0) || 1;
+  const bAgg = {};
+  rows.forEach(v => { const o = bAgg[v.bucket.label] || (bAgg[v.bucket.label] = { ...v.bucket, pots: 0, sold: 0, n: 0 }); o.pots += v.pots; o.sold += v.sold || 0; o.n++; });
+  const bList = Object.values(bAgg).sort((a, b) => b.pots - a.pots);
+  const toggle = (set, setter, key) => setter(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });
+  const Bar = ({ field, tot }) => (
+    <div style={{ display: "flex", height: 30, borderRadius: 8, overflow: "hidden", border: `1px solid ${C2.border}` }}>
+      {bList.filter(b => b[field] > 0).map(b => (
+        <div key={b.label} onClick={() => toggle(buckets, setBuckets, b.label)}
+          title={`${b.label}: ${Math.round(b[field]).toLocaleString()} (${Math.round(b[field] * 100 / tot)}%) — click to isolate`}
+          style={{ width: `${b[field] * 100 / tot}%`, background: b.hex, minWidth: 3, cursor: "pointer", borderRight: "1px solid rgba(0,0,0,.08)" }} />
+      ))}
+    </div>
+  );
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(20,28,16,.55)", zIndex: 300, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "4vh 14px", overflowY: "auto" }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 14, maxWidth: 880, width: "100%", padding: "18px 20px 20px", fontFamily: "'DM Sans', sans-serif", boxShadow: "0 18px 60px rgba(0,0,0,.3)" }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+          <b style={{ fontFamily: "'DM Serif Display',Georgia,serif", fontSize: 19, color: C2.dark }}>🎨 Color mix — {famLabel}</b>
+          <span style={{ fontSize: 12, color: C2.muted }}>{rows.length} of {all.length} varieties · {Math.round(totP).toLocaleString()} pots shown ({Math.round(totP * 100 / famP)}% of family)</span>
+          <span style={{ flex: 1 }} />
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="search variety…"
+            style={{ padding: "6px 10px", borderRadius: 8, border: `1.5px solid ${C2.border}`, fontFamily: "'DM Sans',sans-serif", fontSize: 12.5 }} />
+          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: C2.muted }}>✕</button>
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 5, margin: "10px 0 4px" }}>
+          {bList.map(b => (
+            <button key={b.label} onClick={() => toggle(buckets, setBuckets, b.label)}
+              style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 10px", borderRadius: 14, fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "'DM Sans',sans-serif",
+                border: `1.5px solid ${buckets.has(b.label) ? C2.dark : C2.border}`, background: buckets.has(b.label) ? C2.chip : "#fff", color: C2.dark }}>
+              <span style={{ width: 10, height: 10, borderRadius: 3, background: b.hex, border: "1px solid rgba(0,0,0,.15)" }} />{b.label}
+            </button>
+          ))}
+          <span style={{ width: 10 }} />
+          {allSeries.map(sn => (
+            <button key={sn} onClick={() => toggle(seriesSel, setSeriesSel, sn)}
+              style={{ padding: "3px 10px", borderRadius: 14, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans',sans-serif",
+                border: `1.5px solid ${seriesSel.has(sn) ? C2.light : C2.border}`, background: seriesSel.has(sn) ? "#eef6e8" : "#fff", color: seriesSel.has(sn) ? "#2e7d32" : C2.muted }}>
+              {sn}
+            </button>
+          ))}
+          {(buckets.size > 0 || seriesSel.size > 0 || q) && (
+            <button onClick={() => { setBuckets(new Set()); setSeriesSel(new Set()); setQ(""); }}
+              style={{ padding: "3px 10px", borderRadius: 14, fontSize: 11, fontWeight: 800, border: "none", background: "none", color: "#c0392b", cursor: "pointer", fontFamily: "'DM Sans',sans-serif" }}>clear ✕</button>
+          )}
+        </div>
+        <div style={{ fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: C2.muted, margin: "8px 0 3px" }}>Planned 2027 · {Math.round(totP).toLocaleString()} pots</div>
+        <Bar field="pots" tot={totP} />
+        <div style={{ fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: C2.muted, margin: "8px 0 3px" }}>Sold 2026 · {Math.round(totS).toLocaleString()} pots</div>
+        <Bar field="sold" tot={totS} />
+        <div style={{ overflowX: "auto", marginTop: 12, maxHeight: "46vh", overflowY: "auto", border: `1px solid ${C2.border}`, borderRadius: 10 }}>
+          <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12.5 }}>
+            <thead><tr>{["Variety", "Series", "Color", "'27 planned", "% shown", "'26 sold", "Δ share"].map((h, i) => (
+              <th key={h} style={{ textAlign: i >= 3 ? "right" : "left", padding: "7px 10px", fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: C2.muted, borderBottom: `2px solid ${C2.border}`, position: "sticky", top: 0, background: "#fff", whiteSpace: "nowrap" }}>{h}</th>
+            ))}</tr></thead>
+            <tbody>
+              {rows.slice().sort((a, b) => b.pots - a.pots).map(v => {
+                const pp = v.pots * 100 / totP, sp = (v.sold || 0) * 100 / totS, d = pp - sp;
+                return (
+                  <tr key={v.variety}>
+                    <td style={{ padding: "6px 10px", borderBottom: `1px solid ${C2.border}`, fontWeight: 600 }}>
+                      <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 3, background: v.bucket.hex, border: "1px solid rgba(0,0,0,.15)", marginRight: 7 }} />{v.variety}
+                    </td>
+                    <td style={{ padding: "6px 10px", borderBottom: `1px solid ${C2.border}`, color: C2.muted, fontSize: 11.5 }}>{v.seriesName}</td>
+                    <td style={{ padding: "6px 10px", borderBottom: `1px solid ${C2.border}`, color: C2.muted, fontSize: 11.5 }}>{v.bucket.label}</td>
+                    <td style={{ padding: "6px 10px", borderBottom: `1px solid ${C2.border}`, textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>{v.pots.toLocaleString()}</td>
+                    <td style={{ padding: "6px 10px", borderBottom: `1px solid ${C2.border}`, textAlign: "right", minWidth: 110 }}>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                        <span style={{ width: 60, height: 7, background: "#eef3e8", borderRadius: 4, overflow: "hidden", display: "inline-block" }}>
+                          <span style={{ display: "block", height: "100%", width: `${Math.min(100, pp)}%`, background: v.bucket.hex }} />
+                        </span>
+                        <span style={{ fontSize: 11.5, fontVariantNumeric: "tabular-nums" }}>{pp >= 1 ? Math.round(pp) + "%" : "<1%"}</span>
+                      </span>
+                    </td>
+                    <td style={{ padding: "6px 10px", borderBottom: `1px solid ${C2.border}`, textAlign: "right", fontVariantNumeric: "tabular-nums", color: C2.muted }}>{v.sold ? Math.round(v.sold).toLocaleString() : "—"}</td>
+                    <td style={{ padding: "6px 10px", borderBottom: `1px solid ${C2.border}`, textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700, color: Math.abs(d) < 1 || !v.sold ? C2.muted : d > 0 ? C2.amber : "#2e7d32" }}>
+                      {!v.sold ? "new" : Math.abs(d) < 1 ? "·" : (d > 0 ? "▲+" : "▼−") + Math.round(Math.abs(d))}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div style={{ fontSize: 10.5, color: C2.muted, marginTop: 8 }}>Click bar segments or chips to filter · Δ share = planned% − sold% within what's shown · ▲ heavier than it sold, ▼ lighter</div>
+      </div>
+    </div>
+  );
+}
+
 function readyInPast(yr, wk) {
   const n = new Date();
   const ds = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
@@ -127,6 +234,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
   const [quotesByKey, setQuotesByKey] = useState({});  // variety_key -> broker_prices rows (raw, for bulk pricing)
   const [divideFor, setDivideFor] = useState(null);    // {variety, n, gap} — inline divide-into-rounds UI
   const [recipeOpen, setRecipeOpen] = useState(false); // recipe card collapsed by default — planning first, spec on demand
+  const [mixOpen, setMixOpen] = useState(false);       // 🎨 color-mix pop-out explorer
 
   lockedRef.current = locked;
   useEffect(() => {
@@ -1591,6 +1699,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
           )}
         </div>
 
+        {mixOpen && <ColorMixModal seasonVars={seasonVars} seriesOf={seriesOf} famLabel={famLabel} onClose={() => setMixOpen(false)} />}
         <CultureCard recipe={recipe} series={series} locked={locked} setRecipe={setRecipe} setSeries={setSeries} />
 
         {/* walkthrough targets not yet reflected in the rows — the SvP → dig-in bridge */}
@@ -1639,6 +1748,13 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
               {label}
             </button>
           ))}
+          {seasonVars.length > 0 && (
+            <button onClick={() => setMixOpen(true)} title="interactive color-mix explorer — filter by color, series, or variety"
+              style={{ padding: "6px 13px", borderRadius: 8, fontWeight: 800, fontSize: 12, cursor: "pointer", fontFamily: FONT,
+                border: `1.5px solid ${C.border}`, background: "#fff", color: C.muted }}>
+              🎨 Color mix ⤢
+            </button>
+          )}
           {/* family finish week — cascades to EVERY color and round; per-item changes
               live on the item page, per-color via right-click → New group */}
           {(() => {
@@ -1674,57 +1790,6 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
           )}
         </div>
 
-        {/* 🎨 bird's-eye color mix — planned share vs what actually sold, bucketed by
-            the color in each variety's name. The decision check: are we over/under-
-            weighted anywhere vs real demand? */}
-        {viewMode === "colors" && seasonVars.length > 0 && (() => {
-          const buckets = {};
-          seasonVars.forEach(vr => {
-            const b = colorBucketOf(vr.variety);
-            const o = buckets[b.label] || (buckets[b.label] = { ...b, pots: 0, sold: 0, vars: [] });
-            o.pots += vr.pots; o.sold += vr.sold || 0; o.vars.push(vr.variety);
-          });
-          const list = Object.values(buckets).sort((a, b) => b.pots - a.pots);
-          const totP = list.reduce((a, b) => a + b.pots, 0) || 1;
-          const totS = list.reduce((a, b) => a + b.sold, 0) || 1;
-          const Bar = ({ field, tot }) => (
-            <div style={{ display: "flex", height: 26, borderRadius: 7, overflow: "hidden", border: `1px solid ${C.border}` }}>
-              {list.filter(b => b[field] > 0).map(b => (
-                <div key={b.label} title={`${b.label}: ${b[field].toLocaleString()} (${Math.round(b[field] * 100 / tot)}%) — ${b.vars.join(", ")}`}
-                  style={{ width: `${b[field] * 100 / tot}%`, background: b.hex, minWidth: 3,
-                    borderRight: "1px solid rgba(0,0,0,.08)" }} />
-              ))}
-            </div>
-          );
-          return (
-            <div style={{ ...card, padding: "12px 16px 14px" }}>
-              <div style={{ fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".5px", color: C.muted, marginBottom: 8 }}>
-                🎨 Color mix — planned 2027 vs sold 2026
-              </div>
-              <div style={{ fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: C.muted, margin: "0 0 3px" }}>Planned ({totP.toLocaleString()} pots)</div>
-              <Bar field="pots" tot={totP} />
-              <div style={{ fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: C.muted, margin: "8px 0 3px" }}>'26 sold ({Math.round(totS).toLocaleString()} pots)</div>
-              <Bar field="sold" tot={totS} />
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "5px 14px", marginTop: 10 }}>
-                {list.map(b => {
-                  const pp = b.pots * 100 / totP, sp = b.sold * 100 / totS;
-                  const d = pp - sp;
-                  const drift = Math.abs(d) >= 3 && b.sold > 0;
-                  return (
-                    <span key={b.label} title={b.vars.join(", ")} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, fontVariantNumeric: "tabular-nums" }}>
-                      <span style={{ width: 11, height: 11, borderRadius: 3, background: b.hex, border: "1px solid rgba(0,0,0,.15)", display: "inline-block" }} />
-                      <b>{b.label}</b>
-                      <span style={{ color: C.muted }}>{Math.round(pp)}% vs {b.sold > 0 ? Math.round(sp) + "%" : "—"}</span>
-                      {drift && <b style={{ color: d > 0 ? C.amber : "#2e7d32", fontSize: 10 }}>{d > 0 ? `▲+${Math.round(d)}` : `▼${Math.round(d)}`}</b>}
-                    </span>
-                  );
-                })}
-              </div>
-              <div style={{ fontSize: 10, color: C.muted, marginTop: 7 }}>▲ = planning a bigger share than it earned in '26 sales · ▼ = smaller share than it sold · hover any segment for its varieties</div>
-            </div>
-          );
-        })()}
-
         {/* SEASON VIEW — one row per color, whole-season totals. This is the planning
             surface: type the number, divide into rounds when you want them, bulk-price. */}
         {viewMode === "colors" && (
@@ -1752,12 +1817,13 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
                     <input type="checkbox" checked={seasonVars.length > 0 && seasonVars.every(v => selVars.has(v.variety))}
                       onChange={e => setSelVars(e.target.checked ? new Set(seasonVars.map(v => v.variety)) : new Set())} />
                   </th>
-                  {["Variety", "Series", "Form", "Planned '26", "'26 sold", "Sell-thru", "Season (pots)", "Rounds", "$/liner", "Broker"].map(h => <th key={h} style={th}>{h}</th>)}
+                  {["Variety", "Series", "Form", "Planned '26", "'26 sold", "vs '26 sold", "'27 Planned (pots)", "Rounds", "$/liner", "Broker"].map(h => <th key={h} style={th}>{h}</th>)}
                 </tr></thead>
                 <tbody>
                   {seasonVars.map(vr => {
                     const s = seriesOf(vr.variety);
-                    const pct = vr.pots > 0 && vr.sold != null ? Math.round(vr.sold * 100 / vr.pots) : null;
+                    const soldShort = vr.ref26 > 0 && vr.sold != null && vr.sold < vr.ref26;   // didn't sell what we planned in '26
+                    const delta = vr.sold > 0 && vr.pots > 0 ? Math.round((vr.pots - vr.sold) * 100 / vr.sold) : null;  // '27 plan vs '26 actual demand
                     const dividing = divideFor?.variety === vr.variety;
                     return (
                       <tr key={vr.variety}>
@@ -1775,15 +1841,14 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
                         <td style={{ ...td, color: C.muted, fontSize: 11 }}>{s?.series_name || "—"}</td>
                         <td style={td}><span style={{ fontFamily: "ui-monospace,Menlo,monospace", fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 5, background: /CALL/.test(s?.form || "") ? C.amberBg : C.chip, color: /CALL/.test(s?.form || "") ? C.amber : C.green }}>{s?.form || "—"}</span></td>
                         <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", color: C.muted }} title="what this color was planned for in 2026 — frozen reference">{vr.ref26 ? vr.ref26.toLocaleString() : "—"}</td>
-                        <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{vr.sold ? vr.sold.toLocaleString() : "—"}</td>
-                        <td style={{ ...td, minWidth: 84 }}>
-                          {pct == null ? <span style={{ color: C.muted, fontSize: 10 }}>—</span> : (
-                            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-                              <span style={{ width: 46, height: 8, background: C.chip, borderRadius: 4, overflow: "hidden", display: "inline-block" }}>
-                                <span style={{ display: "block", height: "100%", width: `${Math.min(100, pct)}%`, background: pct >= 95 ? C.light : pct >= 60 ? "#a8c95d" : C.amber }} />
-                              </span>
-                              <b style={{ fontSize: 11, color: pct < 60 ? C.amber : C.dark, fontVariantNumeric: "tabular-nums" }}>{pct}%</b>
-                            </span>
+                        <td title={soldShort ? `sold ${(vr.ref26 - vr.sold).toLocaleString()} short of the '26 plan` : undefined}
+                          style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", color: soldShort ? "#d94f3d" : undefined, fontWeight: soldShort ? 800 : undefined }}>{vr.sold ? vr.sold.toLocaleString() : "—"}</td>
+                        <td style={{ ...td, textAlign: "right", minWidth: 64 }}
+                          title="how far the '27 planned number sits from what actually sold in '26">
+                          {delta == null ? <span style={{ color: C.muted, fontSize: 10 }}>—</span> : (
+                            <b style={{ fontSize: 11.5, fontVariantNumeric: "tabular-nums", color: delta > 10 ? C.amber : delta < 0 ? "#2e7d32" : C.muted }}>
+                              {delta > 0 ? `+${delta}%` : `${delta}%`}
+                            </b>
                           )}
                         </td>
                         <td style={{ ...td, textAlign: "right" }} title="the whole-season total for this color — distributes across its rounds proportionally">
@@ -2300,16 +2365,35 @@ function CultureCard({ recipe, series, locked, setRecipe, setSeries }) {
   const [rows, setRows] = useState(null);
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState(null);   // guide id whose prose is expanded
+  const [q, setQ] = useState("");               // corpus search — any crop/series/variety
+  const [sq, setSq] = useState("");             // debounced
+  const [searchRows, setSearchRows] = useState(null);
 
   useEffect(() => {
+    // SUBSTRING crop match, not exact: the corpus names annuals "Geranium (Annual)" —
+    // an exact "Geranium" match found only the Darwin Perennials cranesbill guide.
     if (!open || !cc || !recipe || rows) return;
     (async () => {
       const { data } = await cc.from("culture_guides_public")
-        .select("id,breeder_name,series_name,series_variety,propagation_weeks,finish_time_matrix,propagation_details,culture_details,requires_heat")
-        .ilike("crop_name", recipe.crop_name).limit(60);
+        .select("id,breeder_name,crop_name,category,series_name,series_variety,propagation_weeks,finish_time_matrix,propagation_details,culture_details,requires_heat")
+        .ilike("crop_name", `%${recipe.crop_name}%`).limit(200);
       setRows(data || []);
     })();
   }, [open, cc, recipe, rows]);
+
+  useEffect(() => { const t = setTimeout(() => setSq(q.trim()), 350); return () => clearTimeout(t); }, [q]);
+  useEffect(() => {
+    // free search over the WHOLE culture library — for when the crop-name net misses
+    if (!cc || sq.length < 2) { setSearchRows(null); return; }
+    let dead = false;
+    (async () => {
+      const { data } = await cc.from("culture_guides_public")
+        .select("id,breeder_name,crop_name,category,series_name,series_variety,propagation_weeks,finish_time_matrix,propagation_details,culture_details,requires_heat")
+        .or(`crop_name.ilike.%${sq}%,series_name.ilike.%${sq}%,series_variety.ilike.%${sq}%`).limit(80);
+      if (!dead) setSearchRows(data || []);
+    })();
+    return () => { dead = true; };
+  }, [cc, sq]);
 
   if (!cc || !recipe) return null;
   const sizeWant = parseFloat(recipe.size_label) || 4.5;
@@ -2333,10 +2417,18 @@ function CultureCard({ recipe, series, locked, setRecipe, setSeries }) {
     return out[0];
   };
 
-  // one line per series (dedupe guides by series_name)
+  // rank: this family's series first, then guides in the same category as those
+  // matches (an annual house's geranium page shouldn't lead with a perennial), then
+  // the rest. One line per crop+series (dedupe, prefer the guide with a finish matrix).
+  const famSeries = (series || []).map(x => String(x.series_name || "").toLowerCase()).filter(n => n && n !== "(unassigned)");
+  const seriesKeyOf = g => String(g.series_name || g.series_variety || "?").replace(/[™®]/g, "").trim();
+  const famMatch = g => { const sn = seriesKeyOf(g).toLowerCase(); return famSeries.some(f => sn.startsWith(f) || f.startsWith(sn)); };
+  const pool = sq.length >= 2 ? (searchRows || []) : (rows || []);
+  const matchedCats = new Set(pool.filter(famMatch).map(g => String(g.category || "").toLowerCase()).filter(Boolean));
+  const rankOf = g => famMatch(g) ? 0 : (matchedCats.size && matchedCats.has(String(g.category || "").toLowerCase()) ? 1 : 2);
   const bySeries = {};
-  (rows || []).forEach(g => {
-    const k = String(g.series_name || g.series_variety || "?").replace(/[™®]/g, "").trim();
+  pool.forEach(g => {
+    const k = `${String(g.crop_name || "").trim()}|${seriesKeyOf(g)}`;
     if (!bySeries[k] || (finishOf(g) && !finishOf(bySeries[k]))) bySeries[k] = g;
   });
 
@@ -2356,16 +2448,25 @@ function CultureCard({ recipe, series, locked, setRecipe, setSeries }) {
       </button>
       {open && (
         <div style={{ borderTop: `1px solid ${C.border}`, padding: "8px 14px 12px" }}>
-          {rows == null && <div style={{ fontSize: 12, color: C.muted }}>reading the culture library…</div>}
-          {rows != null && !Object.keys(bySeries).length && <div style={{ fontSize: 12, color: C.muted }}>no culture guides on file for {recipe.crop_name} — set the recipe from experience, or add the guide to the culture library.</div>}
-          {Object.entries(bySeries).sort().map(([name, g]) => {
+          <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "2px 0 8px" }}>
+            <input value={q} onChange={e => setQ(e.target.value)} placeholder={`search the whole culture library… (showing ${recipe.crop_name})`}
+              style={{ flex: 1, maxWidth: 380, padding: "6px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontFamily: FONT, fontSize: 12 }} />
+            {q && <button onClick={() => setQ("")} style={{ background: "none", border: "none", color: C.muted, fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>clear ✕</button>}
+          </div>
+          {(sq.length >= 2 ? searchRows == null : rows == null) && <div style={{ fontSize: 12, color: C.muted }}>reading the culture library…</div>}
+          {(sq.length >= 2 ? searchRows != null : rows != null) && !Object.keys(bySeries).length &&
+            <div style={{ fontSize: 12, color: C.muted }}>{sq.length >= 2 ? `nothing in the culture library matches "${sq}"` : `no culture guides on file for ${recipe.crop_name} — search above, set the recipe from experience, or add the guide to the culture library.`}</div>}
+          {Object.entries(bySeries).sort(([ka, a], [kb, b]) => rankOf(a) - rankOf(b) || ka.localeCompare(kb)).map(([key, g]) => {
+            const name = seriesKeyOf(g);
             const p = propOf(g), f = finishOf(g);
             const mid = f ? Math.round((f.lo + f.hi) / 2) : null;
             return (
               <div key={g.id} style={{ padding: "6px 0", borderBottom: `1px solid #f0f4ec` }}>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 12.5 }}>
                   <b>{name}</b>
-                  <span style={{ fontSize: 10.5, color: C.muted }}>{g.breeder_name}</span>
+                  <span style={{ fontSize: 10.5, color: C.muted }}>{g.breeder_name}{g.crop_name && g.crop_name.toLowerCase() !== recipe.crop_name.toLowerCase() ? ` · ${g.crop_name}` : ""}</span>
+                  {g.category && <span style={{ fontSize: 9, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", padding: "1px 6px", borderRadius: 5,
+                    background: /perennial/i.test(g.category) ? C.amberBg : C.chip, color: /perennial/i.test(g.category) ? C.amber : C.green }}>{g.category}</span>}
                   {p != null && <span>prop <b>{p.lo === p.hi ? p.lo : `${p.lo}–${p.hi}`} wk</b> {btn(`→ prop ${p.hi}`, () => setSeries(series.map(x =>
                     (x.series_name !== "(unassigned)" && name.toLowerCase().startsWith(x.series_name.toLowerCase())) || /^(URC|CALL)/i.test(x.form || "")
                       ? { ...x, rooting_weeks: p.hi } : x)), `set ${p.hi} prop weeks (range upper) on this family's rooted series`)}</span>}
