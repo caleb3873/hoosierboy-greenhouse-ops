@@ -1145,6 +1145,22 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
     setBusy(false); setTick(t => t + 1);
   }
 
+  // per-group bench cap (last season's bench load) — the +/- scoreboard on each
+  // group header. Stored in family_targets.group_caps keyed by the group key
+  // ("year|plantWeek"), so it travels with the family and survives regrouping.
+  async function saveGroupCap(g, raw) {
+    const s0 = String(raw ?? "").trim();
+    const n = s0 === "" ? null : Math.max(0, Math.round(+s0.replace(/[^0-9.]/g, "")));
+    if (s0 !== "" && (!n && n !== 0)) return;
+    const caps = { ...((famTgt && famTgt.group_caps) || {}) };
+    if (n == null) delete caps[g.key]; else caps[g.key] = n;
+    const { error } = await sb.from("family_targets").upsert(
+      { plan_id: plan.id, recipe_id: recipeId, group_caps: caps, updated_at: new Date().toISOString() },
+      { onConflict: "plan_id,recipe_id" });
+    if (error) { window.alert("Cap didn't save: " + error.message); return; }
+    setFamTgt(f => ({ ...(f || { plan_id: plan.id, recipe_id: recipeId }), group_caps: caps }));
+  }
+
   // the STATIC family projection — the number agreed at the family grain
   async function saveFamProjection(raw) {
     const total = Math.max(0, Math.round(+String(raw).replace(/[^0-9.]/g, "")));
@@ -1789,6 +1805,30 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
                     : null;
                 })()}
                 <span style={{ fontSize: 11, color: C.muted }}>{liveVars.length} varieties · {gPots.toLocaleString()} pots</span>
+                {(() => {
+                  // bench-cap scoreboard: live +/- vs last season's bench load; updates
+                  // with every quantity commit. Click the cap to set/change/clear it.
+                  const cap = famTgt?.group_caps?.[g.key];
+                  const editCap = e => {
+                    e.stopPropagation();
+                    const v = window.prompt(`Bench cap for this group (wk ${g.plant})${cap != null ? ` — blank to clear` : ""}:`, cap ?? "");
+                    if (v !== null) saveGroupCap(g, v);
+                  };
+                  if (cap == null) return (
+                    <button className="no-print" onClick={editCap} title="set this group's bench cap (last season's bench load) to get a live over/under readout"
+                      style={{ background: "none", border: `1px dashed ${C.border}`, borderRadius: 6, color: C.muted, fontSize: 9.5, fontWeight: 700, padding: "1px 7px", cursor: "pointer", fontFamily: FONT }}>＋ cap</button>
+                  );
+                  const d = gPots - cap;
+                  return (
+                    <span onClick={editCap} title="vs last season's bench cap — click to change"
+                      style={{ display: "inline-flex", alignItems: "center", gap: 5, cursor: "pointer", fontSize: 10.5, fontWeight: 800,
+                        background: d > 0 ? "#fbe9e5" : d < 0 ? "#eef6e8" : C.chip, border: `1.5px solid ${d > 0 ? "#e5b0a5" : d < 0 ? C.light : C.border}`,
+                        borderRadius: 8, padding: "2px 9px", color: d > 0 ? "#c0392b" : d < 0 ? "#2e7d32" : C.muted, fontVariantNumeric: "tabular-nums" }}>
+                      cap {cap.toLocaleString()}
+                      <b>{d > 0 ? `+${d.toLocaleString()} OVER` : d < 0 ? `${d.toLocaleString()} open` : "✓ at cap"}</b>
+                    </span>
+                  );
+                })()}
                 <span onClick={e => e.stopPropagation()} style={{ display: "inline-flex", gap: 5, alignItems: "center" }}>
                   {dupG?.key === g.key ? (
                     <>
