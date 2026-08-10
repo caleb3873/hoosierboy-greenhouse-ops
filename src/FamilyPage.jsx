@@ -9,7 +9,7 @@ import { useAuth } from "./Auth";
 import { rippleTasks, isoWeekOf } from "./ripple";
 import AddPlantDoor from "./AddPlantDoor";
 import { QuotePicker } from "./ProgramBuilder";
-import { wrapWk, weeksInYear, plantOrder, FinishWkInput } from "./shared";
+import { wrapWk, weeksInYear, plantOrder, FinishWkInput, lockBrokerOrders } from "./shared";
 
 const C = { dark: "#1e2d1a", light: "#7fb069", cream: "#f3f8ee", creamBr: "#cfe3bd",
   muted: "#7a8c74", text: "#2f3b2a", amber: "#c9812a", amberBg: "#fbf1df", red: "#c0492b",
@@ -329,7 +329,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
       if (!allKeys.length) return;
       const quotes = [];
       for (let i = 0; i < allKeys.length; i += 100) {
-        const { data } = await sb.from("broker_prices").select("variety_key,broker,supplier,form_class,form_raw,landed").in("variety_key", allKeys.slice(i, i + 100));
+        const { data } = await sb.from("broker_prices").select("variety_key,broker,supplier,form_class,form_raw,landed,material").in("variety_key", allKeys.slice(i, i + 100));
         quotes.push(...(data || []));
       }
       // raw quotes by key — the season view's bulk broker assign + tray auto-fill read
@@ -1344,6 +1344,49 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
 
   // ⑃ Divide a color's season total into rounds AT THE WEEKS YOU NAME (Caleb 8/5:
   // "i want this group to finish week 18 and this group to finish week 19").
+  // ── 🛒 lock in broker orders — selected colors (or all) become draft POs,
+  // one per broker+supplier per ship week; re-locking updates lines in place
+  async function lockInOrders() {
+    const wanted = selVars.size ? selVars : new Set(seasonVars.filter(v => v.pots > 0).map(v => v.variety));
+    if (!wanted.size) { window.alert("Nothing to order — no colors with planned pots."); return; }
+    const agg = {};
+    rows.forEach(r => {
+      if (r.is_combo_component) return;
+      const v = vmap[r.variety_id];
+      const vname = v?.variety;
+      if (!vname || !wanted.has(vname)) return;
+      const plants = +r.qty_plants_ordered || (+r.qty_pots || 0) * (+r.ppp || 1);
+      if (!(plants > 0)) return;
+      const k = `${vname}|${r.plant_year ?? "?"}|${r.plant_week ?? "?"}`;
+      const o = agg[k] || (agg[k] = { varietyName: vname, varietyId: r.variety_id, shipWeek: r.plant_week, shipYear: r.plant_year, plants: 0, broker: null, supplier: null, price: null });
+      o.plants += plants;
+      if (r.broker && !o.broker) { o.broker = r.broker; o.supplier = r.supplier || null; }
+      if (r.liner_unit_cost != null && o.price == null) o.price = +r.liner_unit_cost;
+    });
+    const specs = Object.values(agg).map(l => {
+      const v = vmap[l.varietyId] || {};
+      const keys = [v.variety_key, ...(v.match_aliases || [])].filter(Boolean);
+      const qs = keys.flatMap(k => quotesByKey[k] || []);
+      const q = qs.find(x => l.broker && x.broker === l.broker) || qs[0];
+      return { ...l,
+        broker: l.broker || q?.broker || null,
+        supplier: l.supplier || q?.supplier || null,
+        price: l.price ?? (q ? +q.landed : null),
+        material: q?.material || null,
+        form: seriesOf(l.varietyName)?.form || q?.form_class || null,
+      };
+    });
+    const noBroker = specs.filter(l => !l.broker).map(l => l.varietyName);
+    if (!window.confirm(`Lock ${[...new Set(specs.map(l => l.varietyName))].length} color(s) into draft broker orders?\n(one draft per broker+supplier per ship week · URC/CALL round to 100s)${noBroker.length ? `\n\n⚠ no broker on: ${[...new Set(noBroker)].join(", ")} — those will be skipped` : ""}`)) return;
+    setBusy(true);
+    try {
+      const { orders, skipped } = await lockBrokerOrders(sb, plan.id, specs);
+      window.alert(`Drafted:\n${orders.map(o => `  ${o.orderNumber} — ${o.broker}${o.supplier ? " → " + o.supplier : ""} wk${o.shipWeek} · ${o.qty.toLocaleString()} plants`).join("\n") || "  (nothing — no orderable lines)"}${skipped.length ? `\n\nSkipped (no broker/week): ${[...new Set(skipped.map(l => l.varietyName))].join(", ")}` : ""}\n\nReview + download on the plan's 📋 Orders tab.`);
+      setSelVars(new Set());
+    } catch (e) { window.alert("Order draft failed: " + e.message); }
+    setBusy(false);
+  }
+
   // Existing rounds are reused earliest-first and RETIMED onto the requested weeks
   // (chain re-derived per series); missing rounds are cloned; rounds beyond the list
   // go to zero. Quantities split equally across the rounds.
@@ -1748,6 +1791,14 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
               {label}
             </button>
           ))}
+          {seasonVars.length > 0 && (
+            <button disabled={busy} onClick={lockInOrders}
+              title={selVars.size ? `lock the ${selVars.size} checked color(s) into draft broker orders` : "lock EVERY planned color into draft broker orders (check boxes below to order a subset)"}
+              style={{ padding: "6px 13px", borderRadius: 8, fontWeight: 800, fontSize: 12, cursor: "pointer", fontFamily: FONT,
+                border: `1.5px solid ${C.light}`, background: "#fff", color: C.dark }}>
+              🛒 Lock in order{selVars.size ? ` (${selVars.size})` : ""}
+            </button>
+          )}
           {seasonVars.length > 0 && (
             <button onClick={() => setMixOpen(true)} title="interactive color-mix explorer — filter by color, series, or variety"
               style={{ padding: "6px 13px", borderRadius: 8, fontWeight: 800, fontSize: 12, cursor: "pointer", fontFamily: FONT,

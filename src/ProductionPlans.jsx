@@ -8156,12 +8156,143 @@ function SrcMatcher({ sb, onChanged }) {
   );
 }
 
+// ── Draft broker orders — created by 🛒 Lock in order on family pages ────────
+async function recomputeOrderTotals(sb, orderId) {
+  const { data } = await sb.from("purchase_order_lines").select("qty_ordered,ext_price,status").eq("purchase_order_id", orderId);
+  const act = (data || []).filter(x => x.status === "active");
+  await sb.from("purchase_orders").update({
+    total_qty: act.reduce((s, x) => s + (+x.qty_ordered || 0), 0),
+    total_cost: +act.reduce((s, x) => s + (+x.ext_price || 0), 0).toFixed(2),
+  }).eq("id", orderId);
+}
+
+function DraftOrderCard({ o, oLines, onChanged }) {
+  const sb = getSupabase();
+  const [busy, setBusy] = useState(false);
+  const underMin = (+o.total_qty || 0) < 2000;   // hard rule: 2,000 per supplier by default
+  const act = oLines.filter(l => l.status === "active");
+
+  async function saveLine(l, patch) {
+    setBusy(true);
+    const upd = { ...patch };
+    if (upd.qty_ordered != null && l.unit_price != null) upd.ext_price = +(upd.qty_ordered * +l.unit_price).toFixed(2);
+    await sb.from("purchase_order_lines").update(upd).eq("id", l.id);
+    if (upd.qty_ordered != null) await recomputeOrderTotals(sb, o.id);
+    setBusy(false); onChanged();
+  }
+  async function dropLine(l) {
+    if (!window.confirm(`Remove ${l.variety_name} from this draft?`)) return;
+    setBusy(true);
+    await sb.from("purchase_order_lines").delete().eq("id", l.id);
+    await recomputeOrderTotals(sb, o.id);
+    setBusy(false); onChanged();
+  }
+  async function saveNotes(v) {
+    await sb.from("purchase_orders").update({ notes: v.trim() || null }).eq("id", o.id); onChanged();
+  }
+  async function markSent() {
+    if (!window.confirm(`Mark ${o.order_number} as SENT to ${o.broker}? It freezes into the placed list below.`)) return;
+    setBusy(true);
+    await sb.from("purchase_orders").update({ status: "sent", date_ordered: new Date().toISOString().slice(0, 10) }).eq("id", o.id);
+    setBusy(false); onChanged();
+  }
+  async function deleteDraft() {
+    if (!window.confirm(`Delete draft ${o.order_number} and its ${act.length} lines? The plan itself is untouched.`)) return;
+    setBusy(true);
+    await sb.from("purchase_order_lines").delete().eq("purchase_order_id", o.id);
+    await sb.from("purchase_orders").delete().eq("id", o.id);
+    setBusy(false); onChanged();
+  }
+  async function downloadXlsx() {
+    const XLSX = await import("xlsx");
+    const aoa = [
+      [`ORDER ${o.order_number}`], [`Broker: ${o.broker}`, `Supplier: ${o.supplier || ""}`],
+      [`Ship week: ${o.ship_week} (${o.ship_date || ""})`, o.notes ? `Notes: ${o.notes}` : ""],
+      [],
+      ["Material #", "Variety", "Form", "Qty", "$/unit", "Ext $", "Notes"],
+      ...act.map(l => [l.material || "", l.variety_name, l.form || "", +l.qty_ordered || 0,
+        l.unit_price != null ? +(+l.unit_price).toFixed(4) : "", l.ext_price != null ? +(+l.ext_price).toFixed(2) : "", l.notes || ""]),
+      [],
+      ["", "TOTAL", "", +o.total_qty || 0, "", +o.total_cost || 0, ""],
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws["!cols"] = [{ wch: 12 }, { wch: 34 }, { wch: 8 }, { wch: 9 }, { wch: 9 }, { wch: 11 }, { wch: 30 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Order");
+    XLSX.writeFile(wb, `${o.order_number}.xlsx`);
+  }
+
+  const inp = { width: 74, padding: "4px 6px", borderRadius: 6, border: `1px solid ${COLORS.border}`, fontFamily: "inherit", fontSize: 12.5, textAlign: "right" };
+  return (
+    <div style={{ background: "#fffdf5", border: `1.5px dashed ${underMin ? COLORS.red : COLORS.amber}`, borderRadius: 10, padding: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 10 }}>
+        <div>
+          <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 19, color: COLORS.dark }}>
+            <span style={{ fontSize: 10, fontWeight: 800, background: COLORS.amber, color: "#fff", borderRadius: 6, padding: "2px 8px", verticalAlign: "middle", marginRight: 8, fontFamily: "'DM Sans', sans-serif" }}>DRAFT</span>
+            {o.order_number} <span style={{ fontSize: 13, color: COLORS.muted, fontWeight: 400 }}>· wk{o.ship_week} · {o.ship_date}</span>
+          </div>
+          <div style={{ fontSize: 12, color: COLORS.muted, marginTop: 2 }}>{o.broker}{o.supplier ? ` → ${o.supplier}` : ""}</div>
+          {underMin && <div style={{ fontSize: 11, fontWeight: 800, color: COLORS.red, marginTop: 4 }}>⚠ {(+o.total_qty || 0).toLocaleString()} of the 2,000 supplier minimum — add items or combine weeks before sending</div>}
+        </div>
+        <div style={{ textAlign: "right" }}>
+          <div style={{ fontWeight: 800, fontSize: 18, color: COLORS.dark }}>{(+o.total_qty || 0).toLocaleString()} plants</div>
+          <div style={{ fontSize: 12, color: COLORS.light, fontWeight: 700 }}>{fmtMoney(+o.total_cost)}</div>
+        </div>
+      </div>
+      <div style={{ marginTop: 12, overflowX: "auto" }}>
+        <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12.5 }}>
+          <thead><tr>{["Material #", "Variety", "Form", "Qty", "$/unit", "Ext $", "Line note", ""].map((h, i) => (
+            <th key={h + i} style={{ textAlign: i >= 3 && i <= 5 ? "right" : "left", padding: "5px 8px", fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: COLORS.muted, borderBottom: `2px solid ${COLORS.border}` }}>{h}</th>
+          ))}</tr></thead>
+          <tbody>
+            {act.map(l => {
+              const offGrid = /URC|CALL/i.test(l.form || "") && (+l.qty_ordered % 100 !== 0 || +l.qty_ordered < 100);
+              return (
+                <tr key={l.id}>
+                  <td style={{ padding: "4px 8px", borderBottom: `1px solid ${COLORS.border}`, fontFamily: "ui-monospace,Menlo,monospace", fontSize: 11.5 }}>{l.material || <span style={{ color: COLORS.amber }}>—</span>}</td>
+                  <td style={{ padding: "4px 8px", borderBottom: `1px solid ${COLORS.border}`, fontWeight: 600 }}>{l.variety_name}</td>
+                  <td style={{ padding: "4px 8px", borderBottom: `1px solid ${COLORS.border}`, fontSize: 11, color: COLORS.muted }}>{l.form || "—"}</td>
+                  <td style={{ padding: "4px 8px", borderBottom: `1px solid ${COLORS.border}`, textAlign: "right" }}>
+                    <input type="number" step={100} min={0} defaultValue={+l.qty_ordered || 0} disabled={busy}
+                      onBlur={e => { const v = Math.max(0, Math.round(+e.target.value || 0)); if (v !== +l.qty_ordered) saveLine(l, { qty_ordered: v }); }}
+                      style={{ ...inp, border: `1px solid ${offGrid ? COLORS.red : COLORS.border}` }} title={offGrid ? "URC/CALL order in 100s, minimum 100 per color" : undefined} />
+                  </td>
+                  <td style={{ padding: "4px 8px", borderBottom: `1px solid ${COLORS.border}`, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{l.unit_price != null ? "$" + (+l.unit_price).toFixed(3) : <span style={{ color: COLORS.amber, fontWeight: 800 }}>no $</span>}</td>
+                  <td style={{ padding: "4px 8px", borderBottom: `1px solid ${COLORS.border}`, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{l.ext_price != null ? fmtMoney(+l.ext_price) : "—"}</td>
+                  <td style={{ padding: "4px 8px", borderBottom: `1px solid ${COLORS.border}` }}>
+                    <input defaultValue={l.notes || ""} placeholder="note…" disabled={busy}
+                      onBlur={e => { if ((e.target.value || "") !== (l.notes || "")) saveLine(l, { notes: e.target.value.trim() || null }); }}
+                      style={{ ...inp, width: 160, textAlign: "left" }} />
+                  </td>
+                  <td style={{ padding: "4px 4px", borderBottom: `1px solid ${COLORS.border}` }}>
+                    <button disabled={busy} onClick={() => dropLine(l)} title="remove this line" style={{ background: "none", border: "none", color: COLORS.muted, cursor: "pointer", fontSize: 13 }}>✕</button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <textarea defaultValue={o.notes || ""} placeholder="Order notes for the broker (substitutions OK, ship-with preferences, etc.) — included on the download"
+        onBlur={e => { if ((e.target.value || "") !== (o.notes || "")) saveNotes(e.target.value); }} rows={2}
+        style={{ width: "100%", boxSizing: "border-box", marginTop: 10, padding: "7px 9px", border: `1px solid ${COLORS.border}`, borderRadius: 8, fontFamily: "inherit", fontSize: 12.5, resize: "vertical" }} />
+      <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+        <button disabled={busy} onClick={downloadXlsx} style={{ background: COLORS.dark, color: "#c8e6b8", border: "none", borderRadius: 8, padding: "7px 14px", fontWeight: 800, fontSize: 12.5, cursor: "pointer", fontFamily: "inherit" }}>⬇ Download XLSX</button>
+        <button disabled={busy} onClick={markSent} style={{ background: COLORS.light, color: "#fff", border: "none", borderRadius: 8, padding: "7px 14px", fontWeight: 800, fontSize: 12.5, cursor: "pointer", fontFamily: "inherit" }}>✓ Mark sent</button>
+        <span style={{ flex: 1 }} />
+        <button disabled={busy} onClick={deleteDraft} style={{ background: "none", border: `1px solid ${COLORS.border}`, color: COLORS.red, borderRadius: 8, padding: "7px 12px", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>🗑 Delete draft</button>
+      </div>
+    </div>
+  );
+}
+
 // ── Orders tab — broker order acks ──────────────────────────────────────────
 function OrdersTab({ plan }) {
   const sb = getSupabase();
   const [orders, setOrders] = useState([]);
   const [lines,  setLines]  = useState([]);
   const [expanded, setExpanded] = useState(null);
+  const [tick, setTick] = useState(0);
 
   useEffect(() => {
     if (!sb) return;
@@ -8174,15 +8305,19 @@ function OrdersTab({ plan }) {
         const { data: pol } = await sb.from("purchase_order_lines")
           .select("*").in("purchase_order_id", ids).order("line_no");
         setLines(pol || []);
-      }
+      } else setLines([]);
     })();
-  }, [sb, plan.id]);
+  }, [sb, plan.id, tick]);
+
+  const drafts = orders.filter(o => o.status === "draft");
+  const placed = orders.filter(o => o.status !== "draft");
 
   if (orders.length === 0) {
     return (
       <div style={{ background: COLORS.card, border: `1px dashed ${COLORS.border}`, borderRadius: 10, padding: 40, textAlign: "center", color: COLORS.muted }}>
         <div style={{ fontSize: 32, marginBottom: 12 }}>📋</div>
         <div>No orders for <strong>{plan.name}</strong> yet.</div>
+        <div style={{ fontSize: 12, marginTop: 6 }}>Hit <b>🛒 Lock in order</b> on a family page — drafts land here to finalize + download.</div>
       </div>
     );
   }
@@ -8192,6 +8327,16 @@ function OrdersTab({ plan }) {
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
+      {drafts.length > 0 && (
+        <>
+          <div style={{ fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".5px", color: COLORS.amber }}>
+            ✏️ Drafts to finalize — edit quantities, add notes, download, send, then ✓ Mark sent
+          </div>
+          {drafts.map(o => (
+            <DraftOrderCard key={o.id} o={o} oLines={lines.filter(l => l.purchase_order_id === o.id)} onChanged={() => setTick(t => t + 1)} />
+          ))}
+        </>
+      )}
       {/* Banner */}
       <div style={{ background: COLORS.dark, color: "#fff", borderRadius: 10, padding: 16, display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
         <Stat label="Orders"        value={orders.length}                                              dark />
@@ -8201,7 +8346,7 @@ function OrdersTab({ plan }) {
       </div>
 
       {/* Order cards */}
-      {orders.map(o => {
+      {placed.map(o => {
         const oLines = lines.filter(l => l.purchase_order_id === o.id);
         const active = oLines.filter(l => l.status === "active");
         const cancelled = oLines.filter(l => l.status === "cancelled");

@@ -466,3 +466,80 @@ export function FinishWkInput({ wk, yr, onCommit, disabled, placeholder = "YYWW"
     </span>
   );
 }
+
+// ── 🛒 Lock in broker orders ─────────────────────────────────────────────────
+// specs: [{ varietyName, varietyId, broker, supplier, shipWeek, shipYear,
+//           plants, price, material, form }] — one per variety×ship-week.
+// Hard rules (Caleb 8/10): URC/CALL = minimum 100 per color, ordered in 100s;
+// supplier orders default to a 2,000 minimum (checked in the Orders tab UI,
+// not enforced here — combining weeks to hit it is a human call).
+// Grain: ONE DRAFT per broker+supplier+ship-week (EHR books per supplier —
+// that's how the ack order numbers come back; Ball is single-supplier anyway).
+// Re-locking the same variety UPDATES its line in place — never a second line,
+// which is the no-double-ordering guard.
+export async function lockBrokerOrders(sb, planId, specs) {
+  const ready = [], skipped = [];
+  specs.forEach(l => {
+    if (!(l.plants > 0)) return;                       // nothing planned — not an error
+    if (!l.broker || !l.shipWeek) { skipped.push(l); return; }
+    const qty = /URC|CALL/i.test(l.form || "")
+      ? Math.max(100, Math.ceil(l.plants / 100) * 100)
+      : Math.ceil(l.plants);
+    ready.push({ ...l, qty });
+  });
+
+  const groups = {};
+  ready.forEach(l => {
+    const k = `${l.broker}|${l.supplier || ""}|${l.shipYear || ""}|${l.shipWeek}`;
+    (groups[k] = groups[k] || []).push(l);
+  });
+
+  const results = [];
+  for (const ls of Object.values(groups)) {
+    const { broker, supplier, shipWeek } = ls[0];
+    const shipYear = ls[0].shipYear || new Date().getFullYear() + 1;
+    let q = sb.from("purchase_orders").select("id,order_number").eq("plan_id", planId)
+      .eq("broker", broker).eq("ship_week", shipWeek).eq("ship_year", shipYear).eq("status", "draft");
+    q = supplier ? q.eq("supplier", supplier) : q.is("supplier", null);
+    let { data: ord, error: findErr } = await q.maybeSingle();
+    if (findErr) throw new Error(findErr.message);
+    if (!ord) {
+      const yyww = `${String(shipYear % 100).padStart(2, "0")}${String(shipWeek).padStart(2, "0")}`;
+      const num = `DRAFT-${String(broker).slice(0, 4).toUpperCase()}${supplier ? "-" + String(supplier).replace(/[^A-Za-z]/g, "").slice(0, 4).toUpperCase() : ""}-${yyww}`;
+      const monday = isoWeekMonday(shipYear, shipWeek);
+      const { data: ins, error } = await sb.from("purchase_orders").insert({
+        plan_id: planId, order_number: num, broker, supplier: supplier || null,
+        ship_week: shipWeek, ship_year: shipYear,
+        ship_date: monday ? monday.toISOString().slice(0, 10) : null,
+        status: "draft", total_qty: 0, total_cost: 0,
+      }).select("id,order_number").single();
+      if (error) throw new Error(error.message);
+      ord = ins;
+    }
+    const { data: exist, error: exErr } = await sb.from("purchase_order_lines")
+      .select("id,variety_name,line_no").eq("purchase_order_id", ord.id);
+    if (exErr) throw new Error(exErr.message);
+    let nextNo = Math.max(0, ...(exist || []).map(l => +l.line_no || 0)) + 1;
+    for (const l of ls) {
+      const ext = l.price != null ? +(l.qty * l.price).toFixed(2) : null;
+      const match = (exist || []).find(x => String(x.variety_name).trim().toLowerCase() === String(l.varietyName).trim().toLowerCase());
+      const payload = {
+        variety_name: l.varietyName, variety_id: l.varietyId || null,
+        qty_ordered: l.qty, unit_price: l.price ?? null, ext_price: ext,
+        material: l.material || null, form: l.form || null, status: "active",
+      };
+      const { error } = match
+        ? await sb.from("purchase_order_lines").update(payload).eq("id", match.id)
+        : await sb.from("purchase_order_lines").insert({ ...payload, purchase_order_id: ord.id, line_no: nextNo++ });
+      if (error) throw new Error(error.message);
+    }
+    const { data: allL } = await sb.from("purchase_order_lines")
+      .select("qty_ordered,ext_price,status").eq("purchase_order_id", ord.id);
+    const act = (allL || []).filter(x => x.status === "active");
+    const totQ = act.reduce((s, x) => s + (+x.qty_ordered || 0), 0);
+    const totC = act.reduce((s, x) => s + (+x.ext_price || 0), 0);
+    await sb.from("purchase_orders").update({ total_qty: totQ, total_cost: +totC.toFixed(2) }).eq("id", ord.id);
+    results.push({ orderNumber: ord.order_number, broker, supplier, shipWeek, lines: ls.length, qty: totQ });
+  }
+  return { orders: results, skipped };
+}
