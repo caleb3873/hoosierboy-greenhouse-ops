@@ -218,9 +218,10 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
     if (!rows) return [];
     const m = {};
     rows.forEach(r => {
-      // a group's identity = when it PLANTS and FINISHES; arrival varies by series
-      // physiology (per-vr rooting) and displays as a range — it must not split groups
-      const k = `${r.plant_week ?? "?"}|${r.ready_week ?? r.ship_week ?? "?"}`;
+      // ONE ROUND = ONE WEEK OF PLANTING (Caleb 8/10): everything planting in the
+      // same week is the SAME group, whatever its variety or finish week. Finish
+      // shows as a range when series diverge — it must never split a planting week.
+      const k = `${r.plant_year ?? "?"}|${r.plant_week ?? "?"}`;
       const g = (m[k] = m[k] || { key: k, plant: r.plant_week, plantYear: r.plant_year,
         ready: r.ready_week, readyYear: r.ready_year, shipMin: null, shipMax: null, rows: [] });
       g.rows.push(r);
@@ -708,7 +709,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
       }
     } catch { /* audit must not block */ }
     const pNew = wrap(ready - finWks, readyYear);
-    setFlashKey(`${pNew.wk}|${ready}`);
+    setFlashKey(`${pNew.yr}|${pNew.wk}`);
     setRipple(acc.moved || acc.flags.length ? acc : null);
     setBusy(false); setTick(t => t + 1);
   }
@@ -739,7 +740,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
       { ship: sh.wk, shipYear: sh.yr, plant: target.plant, plantYear: pYr },
       { wk: vr.rows[0]?.ship_week, yr: vr.rows[0]?.ship_year ?? vr.rows[0]?.plant_year }, displayName);
     setRipple(mvRes.moved || mvRes.flags.length ? mvRes : null);
-    setFlashKey(`${target.plant}|${target.ready ?? "?"}`);
+    setFlashKey(`${target.plantYear ?? vr.rows[0]?.plant_year ?? "?"}|${target.plant}`);
     try {
       await sb.from("item_change_log").insert({ plan_id: plan.id, item_name: vr.rows[0]?.item_name || vr.variety,
         variety_key: vr.vkey || null, change_type: "group_move",
@@ -851,7 +852,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
           changed_by: displayName || null, source: "family-page" });
       }
     } catch { /* audit must not block */ }
-    setFlashKey(`${p.wk}|${ready}`);   // follow the new round after the re-sort
+    setFlashKey(`${p.yr}|${p.wk}`);   // follow the new round after the re-sort
     setBusy(false); setDupG(null); setTick(t => t + 1);
   }
   // ✕ Discontinue: remove a color from THIS plan — history lives in past seasons
@@ -1202,7 +1203,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
     setBusy(true);
     try {
       // bucket the color's rows into its existing rounds (same key the group view uses)
-      const keyOf = r => `${r.plant_week ?? "?"}|${r.ready_week ?? r.ship_week ?? "?"}`;
+      const keyOf = r => `${r.plant_year ?? "?"}|${r.plant_week ?? "?"}`;   // one plant week = one round
       const byKey = {};
       vr.rows.forEach(r => { (byKey[keyOf(r)] = byKey[keyOf(r)] || []).push(r); });
       const ordered = vr.rounds.slice().sort((a, b) => ((a.readyYear ?? 0) * 100 + (a.ready ?? 0)) - ((b.readyYear ?? 0) * 100 + (b.ready ?? 0)))
