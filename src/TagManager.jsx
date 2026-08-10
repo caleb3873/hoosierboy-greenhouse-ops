@@ -48,6 +48,15 @@ export default function TagManager() {
     })();
   }, [sb]);
 
+  async function toggleTag(item) {
+    const cur = inv[item];
+    const next = !(cur ? cur.tagged !== false : true);   // default is TAGGED — first click turns it off
+    const rec = { item_name: item, tagged: next, on_hand: cur?.on_hand ?? 0, updated_by: displayName || null, updated_at: new Date().toISOString() };
+    const { data, error } = await sb.from("tag_inventory").upsert(rec, { onConflict: "item_name" }).select().single();
+    if (error) { window.alert("Toggle didn't save: " + error.message); return; }
+    setInv(v => ({ ...v, [item]: data }));
+  }
+
   async function saveOnHand(item, raw) {
     const n = Math.max(0, Math.round(+String(raw).replace(/[^0-9]/g, "") || 0));
     const cur = inv[item];
@@ -68,14 +77,16 @@ export default function TagManager() {
     const all = [...demand, ...extras];
     const qq = q.trim().toLowerCase();
     return all.filter(r => !qq || r.item.toLowerCase().includes(qq)).map(r => {
+      const tagged = inv[r.item] ? inv[r.item].tagged !== false : true;   // DEFAULT: every 4.5" gets one tag per pot
       const onHand = +(inv[r.item]?.on_hand ?? 0);
-      const order = Math.max(0, r.pots - onHand);
-      return { ...r, onHand, order, cost: order * tagCost, surplus: Math.max(0, onHand - r.pots) };
+      const need = tagged ? r.pots : 0;
+      const order = Math.max(0, need - onHand);
+      return { ...r, tagged, need, onHand, order, cost: order * tagCost, surplus: Math.max(0, onHand - need) };
     });
   }, [demand, inv, q, tagCost]);
 
   const tot = useMemo(() => (rows || []).reduce((a, r) => ({
-    pots: a.pots + r.pots, onHand: a.onHand + r.onHand, order: a.order + r.order, cost: a.cost + r.cost, surplus: a.surplus + r.surplus,
+    pots: a.pots + r.need, onHand: a.onHand + r.onHand, order: a.order + r.order, cost: a.cost + r.cost, surplus: a.surplus + r.surplus,
   }), { pots: 0, onHand: 0, order: 0, cost: 0, surplus: 0 }), [rows]);
 
   function copyOrder() {
@@ -130,13 +141,19 @@ export default function TagManager() {
             </tr></thead>
             <tbody>
               {rows.map(r => (
-                <tr key={r.item} style={{ background: r.pots === 0 ? "#fbf8ef" : undefined }}>
+                <tr key={r.item} style={{ background: r.pots === 0 ? "#fbf8ef" : undefined, opacity: r.tagged ? 1 : 0.55 }}>
                   <td style={{ ...td, fontWeight: 600 }}>
+                    <button onClick={() => toggleTag(r.item)}
+                      title={r.tagged ? "tagged — one tag per pot (click to turn OFF for this item)" : "no tag for this item (click to turn back on)"}
+                      style={{ marginRight: 7, padding: "2px 8px", borderRadius: 10, fontSize: 10, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+                        border: `1.5px solid ${r.tagged ? C.light : C.border}`, background: r.tagged ? "#eef6e8" : "#fff", color: r.tagged ? "#2e7d32" : C.muted }}>
+                      {r.tagged ? "🏷 tag" : "no tag"}
+                    </button>
                     {r.item}
                     {r.pots === 0 && <span title="tags in the drawer for an item not in the plan — surplus" style={{ marginLeft: 6, fontSize: 9, fontWeight: 800, color: C.amber, background: "#f7edd7", borderRadius: 5, padding: "1px 6px" }}>surplus</span>}
                     {r.surplus > 0 && r.pots > 0 && <span title={`${r.surplus.toLocaleString()} more tags than the plan needs`} style={{ marginLeft: 6, fontSize: 9, fontWeight: 800, color: C.amber }}>+{r.surplus.toLocaleString()} extra</span>}
                   </td>
-                  <td style={num}>{r.pots ? r.pots.toLocaleString() : "—"}</td>
+                  <td style={num}>{r.tagged ? (r.pots ? r.pots.toLocaleString() : "—") : <span title="tags turned off for this item">off</span>}</td>
                   <td style={{ ...num, background: savedFlash === r.item ? "#eef6e8" : undefined, transition: "background .6s" }}>
                     <input key={`${r.item}|${r.onHand}`} defaultValue={r.onHand || ""} placeholder="0" inputMode="numeric"
                       onBlur={e => saveOnHand(r.item, e.target.value)}
