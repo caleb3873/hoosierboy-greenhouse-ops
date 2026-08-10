@@ -8177,7 +8177,7 @@ function OrderItemsView({ lines, orders, famMap, onChanged, onOpenFamily }) {
   const omap = Object.fromEntries(orders.map(o => [o.id, o]));
   const all = lines.filter(l => l.status === "active").map(l => {
     const o = omap[l.purchase_order_id] || {};
-    return { ...l, _o: o, _fam: famMap[l.variety_id] || null };
+    return { ...l, _o: o, _fam: famMap[`line:${l.id}`] || famMap[l.variety_id] || null };
   });
   const qq = q.trim().toLowerCase();
   const rows = all.filter(r => !qq || [r.variety_name, r.material, r._o.farm, r._o.supplier, r._o.broker, r._o.order_number, r.prod_note, r.notes, r._fam?.label]
@@ -8219,7 +8219,7 @@ function OrderItemsView({ lines, orders, famMap, onChanged, onOpenFamily }) {
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
         <input value={q} onChange={e => setQ(e.target.value)} placeholder="search variety, material #, farm, order, note…"
           style={{ flex: 1, minWidth: 220, maxWidth: 380, padding: "7px 11px", borderRadius: 8, border: `1.5px solid ${COLORS.border}`, fontFamily: "inherit", fontSize: 12.5 }} />
-        <span style={{ fontSize: 12, color: COLORS.muted }}>{rows.length} items · <b>{totQ.toLocaleString()}</b> plants · <b>{fmtMoney(totC)}</b></span>
+        <span style={{ fontSize: 12, color: COLORS.muted }}>{rows.length} items · <b>{totQ.toLocaleString()}</b> plants · <b>{fmtMoney(totC)}</b> · <i>tap any column header to sort ↕</i></span>
         {sel.size > 0 && (
           <button disabled={busy} onClick={bulkNote}
             style={{ background: COLORS.dark, color: "#c8e6b8", border: "none", borderRadius: 8, padding: "7px 14px", fontWeight: 800, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
@@ -8431,10 +8431,13 @@ function OrdersTab({ plan }) {
         if (vids.length) {
           const { data: scr } = await sb.from("scheduled_crops").select("variety_id,recipe_id")
             .eq("plan_id", plan.id).in("variety_id", vids).not("recipe_id", "is", null).limit(2000);
-          const rids = [...new Set((scr || []).map(x => x.recipe_id))];
+          // recipes referenced by the LINES themselves (stamped at lock-in — the truth)
+          // plus variety-lookup fallback for anything unstamped
+          const rids = [...new Set([...(scr || []).map(x => x.recipe_id), ...(pol || []).map(l => l.recipe_id).filter(Boolean)])];
           const { data: recs } = rids.length ? await sb.from("crop_recipes").select("id,crop_name,size_label").in("id", rids) : { data: [] };
           const rname = Object.fromEntries((recs || []).map(r => [r.id, `${r.size_label || ""} ${r.crop_name || ""}`.trim() || "family"]));
           const fm = {};
+          (pol || []).forEach(l => { if (l.recipe_id) fm[`line:${l.id}`] = { rid: l.recipe_id, label: rname[l.recipe_id] }; });
           (scr || []).forEach(x => { if (!fm[x.variety_id]) fm[x.variety_id] = { rid: x.recipe_id, label: rname[x.recipe_id] }; });
           setFamMap(fm);
         } else setFamMap({});
@@ -8460,8 +8463,8 @@ function OrdersTab({ plan }) {
 
   const famsOf = o => {
     const seen = {};
-    lines.filter(l => l.purchase_order_id === o.id && l.variety_id && famMap[l.variety_id])
-      .forEach(l => { const f = famMap[l.variety_id]; seen[f.rid] = f; });
+    lines.filter(l => l.purchase_order_id === o.id)
+      .forEach(l => { const f = famMap[`line:${l.id}`] || (l.variety_id && famMap[l.variety_id]); if (f) seen[f.rid] = f; });
     return Object.values(seen);
   };
 

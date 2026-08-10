@@ -542,7 +542,7 @@ export async function lockBrokerOrders(sb, planId, specs) {
       const ext = l.price != null ? +(l.qty * l.price).toFixed(2) : null;
       const match = (exist || []).find(x => String(x.variety_name).trim().toLowerCase() === String(l.varietyName).trim().toLowerCase());
       const payload = {
-        variety_name: l.varietyName, variety_id: l.varietyId || null,
+        variety_name: l.varietyName, variety_id: l.varietyId || null, recipe_id: l.recipeId || null,
         qty_ordered: l.qty, unit_price: l.price ?? null, ext_price: ext,
         material: l.material || null, form: l.form || null, status: "active",
       };
