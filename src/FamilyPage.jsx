@@ -34,6 +34,11 @@ const potsOf = r => (+r.qty_pots || 0) * potFactor(r);
 // Variety names carry their color; bucket them so the family reads as a palette.
 // Checked in order — first match wins (phrases before single words).
 const COLOR_BUCKETS = [
+  // series overrides first — some lines read as a SERIES, not a color (Caleb 8/10:
+  // all Brocades together, all Calderas together, ivy geraniums as their own bucket)
+  [/BROCADE/, "Brocade", "#a8623c"],
+  [/CALDERA/, "Caldera", "#cf5a72"],
+  [/PRECISION/, "Ivy geranium", "#7a6bbf"],
   [/APPLE ?BLOSSOM|BLUSH/, "Blush", "#f3c4c9"],
   [/DARK ?RED|CHERRY|NIGHT|BURGUNDY|WINE|MERLOT/, "Dark red", "#8e1f1f"],
   [/PINK FLAME/, "Pink", "#f08cae"],
