@@ -86,6 +86,7 @@ function canonical(desc) {
       broker: "Ball", supplier: SUPPLIER, origin,
       crop: name.split(" ")[0], variety: name, variety_key: key, match_key: key,
       form_class: fc, form_raw: `${r.Size} (Ball WebTrack${origin ? ` ${origin}` : ""}${FREIGHT ? "" : "; freight n/i"})`,
+      material: String(r.Material || "").trim() || null,   // Ball's order/material number — needed at order time
       list_price: +(price / 100).toFixed(4), royalty: +(royalty / 100).toFixed(4),
       freight: FREIGHT || null,
       landed: +((price + royalty) / 100 + FREIGHT).toFixed(4),
