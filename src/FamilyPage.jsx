@@ -235,6 +235,8 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
   const [divideFor, setDivideFor] = useState(null);    // {variety, n, gap} — inline divide-into-rounds UI
   const [recipeOpen, setRecipeOpen] = useState(false); // recipe card collapsed by default — planning first, spec on demand
   const [mixOpen, setMixOpen] = useState(false);       // 🎨 color-mix pop-out explorer
+  const [poInfo, setPoInfo] = useState({ orders: [], lines: 0 });  // orders locked in on this family
+  const [editOverride, setEditOverride] = useState(false);         // 🔓 deliberately editing locked orders
 
   lockedRef.current = locked;
   useEffect(() => {
@@ -255,6 +257,32 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
         .eq("plan_id", plan.id).eq("recipe_id", recipeId).not("is_combo_component", "is", true).limit(2000);
       setRows(sc || []);
       const vids = [...new Set((sc || []).map(r => r.variety_id).filter(Boolean))];
+      // 🔒 orders locked in on this family? (draft or sent) — the page locks
+      {
+        const { data: pos } = await sb.from("purchase_orders")
+          .select("id,order_number,status,ship_date,ship_week,broker,farm")
+          .eq("plan_id", plan.id).in("status", ["draft", "sent"]);
+        if (pos?.length && vids.length) {
+          const { data: pls } = await sb.from("purchase_order_lines")
+            .select("purchase_order_id,variety_id,form,status")
+            .in("purchase_order_id", pos.map(o => o.id)).in("variety_id", vids);
+          const mine = (pls || []).filter(l => l.status === "active");
+          const byOrd = {};
+          mine.forEach(l => {
+            const o = byOrd[l.purchase_order_id] || (byOrd[l.purchase_order_id] = { n: 0, hasLiner: false });
+            o.n++; if (!/URC|CALL/i.test(l.form || "")) o.hasLiner = true;
+          });
+          setPoInfo({
+            lines: mine.length,
+            orders: pos.filter(o => byOrd[o.id]).map(o => {
+              const leadDays = byOrd[o.id].hasLiner ? 70 : 8;   // liners 10 wks, URC/callused 8 days
+              let deadline = null;
+              if (o.ship_date) { const d = new Date(o.ship_date + "T00:00:00"); d.setDate(d.getDate() - leadDays); deadline = d.toISOString().slice(0, 10); }
+              return { ...o, nLines: byOrd[o.id].n, leadDays, deadline };
+            }),
+          });
+        } else setPoInfo({ orders: [], lines: 0 });
+      }
       if (vids.length) {
         const { data: vs } = await sb.from("variety_library").select("id,variety,variety_key,match_aliases").in("id", vids);
         setVmap(Object.fromEntries((vs || []).map(v => [v.id, v])));
@@ -1391,6 +1419,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
       const { orders, skipped } = await lockBrokerOrders(sb, plan.id, specs);
       window.alert(`Drafted:\n${orders.map(o => `  ${o.orderNumber} — ${o.broker}${o.supplier ? " → " + o.supplier : ""}${o.farm ? " (" + o.farm + ")" : ""} wk${o.shipWeek} · ${o.qty.toLocaleString()} plants`).join("\n") || "  (nothing — no orderable lines)"}${skipped.length ? `\n\nSkipped (no broker/week): ${[...new Set(skipped.map(l => l.varietyName))].join(", ")}` : ""}\n\nReview + download on the plan's 📋 Orders tab.`);
       setSelVars(new Set());
+      setEditOverride(false); setTick(t => t + 1);   // page re-locks; banner picks up the fresh drafts
     } catch (e) { window.alert("Order draft failed: " + e.message); }
     setBusy(false);
   }
@@ -1543,6 +1572,51 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
             style={{ padding: "5px 11px", borderRadius: 8, border: `1.5px solid ${C.creamBr}`, background: "#fff", color: C.dark, fontWeight: 800, fontSize: 11.5, cursor: "pointer", fontFamily: FONT }}>⇧ Transfer to a new size</button>
           <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: C.muted }}>✕</button>
         </div>
+
+        {/* 🔒 orders locked in — page freezes until deliberately unlocked; URC/CALL
+            change up to 8 days before ship, liners 10 weeks (hard block past that) */}
+        {poInfo.orders.length > 0 && (() => {
+          const today = new Date().toISOString().slice(0, 10);
+          const frozen = poInfo.orders.filter(o => o.deadline && today > o.deadline);
+          const tryUnlock = () => {
+            if (frozen.length === poInfo.orders.length) {
+              window.alert("⛔ Past the change window for EVERY order on this family:" + String.fromCharCode(10, 10) + frozen.map(o => `  ${o.order_number} — ships ${o.ship_date} (window closed ${o.deadline})`).join(String.fromCharCode(10)) + String.fromCharCode(10, 10) + "URC/callused orders change up to 8 days before shipment; liner orders 10 weeks. Call the broker if something truly has to move.");
+              return;
+            }
+            const NL = String.fromCharCode(10);
+            const msg = "⚠ You are editing an order that has been LOCKED IN." + NL + NL
+              + poInfo.orders.map(o => `  ${o.order_number} — ${o.broker}${o.farm ? " · " + o.farm : ""} · wk${o.ship_week} · change by ${o.deadline || "?"}${frozen.includes(o) ? "  ⛔ WINDOW CLOSED" : ""}`).join(NL)
+              + NL + NL + "After your changes, hit 🛒 Lock in order again so the drafts update. Unlock?";
+            if (window.confirm(msg)) setEditOverride(true);
+          };
+          return (
+            <div style={{ background: editOverride ? "#fdecea" : "#e8eef9", border: `1.5px solid ${editOverride ? C.red : "#8fa7d9"}`, borderRadius: 10, padding: "9px 13px", marginBottom: 10, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <b style={{ fontSize: 12.5, color: editOverride ? C.red : "#2c4a86" }}>
+                {editOverride ? "⚠ EDITING LOCKED-IN ORDERS" : "🔒 ORDERS LOCKED IN — page is read-only"}
+              </b>
+              <span style={{ fontSize: 11.5, color: C.text }}>
+                {poInfo.lines} line{poInfo.lines === 1 ? "" : "s"} across {poInfo.orders.length} order{poInfo.orders.length === 1 ? "" : "s"}
+              </span>
+              {poInfo.orders.map(o => (
+                <span key={o.id} title={`${o.nLines} lines · ${o.leadDays === 8 ? "URC/callused: change up to 8 days before ship" : "liners: change up to 10 weeks before ship"}`}
+                  style={{ fontSize: 10.5, fontWeight: 700, padding: "2px 8px", borderRadius: 7, fontVariantNumeric: "tabular-nums",
+                    background: frozen.includes(o) ? "#fbe3e0" : "#fff", border: `1px solid ${frozen.includes(o) ? C.red : "#c3d0e8"}`, color: frozen.includes(o) ? C.red : "#2c4a86" }}>
+                  {o.order_number} · wk{o.ship_week}{o.deadline ? ` · ${frozen.includes(o) ? "⛔ closed" : "change by " + o.deadline}` : ""}
+                </span>
+              ))}
+              <span style={{ flex: 1 }} />
+              {editOverride
+                ? <button onClick={() => setEditOverride(false)} style={{ padding: "5px 12px", borderRadius: 8, border: "none", background: C.dark, color: "#c8e6b8", fontWeight: 800, fontSize: 11.5, cursor: "pointer", fontFamily: FONT }}>🔒 Re-lock page</button>
+                : <button onClick={tryUnlock} style={{ padding: "5px 12px", borderRadius: 8, border: `1.5px solid #8fa7d9`, background: "#fff", color: "#2c4a86", fontWeight: 800, fontSize: 11.5, cursor: "pointer", fontFamily: FONT }}>🔓 Unlock to edit</button>}
+            </div>
+          );
+        })()}
+        <div style={{
+          pointerEvents: poInfo.orders.length > 0 && !editOverride ? "none" : undefined,
+          opacity: poInfo.orders.length > 0 && !editOverride ? 0.94 : 1,
+          background: poInfo.orders.length > 0 ? (editOverride ? "#fdf6f5" : "#edf1f8") : undefined,
+          borderRadius: poInfo.orders.length > 0 ? 12 : 0, padding: poInfo.orders.length > 0 ? 8 : 0,
+        }}>
 
         {/* hero */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", gap: 8, margin: "10px 0 12px" }}>
@@ -2337,6 +2411,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
 
         {/* search the broker catalog and lock a quote to a color. From a color's 🔗 it
             attaches straight to that variety; from the toolbar it asks which color after. */}
+        </div>
         {quoteFor && (
           <QuotePicker sb={sb}
             varietyKey={quoteFor.v?.vkey || null}
