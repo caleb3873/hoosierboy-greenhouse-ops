@@ -30,6 +30,31 @@ const potsOf = r => (+r.qty_pots || 0) * potFactor(r);
 
 // Past-week guard (Caleb 7/29: typed 2615 for 2715) — an item cannot finish in the past.
 // Returns true (and explains) when the ready week already went by.
+// ── color bucketing for the 🎨 mix view ──────────────────────────────────────
+// Variety names carry their color; bucket them so the family reads as a palette.
+// Checked in order — first match wins (phrases before single words).
+const COLOR_BUCKETS = [
+  [/APPLE ?BLOSSOM|BLUSH/, "Blush", "#f3c4c9"],
+  [/DARK ?RED|CHERRY|NIGHT|BURGUNDY|WINE|MERLOT/, "Dark red", "#8e1f1f"],
+  [/PINK FLAME/, "Pink", "#f08cae"],
+  [/FIRE|SCARLET|FLAME/, "Fire red", "#e05420"],
+  [/RED ICE|RED/, "Red", "#d23b2f"],
+  [/SHOCKING PINK|HOT PINK|HOT ROSE|DEEP PINK|MAGENTA|FUCHSIA/, "Hot pink", "#e0447c"],
+  [/PINK|ROSE|BATIK/, "Pink", "#f08cae"],
+  [/WHITE|SNOW|IVORY/, "White", "#f3f0e2"],
+  [/ORANGE|TANGERINE|MANGO/, "Orange", "#f07f1d"],
+  [/SALMON|CORAL|PEACH|APRICOT/, "Salmon", "#fa8b6c"],
+  [/VIOLET|PURPLE|PLUM/, "Violet", "#7d4fa8"],
+  [/LAVENDER|BLUE|PERIWINKLE/, "Lavender", "#9b8fd0"],
+  [/YELLOW|GOLD|LEMON/, "Yellow", "#f2c437"],
+  [/SIZZLE|SPLASH|EYE|VEIN|STAR|PICOTEE|MIX\b/, "Bicolor", "#c98ab4"],
+];
+function colorBucketOf(name) {
+  const n = String(name || "").toUpperCase();
+  for (const [re, label, hex] of COLOR_BUCKETS) if (re.test(n)) return { label, hex };
+  return { label: "Other", hex: "#a9b3a1" };
+}
+
 function readyInPast(yr, wk) {
   const n = new Date();
   const ds = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
@@ -1632,6 +1657,57 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
             </button>
           )}
         </div>
+
+        {/* 🎨 bird's-eye color mix — planned share vs what actually sold, bucketed by
+            the color in each variety's name. The decision check: are we over/under-
+            weighted anywhere vs real demand? */}
+        {viewMode === "colors" && seasonVars.length > 0 && (() => {
+          const buckets = {};
+          seasonVars.forEach(vr => {
+            const b = colorBucketOf(vr.variety);
+            const o = buckets[b.label] || (buckets[b.label] = { ...b, pots: 0, sold: 0, vars: [] });
+            o.pots += vr.pots; o.sold += vr.sold || 0; o.vars.push(vr.variety);
+          });
+          const list = Object.values(buckets).sort((a, b) => b.pots - a.pots);
+          const totP = list.reduce((a, b) => a + b.pots, 0) || 1;
+          const totS = list.reduce((a, b) => a + b.sold, 0) || 1;
+          const Bar = ({ field, tot }) => (
+            <div style={{ display: "flex", height: 26, borderRadius: 7, overflow: "hidden", border: `1px solid ${C.border}` }}>
+              {list.filter(b => b[field] > 0).map(b => (
+                <div key={b.label} title={`${b.label}: ${b[field].toLocaleString()} (${Math.round(b[field] * 100 / tot)}%) — ${b.vars.join(", ")}`}
+                  style={{ width: `${b[field] * 100 / tot}%`, background: b.hex, minWidth: 3,
+                    borderRight: "1px solid rgba(0,0,0,.08)" }} />
+              ))}
+            </div>
+          );
+          return (
+            <div style={{ ...card, padding: "12px 16px 14px" }}>
+              <div style={{ fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".5px", color: C.muted, marginBottom: 8 }}>
+                🎨 Color mix — planned 2027 vs sold 2026
+              </div>
+              <div style={{ fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: C.muted, margin: "0 0 3px" }}>Planned ({totP.toLocaleString()} pots)</div>
+              <Bar field="pots" tot={totP} />
+              <div style={{ fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: C.muted, margin: "8px 0 3px" }}>'26 sold ({Math.round(totS).toLocaleString()} pots)</div>
+              <Bar field="sold" tot={totS} />
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "5px 14px", marginTop: 10 }}>
+                {list.map(b => {
+                  const pp = b.pots * 100 / totP, sp = b.sold * 100 / totS;
+                  const d = pp - sp;
+                  const drift = Math.abs(d) >= 3 && b.sold > 0;
+                  return (
+                    <span key={b.label} title={b.vars.join(", ")} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, fontVariantNumeric: "tabular-nums" }}>
+                      <span style={{ width: 11, height: 11, borderRadius: 3, background: b.hex, border: "1px solid rgba(0,0,0,.15)", display: "inline-block" }} />
+                      <b>{b.label}</b>
+                      <span style={{ color: C.muted }}>{Math.round(pp)}% vs {b.sold > 0 ? Math.round(sp) + "%" : "—"}</span>
+                      {drift && <b style={{ color: d > 0 ? C.amber : "#2e7d32", fontSize: 10 }}>{d > 0 ? `▲+${Math.round(d)}` : `▼${Math.round(d)}`}</b>}
+                    </span>
+                  );
+                })}
+              </div>
+              <div style={{ fontSize: 10, color: C.muted, marginTop: 7 }}>▲ = planning a bigger share than it earned in '26 sales · ▼ = smaller share than it sold · hover any segment for its varieties</div>
+            </div>
+          );
+        })()}
 
         {/* SEASON VIEW — one row per color, whole-season totals. This is the planning
             surface: type the number, divide into rounds when you want them, bulk-price. */}
