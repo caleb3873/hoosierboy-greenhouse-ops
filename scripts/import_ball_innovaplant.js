@@ -37,6 +37,7 @@ const CROP = {
   Jamesbrit: "Jamesbrittenia", HE: "Herb", Helio: "Heliotrope", Chrysoc: "Chrysocephalum",
   Strept: "Streptocarpus", Portul: "Portulaca", Scaev: "Scaevola", Sanvit: "Sanvitalia",
   Osteo: "Osteospermum", NGI: "New Guinea Impatiens", BegVEG: "Begonia", ImpaDB: "Impatiens", Dian: "Dianthus",
+  GerZN: "Geranium", GerIV: "Geranium", GerIS: "Geranium",   // zonal / ivy / interspecific — all Geranium (BFP callused book, 8/10)
 };
 // word-level truncations — shared dictionary (scripts/ball_words.js)
 const { expandWord } = require(path.join(__dirname, "ball_words"));

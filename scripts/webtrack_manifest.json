@@ -15,6 +15,11 @@
       "file": "/Users/caleb/Desktop/Ball Quotes/Dummen Kenya Ball (Dianthus).xlsx",
       "supplier": "Dummen",
       "freight": 0.05
+    },
+    {
+      "file": "/Users/caleb/Documents/GitHub/hoosierboy-greenhouse-ops/quotes/Ball Quotes/PRODUCT_SEARCH_RESULTS_20260810080657.xlsx",
+      "supplier": "Ball FloraPlant",
+      "freight": 0
     }
   ]
 }
