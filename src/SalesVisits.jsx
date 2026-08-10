@@ -38,6 +38,8 @@ export function SalesVisitViewer({ slug }) {
 // ── mobile module: the list ──────────────────────────────────────────────────
 export default function SalesVisits() {
   const { rows, loading, remove } = useTable("sales_visits", { orderBy: "created_at", ascending: false });
+  const { rows: responses } = useTable("sv_responses", { orderBy: "updated_at", ascending: false });
+  const respOf = slug => (responses || []).find(r => r.slug === slug);
   const { displayName } = useAuth();
   const [copied, setCopied] = useState(null);
   const [confirmRm, setConfirmRm] = useState(null);
@@ -68,6 +70,12 @@ export default function SalesVisits() {
           <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
             <div style={{ fontWeight: 800, fontSize: 15.5, color: C.dark }}>{v.title}</div>
             {v.customer && <div style={{ fontSize: 12, color: C.muted }}>{v.customer}</div>}
+            {respOf(v.slug) && (() => { const r = respOf(v.slug); const n = Object.keys(r.answers || {}).filter(k => k !== "general").length; return (
+              <span title="answers saved on the page — Open to read them"
+                style={{ fontSize: 10.5, fontWeight: 800, background: "#e8f2e2", color: "#2e7d32", border: "1px solid #bcd9ae", borderRadius: 7, padding: "2px 8px" }}>
+                ✅ {n} answered{r.answeredBy ? ` · ${r.answeredBy}` : ""} · {new Date(r.updatedAt).toLocaleDateString()}
+              </span>
+            ); })()}
             <span style={{ flex: 1 }} />
             <div style={{ fontSize: 11, color: C.muted }}>{v.createdAt ? new Date(v.createdAt).toLocaleDateString() : ""}</div>
           </div>
