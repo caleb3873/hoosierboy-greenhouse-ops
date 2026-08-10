@@ -261,7 +261,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
       {
         const { data: pos } = await sb.from("purchase_orders")
           .select("id,order_number,status,ship_date,ship_week,broker,farm")
-          .eq("plan_id", plan.id).in("status", ["draft", "sent"]);
+          .eq("plan_id", plan.id).in("status", ["draft", "sent", "pending"]);
         if (pos?.length && vids.length) {
           const { data: pls } = await sb.from("purchase_order_lines")
             .select("purchase_order_id,variety_id,form,status")

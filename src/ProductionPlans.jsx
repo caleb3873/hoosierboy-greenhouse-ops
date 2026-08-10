@@ -8157,6 +8157,7 @@ function SrcMatcher({ sb, onChanged }) {
 }
 
 // ── Draft broker orders — created by 🛒 Lock in order on family pages ────────
+const fnameSafe = t => String(t || "").replace(/"/g, "in").replace(/[\/\\:*?<>|]/g, "-").trim();
 async function recomputeOrderTotals(sb, orderId) {
   const { data } = await sb.from("purchase_order_lines").select("qty_ordered,ext_price,status").eq("purchase_order_id", orderId);
   const act = (data || []).filter(x => x.status === "active");
@@ -8296,9 +8297,9 @@ function DraftOrderCard({ o, oLines, families, onOpenFamily, onChanged }) {
     await sb.from("purchase_orders").update({ notes: v.trim() || null }).eq("id", o.id); onChanged();
   }
   async function markSent() {
-    if (!window.confirm(`Mark ${o.order_number} as SENT to ${o.broker}? It freezes into the placed list below.`)) return;
+    if (!window.confirm(`Mark ${o.order_number} as SENT to ${o.broker}? It moves to pending — the follow-up timer starts (no ack in 7 days = reminder).`)) return;
     setBusy(true);
-    await sb.from("purchase_orders").update({ status: "sent", date_ordered: new Date().toISOString().slice(0, 10) }).eq("id", o.id);
+    await sb.from("purchase_orders").update({ status: "pending", date_ordered: new Date().toISOString().slice(0, 10) }).eq("id", o.id);
     setBusy(false); onChanged();
   }
   async function deleteDraft() {
@@ -8324,7 +8325,13 @@ function DraftOrderCard({ o, oLines, families, onOpenFamily, onChanged }) {
     ws["!cols"] = [{ wch: 12 }, { wch: 34 }, { wch: 8 }, { wch: 9 }, { wch: 9 }, { wch: 11 }, { wch: 30 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Order");
-    XLSX.writeFile(wb, `${o.order_number}.xlsx`);
+    const famTag = families?.length === 1 ? ` — ${fnameSafe(families[0].label)}` : "";
+    XLSX.writeFile(wb, `${o.order_number}${famTag}.xlsx`);
+    // downloading = it's going to the broker → the draft becomes PENDING (awaiting ack)
+    if (o.status === "draft") {
+      await sb.from("purchase_orders").update({ status: "pending", date_ordered: new Date().toISOString().slice(0, 10) }).eq("id", o.id);
+      onChanged();
+    }
   }
 
   const inp = { width: 74, padding: "4px 6px", borderRadius: 6, border: `1px solid ${COLORS.border}`, fontFamily: "inherit", fontSize: 12.5, textAlign: "right" };
@@ -8479,7 +8486,16 @@ function OrdersTab({ plan }) {
     const brokers = [...new Set(chosen.map(o => o.broker))].join("+");
     const wks = chosen.map(o => +o.ship_week).filter(Boolean);
     const wkTag = wks.length ? ` wk${Math.min(...wks)}${Math.max(...wks) !== Math.min(...wks) ? "-" + Math.max(...wks) : ""}` : "";
-    XLSX.writeFile(wb, `${brokers} orders${wkTag} (${chosen.length}).xlsx`);
+    const chosenLines = lines.filter(l => selOrds.has(l.purchase_order_id));
+    const fams = [...new Set(chosenLines.map(l => (famMap[`line:${l.id}`] || famMap[l.variety_id])?.label).filter(Boolean))];
+    const famTag = fams.length === 1 ? ` — ${fnameSafe(fams[0])}` : "";
+    XLSX.writeFile(wb, `${brokers} orders${wkTag}${famTag} (${chosen.length}).xlsx`);
+    // downloading = they're going to the broker → drafts become PENDING (awaiting ack)
+    const draftIds = chosen.filter(o => o.status === "draft").map(o => o.id);
+    if (draftIds.length) {
+      await sb.from("purchase_orders").update({ status: "pending", date_ordered: new Date().toISOString().slice(0, 10) }).in("id", draftIds);
+      setSelOrds(new Set()); setTick(t => t + 1);
+    }
   }
 
   if (orders.length === 0) {
@@ -8533,6 +8549,22 @@ function OrdersTab({ plan }) {
           )}
         </>}
       </div>
+      {view === "orders" && (() => {
+        const today = new Date();
+        const overdue = orders.filter(o => o.status === "pending" && !o.ack_pdf_path && o.date_ordered
+          && (today - new Date(o.date_ordered + "T00:00:00")) / 86400000 >= 7);
+        if (!overdue.length) return null;
+        return (
+          <div style={{ background: "#fdecea", border: `1.5px solid ${COLORS.red}`, borderRadius: 10, padding: "10px 14px" }}>
+            <b style={{ fontSize: 13, color: COLORS.red }}>📞 Follow up with the broker — no acknowledgement after a week:</b>
+            <div style={{ fontSize: 12, marginTop: 4 }}>
+              {overdue.map(o => (
+                <div key={o.id}>{o.order_number} — {o.broker}{o.farm ? ` · ${o.farm}` : ""} · sent {o.date_ordered} ({Math.floor((today - new Date(o.date_ordered + "T00:00:00")) / 86400000)} days ago)</div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
       {view === "items" && <OrderItemsView lines={lines} orders={orders} famMap={famMap} onChanged={() => setTick(t => t + 1)} onOpenFamily={setShowFamily} />}
       {view === "orders" && drafts.length > 0 && (
         <>
@@ -8587,6 +8619,15 @@ function OrdersTab({ plan }) {
                   <div style={{ fontWeight: 800, fontSize: 18, color: COLORS.dark }}>{(+o.total_qty || 0).toLocaleString()} liners</div>
                   <div style={{ fontSize: 12, color: COLORS.light, fontWeight: 700 }}>{fmtMoney(+o.total_cost)}</div>
                 </div>
+                {o.status === "pending" && !o.ack_pdf_path && o.date_ordered && (() => {
+                  const days = Math.floor((new Date() - new Date(o.date_ordered + "T00:00:00")) / 86400000);
+                  const late = days >= 7;
+                  return (
+                    <span style={{ background: late ? "#fdecea" : "#fdf3e0", color: late ? COLORS.red : COLORS.amber, border: `1px solid ${late ? COLORS.red : COLORS.amber}`, padding: "2px 8px", borderRadius: 10, fontSize: 11, fontWeight: 700 }}>
+                      {late ? `📞 no ack · ${days} days` : `⏳ pending · ${days}d`}
+                    </span>
+                  );
+                })()}
                 {o.amendment_count > 0 && (
                   <span style={{ background: COLORS.amber + "22", color: COLORS.amber, border: `1px solid ${COLORS.amber}`, padding: "2px 8px", borderRadius: 10, fontSize: 11, fontWeight: 700 }}>
                     {o.amendment_count} amendment{o.amendment_count > 1 ? "s" : ""}
