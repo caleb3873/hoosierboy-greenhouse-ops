@@ -506,11 +506,10 @@ export async function lockBrokerOrders(sb, planId, specs) {
     if (!ord) {
       const yyww = `${String(shipYear % 100).padStart(2, "0")}${String(shipWeek).padStart(2, "0")}`;
       const num = `DRAFT-${String(broker).slice(0, 4).toUpperCase()}${supplier ? "-" + String(supplier).replace(/[^A-Za-z]/g, "").slice(0, 4).toUpperCase() : ""}-${yyww}`;
-      const monday = isoWeekMonday(shipYear, shipWeek);
       const { data: ins, error } = await sb.from("purchase_orders").insert({
         plan_id: planId, order_number: num, broker, supplier: supplier || null,
         ship_week: shipWeek, ship_year: shipYear,
-        ship_date: monday ? monday.toISOString().slice(0, 10) : null,
+        ship_date: isoWeekMonday(shipYear, shipWeek) || null,   // already an ISO date string
         status: "draft", total_qty: 0, total_cost: 0,
       }).select("id,order_number").single();
       if (error) throw new Error(error.message);
