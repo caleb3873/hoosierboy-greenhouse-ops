@@ -3,6 +3,7 @@ import { AuthProvider, LoginScreen, UserMenu, useAuth, RecoveryPasswordForm } fr
 import { SharedGalleryViewer } from "./Sharing";
 import { SalesVisitViewer } from "./SalesVisits";
 import InventoryValuation from "./InventoryValuation";
+import TagManager from "./TagManager";
 import { ExtractionProvider, useExtraction } from "./ExtractionContext";
 import { CROP_STATUS } from "./shared";
 
@@ -77,6 +78,7 @@ const NAV_GROUPS = [
       { id: "soil",      label: "Soil Calculator" },
       { id: "containers", label: "🪴 Containers" },
       { id: "inventory-value", label: "📊 Inventory Value" },
+      { id: "tags", label: "🏷 Tag Manager" },
     ],
   },
   {
@@ -283,6 +285,7 @@ function PlannerShell() {
         {page === "soil"       && <SoilCalculator />}
         {page === "containers" && <Containers />}
         {page === "inventory-value" && <InventoryValuation />}
+        {page === "tags" && <TagManager />}
         {page === "fall"       && <FallProgram />}
         {page === "plans"      && <ProductionPlans />}
         {page === "sourcing"   && <SourcingPage />}
