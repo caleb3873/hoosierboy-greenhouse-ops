@@ -9,7 +9,7 @@ import { useAuth } from "./Auth";
 import { rippleTasks, isoWeekOf } from "./ripple";
 import AddPlantDoor from "./AddPlantDoor";
 import { QuotePicker } from "./ProgramBuilder";
-import { wrapWk, weeksInYear, plantOrder, FinishWkInput, lockBrokerOrders } from "./shared";
+import { wrapWk, weeksInYear, plantOrder, FinishWkInput, lockBrokerOrders, farmOf } from "./shared";
 
 const C = { dark: "#1e2d1a", light: "#7fb069", cream: "#f3f8ee", creamBr: "#cfe3bd",
   muted: "#7a8c74", text: "#2f3b2a", amber: "#c9812a", amberBg: "#fbf1df", red: "#c0492b",
@@ -1374,10 +1374,11 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
       const q = (l.price != null && cands.length > 1
         ? cands.slice().sort((a, b) => Math.abs(+a.landed - l.price) - Math.abs(+b.landed - l.price))[0]
         : cands[0]) || qs[0];
+      const supplier = l.supplier || q?.supplier || null;
       return { ...l,
         broker: l.broker || q?.broker || null,
-        supplier: l.supplier || q?.supplier || null,
-        farm: q?.origin || null,
+        supplier,
+        farm: farmOf(supplier, recipe?.crop_name, recipe?.plant_class === "perennial", q?.origin),
         price: l.price ?? (q ? +q.landed : null),
         material: q?.material || null,
         form: seriesOf(l.varietyName)?.form || q?.form_class || null,

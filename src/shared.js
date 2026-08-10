@@ -477,6 +477,24 @@ export function FinishWkInput({ wk, yr, onCommit, disabled, placeholder = "YYWW"
 // individual farm (Dümmen Ethiopia ≠ Dümmen Mexico), not per broker/supplier.
 // Re-locking the same variety UPDATES its line in place — never a second line,
 // which is the no-double-ordering guard.
+// Farm resolution — minimums apply per FARM. Caleb's supply-chain rules (8/10/26):
+//   Ball FloraPlant: geraniums → Mexico; everything else → Las Limas
+//   Syngenta:        geraniums → Syngenta Mexico; everything else → Syngenta Guatemala
+//   Dümmen:          perennials → Dummen Perennials; geraniums → Dummen Oglevee Mexico;
+//                    everything else → Dummen El Salvador
+// Other suppliers: fall back to the quote's origin column (or none).
+export function farmOf(supplier, cropName, isPerennial, quoteOrigin) {
+  const sup = String(supplier || "").toLowerCase();
+  const ger = /geranium|pelargonium/i.test(String(cropName || ""));
+  if (/ball\s*floraplant/.test(sup)) return ger ? "Ball FloraPlant Mexico" : "Ball FloraPlant Las Limas";
+  if (/syngenta/.test(sup))          return ger ? "Syngenta Mexico" : "Syngenta Guatemala";
+  if (/d[uü]mmen/.test(sup)) {
+    if (isPerennial) return "Dummen Perennials";
+    return ger ? "Dummen Oglevee Mexico" : "Dummen El Salvador";
+  }
+  return quoteOrigin || null;
+}
+
 export async function lockBrokerOrders(sb, planId, specs) {
   const ready = [], skipped = [];
   specs.forEach(l => {
