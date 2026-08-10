@@ -8413,6 +8413,9 @@ function OrdersTab({ plan }) {
   const [expanded, setExpanded] = useState(null);
   const [tick, setTick] = useState(0);
   const [view, setView] = useState("orders");        // 📦 by order | 🌱 by item
+  const [fBroker, setFBroker] = useState("");        // by-order filters
+  const [fStatus, setFStatus] = useState("");
+  const [selOrds, setSelOrds] = useState(() => new Set());  // multi-select → one combined XLSX
   const [famMap, setFamMap] = useState({});          // variety_id → {rid, label} for the adjust path
   const [showFamily, setShowFamily] = useState(null);
 
@@ -8445,8 +8448,37 @@ function OrdersTab({ plan }) {
     })();
   }, [sb, plan.id, tick]);
 
-  const drafts = orders.filter(o => o.status === "draft");
-  const placed = orders.filter(o => o.status !== "draft");
+  const matches = o => (!fBroker || o.broker === fBroker) && (!fStatus || o.status === fStatus);
+  const drafts = orders.filter(o => o.status === "draft" && matches(o));
+  const placed = orders.filter(o => o.status !== "draft" && matches(o));
+  const brokerOpts = [...new Set(orders.map(o => o.broker).filter(Boolean))].sort();
+  const statusOpts = [...new Set(orders.map(o => o.status).filter(Boolean))].sort();
+
+  async function downloadCombined() {
+    const chosen = orders.filter(o => selOrds.has(o.id))
+      .sort((a, b) => ((+a.ship_year || 0) * 100 + (+a.ship_week || 0)) - ((+b.ship_year || 0) * 100 + (+b.ship_week || 0)));
+    if (!chosen.length) return;
+    const XLSX = await import("xlsx");
+    const aoa = [];
+    let gQ = 0, gC = 0;
+    chosen.forEach(o => {
+      const act = lines.filter(l => l.purchase_order_id === o.id && l.status === "active");
+      aoa.push([`ORDER ${o.order_number}`, `${o.broker}${o.supplier ? " → " + o.supplier : ""}${o.farm ? " — " + o.farm : ""}`, `Ship wk ${o.ship_week} (${o.ship_date || ""})`, o.notes || ""]);
+      aoa.push(["Material #", "Variety", "Form", "Qty", "$/unit", "Ext $", "Notes"]);
+      act.forEach(l => aoa.push([l.material || "", l.variety_name, l.form || "", +l.qty_ordered || 0,
+        l.unit_price != null ? +(+l.unit_price).toFixed(4) : "", l.ext_price != null ? +(+l.ext_price).toFixed(2) : "", l.notes || ""]));
+      aoa.push(["", `ORDER TOTAL`, "", +o.total_qty || 0, "", +o.total_cost || 0, ""]);
+      aoa.push([]);
+      gQ += +o.total_qty || 0; gC += +o.total_cost || 0;
+    });
+    aoa.push(["", `GRAND TOTAL — ${chosen.length} orders`, "", gQ, "", +gC.toFixed(2), ""]);
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws["!cols"] = [{ wch: 12 }, { wch: 34 }, { wch: 8 }, { wch: 9 }, { wch: 9 }, { wch: 11 }, { wch: 30 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Orders");
+    const brokers = [...new Set(chosen.map(o => o.broker))].join("+");
+    XLSX.writeFile(wb, `Orders-${brokers}-${chosen.length}.xlsx`);
+  }
 
   if (orders.length === 0) {
     return (
@@ -8470,13 +8502,34 @@ function OrdersTab({ plan }) {
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
-      <div style={{ display: "flex", gap: 8 }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
         {[["orders", "📦 By order"], ["items", "🌱 By item"]].map(([m, label]) => (
           <button key={m} onClick={() => setView(m)}
             style={{ padding: "6px 14px", borderRadius: 8, fontWeight: 800, fontSize: 12.5, cursor: "pointer", fontFamily: "inherit",
               border: `1.5px solid ${view === m ? COLORS.light : COLORS.border}`,
               background: view === m ? "#eef6e8" : COLORS.card, color: view === m ? COLORS.dark : COLORS.muted }}>{label}</button>
         ))}
+        {view === "orders" && <>
+          <span style={{ width: 6 }} />
+          <select value={fBroker} onChange={e => setFBroker(e.target.value)}
+            style={{ padding: "6px 9px", borderRadius: 8, border: `1.5px solid ${fBroker ? COLORS.light : COLORS.border}`, fontFamily: "inherit", fontSize: 12, fontWeight: 700, background: fBroker ? "#eef6e8" : COLORS.card }}>
+            <option value="">all brokers</option>
+            {brokerOpts.map(b => <option key={b} value={b}>{b}</option>)}
+          </select>
+          <select value={fStatus} onChange={e => setFStatus(e.target.value)}
+            style={{ padding: "6px 9px", borderRadius: 8, border: `1.5px solid ${fStatus ? COLORS.light : COLORS.border}`, fontFamily: "inherit", fontSize: 12, fontWeight: 700, background: fStatus ? "#eef6e8" : COLORS.card }}>
+            <option value="">all statuses</option>
+            {statusOpts.map(st => <option key={st} value={st}>{st}</option>)}
+          </select>
+          {selOrds.size > 0 && (
+            <button onClick={downloadCombined}
+              style={{ background: COLORS.dark, color: "#c8e6b8", border: "none", borderRadius: 8, padding: "7px 14px", fontWeight: 800, fontSize: 12.5, cursor: "pointer", fontFamily: "inherit" }}>
+              ⬇ {selOrds.size} order{selOrds.size !== 1 ? "s" : ""} → one XLSX</button>
+          )}
+          {selOrds.size > 0 && (
+            <button onClick={() => setSelOrds(new Set())} style={{ background: "none", border: "none", color: COLORS.muted, fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>clear</button>
+          )}
+        </>}
       </div>
       {view === "items" && <OrderItemsView lines={lines} orders={orders} famMap={famMap} onChanged={() => setTick(t => t + 1)} onOpenFamily={setShowFamily} />}
       {view === "orders" && drafts.length > 0 && (
@@ -8485,8 +8538,15 @@ function OrdersTab({ plan }) {
             ✏️ Drafts to finalize — edit quantities, add notes, download, send, then ✓ Mark sent
           </div>
           {drafts.map(o => (
-            <DraftOrderCard key={o.id} o={o} oLines={lines.filter(l => l.purchase_order_id === o.id)}
-              families={famsOf(o)} onOpenFamily={setShowFamily} onChanged={() => setTick(t => t + 1)} />
+            <div key={o.id} style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+              <input type="checkbox" checked={selOrds.has(o.id)} title="select for a combined XLSX"
+                onChange={e => setSelOrds(sv => { const n = new Set(sv); if (e.target.checked) n.add(o.id); else n.delete(o.id); return n; })}
+                style={{ marginTop: 22, width: 17, height: 17, flex: "0 0 auto", accentColor: "#7fb069" }} />
+              <div style={{ flex: 1 }}>
+                <DraftOrderCard o={o} oLines={lines.filter(l => l.purchase_order_id === o.id)}
+                  families={famsOf(o)} onOpenFamily={setShowFamily} onChanged={() => setTick(t => t + 1)} />
+              </div>
+            </div>
           ))}
         </>
       )}
@@ -8506,7 +8566,11 @@ function OrdersTab({ plan }) {
         const cancelled = oLines.filter(l => l.status === "cancelled");
         const isOpen = expanded === o.id;
         return (
-          <div key={o.id} style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 16 }}>
+          <div key={o.id} style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+            <input type="checkbox" checked={selOrds.has(o.id)} title="select for a combined XLSX"
+              onChange={e => setSelOrds(sv => { const n = new Set(sv); if (e.target.checked) n.add(o.id); else n.delete(o.id); return n; })}
+              style={{ marginTop: 22, width: 17, height: 17, flex: "0 0 auto", accentColor: "#7fb069" }} />
+          <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 16, flex: 1 }}>
             <div onClick={() => setExpanded(isOpen ? null : o.id)} style={{ cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <div>
                 <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 20, color: COLORS.dark }}>
@@ -8580,6 +8644,7 @@ function OrdersTab({ plan }) {
                 )}
               </div>
             )}
+          </div>
           </div>
         );
       })}</>}
