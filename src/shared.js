@@ -473,8 +473,8 @@ export function FinishWkInput({ wk, yr, onCommit, disabled, placeholder = "YYWW"
 // Hard rules (Caleb 8/10): URC/CALL = minimum 100 per color, ordered in 100s;
 // supplier orders default to a 2,000 minimum (checked in the Orders tab UI,
 // not enforced here — combining weeks to hit it is a human call).
-// Grain: ONE DRAFT per broker+supplier+ship-week (EHR books per supplier —
-// that's how the ack order numbers come back; Ball is single-supplier anyway).
+// Grain: ONE DRAFT per broker+supplier+FARM+ship-week — minimums apply per
+// individual farm (Dümmen Ethiopia ≠ Dümmen Mexico), not per broker/supplier.
 // Re-locking the same variety UPDATES its line in place — never a second line,
 // which is the no-double-ordering guard.
 export async function lockBrokerOrders(sb, planId, specs) {
@@ -490,24 +490,25 @@ export async function lockBrokerOrders(sb, planId, specs) {
 
   const groups = {};
   ready.forEach(l => {
-    const k = `${l.broker}|${l.supplier || ""}|${l.shipYear || ""}|${l.shipWeek}`;
+    const k = `${l.broker}|${l.supplier || ""}|${l.farm || ""}|${l.shipYear || ""}|${l.shipWeek}`;
     (groups[k] = groups[k] || []).push(l);
   });
 
   const results = [];
   for (const ls of Object.values(groups)) {
-    const { broker, supplier, shipWeek } = ls[0];
+    const { broker, supplier, farm, shipWeek } = ls[0];
     const shipYear = ls[0].shipYear || new Date().getFullYear() + 1;
     let q = sb.from("purchase_orders").select("id,order_number").eq("plan_id", planId)
       .eq("broker", broker).eq("ship_week", shipWeek).eq("ship_year", shipYear).eq("status", "draft");
     q = supplier ? q.eq("supplier", supplier) : q.is("supplier", null);
+    q = farm ? q.eq("farm", farm) : q.is("farm", null);
     let { data: ord, error: findErr } = await q.maybeSingle();
     if (findErr) throw new Error(findErr.message);
     if (!ord) {
       const yyww = `${String(shipYear % 100).padStart(2, "0")}${String(shipWeek).padStart(2, "0")}`;
-      const num = `DRAFT-${String(broker).slice(0, 4).toUpperCase()}${supplier ? "-" + String(supplier).replace(/[^A-Za-z]/g, "").slice(0, 4).toUpperCase() : ""}-${yyww}`;
+      const num = `DRAFT-${String(broker).slice(0, 4).toUpperCase()}${supplier ? "-" + String(supplier).replace(/[^A-Za-z]/g, "").slice(0, 4).toUpperCase() : ""}${farm ? "-" + String(farm).replace(/[^A-Za-z]/g, "").slice(0, 4).toUpperCase() : ""}-${yyww}`;
       const { data: ins, error } = await sb.from("purchase_orders").insert({
-        plan_id: planId, order_number: num, broker, supplier: supplier || null,
+        plan_id: planId, order_number: num, broker, supplier: supplier || null, farm: farm || null,
         ship_week: shipWeek, ship_year: shipYear,
         ship_date: isoWeekMonday(shipYear, shipWeek) || null,   // already an ISO date string
         status: "draft", total_qty: 0, total_cost: 0,
@@ -538,7 +539,7 @@ export async function lockBrokerOrders(sb, planId, specs) {
     const totQ = act.reduce((s, x) => s + (+x.qty_ordered || 0), 0);
     const totC = act.reduce((s, x) => s + (+x.ext_price || 0), 0);
     await sb.from("purchase_orders").update({ total_qty: totQ, total_cost: +totC.toFixed(2) }).eq("id", ord.id);
-    results.push({ orderNumber: ord.order_number, broker, supplier, shipWeek, lines: ls.length, qty: totQ });
+    results.push({ orderNumber: ord.order_number, broker, supplier, farm, shipWeek, lines: ls.length, qty: totQ });
   }
   return { orders: results, skipped };
 }

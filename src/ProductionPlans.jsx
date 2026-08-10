@@ -8169,6 +8169,7 @@ async function recomputeOrderTotals(sb, orderId) {
 function DraftOrderCard({ o, oLines, onChanged }) {
   const sb = getSupabase();
   const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(false);   // collapsed by default — header carries totals + the min warning
   const underMin = (+o.total_qty || 0) < 2000;   // hard rule: 2,000 per supplier by default
   const act = oLines.filter(l => l.status === "active");
 
@@ -8206,7 +8207,7 @@ function DraftOrderCard({ o, oLines, onChanged }) {
   async function downloadXlsx() {
     const XLSX = await import("xlsx");
     const aoa = [
-      [`ORDER ${o.order_number}`], [`Broker: ${o.broker}`, `Supplier: ${o.supplier || ""}`],
+      [`ORDER ${o.order_number}`], [`Broker: ${o.broker}`, `Supplier: ${o.supplier || ""}${o.farm ? " — " + o.farm : ""}`],
       [`Ship week: ${o.ship_week} (${o.ship_date || ""})`, o.notes ? `Notes: ${o.notes}` : ""],
       [],
       ["Material #", "Variety", "Form", "Qty", "$/unit", "Ext $", "Notes"],
@@ -8225,21 +8226,26 @@ function DraftOrderCard({ o, oLines, onChanged }) {
   const inp = { width: 74, padding: "4px 6px", borderRadius: 6, border: `1px solid ${COLORS.border}`, fontFamily: "inherit", fontSize: 12.5, textAlign: "right" };
   return (
     <div style={{ background: "#fffdf5", border: `1.5px dashed ${underMin ? COLORS.red : COLORS.amber}`, borderRadius: 10, padding: 16 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 10 }}>
+      <div onClick={() => setOpen(v => !v)} style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 10, cursor: "pointer" }}>
         <div>
           <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 19, color: COLORS.dark }}>
             <span style={{ fontSize: 10, fontWeight: 800, background: COLORS.amber, color: "#fff", borderRadius: 6, padding: "2px 8px", verticalAlign: "middle", marginRight: 8, fontFamily: "'DM Sans', sans-serif" }}>DRAFT</span>
             {o.order_number} <span style={{ fontSize: 13, color: COLORS.muted, fontWeight: 400 }}>· wk{o.ship_week} · {o.ship_date}</span>
           </div>
-          <div style={{ fontSize: 12, color: COLORS.muted, marginTop: 2 }}>{o.broker}{o.supplier ? ` → ${o.supplier}` : ""}</div>
-          {underMin && <div style={{ fontSize: 11, fontWeight: 800, color: COLORS.red, marginTop: 4 }}>⚠ {(+o.total_qty || 0).toLocaleString()} of the 2,000 supplier minimum — add items or combine weeks before sending</div>}
+          <div style={{ fontSize: 12, color: COLORS.muted, marginTop: 2 }}>
+            {o.broker}{o.supplier ? ` → ${o.supplier}` : ""}{o.farm ? <b style={{ color: COLORS.dark }}> · {o.farm}</b> : ""} · {act.length} line{act.length !== 1 ? "s" : ""}
+          </div>
+          {underMin && <div style={{ fontSize: 11, fontWeight: 800, color: COLORS.red, marginTop: 4 }}>⚠ {(+o.total_qty || 0).toLocaleString()} of 2,000 farm minimum — {(2000 - (+o.total_qty || 0)).toLocaleString()} short; add items or combine weeks</div>}
         </div>
-        <div style={{ textAlign: "right" }}>
-          <div style={{ fontWeight: 800, fontSize: 18, color: COLORS.dark }}>{(+o.total_qty || 0).toLocaleString()} plants</div>
-          <div style={{ fontSize: 12, color: COLORS.light, fontWeight: 700 }}>{fmtMoney(+o.total_cost)}</div>
+        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontWeight: 800, fontSize: 18, color: COLORS.dark }}>{(+o.total_qty || 0).toLocaleString()} plants</div>
+            <div style={{ fontSize: 12, color: COLORS.light, fontWeight: 700 }}>{fmtMoney(+o.total_cost)}</div>
+          </div>
+          <span style={{ color: COLORS.muted, fontSize: 16 }}>{open ? "▾" : "▸"}</span>
         </div>
       </div>
-      <div style={{ marginTop: 12, overflowX: "auto" }}>
+      {open && <><div style={{ marginTop: 12, overflowX: "auto" }}>
         <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12.5 }}>
           <thead><tr>{["Material #", "Variety", "Form", "Qty", "$/unit", "Ext $", "Line note", ""].map((h, i) => (
             <th key={h + i} style={{ textAlign: i >= 3 && i <= 5 ? "right" : "left", padding: "5px 8px", fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: COLORS.muted, borderBottom: `2px solid ${COLORS.border}` }}>{h}</th>
@@ -8281,7 +8287,7 @@ function DraftOrderCard({ o, oLines, onChanged }) {
         <button disabled={busy} onClick={markSent} style={{ background: COLORS.light, color: "#fff", border: "none", borderRadius: 8, padding: "7px 14px", fontWeight: 800, fontSize: 12.5, cursor: "pointer", fontFamily: "inherit" }}>✓ Mark sent</button>
         <span style={{ flex: 1 }} />
         <button disabled={busy} onClick={deleteDraft} style={{ background: "none", border: `1px solid ${COLORS.border}`, color: COLORS.red, borderRadius: 8, padding: "7px 12px", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>🗑 Delete draft</button>
-      </div>
+      </div></>}
     </div>
   );
 }

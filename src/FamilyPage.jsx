@@ -329,7 +329,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
       if (!allKeys.length) return;
       const quotes = [];
       for (let i = 0; i < allKeys.length; i += 100) {
-        const { data } = await sb.from("broker_prices").select("variety_key,broker,supplier,form_class,form_raw,landed,material").in("variety_key", allKeys.slice(i, i + 100));
+        const { data } = await sb.from("broker_prices").select("variety_key,broker,supplier,form_class,form_raw,landed,material,origin").in("variety_key", allKeys.slice(i, i + 100));
         quotes.push(...(data || []));
       }
       // raw quotes by key — the season view's bulk broker assign + tray auto-fill read
@@ -1367,10 +1367,17 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
       const v = vmap[l.varietyId] || {};
       const keys = [v.variety_key, ...(v.match_aliases || [])].filter(Boolean);
       const qs = keys.flatMap(k => quotesByKey[k] || []);
-      const q = qs.find(x => l.broker && x.broker === l.broker) || qs[0];
+      // among this broker's quotes, the one whose landed price matches the locked
+      // row price is the quote that was applied — its farm/origin rides along
+      // (Dümmen Ethiopia vs Mexico are different farms with different minimums)
+      const cands = qs.filter(x => !l.broker || x.broker === l.broker);
+      const q = (l.price != null && cands.length > 1
+        ? cands.slice().sort((a, b) => Math.abs(+a.landed - l.price) - Math.abs(+b.landed - l.price))[0]
+        : cands[0]) || qs[0];
       return { ...l,
         broker: l.broker || q?.broker || null,
         supplier: l.supplier || q?.supplier || null,
+        farm: q?.origin || null,
         price: l.price ?? (q ? +q.landed : null),
         material: q?.material || null,
         form: seriesOf(l.varietyName)?.form || q?.form_class || null,
@@ -1381,7 +1388,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
     setBusy(true);
     try {
       const { orders, skipped } = await lockBrokerOrders(sb, plan.id, specs);
-      window.alert(`Drafted:\n${orders.map(o => `  ${o.orderNumber} — ${o.broker}${o.supplier ? " → " + o.supplier : ""} wk${o.shipWeek} · ${o.qty.toLocaleString()} plants`).join("\n") || "  (nothing — no orderable lines)"}${skipped.length ? `\n\nSkipped (no broker/week): ${[...new Set(skipped.map(l => l.varietyName))].join(", ")}` : ""}\n\nReview + download on the plan's 📋 Orders tab.`);
+      window.alert(`Drafted:\n${orders.map(o => `  ${o.orderNumber} — ${o.broker}${o.supplier ? " → " + o.supplier : ""}${o.farm ? " (" + o.farm + ")" : ""} wk${o.shipWeek} · ${o.qty.toLocaleString()} plants`).join("\n") || "  (nothing — no orderable lines)"}${skipped.length ? `\n\nSkipped (no broker/week): ${[...new Set(skipped.map(l => l.varietyName))].join(", ")}` : ""}\n\nReview + download on the plan's 📋 Orders tab.`);
       setSelVars(new Set());
     } catch (e) { window.alert("Order draft failed: " + e.message); }
     setBusy(false);
