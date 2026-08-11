@@ -95,7 +95,7 @@ export default function SpaceMap({ plan: fixedPlan }) {
       let sc = [];
       for (let i = 0; i < ids.length; i += 80) {
         const { data } = await sb.from("scheduled_crops").select("id,item_name,qty_pots,plant_week,bench_id,placed_at")
-          .eq("plan_id", planId).in("bench_id", ids.slice(i, i + 80)).not("is_combo_component", "is", true).limit(2000);
+          .eq("plan_id", planId).in("bench_id", ids.slice(i, i + 80)).not("is_combo_component", "is", true).gt("qty_pots", 0).limit(2000);
         sc = sc.concat(data || []);
       }
       setRows(sc);
