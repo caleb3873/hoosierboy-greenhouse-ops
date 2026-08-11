@@ -183,11 +183,13 @@ export default function SpaceMap({ plan: fixedPlan }) {
     const src = mode === "lastyear" ? lastYearRows : placedRows;
     const m = {};
     src.forEach(r => {
-      const o = m[r.bench_id] || (m[r.bench_id] = { items: [], byClass: {} });
-      o.items.push(r);
+      const o = m[r.bench_id] || (m[r.bench_id] = { agg: {}, byClass: {} });
+      const a = o.agg[r.item_name] || (o.agg[r.item_name] = { name: r.item_name, qty: 0, ids: [], firstId: r.id, wk: r.plant_week });
+      a.qty += +r.qty_pots || 0; a.ids.push(r.id);
       const k = classOfItem(r.item_name) || "other";
       o.byClass[k] = (o.byClass[k] || 0) + inUnits(+r.qty_pots || 0, k);
     });
+    Object.values(m).forEach(o => { o.items = Object.values(o.agg).sort((a, b) => a.name.localeCompare(b.name)); });
     return m;
   }, [placedRows, lastYearRows, mode]); // eslint-disable-line
 
@@ -216,40 +218,75 @@ export default function SpaceMap({ plan: fixedPlan }) {
     setBusy(true);
     const stamp = new Date().toISOString();
     try {
-      const rowsLeft = it.rows.slice().sort((a, b) => b.qty_pots - a.qty_pots);
-      for (const r of rowsLeft) {
-        if (want <= 0) break;
-        if (+r.qty_pots <= want) {
+      // combos move whole rows only (children reference the parent row)
+      const { data: anyKids } = await sb.from("scheduled_crops").select("id").in("combo_parent_id", it.rows.map(r => r.id)).limit(1);
+      const isCombo = !!anyKids?.length;
+      // colors go down TOGETHER: finish one color before starting the next; a color
+      // only splits at the bench boundary. Same color merges into one row per bench.
+      const byColor = {};
+      it.rows.forEach(r => (byColor[r.item_name] = byColor[r.item_name] || []).push(r));
+      const placedHere = byBench[bench.id]?.agg || {};
+      const mergeTargets = {};   // item_name -> placed row id on this bench
+      Object.values(placedHere).forEach(a => { mergeTargets[a.name] = a.firstId; });
+      const moveWhole = async (r) => {
+        const tgt = !isCombo && mergeTargets[r.item_name];
+        if (tgt) {
+          const { data: pair, error: pe } = await sb.from("scheduled_crops").select("id,qty_pots,qty_plants_ordered").in("id", [tgt, r.id]);
+          if (pe) throw new Error(pe.message);
+          const t = pair.find(x => x.id === tgt), src = pair.find(x => x.id === r.id);
+          const { error: ue } = await sb.from("scheduled_crops").update({
+            qty_pots: (+t.qty_pots || 0) + (+src.qty_pots || 0),
+            qty_plants_ordered: t.qty_plants_ordered != null || src.qty_plants_ordered != null
+              ? (+t.qty_plants_ordered || 0) + (+src.qty_plants_ordered || 0) : null,
+          }).eq("id", tgt);
+          if (ue) throw new Error(ue.message);
+          const { error: de } = await sb.from("scheduled_crops").delete().eq("id", r.id);
+          if (de) throw new Error(de.message);
+        } else {
           const { error } = await sb.from("scheduled_crops").update({ bench_id: bench.id, placed_at: stamp }).eq("id", r.id);
           if (error) throw new Error(error.message);
-          want -= +r.qty_pots;
+          mergeTargets[r.item_name] = r.id;
+        }
+      };
+      const splitTake = async (r, take) => {
+        const { data: full, error: fe } = await sb.from("scheduled_crops").select("*").eq("id", r.id).single();
+        if (fe) throw new Error(fe.message);
+        const plantsTaken = full.qty_plants_ordered != null ? Math.round(full.qty_plants_ordered * take / +full.qty_pots) : null;
+        const tgt = mergeTargets[r.item_name];
+        if (tgt) {
+          const { data: t, error: te } = await sb.from("scheduled_crops").select("id,qty_pots,qty_plants_ordered").eq("id", tgt).single();
+          if (te) throw new Error(te.message);
+          const { error: ue } = await sb.from("scheduled_crops").update({
+            qty_pots: (+t.qty_pots || 0) + take,
+            qty_plants_ordered: t.qty_plants_ordered != null || plantsTaken != null ? (+t.qty_plants_ordered || 0) + (plantsTaken || 0) : null,
+          }).eq("id", tgt);
+          if (ue) throw new Error(ue.message);
+        } else {
+          const clone = { ...full };
+          delete clone.id; delete clone.created_at; delete clone.updated_at;
+          clone.qty_pots = take;
+          if (plantsTaken != null) clone.qty_plants_ordered = plantsTaken;
+          clone.bench_id = bench.id; clone.placed_at = stamp;
+          const { error: ie } = await sb.from("scheduled_crops").insert(clone);
+          if (ie) throw new Error(ie.message);
+        }
+        const { error: se } = await sb.from("scheduled_crops").update({
+          qty_pots: +full.qty_pots - take,
+          qty_plants_ordered: full.qty_plants_ordered != null ? full.qty_plants_ordered - (plantsTaken || 0) : null,
+        }).eq("id", r.id);
+        if (se) throw new Error(se.message);
+      };
+      let comboLeftover = false;
+      outer:
+      for (const cn of Object.keys(byColor).sort()) {
+        for (const r of byColor[cn].sort((a, b) => b.qty_pots - a.qty_pots)) {
+          if (want <= 0) break outer;
+          if (+r.qty_pots <= want) { await moveWhole(r); want -= +r.qty_pots; }
+          else if (isCombo) { comboLeftover = true; }
+          else { await splitTake(r, want); want = 0; break outer; }
         }
       }
-      if (want > 0) {
-        const r = it.rows.filter(x => +x.qty_pots > want).sort((a, b) => a.qty_pots - b.qty_pots)[0];
-        if (r) {
-          const { data: kids } = await sb.from("scheduled_crops").select("id").eq("combo_parent_id", r.id).limit(1);
-          if (kids?.length) {
-            window.alert(`${it.item} is a combo — rows move whole. Placed what fit; ${want} still unplaced.`);
-          } else {
-            const { data: full, error: fe } = await sb.from("scheduled_crops").select("*").eq("id", r.id).single();
-            if (fe) throw new Error(fe.message);
-            const frac = want / +full.qty_pots;
-            const clone = { ...full };
-            delete clone.id; delete clone.created_at; delete clone.updated_at;
-            clone.qty_pots = want;
-            if (full.qty_plants_ordered != null) clone.qty_plants_ordered = Math.round(full.qty_plants_ordered * frac);
-            clone.bench_id = bench.id; clone.placed_at = stamp;
-            const { error: ie } = await sb.from("scheduled_crops").insert(clone);
-            if (ie) throw new Error(ie.message);
-            const { error: ue } = await sb.from("scheduled_crops").update({
-              qty_pots: +full.qty_pots - want,
-              qty_plants_ordered: full.qty_plants_ordered != null ? full.qty_plants_ordered - clone.qty_plants_ordered : null,
-            }).eq("id", r.id);
-            if (ue) throw new Error(ue.message);
-          }
-        }
-      }
+      if (comboLeftover && want > 0) window.alert(`${it.item} is a combo — rows move whole. Placed what fit; ${want.toLocaleString()} still unplaced.`);
       setTick(t => t + 1);
     } catch (e) { window.alert("Placement failed: " + e.message); }
     setBusy(false);
@@ -275,19 +312,20 @@ export default function SpaceMap({ plan: fixedPlan }) {
   async function clearBench(bench) {
     const info = byBench[bench.id];
     if (!info?.items?.length) return;
-    const tot = info.items.reduce((a, r) => a + (+r.qty_pots || 0), 0);
-    if (!window.confirm(`Clear ${bench.code}? All ${info.items.length} placement${info.items.length !== 1 ? "s" : ""} (${tot.toLocaleString()} pots) go back to the to-place tray.`)) return;
+    const ids = info.items.flatMap(a => a.ids);
+    const tot = info.items.reduce((a, x) => a + x.qty, 0);
+    if (!window.confirm(`Clear ${bench.code}? All ${info.items.length} color${info.items.length !== 1 ? "s" : ""} (${tot.toLocaleString()} pots) go back to the to-place tray.`)) return;
     setBusy(true);
-    const { error } = await sb.from("scheduled_crops").update({ placed_at: null }).in("id", info.items.map(r => r.id));
+    const { error } = await sb.from("scheduled_crops").update({ placed_at: null }).in("id", ids);
     if (error) window.alert("Clear failed: " + error.message);
     setBusy(false); setTick(t => t + 1);
   }
 
-  async function unplace(row) {
+  async function unplace(agg) {
     if (mode === "lastyear") return;
-    if (!window.confirm(`Pull ${row.item_name} (${(+row.qty_pots).toLocaleString()}) off this spot?`)) return;
+    if (!window.confirm(`Pull ${agg.name} (${agg.qty.toLocaleString()}) off this spot?`)) return;
     setBusy(true);
-    await sb.from("scheduled_crops").update({ placed_at: null }).eq("id", row.id);
+    await sb.from("scheduled_crops").update({ placed_at: null }).in("id", agg.ids);
     setBusy(false); setTick(t => t + 1);
   }
 
@@ -341,10 +379,10 @@ export default function SpaceMap({ plan: fixedPlan }) {
           </div>
         )}
         <div style={{ flex: 1 }} />
-        {(info?.items || []).map(r => (
-          <div key={r.id} onClick={e => { e.stopPropagation(); unplace(r); }} title={mode === "plan" ? "click to pull off" : undefined}
+        {(info?.items || []).map(a => (
+          <div key={a.name} onClick={e => { e.stopPropagation(); unplace(a); }} title={mode === "plan" ? "click to pull off" : undefined}
             style={{ fontSize: 9.5, cursor: mode === "plan" ? "pointer" : "default", lineHeight: 1.4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: mode === "lastyear" ? C.muted : C.dark }}>
-            <b style={{ fontVariantNumeric: "tabular-nums" }}>{(+r.qty_pots).toLocaleString()}</b> {r.item_name}
+            <b style={{ fontVariantNumeric: "tabular-nums" }}>{a.qty.toLocaleString()}</b> {a.name}
           </div>
         ))}
         {usedOther > 0 && <div style={{ fontSize: 8.5, color: C.amber, fontWeight: 700 }}>+{usedOther} other-container</div>}
@@ -393,10 +431,10 @@ export default function SpaceMap({ plan: fixedPlan }) {
               <div style={{ width: `${pct * 100}%`, height: "100%", background: pct >= 1 ? C.red : pct > 0.7 ? C.amber : C.light }} />
             </div>
           )}
-          {(info?.items || []).map(r => (
-            <div key={r.id} onClick={e => { e.stopPropagation(); unplace(r); }} title={mode === "plan" ? "click to pull off" : undefined}
+          {(info?.items || []).map(a => (
+            <div key={a.name} onClick={e => { e.stopPropagation(); unplace(a); }} title={mode === "plan" ? "click to pull off" : undefined}
               style={{ fontSize: 10, cursor: mode === "plan" ? "pointer" : "default", lineHeight: 1.4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: mode === "lastyear" ? C.muted : C.dark }}>
-              <b style={{ fontVariantNumeric: "tabular-nums" }}>{(+r.qty_pots).toLocaleString()}</b> {r.item_name}
+              <b style={{ fontVariantNumeric: "tabular-nums" }}>{a.qty.toLocaleString()}</b> {a.name}
             </div>
           ))}
           {usedOther > 0 && <div style={{ fontSize: 8.5, color: C.amber, fontWeight: 700 }}>+{usedOther} other-container</div>}
@@ -415,7 +453,7 @@ export default function SpaceMap({ plan: fixedPlan }) {
     const short = b.code.replace(/^(EQH|EQL)\d\d/, "").replace(/^(BWSH|DBMH|DBML|ASMH)/, "");
     return (
       <div onClick={() => placeItem && !busy && allocate(placeItem, b)} {...dropProps(b)}
-        title={`${b.code} · ${used}/${cap ?? "?"}${info ? " — " + info.items.map(r => `${r.qty_pots} ${r.item_name}`).join(", ") : ""}`}
+        title={`${b.code} · ${used}/${cap ?? "?"}${info ? " — " + info.items.map(a => `${a.qty} ${a.name}`).join(", ") : ""}`}
         style={{ width: 46, flex: "0 0 46px", textAlign: "center", background: blank ? "#fbfdf8" : pct >= 1 ? "#fbe3e0" : "#fdf6e3",
           border: `1.5px solid ${pct >= 1 ? C.red : C.border}`, borderRadius: 7, padding: "5px 2px", cursor: placeItem && mode === "plan" ? "copy" : "default" }}>
         <div style={{ fontFamily: "ui-monospace,Menlo,monospace", fontSize: 9, color: C.muted }}>
