@@ -300,8 +300,9 @@ export default function SpaceMap({ plan: fixedPlan }) {
     );
   };
 
+  // the container chip filters the tray too — Fiber LG selected → only fiber LG items
   const poolList = Object.entries(unplaced)
-    .filter(([n]) => !poolQ || n.toLowerCase().includes(poolQ.toLowerCase()))
+    .filter(([n, o]) => o.cls === cls && (!poolQ || n.toLowerCase().includes(poolQ.toLowerCase())))
     .sort(([a], [b]) => a.localeCompare(b));
 
   return (
@@ -339,7 +340,7 @@ export default function SpaceMap({ plan: fixedPlan }) {
       <div style={{ display: "grid", gridTemplateColumns: "290px 1fr", gap: 14, alignItems: "start" }}>
         {/* 📥 unplaced tray — drag onto a bench, or select + click */}
         <div style={{ background: C.card, border: `1.5px solid ${placeItem ? C.light : C.border}`, borderRadius: 12, padding: "10px 12px", position: "sticky", top: 8, maxHeight: "82vh", overflowY: "auto" }}>
-          <div style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: C.muted, marginBottom: 6 }}>📥 To place — drag onto the map</div>
+          <div style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: C.muted, marginBottom: 6 }}>📥 To place — {CLASSES.find(([k]) => k === cls)?.[1]} · drag onto the map</div>
           <input value={poolQ} onChange={e => setPoolQ(e.target.value)} placeholder="search unplaced…"
             style={{ width: "100%", boxSizing: "border-box", padding: "6px 9px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontFamily: FONT, fontSize: 12, marginBottom: 8 }} />
           {placeItem && (
