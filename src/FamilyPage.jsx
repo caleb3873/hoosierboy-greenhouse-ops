@@ -886,6 +886,45 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
     setBusy(false); setTick(t => t + 1);
   }
 
+  // set a group's PLANT week directly (Caleb 8/11: "a plant date that I set is
+  // necessary") — ship re-derives per series (rooted backs off rooting weeks),
+  // the FINISH stays exactly where it was.
+  async function applyGroupPlant(g, w, y) {
+    if (!w || w > 53) return;
+    const wrap = wrapWk;
+    const acc = { moved: 0, flags: [] };
+    setBusy(true);
+    for (const vr of g.vars) {
+      const sSpec = seriesOf(vr.variety) || {};
+      const rooted = /^(URC|CALL)/i.test(sSpec.form || "");
+      const p = { wk: w, yr: y };
+      const sh = rooted ? wrap(p.wk - Math.round(+(sSpec.rooting_weeks ?? 0)), p.yr) : p;
+      const old = vr.rows[0];
+      for (const r of vr.rows) {
+        const { error } = await sb.from("scheduled_crops").update({
+          plant_week: p.wk, plant_year: p.yr, ship_week: sh.wk, ship_year: sh.yr,
+        }).eq("id", r.id);
+        if (error) { window.alert(`⚠ Plant-week change did NOT save (${error.message}) — the group is unchanged.`); setBusy(false); return; }
+      }
+      const its = [...new Set(vr.rows.map(r => r.item_name))];
+      const res = await rippleTasks(sb, plan.id, its,
+        { ship: sh.wk, shipYear: sh.yr, plant: p.wk, plantYear: p.yr },
+        { wk: old?.ship_week, yr: old?.ship_year ?? old?.plant_year }, displayName);
+      acc.moved += res.moved; acc.flags.push(...res.flags);
+    }
+    try {
+      for (const it of [...new Set(g.rows.map(r => r.item_name))]) {
+        await sb.from("item_change_log").insert({ plan_id: plan.id, item_name: it,
+          change_type: "group_plant_change",
+          detail: { group: g.n, plant: `${y}w${w}`, note: "plant date set directly — finish untouched (family page)" },
+          changed_by: displayName || null, source: "family-page" });
+      }
+    } catch { /* audit must not block */ }
+    setFlashKey(`${y}|${w}`);
+    setRipple(acc.moved || acc.flags.length ? acc : null);
+    setBusy(false); setTick(t => t + 1);
+  }
+
   useEffect(() => {   // after a re-sort, bring the edited group back under the cursor and glow it
     if (!flashKey) return;
     const el = document.getElementById(`fam-grp-${flashKey}`);
@@ -2099,7 +2138,11 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
                 <b style={{ fontSize: 12 }}>Group {g.n}</b>
                 {flashKey === g.key && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.amber, background: C.amberBg, borderRadius: 5, padding: "2px 7px" }}>you just edited this — groups number by finish order</span>}
                 <span style={{ fontSize: 11, color: C.muted }} onClick={e => e.stopPropagation()}>
-                  ship <b style={wkStyle}>{g.shipMin == null ? "—" : g.shipMinAbs === g.shipMaxAbs ? wkFmt(g.shipMinYr, g.shipMin) : `${wkFmt(g.shipMinYr, g.shipMin)}–${wkFmt(g.shipMaxYr, g.shipMax)}`}</b> → plant <b style={wkStyle}>{wkFmt(g.plantYear, g.plant)}</b> → ready{" "}
+                  ship <b style={wkStyle}>{g.shipMin == null ? "—" : g.shipMinAbs === g.shipMaxAbs ? wkFmt(g.shipMinYr, g.shipMin) : `${wkFmt(g.shipMinYr, g.shipMin)}–${wkFmt(g.shipMaxYr, g.shipMax)}`}</b> → plant{" "}
+                  <FinishWkInput key={`p${g.key}|${g.plant}`} wk={g.plant} yr={g.plantYear ?? plan.year ?? 2027} disabled={busy} showDate={false} width={50}
+                    title="this group's PLANT week — type a week or 📅 pick a date; ship re-derives per series, the finish stays where it is"
+                    onCommit={(w, y) => applyGroupPlant(g, w, y)} />
+                  {" "}→ ready{" "}
                   <FinishWkInput key={`${g.key}|${g.ready}`} wk={g.ready} yr={g.readyYear ?? g.plantYear} disabled={busy}
                     title="this group's finish — type a week or 📅 pick a date; the whole group's chain re-derives from the recipe"
                     onCommit={(w, y) => applyGroupReady(g, `${String(y % 100).padStart(2, "0")}${String(w).padStart(2, "0")}`)} />
