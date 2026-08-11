@@ -5,7 +5,7 @@
 // picking or DRAGGING an unplaced plan item onto a bench/line; if space runs
 // out you can trim the plan to fit. Combo parents move whole-row only.
 import { useEffect, useMemo, useState } from "react";
-import { getSupabase } from "./shared";
+import { getSupabase } from "./supabase";
 
 const C = { dark: "#1e2d1a", light: "#7fb069", cream: "#c8e6b8", muted: "#7a8c74", red: "#d94f3d", amber: "#e89a3a", border: "#dfe7d8", chip: "#eef3e8", card: "#fff" };
 const FONT = "'DM Sans', sans-serif";
