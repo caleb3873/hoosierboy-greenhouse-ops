@@ -322,6 +322,8 @@ function PlannerShell() {
 function FloorAppRouter({ role, isManager, growerProfile, signOut }) {
   const name = growerProfile?.name || "";
   const isReese = name === "Reese Morris";
+  // Reese 8/10: Colin + Zach submit tasks/treatments same as him — no confirm gate
+  const isGrowerCreator = isReese || name === "Colin O'Dell" || name === "Zach Stenz" || name === "Zach Stenz Jr" || /^Zach(ary)? Stenz/.test(name);
   const isAsstManager = role === "assistant_manager";
   // The head grower owns the growing program — same task app, creator side.
   const isHeadGrower = role === "head_grower";
@@ -336,14 +338,14 @@ function FloorAppRouter({ role, isManager, growerProfile, signOut }) {
   else if (["Evie", "Sam", "Ryan", "Nick", "Tyler"].some(n => name.includes(n))) defaultCategory = "production";
   if (isHeadGrower && !defaultCategory) defaultCategory = "growing";
   // Manager + Reese + head grower start in task creator. Other workers start in worker checklist.
-  const initial = isManager || isReese || isHeadGrower ? "creator" : "worker";
+  const initial = isManager || isGrowerCreator || isHeadGrower ? "creator" : "worker";
   const [view, setView] = useState(initial);
 
   if (view === "creator") {
     return <ManagerTasksView
       onSwitchMode={signOut}
       onBackToApp={() => setView("app")}
-      canCreateGrowing={isManager || isReese || isHeadGrower}
+      canCreateGrowing={isManager || isGrowerCreator || isHeadGrower}
       defaultCategory={defaultCategory}
       isAsstManager={isAsstManager}
     />;

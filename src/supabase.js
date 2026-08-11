@@ -22,7 +22,7 @@ const JSONB_KEYS = new Set([
   "availableDays","available_days",
   "photos","members","availableDays","available_days",
   "pick_sheet_photos","pickSheetPhotos",
-  "answers",
+  "answers","variety_done","variety_rates","variety_notes",
   "signed_invoice_photos","signedInvoicePhotos",
   "alerts",
   "action_items","actionItems",

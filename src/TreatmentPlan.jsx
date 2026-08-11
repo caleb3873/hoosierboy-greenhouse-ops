@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { getSupabase } from "./supabase";
+import { useAuth } from "./Auth";
 
 // "What we did last year" treatment plan → seed this year's tasks. Generic per crop (Mum first).
 const uid = () => crypto.randomUUID();
@@ -361,6 +362,7 @@ function GrowthChart({ refs }) {
 }
 
 export default function TreatmentPlan({ onBack, onGoToGrowing, responsesOnly = false }) {
+  const { displayName } = useAuth();
   const sb = getSupabase();
   const [crop, setCrop] = useState("Mum");
   const [crops, setCrops] = useState(["Mum"]);
@@ -372,7 +374,8 @@ export default function TreatmentPlan({ onBack, onGoToGrowing, responsesOnly = f
   const [sel, setSel] = useState(null);   // record whose detail window is open
   const [logOpen, setLogOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
-  const [view, setView] = useState(responsesOnly ? "responses" : "plan"); // plan | responses | reference
+  const [view, setView] = useState(responsesOnly ? "responses" : "log"); // log (this year) | plan (last year ref) | responses | reference
+  const [appFilter, setAppFilter] = useState("");   // product chip on the this-year list
   const [refs, setRefs] = useState([]);          // variety_reference rows for this crop
   const [refZoom, setRefZoom] = useState(null);  // { photos, i }
   const thisYear = new Date().getFullYear();
@@ -544,6 +547,24 @@ export default function TreatmentPlan({ onBack, onGoToGrowing, responsesOnly = f
     .sort((a, b) => a.rec_date.slice(5).localeCompare(b.rec_date.slice(5)));
   const byMonth = {};
   recs.forEach(r => { if (!r.rec_date) return; (byMonth[monthOf(r.rec_date)] = byMonth[monthOf(r.rec_date)] || []).push(r); });
+  // 📒 THIS YEAR — Reese's working list: what's been logged, newest first; the
+  // prescheduled last-year reference lives on its own tab and stays out of the way
+  const thisYearRecs = recs.filter(r => String(r.rec_date).slice(0, 4) === String(thisYear))
+    .filter(r => !appFilter || (r.application || "📏 reference") === appFilter)
+    .sort((a, b) => String(b.rec_date).localeCompare(String(a.rec_date)));
+  const appChips = [...new Set(recs.filter(r => String(r.rec_date).slice(0, 4) === String(thisYear)).map(r => r.application || "📏 reference"))].sort();
+  const week7 = (() => {   // recap: the last 7 days on this crop
+    const cut = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
+    const logged = recs.filter(r => String(r.rec_date) >= cut && String(r.rec_date).slice(0, 4) === String(thisYear));
+    const checks = [];
+    recs.forEach(r => Object.entries(r.variety_done || {}).forEach(([v, d]) => { if (d && String(d.at || "").slice(0, 10) >= cut) checks.push({ v, by: d.by }); }));
+    const crewDone = Object.values(tasks).flat().filter(t => t.status === "completed" && String(t.completedAt || "").slice(0, 10) >= cut);
+    const who = {};
+    logged.forEach(r => { if (r.logged_by) who[r.logged_by] = (who[r.logged_by] || 0) + 1; });
+    checks.forEach(c => { if (c.by) who[c.by] = (who[c.by] || 0) + 1; });
+    crewDone.forEach(t => { if (t.completedBy) who[t.completedBy] = (who[t.completedBy] || 0) + 1; });
+    return { logged: logged.length, checks: checks.length, crewDone: crewDone.length, who };
+  })();
   // completed treatments (≥1 completed task) → the Responses view, newest completion first
   const lastDoneOf = id => listOf(id).filter(t => t.status === "completed").map(t => t.completedAt).filter(Boolean).sort().pop() || "";
   const completedRecs = recs.filter(r => doneN(r.id) > 0).sort((a, b) => lastDoneOf(b.id).localeCompare(lastDoneOf(a.id)));
@@ -563,7 +584,12 @@ export default function TreatmentPlan({ onBack, onGoToGrowing, responsesOnly = f
       <div onClick={() => setSel(r)} style={{ flex: 1, minWidth: 0, cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
-            {r.application && <span style={{ fontSize: 11.5, fontWeight: 800, color: "#fff", background: appColor(r.application), borderRadius: 7, padding: "2px 9px", ...wrap }}>{r.application}{r.rates ? ` · ${r.rates}` : ""}</span>}
+            {r.application
+              ? <span style={{ fontSize: 11.5, fontWeight: 800, color: "#fff", background: appColor(r.application), borderRadius: 7, padding: "2px 9px", ...wrap }}>{r.application}{r.rates ? ` · ${r.rates}` : ""}</span>
+              : <span style={{ fontSize: 11.5, fontWeight: 800, color: "#6a5a8a", background: "#efeaf8", border: "1px solid #cabfe5", borderRadius: 7, padding: "2px 9px" }}>📏 reference</span>}
+            {(() => { const vd = Object.keys(r.variety_done || {}).length; const vt = splitVars(r.crop_detail).length;
+              return !listOf(r.id).length && vd > 0
+                ? <span style={{ fontSize: 10, fontWeight: 800, color: vd >= vt && vt > 0 ? "#fff" : "#2e5c1e", background: vd >= vt && vt > 0 ? "#3a7d2c" : "#eef6e7", borderRadius: 7, padding: "2px 8px" }}>{vd >= vt && vt > 0 ? "✓ DONE" : `${vd}/${vt || "?"} done`}</span> : null; })()}
             {pv && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.plum, background: "#f5eefa", border: `1px solid ${C.plum}`, borderRadius: 7, padding: "1px 6px" }}>{splitVars(r.crop_detail).length} varieties</span>}
             {allDone && <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: "#3a7d2c", borderRadius: 7, padding: "2px 8px" }}>✓ DONE{lastDone ? ` ${fmtDate(String(lastDone).slice(0, 10))}` : ""}</span>}
             {scheduled && !allDone && dN > 0 && <span style={{ fontSize: 10, fontWeight: 800, color: "#2e5c1e", background: "#eef6e7", borderRadius: 7, padding: "2px 8px" }}>{dN}/{total} done</span>}
@@ -598,11 +624,39 @@ export default function TreatmentPlan({ onBack, onGoToGrowing, responsesOnly = f
 
         {(!responsesOnly || refs.length > 0) && (
           <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-            {[...(responsesOnly ? [] : [["plan", "🌼 Plan"]]), ["responses", "📸 Responses"], ...(refs.length ? [["reference", "📏 Sizes"], ["growth", "📈 Growth"]] : [])].map(([id, label]) => (
+            {[...(responsesOnly ? [] : [["log", "📒 This Year"], ["plan", "📜 Last Year"]]), ["responses", "📸 Responses"], ...(refs.length ? [["reference", "📏 Sizes"], ["growth", "📈 Growth"]] : [])].map(([id, label]) => (
               <button key={id} onClick={() => setView(id)} style={{ flex: 1, background: view === id ? C.dark : "#fff", color: view === id ? "#c8e6b8" : C.muted, border: `1.5px solid ${view === id ? C.dark : C.border}`, borderRadius: 10, padding: "9px 8px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>{label}{id === "responses" && completedRecs.length > 0 ? ` (${completedRecs.length})` : ""}{id === "reference" ? ` (${refs.length})` : ""}</button>
             ))}
           </div>
         )}
+
+        {view === "log" && !responsesOnly && (<>
+          <div style={{ background: C.card, border: `2px solid ${C.light}`, borderRadius: 12, padding: "10px 14px", marginBottom: 12 }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: C.dark, textTransform: "uppercase", letterSpacing: .5 }}>🗓 This week on {crop}</div>
+            <div style={{ fontSize: 12.5, color: "#2e3d28", marginTop: 3 }}>
+              <b>{week7.logged}</b> treatment{week7.logged !== 1 ? "s" : ""} logged · <b>{week7.checks}</b> variety check{week7.checks !== 1 ? "s" : ""} · <b>{week7.crewDone}</b> crew task{week7.crewDone !== 1 ? "s" : ""} completed
+              {Object.keys(week7.who).length > 0 && <span style={{ color: C.muted }}> — {Object.entries(week7.who).map(([n, c]) => `${n} (${c})`).join(", ")}</span>}
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+            <button onClick={() => setLogOpen(true)} style={{ background: C.light, color: "#fff", border: "none", borderRadius: 9, padding: "10px 18px", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>＋ Log a treatment</button>
+            <button onClick={() => setHelpOpen(true)} style={{ background: "#fff", color: C.plum, border: `1.5px solid ${C.plum}`, borderRadius: 9, padding: "10px 14px", fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>❓</button>
+          </div>
+          {appChips.length > 1 && (
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+              <button onClick={() => setAppFilter("")} style={{ border: `1.5px solid ${!appFilter ? C.dark : C.border}`, background: !appFilter ? C.dark : "#fff", color: !appFilter ? "#c8e6b8" : C.muted, borderRadius: 999, padding: "4px 12px", fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>all</button>
+              {appChips.map(a => (
+                <button key={a} onClick={() => setAppFilter(appFilter === a ? "" : a)}
+                  style={{ border: `1.5px solid ${appFilter === a ? C.dark : C.border}`, background: appFilter === a ? C.dark : "#fff", color: appFilter === a ? "#c8e6b8" : C.dark, borderRadius: 999, padding: "4px 12px", fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{a}</button>
+              ))}
+            </div>
+          )}
+          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: "8px 14px 12px" }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: C.dark, padding: "2px 0 4px" }}>{thisYear} — newest first</div>
+            {thisYearRecs.map(r => <Row key={r.id} r={r} />)}
+            {!thisYearRecs.length && <div style={{ color: C.muted, fontSize: 13, padding: "16px 0", textAlign: "center" }}>Nothing logged on {crop} in {thisYear} yet — ＋ Log a treatment.</div>}
+          </div>
+        </>)}
 
         {view === "plan" && !responsesOnly && (<>
         <div style={{ background: "#eef6e7", border: `1px solid ${C.light}`, borderRadius: 10, padding: "10px 12px", fontSize: 12.5, color: "#2e3d28", marginBottom: 14 }}>
@@ -673,11 +727,12 @@ export default function TreatmentPlan({ onBack, onGoToGrowing, responsesOnly = f
         </>)}
       </div>
 
-      {sel && <DetailModal sb={sb} rec={sel} thisYear={thisYear} defaultDate={targetDefault(sel)} varTasks={listOf(sel.id)}
+      {sel && <DetailModal sb={sb} rec={sel} thisYear={thisYear} defaultDate={targetDefault(sel)} varTasks={listOf(sel.id)} displayName={displayName}
         onConvert={(td) => convert(sel, td)} onUndo={() => undo(sel)} onReconcile={(r) => reconcile(r)} onChanged={async () => { await load(); }} onSyncSel={r => setSel(r)} onClose={() => setSel(null)}
         onGoToGrowing={onGoToGrowing} />}
       {refZoom && <RefLightbox photos={refZoom.photos} index={refZoom.i} onClose={() => setRefZoom(null)} onIndex={i => setRefZoom({ ...refZoom, i })} />}
-      {logOpen && <LogModal crop={crop} year={thisYear} sb={sb} onClose={() => setLogOpen(false)} onSaved={() => { setLogOpen(false); load(); }} />}
+      {logOpen && <LogModal crop={crop} year={thisYear} sb={sb} loggedBy={displayName} onClose={() => setLogOpen(false)}
+        onSaved={(rec) => { setLogOpen(false); load(); if (rec) { setView(v => v === "plan" ? "log" : v); setSel(rec); } }} />}
       {helpOpen && <HelpModal crop={crop} year={thisYear} onClose={() => setHelpOpen(false)} />}
     </div>
   );
@@ -721,7 +776,7 @@ function HelpModal({ crop, year, onClose }) {
 }
 
 // Detail window — read the treatment, add plant-size photos + notes, set the date, create/undo the task.
-function DetailModal({ sb, rec, thisYear, defaultDate, varTasks = [], onConvert, onUndo, onReconcile, onChanged, onSyncSel, onClose, onGoToGrowing }) {
+function DetailModal({ sb, rec, thisYear, defaultDate, varTasks = [], displayName, onConvert, onUndo, onReconcile, onChanged, onSyncSel, onClose, onGoToGrowing }) {
   const init = () => ({ application: rec.application || "", rates: rec.rates || "", location: rec.location || "", notes: rec.notes || "" });
   const [meta, setMeta] = useState(init);
   const [lines, setLines] = useState(() => { const v = splitVars(rec.crop_detail); return v.length ? v : [""]; });
@@ -743,6 +798,15 @@ function DetailModal({ sb, rec, thisYear, defaultDate, varTasks = [], onConvert,
   const addLine = () => setLines(a => [...a, ""]);
   const cropDetail = lines.map(s => s.trim()).filter(Boolean).join(", ");
   const photos = rec.photos || [];
+  const vd = rec.variety_done || {}, vrs = rec.variety_rates || {}, vns = rec.variety_notes || {};
+  const doneCnt = lines.map(x => x.trim()).filter(k => k && vd[k]).length;
+  const saveVar = async (field, key, value) => {
+    const cur = { variety_done: vd, variety_rates: vrs, variety_notes: vns }[field];
+    const next = { ...cur };
+    if (value == null) delete next[key]; else next[key] = value;
+    await sb.from("treatment_records").update({ [field]: next }).eq("id", rec.id);
+    onSyncSel({ ...rec, [field]: next }); onChanged();
+  };
   const titlePreview = (["🌼", meta.application, meta.rates].filter(x => x && x.trim()).join(" ") + (cropDetail ? ` — ${cropDetail}` : "")).trim();
 
   async function addPhoto(file, variety) {
@@ -788,6 +852,23 @@ function DetailModal({ sb, rec, thisYear, defaultDate, varTasks = [], onConvert,
         if (!window.confirm(msg)) { setMeta(init()); const v = splitVars(rec.crop_detail); setLines(v.length ? v : [""]); return; } // cancel → revert the edit
       }
     }
+    // typo fix / rename on an UNSCHEDULED record: photos + per-variety data follow the
+    // new name (Reese: "he may just be fixing a typo and he will lose the information")
+    let renamed = null;
+    if (!varTasks.length) {
+      const before = splitVars(rec.crop_detail).map(x => x.trim()).filter(Boolean);
+      const after = (linesOverride || lines).map(x => x.trim()).filter(Boolean);
+      const gone = before.filter(x => !after.includes(x));
+      const added = after.filter(x => !before.includes(x));
+      if (gone.length === 1 && added.length === 1) {
+        renamed = { from: gone[0], to: added[0] };
+        const remap = o => { const n = { ...o }; if (n[renamed.from] != null) { n[renamed.to] = n[renamed.from]; delete n[renamed.from]; } return n; };
+        clean.photos = (rec.photos || []).map(ph => ph.variety === renamed.from ? { ...ph, variety: renamed.to } : ph);
+        clean.variety_done = remap(rec.variety_done || {});
+        clean.variety_rates = remap(rec.variety_rates || {});
+        clean.variety_notes = remap(rec.variety_notes || {});
+      }
+    }
     await sb.from("treatment_records").update(clean).eq("id", rec.id);
     onSyncSel({ ...rec, ...clean });
     // if already scheduled, reconcile the per-variety tasks to the current lines (add/remove/rename + retag)
@@ -815,7 +896,13 @@ function DetailModal({ sb, rec, thisYear, defaultDate, varTasks = [], onConvert,
           <input value={meta.application} onChange={e => setM("application", e.target.value)} onBlur={() => saveMeta()} placeholder="Application (Piccolo…)" style={{ ...inp, flex: 2 }} />
           <input value={meta.rates} onChange={e => setM("rates", e.target.value)} onBlur={() => saveMeta()} placeholder="Rate (3ppm…)" style={{ ...inp, flex: 1 }} />
         </div>
-        <div style={lbl}>Varieties treated <span style={{ fontWeight: 400, textTransform: "none" }}>· {pv ? "PGR — one task per variety, each gets its own size photo" : "broad application — one task by location"}</span></div>
+        <div style={lbl}>Varieties treated
+          <span style={{ fontWeight: 400, textTransform: "none" }}> · check off as you go</span>
+          {lines.filter(x => x.trim()).length > 0 && (
+            <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 800, color: doneCnt === lines.filter(x => x.trim()).length ? "#fff" : "#2e5c1e", background: doneCnt === lines.filter(x => x.trim()).length ? "#3a7d2c" : "#eef6e7", borderRadius: 7, padding: "2px 8px", textTransform: "none" }}>
+              {doneCnt}/{lines.filter(x => x.trim()).length} done</span>
+          )}
+        </div>
         {(() => {
           const tile = p => (
             <div key={p.id} style={{ position: "relative", flexShrink: 0 }}>
@@ -831,7 +918,16 @@ function DetailModal({ sb, rec, thisYear, defaultDate, varTasks = [], onConvert,
               return (
                 <div key={i} style={{ border: `1px solid ${C.border}`, borderRadius: 10, padding: 8, marginBottom: 8 }}>
                   <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                    <input value={v} onChange={e => setLine(i, e.target.value)} onBlur={() => saveMeta()} placeholder={'Variety (e.g. 9" Nicki)'} style={{ ...inp, flex: 1 }} />
+                    <input type="checkbox" checked={!!(key && vd[key])} disabled={!key}
+                      title={key && vd[key] ? `done ${String(vd[key].at || "").slice(0, 10)}${vd[key].by ? " · " + vd[key].by : ""} — uncheck to undo` : "check when this variety is treated"}
+                      onChange={e => saveVar("variety_done", key, e.target.checked ? { at: new Date().toISOString(), by: displayName || null } : null)}
+                      style={{ width: 20, height: 20, accentColor: "#3a7d2c", flexShrink: 0 }} />
+                    <input value={v} onChange={e => setLine(i, e.target.value)} onBlur={() => saveMeta()} placeholder={'Variety (e.g. 9" Nicki)'} style={{ ...inp, flex: 1, ...(key && vd[key] ? { background: "#f1f8ec" } : {}) }} />
+                    <input value={key ? (vrs[key] ?? "") : ""} disabled={!key}
+                      onChange={e => key && onSyncSel({ ...rec, variety_rates: { ...vrs, [key]: e.target.value } })}
+                      onBlur={e => key && saveVar("variety_rates", key, e.target.value.trim() || null)}
+                      placeholder={meta.rates || "rate"} title="this variety's own rate — blank uses the header rate"
+                      style={{ ...inp, width: 74, flex: "0 0 74px", ...(key && vrs[key] ? { borderColor: "#e0952b", fontWeight: 700 } : {}) }} />
                     {pv && key && taskFor(key) && <span title={taskFor(key).status === "completed" ? "Crew completed this variety" : "Task scheduled — awaiting crew photo"} style={{ fontSize: 10, fontWeight: 800, color: taskFor(key).status === "completed" ? "#fff" : "#2e5c1e", background: taskFor(key).status === "completed" ? "#3a7d2c" : "#eef6e7", borderRadius: 7, padding: "3px 7px", flexShrink: 0 }}>{taskFor(key).status === "completed" ? "✓" : "•"}</span>}
                     <label title={key ? "Add a size photo" : "Name the variety first"} style={{ background: key ? "#f5eefa" : "#f0f0f0", border: `1.5px solid ${key ? C.plum : C.border}`, color: key ? C.plum : C.muted, borderRadius: 8, padding: "9px 12px", fontSize: 15, cursor: key ? "pointer" : "default", flexShrink: 0 }}>
                       {uploading === key && key ? "…" : "📷"}
@@ -840,6 +936,12 @@ function DetailModal({ sb, rec, thisYear, defaultDate, varTasks = [], onConvert,
                     {lines.length > 1 && <button onClick={() => removeLine(i)} title="Remove variety" style={{ background: "none", border: "none", color: "#d94f3d", fontSize: 20, cursor: "pointer", flexShrink: 0, lineHeight: 1 }}>×</button>}
                   </div>
                   {list.length > 0 && <div style={{ display: "flex", gap: 6, overflowX: "auto", marginTop: 7 }}>{list.map(tile)}</div>}
+                  {key && (
+                    <input value={vns[key] ?? ""} placeholder="quick note for this variety…"
+                      onChange={e => onSyncSel({ ...rec, variety_notes: { ...vns, [key]: e.target.value } })}
+                      onBlur={e => saveVar("variety_notes", key, e.target.value.trim() || null)}
+                      style={{ width: "100%", boxSizing: "border-box", marginTop: 6, padding: "6px 9px", border: `1px solid ${C.border}`, borderRadius: 7, fontSize: 12.5, fontFamily: "inherit", background: "#fbfdf8" }} />
+                  )}
                 </div>
               );
             })}
@@ -881,22 +983,27 @@ function DetailModal({ sb, rec, thisYear, defaultDate, varTasks = [], onConvert,
               <button onClick={doUndo} disabled={busy} style={{ background: "#fff", color: "#d94f3d", border: `1.5px solid ${C.border}`, borderRadius: 9, padding: "9px 14px", fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>{busy ? "…" : total > 1 ? "Undo all" : "Undo"}</button>
             </div>
           )}
-          <div style={{ fontSize: 11, color: C.muted, marginTop: 6 }}>{pv ? `Piccolo is size-triggered — each variety is its own task so the crew photographs each one's size. ` : ""}Set the date to when the plants actually reach size — you can also tweak it later in Growing tasks.</div>
+          <div style={{ fontSize: 11, color: C.muted, marginTop: 6 }}>{pv ? `Piccolo is size-triggered — each variety is its own task so the crew photographs each one's size. ` : ""}Creating tasks is OPTIONAL — checking varieties off above is the record on its own.</div>
         </div>
+        <button onClick={onClose}
+          style={{ width: "100%", marginTop: 14, background: C.dark, color: "#c8e6b8", border: "none", borderRadius: 11, padding: "14px 0", fontWeight: 800, fontSize: 15, cursor: "pointer", fontFamily: "inherit" }}>
+          ✅ Submit & Done{doneCnt > 0 ? ` — ${doneCnt}/${lines.filter(x => x.trim()).length} checked` : ""}
+        </button>
       </div>
     </div>
   );
 }
 
 // Quick "log what we did" — records this year's treatment so it becomes next year's reference.
-function LogModal({ crop, year, sb, onClose, onSaved }) {
+function LogModal({ crop, year, sb, loggedBy, onClose, onSaved }) {
   const [d, setD] = useState({ rec_date: new Date().toISOString().slice(0, 10), crop_detail: "", location: "", application: "", rates: "", notes: "" });
   const set = (k, v) => setD(x => ({ ...x, [k]: v }));
   const inp = { width: "100%", boxSizing: "border-box", padding: "9px 11px", border: "1.5px solid #c8d8c0", borderRadius: 9, fontSize: 14, fontFamily: "inherit", marginBottom: 10 };
   async function save() {
-    if (!d.application && !d.crop_detail) { window.alert("Add at least a treatment or crop."); return; }
-    await sb.from("treatment_records").insert({ crop, year, ...d, source: "logged", photos: [] });
-    onSaved();
+    if (!d.application && !d.crop_detail) { window.alert("Add at least a treatment or crop — leave the application blank for a 📏 reference-only entry (measurements/photos)."); return; }
+    const { data: rec, error } = await sb.from("treatment_records").insert({ crop, year, ...d, source: "logged", photos: [], logged_by: loggedBy || null }).select().single();
+    if (error) { window.alert("Save failed: " + error.message); return; }
+    onSaved(rec);   // straight into the varieties window — no hunting for it
   }
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.5)", zIndex: 9999, display: "flex", alignItems: "flex-end", justifyContent: "center", padding: 12 }}>

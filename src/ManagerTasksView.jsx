@@ -429,6 +429,18 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
   // that have a back-to-hub and aren't tightly role-gated, so a reload can't strand anyone.
   const PERSISTABLE_VIEWS = ["tasks", "tradeshow", "photos", "hotlist", "treatment", "today", "week", "messages", "vacation", "evaluations", "receiving", "inventory", "reference-docs", "driver-schedule", "prop-guide", "sales-visits"];
   const [currentView, setCurrentView] = useState(() => { try { const v = sessionStorage.getItem("mtv_view_v1"); return v && PERSISTABLE_VIEWS.includes(v) ? v : "hub"; } catch { return "hub"; } }); // hub | tasks | vacation | messages | today | week | hr-inbox
+  // Android back button: each view push gets a history entry so back returns to the
+  // hub instead of closing the app (Reese is on Android)
+  useEffect(() => {
+    if (currentView !== "hub") {
+      try { window.history.pushState({ mtv: currentView }, ""); } catch {}
+    }
+  }, [currentView]);
+  useEffect(() => {
+    const onPop = () => setCurrentView(v => v !== "hub" ? "hub" : v);
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
   useEffect(() => { try { sessionStorage.setItem("mtv_view_v1", currentView); } catch {} }, [currentView]); // sessionStorage → survives refresh, resets on fresh open
   useEffect(() => { try { localStorage.setItem("mtv_cat_v1", category); } catch {} }, [category]);
   const [showHrCompose, setShowHrCompose] = useState(false);
