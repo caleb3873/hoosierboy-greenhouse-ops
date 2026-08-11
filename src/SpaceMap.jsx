@@ -16,8 +16,8 @@ const CLASSES = [
 ];
 const QN = ["02","03","04","05","06","07","08","09","10","11","12","13","14","15","16","17","18","19","20","21","22","23","25"];
 const HOUSES = [
-  { key: "BWS", label: "West Side", benchLike: "BWS%", banks: [["South row", /^BWSS/, true], ["North row (09–16 ⅓)", /^BWSN/, true]], lineLike: ["BWSH%"] },
-  { key: "DBM", label: "Bluff Main", benchLike: "DBM%", banks: [["West range", /^DBMW/, false], ["East range", /^DBME/, false]], lineLike: ["DBMH%", "DBML%"] },
+  { key: "BWS", label: "West Side", benchLike: "BWS%", vertical: true, banks: [["South row", /^BWSS/, true], ["North row (09–16 ⅓)", /^BWSN/, true]], lineLike: ["BWSH%"] },
+  { key: "DBM", label: "Bluff Main", benchLike: "DBM%", vertical: true, banks: [["West range", /^DBMW/, false], ["East range", /^DBME/, false]], lineLike: ["DBMH%", "DBML%"] },
   ...QN.map(n => ({ key: `Q${n}`, label: `Quonset ${n}`, benchLike: `EQ${n}%`, banks: [["Benches — walk order", new RegExp(`^EQ${n}0[1-4]$`), false]], lineLike: [`EQH${n}%`, `EQL${n}%`] })),
 ];
 
@@ -311,6 +311,53 @@ export default function SpaceMap({ plan: fixedPlan }) {
     );
   };
 
+  // ── wide bench card for the big houses (stacked vertically, walk down) ──
+  const BenchWide = ({ b }) => {
+    const k = cls;
+    const cap = capOf(b, k);
+    const info = byBench[b.id];
+    const used = info?.byClass[k] || 0;
+    const usedOther = info ? Object.entries(info.byClass).filter(([x]) => x !== k).reduce((s, [, v]) => s + v, 0) : 0;
+    const pct = cap ? Math.min(1, used / cap) : 0;
+    const blank = !info;
+    return (
+      <div onClick={() => placeItem && !busy && allocate(placeItem, b)} {...dropProps(b)}
+        style={{ display: "flex", alignItems: "center", gap: 10, background: blank ? "#fbfdf8" : pct >= 1 ? "#fbe3e0" : "#fdf6e3",
+          border: `1.5px solid ${pct >= 1 ? C.red : C.border}`, borderRadius: 9, padding: "7px 10px", cursor: placeItem && mode === "plan" ? "copy" : "default" }}>
+        <div style={{ width: 74 }}>
+          <b style={{ fontFamily: "ui-monospace,Menlo,monospace", fontSize: 11.5 }}>{b.code}</b>
+          <div style={{ fontSize: 9, fontWeight: 800, color: C.muted }}>{TYPE_LABEL[b.bench_type] || ""}</div>
+        </div>
+        <div style={{ width: 92, textAlign: "right" }}>
+          {cap != null ? (
+            <>
+              <span style={{ fontSize: 17, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: blank ? C.dark : pct >= 1 ? C.red : C.amber }}>
+                {blank ? cap.toLocaleString() : `${used}/${cap}`}
+              </span>
+              <div style={{ fontSize: 8, fontWeight: 800, textTransform: "uppercase", color: C.muted }}>
+                {blank ? (k === "tray45" ? `${spacing}` : "cap") : `${cap - used} open`}
+              </div>
+            </>
+          ) : <span style={{ fontSize: 9.5, color: C.muted }}>no cap</span>}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {cap != null && !blank && (
+            <div style={{ height: 5, background: "#e8ede3", borderRadius: 3, marginBottom: 3, overflow: "hidden" }}>
+              <div style={{ width: `${pct * 100}%`, height: "100%", background: pct >= 1 ? C.red : pct > 0.7 ? C.amber : C.light }} />
+            </div>
+          )}
+          {(info?.items || []).map(r => (
+            <div key={r.id} onClick={e => { e.stopPropagation(); unplace(r); }} title={mode === "plan" ? "click to pull off" : undefined}
+              style={{ fontSize: 10, cursor: mode === "plan" ? "pointer" : "default", lineHeight: 1.4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: mode === "lastyear" ? C.muted : C.dark }}>
+              <b style={{ fontVariantNumeric: "tabular-nums" }}>{(+r.qty_pots).toLocaleString()}</b> {r.item_name}
+            </div>
+          ))}
+          {usedOther > 0 && <div style={{ fontSize: 8.5, color: C.amber, fontWeight: 700 }}>+{usedOther} other-container</div>}
+        </div>
+      </div>
+    );
+  };
+
   // ── a line drawn as a line: narrow strip, hover for detail ──
   const LineStrip = ({ b }) => {
     const cap = b.cap_overrides?.basket ?? null;
@@ -439,10 +486,23 @@ export default function SpaceMap({ plan: fixedPlan }) {
           {layers.baskets && basketLines.length > 0 && (
             <div style={{ marginBottom: 12 }}>
               <div style={{ fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".5px", color: C.muted, marginBottom: 4 }}>🧺 basket lines overhead — left → right</div>
-              <div style={{ display: "flex", gap: 4, overflowX: "auto", paddingBottom: 3 }}>{basketLines.map(b => <LineStrip key={b.id} b={b} />)}</div>
+              <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>{basketLines.map(b => <LineStrip key={b.id} b={b} />)}</div>
             </div>
           )}
-          {layers.benches && (house?.banks || []).map(([label, re, rev]) => {
+          {layers.benches && (house?.vertical ? (
+            <div style={{ display: "grid", gridTemplateColumns: `repeat(${house.banks.length}, 1fr)`, gap: 12, marginBottom: 12 }}>
+              {house.banks.map(([label, re, rev]) => {
+                let bs = benchOf(re);
+                if (rev) bs = bs.slice().reverse();
+                return (
+                  <div key={label}>
+                    <div style={{ fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".5px", color: C.muted, marginBottom: 4 }}>{label} — walk ↓</div>
+                    <div style={{ display: "grid", gap: 5 }}>{bs.map(b => <BenchWide key={b.id} b={b} />)}</div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (house?.banks || []).map(([label, re, rev]) => {
             let bs = benchOf(re);
             if (rev) bs = bs.slice().reverse();
             return bs.length > 0 && (
@@ -451,11 +511,11 @@ export default function SpaceMap({ plan: fixedPlan }) {
                 <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 3 }}>{bs.map(b => <BenchCol key={b.id} b={b} />)}</div>
               </div>
             );
-          })}
+          }))}
           {layers.lows && lowLines.length > 0 && (
             <div>
               <div style={{ fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".5px", color: C.muted, marginBottom: 4 }}>low lines — left → right</div>
-              <div style={{ display: "flex", gap: 4, overflowX: "auto", paddingBottom: 3 }}>{lowLines.map(b => <LineStrip key={b.id} b={b} />)}</div>
+              <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>{lowLines.map(b => <LineStrip key={b.id} b={b} />)}</div>
             </div>
           )}
         </div>
