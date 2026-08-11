@@ -366,7 +366,7 @@ export function wrapWk(wk, yr) {
 // Throws on any write error so callers don't stamp "applied" over a failed push.
 export async function pushTargetToRows(sb, planId, itemName, pots) {
   let { data: rows0, error: e0 } = await sb.from("scheduled_crops")
-    .select("id,qty_pots,ppp,plants_per_unit,pack_size")
+    .select("id,qty_pots,ppp,plants_per_unit,pack_size,placed_at")
     .eq("plan_id", planId).eq("item_name", itemName).not("is_combo_component", "is", true);
   if (e0) throw new Error(`read rows: ${e0.message}`);
   if (!rows0 || !rows0.length) return { rows: 0, achieved: null };
@@ -378,36 +378,68 @@ export async function pushTargetToRows(sb, planId, itemName, pots) {
   if (parentIds.size && parentIds.size < rows0.length) rows0 = rows0.filter(r => parentIds.has(r.id));
   const pf = r => { const ppu = Math.max(1, +r.plants_per_unit || +r.pack_size || 1); const ppp = +r.ppp || 1; return (ppp >= ppu && ppu > 1) ? ppu : 1; };
   const factors = rows0.map(pf);
-  const curPots = rows0.reduce((a, r, i) => a + (+r.qty_pots || 0) * factors[i], 0);
-  // proportional when the item has shape; even when all rows are zero (a re-grown
-  // drop — the old apply engine's qty>0 filter could never resurrect those)
-  const exact = rows0.map((r, i) =>
-    curPots > 0 ? (pots * ((+r.qty_pots || 0) * factors[i]) / curPots) / factors[i] : (pots / rows0.length) / factors[i]);
-  const flo = exact.map(Math.floor);
-  let rem = pots - flo.reduce((a, n, i) => a + n * factors[i], 0);
-  const order = exact.map((e, i) => ({ i, fr: e - flo[i] })).sort((a, b) => b.fr - a.fr);
-  let granted = true;
-  while (rem > 0 && granted) {          // multi-pass: keep granting native units while any fits
-    granted = false;
-    for (const o of order) { if (rem >= factors[o.i]) { flo[o.i]++; rem -= factors[o.i]; granted = true; } }
+  const oldQty = rows0.map(r => +r.qty_pots || 0);
+  const curPots = rows0.reduce((a, _, i) => a + oldQty[i] * factors[i], 0);
+
+  // largest-remainder multi-pass over a SUBSET of row indexes
+  const distribute = (idxs, target) => {
+    const curSub = idxs.reduce((a, ri) => a + oldQty[ri] * factors[ri], 0);
+    const exact = idxs.map(ri => curSub > 0 ? (target * (oldQty[ri] * factors[ri]) / curSub) / factors[ri] : (target / idxs.length) / factors[ri]);
+    const flo = exact.map(Math.floor);
+    let rem = target - flo.reduce((a, n, j) => a + n * factors[idxs[j]], 0);
+    const order = exact.map((e, j) => ({ j, fr: e - flo[j] })).sort((a, b) => b.fr - a.fr);
+    let granted = true;
+    while (rem > 0 && granted) {
+      granted = false;
+      for (const o of order) { if (rem >= factors[idxs[o.j]]) { flo[o.j]++; rem -= factors[idxs[o.j]]; granted = true; } }
+    }
+    return { flo, achieved: target - rem };
+  };
+
+  // PLACED rows (Space map) are locked: a family-number change flows into the
+  // unplaced rows; benches only shrink when the target drops below what's placed.
+  const freeIdx = rows0.map((r, i) => !r.placed_at ? i : -1).filter(i => i >= 0);
+  const lockedIdx = rows0.map((r, i) => r.placed_at ? i : -1).filter(i => i >= 0);
+  const lockedPots = lockedIdx.reduce((a, ri) => a + oldQty[ri] * factors[ri], 0);
+  const newQty = oldQty.slice();
+  let achieved;
+  if (!lockedIdx.length || !freeIdx.length) {
+    // nothing placed, or EVERYTHING placed (deliberate edit) — classic full spread
+    const all = rows0.map((_, i) => i);
+    const sub = distribute(all, pots);
+    all.forEach((ri, j) => { newQty[ri] = sub.flo[j]; });
+    achieved = sub.achieved;
+  } else if (pots >= lockedPots) {
+    const sub = distribute(freeIdx, pots - lockedPots);
+    freeIdx.forEach((ri, j) => { newQty[ri] = sub.flo[j]; });
+    achieved = lockedPots + sub.achieved;
+  } else {
+    // target fell below what's already on benches: unplaced to zero, placed scale down
+    freeIdx.forEach(ri => { newQty[ri] = 0; });
+    const sub = distribute(lockedIdx, pots);
+    lockedIdx.forEach((ri, j) => { newQty[ri] = sub.flo[j]; });
+    achieved = sub.achieved;
   }
-  const achieved = pots - rem;          // what native units could actually hold
+
   for (let i = 0; i < rows0.length; i++) {
-    if (flo[i] !== +rows0[i].qty_pots) {
-      const { error } = await sb.from("scheduled_crops").update({ qty_pots: flo[i] }).eq("id", rows0[i].id);
+    if (newQty[i] !== oldQty[i]) {
+      const { error } = await sb.from("scheduled_crops").update({ qty_pots: newQty[i] }).eq("id", rows0[i].id);
       if (error) throw new Error(`row update: ${error.message}`);
-      rows0[i].qty_pots = flo[i];
+      rows0[i].qty_pots = newQty[i];
     }
   }
-  const factor = curPots > 0 ? achieved / curPots : 0;
-  const { data: kids } = await sb.from("scheduled_crops").select("id,qty_plants_ordered").in("combo_parent_id", rows0.map(r => r.id));
+  // combo kids scale by THEIR parent's factor (locked parents unchanged → kids unchanged)
+  const rowFactor = {};
+  rows0.forEach((r, i) => { rowFactor[r.id] = oldQty[i] > 0 ? newQty[i] / oldQty[i] : (newQty[i] > 0 ? null : 0); });
+  const { data: kids } = await sb.from("scheduled_crops").select("id,qty_plants_ordered,combo_parent_id").in("combo_parent_id", rows0.map(r => r.id));
   for (const k of (kids || [])) {
-    if (k.qty_plants_ordered != null) {
-      const { error } = await sb.from("scheduled_crops").update({ qty_plants_ordered: Math.round((+k.qty_plants_ordered || 0) * factor) }).eq("id", k.id);
+    const f = rowFactor[k.combo_parent_id];
+    if (k.qty_plants_ordered != null && f != null && f !== 1) {
+      const { error } = await sb.from("scheduled_crops").update({ qty_plants_ordered: Math.round((+k.qty_plants_ordered || 0) * f) }).eq("id", k.id);
       if (error) throw new Error(`kid update: ${error.message}`);
     }
   }
-  return { rows: rows0.length, from: curPots, achieved };
+  return { rows: rows0.length, from: curPots, achieved, locked: lockedPots || undefined };
 }
 
 // ── FINISH DATE ↔ WEEK (Caleb 8/5: "finish needs to be finish DATE — mini calendar
