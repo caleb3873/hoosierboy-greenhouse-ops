@@ -108,7 +108,7 @@ export default function SpaceMap({ plan: fixedPlan }) {
       // unplaced = no placed_at stamp — an inherited bench code doesn't count as placed
       let all = [], off = 0;
       for (;;) {
-        const { data } = await sb.from("scheduled_crops").select("id,item_name,qty_pots,plant_week,plant_year,bench_id,recipe_id")
+        const { data } = await sb.from("scheduled_crops").select("id,item_name,qty_pots,plant_week,plant_year,ready_week,bench_id,recipe_id")
           .eq("plan_id", planId).is("placed_at", null).not("is_combo_component", "is", true).gt("qty_pots", 0)
           .range(off, off + 999);
         all = all.concat(data || []);
@@ -142,11 +142,11 @@ export default function SpaceMap({ plan: fixedPlan }) {
     const m = {};
     pool.forEach(r => {
       if (!showAll && decided && !decided.has(r.item_name)) return;
-      const wkKey = `${r.plant_year ?? ""}w${r.plant_week ?? "?"}`;
+      const wkKey = `${r.plant_year ?? ""}w${r.plant_week ?? "?"}r${r.ready_week ?? "?"}`;   // plant + finish = the group
       const byRound = grouping === "round" && r.recipe_id;
       const key = byRound ? `R${r.recipe_id}||${wkKey}` : `${r.item_name}||${wkKey}`;
       const label = byRound ? (recipeNames[r.recipe_id] || r.item_name) : r.item_name;
-      const o = m[key] || (m[key] = { item: label, wk: r.plant_week, yr: r.plant_year, qty: 0, rows: [], cls: classOfItem(r.item_name), rid: r.recipe_id || null, names: new Set() });
+      const o = m[key] || (m[key] = { item: label, wk: r.plant_week, yr: r.plant_year, rdy: r.ready_week, qty: 0, rows: [], cls: classOfItem(r.item_name), rid: r.recipe_id || null, names: new Set() });
       o.qty += +r.qty_pots || 0; o.rows.push(r); o.names.add(r.item_name);
       if (r.recipe_id && !o.rid) o.rid = r.recipe_id;
     });
@@ -484,6 +484,7 @@ export default function SpaceMap({ plan: fixedPlan }) {
                 <div style={{ paddingRight: 34 }}><b style={{ fontVariantNumeric: "tabular-nums" }}>{o.qty.toLocaleString()}</b> {o.item}</div>
                 <div style={{ marginTop: 1 }}>
                   <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: C.amber, borderRadius: 5, padding: "0 6px" }}>WK {o.wk ?? "?"}</span>
+                  {o.rdy != null && <span style={{ fontSize: 9.5, fontWeight: 700, color: C.muted, marginLeft: 4 }}>fin {o.rdy}</span>}
                   {grouping === "round" && <span style={{ fontSize: 9.5, color: C.muted, marginLeft: 5 }}>{o.names.size} color{o.names.size !== 1 ? "s" : ""}</span>}
                 </div>
                 {o.rid && (
