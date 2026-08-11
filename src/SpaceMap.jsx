@@ -6,6 +6,7 @@
 // out you can trim the plan to fit. Combo parents move whole-row only.
 import { useEffect, useMemo, useState } from "react";
 import { getSupabase } from "./supabase";
+import FamilyPage from "./FamilyPage";
 
 const C = { dark: "#1e2d1a", light: "#7fb069", cream: "#c8e6b8", muted: "#7a8c74", red: "#d94f3d", amber: "#e89a3a", border: "#dfe7d8", chip: "#eef3e8", card: "#fff" };
 const FONT = "'DM Sans', sans-serif";
@@ -58,6 +59,9 @@ export default function SpaceMap({ plan: fixedPlan }) {
   const [poolQ, setPoolQ] = useState("");
   const [busy, setBusy] = useState(false);
   const [tick, setTick] = useState(0);
+  const [decided, setDecided] = useState(null);   // item names with an applied projection — the only ones offered to place
+  const [showAll, setShowAll] = useState(false);
+  const [famOpen, setFamOpen] = useState(null);   // recipe_id → FamilyPage overlay (double-click a tray item)
   const house = HOUSES.find(h => h.key === houseKey);
 
   useEffect(() => {
@@ -101,7 +105,7 @@ export default function SpaceMap({ plan: fixedPlan }) {
     (async () => {
       let all = [], off = 0;
       for (;;) {
-        const { data } = await sb.from("scheduled_crops").select("id,item_name,qty_pots,plant_week,bench_id")
+        const { data } = await sb.from("scheduled_crops").select("id,item_name,qty_pots,plant_week,bench_id,recipe_id")
           .eq("plan_id", planId).is("bench_id", null).not("is_combo_component", "is", true).gt("qty_pots", 0)
           .range(off, off + 999);
         all = all.concat(data || []);
@@ -109,17 +113,32 @@ export default function SpaceMap({ plan: fixedPlan }) {
         off += 1000;
       }
       setPool(all);
+      let dec = [], doff = 0;
+      for (;;) {
+        const { data } = await sb.from("plan_targets").select("item_name")
+          .eq("plan_id", planId).not("applied_at", "is", null).range(doff, doff + 999);
+        dec = dec.concat(data || []);
+        if (!data || data.length < 1000) break;
+        doff += 1000;
+      }
+      setDecided(new Set(dec.map(d => d.item_name)));
     })();
   }, [sb, planId, tick]);
 
   const unplaced = useMemo(() => {
     const m = {};
     pool.forEach(r => {
-      const o = m[r.item_name] || (m[r.item_name] = { qty: 0, rows: [], cls: classOfItem(r.item_name), wks: new Set() });
+      if (!showAll && decided && !decided.has(r.item_name)) return;   // untouched items stay out of the tray
+      const o = m[r.item_name] || (m[r.item_name] = { qty: 0, rows: [], cls: classOfItem(r.item_name), wks: new Set(), rid: null });
       o.qty += +r.qty_pots || 0; o.rows.push(r); if (r.plant_week) o.wks.add(r.plant_week);
+      if (r.recipe_id && !o.rid) o.rid = r.recipe_id;
     });
     return m;
-  }, [pool]);
+  }, [pool, decided, showAll]);
+  const hiddenCount = useMemo(() => {
+    if (showAll || !decided) return 0;
+    return new Set(pool.filter(r => !decided.has(r.item_name)).map(r => r.item_name)).size;
+  }, [pool, decided, showAll]);
 
   // capacity resolution: override → zone rule; tray items try the spacing-specific
   // class first (quonsets/BM), then plain tray45 (west side)
@@ -339,6 +358,8 @@ export default function SpaceMap({ plan: fixedPlan }) {
           {poolList.slice(0, 120).map(([n, o]) => (
             <div key={n} draggable onDragStart={e => { e.dataTransfer.setData("text/plain", n); setPlaceItem(n); }}
               onClick={() => setPlaceItem(placeItem === n ? "" : n)}
+              onDoubleClick={() => o.rid ? setFamOpen(o.rid) : window.alert("No family page linked to this item.")}
+              title="drag onto a bench · double-click opens the family page"
               style={{ padding: "5px 8px", borderRadius: 8, marginBottom: 3, cursor: "grab", fontSize: 11.5, lineHeight: 1.35,
                 border: `1.5px solid ${placeItem === n ? C.light : C.border}`, background: placeItem === n ? "#eef6e8" : "#fbfdf8" }}>
               <b style={{ fontVariantNumeric: "tabular-nums" }}>{o.qty.toLocaleString()}</b> {n}
@@ -346,6 +367,15 @@ export default function SpaceMap({ plan: fixedPlan }) {
             </div>
           ))}
           {poolList.length > 120 && <div style={{ fontSize: 10.5, color: C.muted }}>…{poolList.length - 120} more — search to narrow</div>}
+          {hiddenCount > 0 && (
+            <button onClick={() => setShowAll(true)} title="items with no applied projection are hidden — you haven't decided them yet"
+              style={{ background: "none", border: "none", color: C.muted, fontSize: 10.5, cursor: "pointer", fontFamily: FONT, padding: "4px 0", textAlign: "left" }}>
+              + {hiddenCount} untouched item{hiddenCount !== 1 ? "s" : ""} hidden (no projection) — show anyway</button>
+          )}
+          {showAll && (
+            <button onClick={() => setShowAll(false)} style={{ background: "none", border: "none", color: C.amber, fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT, padding: "4px 0", textAlign: "left" }}>
+              showing untouched items too — hide them again</button>
+          )}
         </div>
 
         {/* the house */}
@@ -370,6 +400,10 @@ export default function SpaceMap({ plan: fixedPlan }) {
           )}
         </div>
       </div>
+      {famOpen && (
+        <FamilyPage plan={fixedPlan || plans.find(p => p.id === planId) || { id: planId }} recipeId={famOpen}
+          onClose={() => { setFamOpen(null); setTick(t => t + 1); }} />
+      )}
     </div>
   );
 }
