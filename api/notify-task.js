@@ -88,6 +88,18 @@ module.exports = async (req, res) => {
       };
       break;
 
+    case "treatment_logged":
+      // Reese 8/10: "send an update each time my way so I can stay current" —
+      // fired when someone OTHER than Reese logs a treatment
+      pushPayload = {
+        title: "Treatment logged",
+        body: `${requester || "Someone"} logged — ${title || ""}`.trim(),
+        url: "/",
+        tag: "treatment_logged",
+        targets: ["Reese Morris"],
+      };
+      break;
+
     default:
       return res.status(400).json({ error: `Unknown event: ${event}` });
   }

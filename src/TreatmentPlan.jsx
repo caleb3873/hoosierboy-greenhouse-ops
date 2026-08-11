@@ -800,6 +800,19 @@ function DetailModal({ sb, rec, thisYear, defaultDate, varTasks = [], displayNam
   const photos = rec.photos || [];
   const vd = rec.variety_done || {}, vrs = rec.variety_rates || {}, vns = rec.variety_notes || {};
   const doneCnt = lines.map(x => x.trim()).filter(k => k && vd[k]).length;
+  // Poinsettias chart by the week (Reese 8A): a typed height lands in
+  // variety_reference.heights at this ISO week → the 📈 Growth chart picks it up
+  const [htFlash, setHtFlash] = useState("");
+  async function saveHeight(key, val) {
+    const n = parseFloat(val);
+    if (!key || isNaN(n)) return;
+    const wk = "WK" + isoWeek(new Date().toISOString().slice(0, 10)).week;
+    const { data: ex } = await sb.from("variety_reference").select("id,heights").eq("crop", rec.crop).eq("year", thisYear).eq("variety", key).maybeSingle();
+    if (ex) await sb.from("variety_reference").update({ heights: { ...(ex.heights || {}), [wk]: n } }).eq("id", ex.id);
+    else await sb.from("variety_reference").insert({ crop: rec.crop, year: thisYear, variety: key, heights: { [wk]: n }, photos: [], sort: 999 });
+    setHtFlash(`${key}: ${n}" @ ${wk} ✓`);
+    setTimeout(() => setHtFlash(""), 3000);
+  }
   const saveVar = async (field, key, value) => {
     const cur = { variety_done: vd, variety_rates: vrs, variety_notes: vns }[field];
     const next = { ...cur };
@@ -890,6 +903,7 @@ function DetailModal({ sb, rec, thisYear, defaultDate, varTasks = [], displayNam
         </div>
         <div style={{ fontSize: 11.5, color: C.muted, marginTop: 2 }}>Last done {fmtDate(rec.rec_date)} '{String(rec.rec_date).slice(2, 4)}</div>
         {flash && <div style={{ marginTop: 8, background: "#eef6e7", border: `1px solid ${C.light}`, color: "#2e5c1e", borderRadius: 9, padding: "8px 11px", fontSize: 12.5, fontWeight: 700 }}>{flash}</div>}
+        {htFlash && <div style={{ marginTop: 8, background: "#eef6e7", border: `1px solid ${C.light}`, color: "#2e5c1e", borderRadius: 9, padding: "8px 11px", fontSize: 12.5, fontWeight: 700 }}>📏 {htFlash} — see 📈 Growth</div>}
 
         <div style={lbl}>Application & rate</div>
         <div style={{ display: "flex", gap: 8 }}>
@@ -923,6 +937,12 @@ function DetailModal({ sb, rec, thisYear, defaultDate, varTasks = [], displayNam
                       onChange={e => saveVar("variety_done", key, e.target.checked ? { at: new Date().toISOString(), by: displayName || null } : null)}
                       style={{ width: 20, height: 20, accentColor: "#3a7d2c", flexShrink: 0 }} />
                     <input value={v} onChange={e => setLine(i, e.target.value)} onBlur={() => saveMeta()} placeholder={'Variety (e.g. 9" Nicki)'} style={{ ...inp, flex: 1, ...(key && vd[key] ? { background: "#f1f8ec" } : {}) }} />
+                    {rec.crop === "Poinsettia" && (
+                      <input type="number" step="0.25" disabled={!key} placeholder={'ht"'}
+                        title="type this variety's height (inches) — charts by week on 📈 Growth"
+                        onBlur={e => { if (e.target.value) { saveHeight(key, e.target.value); e.target.value = ""; } }}
+                        style={{ ...inp, width: 52, flex: "0 0 52px" }} />
+                    )}
                     <input value={key ? (vrs[key] ?? "") : ""} disabled={!key}
                       onChange={e => key && onSyncSel({ ...rec, variety_rates: { ...vrs, [key]: e.target.value } })}
                       onBlur={e => key && saveVar("variety_rates", key, e.target.value.trim() || null)}
@@ -1003,6 +1023,10 @@ function LogModal({ crop, year, sb, loggedBy, onClose, onSaved }) {
     if (!d.application && !d.crop_detail) { window.alert("Add at least a treatment or crop — leave the application blank for a 📏 reference-only entry (measurements/photos)."); return; }
     const { data: rec, error } = await sb.from("treatment_records").insert({ crop, year, ...d, source: "logged", photos: [], logged_by: loggedBy || null }).select().single();
     if (error) { window.alert("Save failed: " + error.message); return; }
+    if (loggedBy && loggedBy !== "Reese Morris") {
+      fetch("/api/notify-task", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ event: "treatment_logged", title: `${crop}: ${d.application || "📏 reference"}${d.crop_detail ? " — " + d.crop_detail : ""}`, requester: loggedBy }) }).catch(() => {});
+    }
     onSaved(rec);   // straight into the varieties window — no hunting for it
   }
   return (

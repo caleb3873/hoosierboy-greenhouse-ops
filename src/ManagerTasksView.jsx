@@ -429,6 +429,8 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
   // that have a back-to-hub and aren't tightly role-gated, so a reload can't strand anyone.
   const PERSISTABLE_VIEWS = ["tasks", "tradeshow", "photos", "hotlist", "treatment", "today", "week", "messages", "vacation", "evaluations", "receiving", "inventory", "reference-docs", "driver-schedule", "prop-guide", "sales-visits"];
   const [currentView, setCurrentView] = useState(() => { try { const v = sessionStorage.getItem("mtv_view_v1"); return v && PERSISTABLE_VIEWS.includes(v) ? v : "hub"; } catch { return "hub"; } }); // hub | tasks | vacation | messages | today | week | hr-inbox
+  const [hubFavEdit, setHubFavEdit] = useState(false);
+  const [, setHubFavTick] = useState(0);   // re-render after a pin toggle
   // Android back button: each view push gets a history entry so back returns to the
   // hub instead of closing the app (Reese is on Android)
   useEffect(() => {
@@ -1279,6 +1281,61 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
             <AnnouncementBanner />
             <OutThisWeekBanner />
             <ReiBanner />
+
+            {/* ⭐ Favorites — pin the cards you actually use to the top (Reese 5b:
+                star-to-pin is enough, no drag). Per-person, saved on the device. */}
+            {(() => {
+              const DEST = [
+                ["treatment", "🌼", "Treatment Plan", () => setCurrentView("treatment")],
+                ["new-work", "🧪", "New Work", () => setShowNewWork(true)],
+                ["tasks-growing", "🌿", "Growing", () => goToTasks("growing")],
+                ["tasks-production", "🏭", "Production", () => goToTasks("production")],
+                ["today", "📅", "Today", () => setCurrentView("today")],
+                ["week", "📆", "This Week", () => setCurrentView("week")],
+                ["vacation", "🌴", "Time Off", () => setCurrentView("vacation")],
+                ["photos", "📸", "Photos", () => setCurrentView("photos")],
+                ["sales-visits", "💼", "Sales Visits", () => setCurrentView("sales-visits")],
+                ["hotlist", "🔥", "Hot List", () => setCurrentView("hotlist")],
+                ["prop-guide", "🌱", "Prop Guide", () => setCurrentView("prop-guide")],
+                ["reference-docs", "📚", "Reference", () => setCurrentView("reference-docs")],
+              ];
+              const KEY = `hub_favs_${displayName || "me"}`;
+              let favs = [];
+              try { favs = JSON.parse(localStorage.getItem(KEY) || "[]"); } catch {}
+              const toggle = (id) => {
+                const next = favs.includes(id) ? favs.filter(x => x !== id) : [...favs, id];
+                try { localStorage.setItem(KEY, JSON.stringify(next)); } catch {}
+                setCurrentView(v => v); window.dispatchEvent(new Event("resize")); setHubFavTick(t => t + 1);
+              };
+              const pinned = DEST.filter(([id]) => favs.includes(id));
+              return (
+                <div style={{ padding: "10px 14px 0" }}>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                    {pinned.map(([id, em, label, go]) => (
+                      <button key={id} onClick={go}
+                        style={{ background: "#fff", border: "2px solid #7fb069", borderRadius: 12, padding: "10px 14px", fontWeight: 800, fontSize: 13.5, cursor: "pointer", fontFamily: "inherit", color: "#1e2d1a", boxShadow: "0 1px 4px rgba(30,45,26,.08)" }}>
+                        {em} {label}
+                      </button>
+                    ))}
+                    <button onClick={() => setHubFavEdit(e => !e)}
+                      title="pin your most-used cards to the top"
+                      style={{ background: "none", border: "1.5px dashed #b5c4ab", borderRadius: 12, padding: "10px 12px", fontWeight: 800, fontSize: 12.5, cursor: "pointer", fontFamily: "inherit", color: "#7a8c74" }}>
+                      {hubFavEdit ? "done ✓" : pinned.length ? "⭐ edit" : "⭐ pin favorites"}
+                    </button>
+                  </div>
+                  {hubFavEdit && (
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8, background: "#fff", border: "1px solid #dfe7d8", borderRadius: 12, padding: 10 }}>
+                      {DEST.map(([id, em, label]) => (
+                        <button key={id} onClick={() => toggle(id)}
+                          style={{ background: favs.includes(id) ? "#eef6e8" : "#fbfdf8", border: `1.5px solid ${favs.includes(id) ? "#7fb069" : "#dfe7d8"}`, borderRadius: 9, padding: "6px 11px", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit", color: "#1e2d1a" }}>
+                          {favs.includes(id) ? "⭐" : "☆"} {em} {label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {isAsstManager ? (
               /* ── ASSISTANT MANAGER HUB — simplified, 4 main cards ── */
