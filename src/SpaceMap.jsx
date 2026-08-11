@@ -66,6 +66,14 @@ export default function SpaceMap({ plan: fixedPlan }) {
   const [tick, setTick] = useState(0);
   const house = HOUSES.find(h => h.key === houseKey);
 
+  // family edits happen in other tabs/overlays — refetch whenever we come back
+  useEffect(() => {
+    const wake = () => { if (!document.hidden) setTick(t => t + 1); };
+    window.addEventListener("focus", wake);
+    document.addEventListener("visibilitychange", wake);
+    return () => { window.removeEventListener("focus", wake); document.removeEventListener("visibilitychange", wake); };
+  }, []);
+
   useEffect(() => {
     if (!sb) return;
     (async () => {
@@ -473,6 +481,8 @@ export default function SpaceMap({ plan: fixedPlan }) {
         <span style={{ display: "inline-flex", gap: 10, marginLeft: 4 }}>
           <Toggle k="baskets" label="🧺 baskets" /><Toggle k="benches" label="benches" /><Toggle k="lows" label="low lines" />
         </span>
+        <button onClick={() => setTick(t => t + 1)} disabled={busy} title="refresh from the plan — picks up family-page edits"
+          style={{ background: "none", border: `1.5px solid ${C.border}`, borderRadius: 8, padding: "4px 10px", fontWeight: 800, fontSize: 11.5, color: C.muted, cursor: "pointer", fontFamily: FONT }}>↻</button>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: mode === "plan" ? "280px 1fr" : "1fr", gap: 14, alignItems: "start" }}>
