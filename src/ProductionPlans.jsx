@@ -8190,6 +8190,7 @@ function OrderItemsView({ lines, orders, famMap, onChanged, onOpenFamily }) {
       case "ext": return +r.ext_price || 0;
       case "wk": return (+r._o.ship_year || 0) * 100 + (+r._o.ship_week || 0);
       case "src": return `${r._o.broker || ""} ${r._o.farm || r._o.supplier || ""}`;
+      case "conf": return r._o.order_number || "";
       case "status": return r._o.status || "";
       default: return r.variety_name || "";
     }
@@ -8234,7 +8235,7 @@ function OrderItemsView({ lines, orders, famMap, onChanged, onOpenFamily }) {
               <input type="checkbox" checked={rows.length > 0 && rows.every(r => sel.has(r.id))}
                 onChange={e => setSel(e.target.checked ? new Set(rows.map(r => r.id)) : new Set())} />
             </th>
-            {H("Variety", "variety")}{H("Qty", "qty", true)}{H("$/unit", "price", true)}{H("Ext $", "ext", true)}{H("Wk", "wk", true)}{H("Broker · Farm", "src")}{H("Status", "status")}
+            {H("Variety", "variety")}{H("Conf #", "conf")}{H("Qty", "qty", true)}{H("$/unit", "price", true)}{H("Ext $", "ext", true)}{H("Wk", "wk", true)}{H("Broker · Farm", "src")}{H("Status", "status")}
             <th style={{ textAlign: "left", padding: "6px 8px", fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: COLORS.muted, borderBottom: `2px solid ${COLORS.border}`, position: "sticky", top: 0, background: COLORS.card }}>Production note</th>
           </tr></thead>
           <tbody>
@@ -8248,6 +8249,7 @@ function OrderItemsView({ lines, orders, famMap, onChanged, onOpenFamily }) {
                   {r._fam && <button onClick={() => onOpenFamily(r._fam.rid)} title={`open the ${r._fam.label} family page`}
                     style={{ background: "none", border: "none", color: COLORS.light, fontWeight: 800, fontSize: 10.5, cursor: "pointer", fontFamily: "inherit", padding: "0 4px" }}>→ {r._fam.label}</button>}
                 </td>
+                <td style={{ ...td2, fontFamily: "ui-monospace,Menlo,monospace", fontSize: 11, whiteSpace: "nowrap" }}>{r._o.order_number || "—"}</td>
                 <td style={{ ...td2, textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>{(+r.qty_ordered || 0).toLocaleString()}</td>
                 <td style={{ ...td2, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.unit_price != null ? "$" + (+r.unit_price).toFixed(3) : "—"}</td>
                 <td style={{ ...td2, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.ext_price != null ? fmtMoney(+r.ext_price) : "—"}</td>
@@ -8260,7 +8262,7 @@ function OrderItemsView({ lines, orders, famMap, onChanged, onOpenFamily }) {
                 <td style={td2}>
                   <input defaultValue={r.prod_note || ""} placeholder="—" disabled={busy}
                     onBlur={e => { const v = e.target.value.trim() || null; if ((v || "") !== (r.prod_note || "")) sb.from("purchase_order_lines").update({ prod_note: v }).eq("id", r.id).then(onChanged); }}
-                    style={{ width: 180, padding: "4px 7px", borderRadius: 6, border: `1px solid ${COLORS.border}`, fontFamily: "inherit", fontSize: 12 }} />
+                    style={{ width: 100, padding: "4px 7px", borderRadius: 6, border: `1px solid ${COLORS.border}`, fontFamily: "inherit", fontSize: 11.5 }} />
                 </td>
               </tr>
             ))}
