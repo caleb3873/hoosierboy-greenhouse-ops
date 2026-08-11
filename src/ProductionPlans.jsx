@@ -8210,7 +8210,7 @@ function ExtrasView({ lines, orders, onChanged }) {
                   <td style={{ ...td3, textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 800, color: COLORS.amber }}>+{r._ex.toLocaleString()}</td>
                   <td style={{ ...td3, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.unit_price != null ? fmtMoney(r._ex * +r.unit_price) : "—"}</td>
                   <td style={td3}>
-                    <input defaultValue={r.prod_note || ""} placeholder="e.g. bump 10\" HB recipe, backup for shrink…"
+                    <input defaultValue={r.prod_note || ""} placeholder="e.g. bump the 10-inch HB recipe, backup for shrink…"
                       onBlur={e => { const v = e.target.value.trim() || null; if ((v || "") !== (r.prod_note || "")) sb.from("purchase_order_lines").update({ prod_note: v }).eq("id", r.id).then(onChanged); }}
                       style={{ width: 240, padding: "4px 7px", borderRadius: 6, border: `1px solid ${COLORS.border}`, fontFamily: "inherit", fontSize: 12 }} />
                   </td>
