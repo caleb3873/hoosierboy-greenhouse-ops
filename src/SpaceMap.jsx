@@ -481,9 +481,11 @@ export default function SpaceMap({ plan: fixedPlan }) {
                 title="drag onto the house, or tap then tap benches"
                 style={{ padding: "5px 8px", borderRadius: 8, marginBottom: 3, cursor: "grab", fontSize: 11.5, lineHeight: 1.35, position: "relative",
                   border: `1.5px solid ${placeItem === key ? C.light : C.border}`, background: placeItem === key ? "#eef6e8" : "#fbfdf8" }}>
-                <b style={{ fontVariantNumeric: "tabular-nums" }}>{o.qty.toLocaleString()}</b> {o.item}
-                <span style={{ fontSize: 9.5, fontWeight: 800, color: C.amber, marginLeft: 5 }}>wk {o.wk ?? "?"}</span>
-                {grouping === "round" && o.names.size > 1 && <span style={{ fontSize: 9, color: C.muted, marginLeft: 4 }}>{o.names.size} colors</span>}
+                <div style={{ paddingRight: 34 }}><b style={{ fontVariantNumeric: "tabular-nums" }}>{o.qty.toLocaleString()}</b> {o.item}</div>
+                <div style={{ marginTop: 1 }}>
+                  <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: C.amber, borderRadius: 5, padding: "0 6px" }}>WK {o.wk ?? "?"}</span>
+                  {grouping === "round" && <span style={{ fontSize: 9.5, color: C.muted, marginLeft: 5 }}>{o.names.size} color{o.names.size !== 1 ? "s" : ""}</span>}
+                </div>
                 {o.rid && (
                   <button onClick={e => { e.stopPropagation(); setFamOpen(o.rid); }} title="open the family page"
                     style={{ position: "absolute", right: 4, top: 4, padding: "1px 6px", borderRadius: 6, border: `1px solid ${C.border}`, background: "#fff", color: C.muted, fontSize: 9.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>⤴ fam</button>
