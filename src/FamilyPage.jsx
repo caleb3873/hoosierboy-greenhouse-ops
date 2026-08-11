@@ -388,7 +388,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
       // ONE ROUND = ONE WEEK OF PLANTING (Caleb 8/10): everything planting in the
       // same week is the SAME group, whatever its variety or finish week. Finish
       // shows as a range when series diverge — it must never split a planting week.
-      const k = `${r.plant_year ?? "?"}|${r.plant_week ?? "?"}`;
+      const k = `${r.plant_year ?? "?"}|${r.plant_week ?? "?"}|${r.ready_year ?? "?"}|${r.ready_week ?? "?"}`;
       const g = (m[k] = m[k] || { key: k, plant: r.plant_week, plantYear: r.plant_year,
         ready: r.ready_week, readyYear: r.ready_year, shipMin: null, shipMax: null, rows: [] });
       g.rows.push(r);
@@ -849,6 +849,14 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
     const readyYear = digits.length <= 2 ? (g.readyYear ?? plan.year ?? 2027) : 2000 + +digits.slice(0, 2);
     if (!ready || ready > 53) return;
     if (readyInPast(readyYear, ready)) return;
+    {   // merging two groups takes a yes: same finish AND the derived plant week collides
+      const pChk = wrapWk(ready - finWks, readyYear);
+      const twin = displayGroups.find(o => o.key !== g.key && o.ready === ready && (o.readyYear ?? "?") === (readyYear ?? "?")
+        && o.plant === pChk.wk && (o.plantYear ?? plan.year) === pChk.yr);
+      if (twin && !window.confirm(`Group ${twin.n} already finishes wk ${ready} from plant wk ${pChk.wk} — this change will COMBINE the two groups into one.
+
+Combine them?`)) return;
+    }
     const wrap = wrapWk;
     const acc = { moved: 0, flags: [] };
     setBusy(true);
@@ -881,7 +889,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
       }
     } catch { /* audit must not block */ }
     const pNew = wrap(ready - finWks, readyYear);
-    setFlashKey(`${pNew.yr}|${pNew.wk}`);
+    setFlashKey(`${pNew.yr}|${pNew.wk}|${readyYear}|${ready}`);
     setRipple(acc.moved || acc.flags.length ? acc : null);
     setBusy(false); setTick(t => t + 1);
   }
@@ -891,6 +899,13 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
   // the FINISH stays exactly where it was.
   async function applyGroupPlant(g, w, y) {
     if (!w || w > 53) return;
+    const twin = displayGroups.find(o => o.key !== g.key && o.plant === w && (o.plantYear ?? plan.year) === y
+      && o.ready === g.ready && (o.readyYear ?? "?") === (g.readyYear ?? "?"));
+    if (twin && !window.confirm(`Group ${twin.n} already plants wk ${w} with the SAME finish (wk ${g.ready ?? "?"}) — moving this group there will COMBINE them into one group.
+
+Same plant date with different treatment stays separate on its own; this merge only happens because the finishes match too.
+
+Combine the groups?`)) return;
     const wrap = wrapWk;
     const acc = { moved: 0, flags: [] };
     setBusy(true);
@@ -920,7 +935,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
           changed_by: displayName || null, source: "family-page" });
       }
     } catch { /* audit must not block */ }
-    setFlashKey(`${y}|${w}`);
+    setFlashKey(`${y}|${w}|${g.readyYear ?? "?"}|${g.ready ?? "?"}`);
     setRipple(acc.moved || acc.flags.length ? acc : null);
     setBusy(false); setTick(t => t + 1);
   }
@@ -951,7 +966,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
       { ship: sh.wk, shipYear: sh.yr, plant: target.plant, plantYear: pYr },
       { wk: vr.rows[0]?.ship_week, yr: vr.rows[0]?.ship_year ?? vr.rows[0]?.plant_year }, displayName);
     setRipple(mvRes.moved || mvRes.flags.length ? mvRes : null);
-    setFlashKey(`${target.plantYear ?? vr.rows[0]?.plant_year ?? "?"}|${target.plant}`);
+    setFlashKey(`${target.plantYear ?? vr.rows[0]?.plant_year ?? "?"}|${target.plant}|${target.readyYear ?? "?"}|${target.ready ?? "?"}`);
     try {
       await sb.from("item_change_log").insert({ plan_id: plan.id, item_name: vr.rows[0]?.item_name || vr.variety,
         variety_key: vr.vkey || null, change_type: "group_move",
