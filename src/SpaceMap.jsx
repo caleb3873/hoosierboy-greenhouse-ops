@@ -264,6 +264,17 @@ export default function SpaceMap({ plan: fixedPlan }) {
     setBusy(false);
   }
 
+  async function clearBench(bench) {
+    const info = byBench[bench.id];
+    if (!info?.items?.length) return;
+    const tot = info.items.reduce((a, r) => a + (+r.qty_pots || 0), 0);
+    if (!window.confirm(`Clear ${bench.code}? All ${info.items.length} placement${info.items.length !== 1 ? "s" : ""} (${tot.toLocaleString()} pots) go back to the to-place tray.`)) return;
+    setBusy(true);
+    const { error } = await sb.from("scheduled_crops").update({ placed_at: null }).in("id", info.items.map(r => r.id));
+    if (error) window.alert("Clear failed: " + error.message);
+    setBusy(false); setTick(t => t + 1);
+  }
+
   async function unplace(row) {
     if (mode === "lastyear") return;
     if (!window.confirm(`Pull ${row.item_name} (${(+row.qty_pots).toLocaleString()}) off this spot?`)) return;
@@ -298,6 +309,11 @@ export default function SpaceMap({ plan: fixedPlan }) {
         <div style={{ display: "flex", alignItems: "baseline", gap: 5 }}>
           <b style={{ fontFamily: "ui-monospace,Menlo,monospace", fontSize: 11.5 }}>{b.code}</b>
           <span style={{ fontSize: 9, fontWeight: 800, color: C.muted }}>{TYPE_LABEL[b.bench_type] || ""}</span>
+          <span style={{ flex: 1 }} />
+          {mode === "plan" && !!info?.items?.length && (
+            <button onClick={e => { e.stopPropagation(); clearBench(b); }} title="clear the bench — everything goes back to the to-place tray"
+              style={{ background: "none", border: "none", cursor: "pointer", fontSize: 11, padding: 0 }}>🧹</button>
+          )}
         </div>
         <div style={{ textAlign: "center", margin: "8px 0 2px" }}>
           {cap != null ? (
@@ -343,7 +359,13 @@ export default function SpaceMap({ plan: fixedPlan }) {
           border: `1.5px solid ${pct >= 1 ? C.red : C.border}`, borderRadius: 9, padding: "7px 10px", cursor: placeItem && mode === "plan" ? "copy" : "default" }}>
         <div style={{ width: 74 }}>
           <b style={{ fontFamily: "ui-monospace,Menlo,monospace", fontSize: 11.5 }}>{b.code}</b>
-          <div style={{ fontSize: 9, fontWeight: 800, color: C.muted }}>{TYPE_LABEL[b.bench_type] || ""}</div>
+          <div style={{ fontSize: 9, fontWeight: 800, color: C.muted }}>
+            {TYPE_LABEL[b.bench_type] || ""}
+            {mode === "plan" && !!info?.items?.length && (
+              <button onClick={e => { e.stopPropagation(); clearBench(b); }} title="clear the bench — everything back to the tray"
+                style={{ background: "none", border: "none", cursor: "pointer", fontSize: 10.5, padding: 0, marginLeft: 4 }}>🧹</button>
+            )}
+          </div>
         </div>
         <div style={{ width: 92, textAlign: "right" }}>
           {cap != null ? (
@@ -388,7 +410,12 @@ export default function SpaceMap({ plan: fixedPlan }) {
         title={`${b.code} · ${used}/${cap ?? "?"}${info ? " — " + info.items.map(r => `${r.qty_pots} ${r.item_name}`).join(", ") : ""}`}
         style={{ width: 46, flex: "0 0 46px", textAlign: "center", background: blank ? "#fbfdf8" : pct >= 1 ? "#fbe3e0" : "#fdf6e3",
           border: `1.5px solid ${pct >= 1 ? C.red : C.border}`, borderRadius: 7, padding: "5px 2px", cursor: placeItem && mode === "plan" ? "copy" : "default" }}>
-        <div style={{ fontFamily: "ui-monospace,Menlo,monospace", fontSize: 9, color: C.muted }}>{short}</div>
+        <div style={{ fontFamily: "ui-monospace,Menlo,monospace", fontSize: 9, color: C.muted }}>
+          {short}
+          {mode === "plan" && !!info?.items?.length && (
+            <span onClick={e => { e.stopPropagation(); clearBench(b); }} title="clear this line" style={{ cursor: "pointer", marginLeft: 3 }}>🧹</span>
+          )}
+        </div>
         <div style={{ fontSize: 12.5, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: blank ? C.dark : pct >= 1 ? C.red : C.amber }}>{blank ? (cap ?? "?") : used}</div>
         {!blank && cap != null && <div style={{ fontSize: 8, color: C.muted }}>/{cap}</div>}
         {b.cap_overrides?.hb_size && b.cap_overrides.hb_size !== "10" && <div style={{ fontSize: 8, fontWeight: 800, color: C.amber }}>{b.cap_overrides.hb_size}"</div>}
