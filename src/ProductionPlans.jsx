@@ -16,6 +16,7 @@ import FamilyAdmin from "./FamilyAdmin";
 import { plantOrder } from "./shared";
 import OrderReconciliation from "./OrderReconciliation";
 import FamilyPage from "./FamilyPage";
+import SpaceMap from "./SpaceMap";
 import PotOrders from "./PotOrders";
 
 const COLORS = {
@@ -344,6 +345,7 @@ const PLAN_TABS = [
   { id: "reconcile", label: "🧾 Reconcile" },
   { id: "categories",label: "🏷 Categories" },
   { id: "orders",    label: "📋 Orders" },
+  { id: "space",     label: "🗺 Space" },
   { id: "sourcing",  label: "🧭 Sourcing" },
   { id: "inputs",    label: "⚙ Inputs" },
   { id: "pricing",   label: "💰 Pricing" },
@@ -493,6 +495,7 @@ function PlanDashboard({ plan, initialTab }) {
           {hasData && tab === "categories" && <CategoryProfiles plan={plan} />}
           {hasData && tab === "baskets"    && <BasketPlanner plan={plan} onOpenCombos={() => setTab("combos")} />}
           {hasData && tab === "orders"    && <OrdersTab plan={plan} />}
+          {hasData && tab === "space"     && <SpaceMap plan={plan} />}
           {tab === "sourcing"  && <SourcingTab plan={plan} />}
           {hasData && tab === "inputs"    && <InputsTab plan={plan} />}
           {hasData && tab === "pricing"   && <PricingTab plan={plan} />}

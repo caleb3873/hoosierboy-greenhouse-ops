@@ -42,10 +42,10 @@ function zoneOf(code) {
   return null;
 }
 
-export default function SpaceMap() {
+export default function SpaceMap({ plan: fixedPlan }) {
   const sb = getSupabase();
   const [plans, setPlans] = useState([]);
-  const [planId, setPlanId] = useState(null);
+  const [planId, setPlanId] = useState(fixedPlan?.id || null);
   const [houseKey, setHouseKey] = useState("BWS");
   const [cls, setCls] = useState("tray45");
   const [spacing, setSpacing] = useState("tight");   // tray mode where the zone distinguishes
@@ -62,9 +62,11 @@ export default function SpaceMap() {
   useEffect(() => {
     if (!sb) return;
     (async () => {
-      const { data: pl } = await sb.from("production_plans").select("id,name,status").in("status", ["active", "planning"]).order("created_at", { ascending: false });
-      setPlans(pl || []);
-      if (!planId && pl?.length) setPlanId((pl.find(p => /spring.*2027/i.test(p.name)) || pl[0]).id);
+      if (!fixedPlan) {
+        const { data: pl } = await sb.from("production_plans").select("id,name,status").neq("status", "archived").order("created_at", { ascending: false });
+        setPlans(pl || []);
+        if (!planId && pl?.length) setPlanId((pl.find(p => /spring.*2027/i.test(p.name)) || pl[0]).id);
+      }
       const { data: r } = await sb.from("bench_capacity_rules").select("*");
       const rm = {};
       (r || []).forEach(x => { ((rm[x.zone_prefix] = rm[x.zone_prefix] || {})[x.bench_type] = rm[x.zone_prefix][x.bench_type] || {})[x.container_class] = x.capacity; });
@@ -288,10 +290,12 @@ export default function SpaceMap() {
           style={{ padding: "6px 10px", borderRadius: 8, border: `1.5px solid ${C.light}`, fontFamily: FONT, fontSize: 13, fontWeight: 800 }}>
           {HOUSES.map(h => <option key={h.key} value={h.key}>{h.label}</option>)}
         </select>
-        <select value={planId || ""} onChange={e => setPlanId(e.target.value)}
-          style={{ padding: "5px 9px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontFamily: FONT, fontSize: 12, fontWeight: 700 }}>
-          {plans.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </select>
+        {fixedPlan
+          ? <b style={{ fontSize: 13, color: C.muted }}>{fixedPlan.name}</b>
+          : <select value={planId || ""} onChange={e => setPlanId(e.target.value)}
+              style={{ padding: "5px 9px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontFamily: FONT, fontSize: 12, fontWeight: 700 }}>
+              {plans.map(p => <option key={p.id} value={p.id}>{p.name}{p.status === "draft" ? " (draft)" : ""}</option>)}
+            </select>}
         <span style={{ display: "inline-flex", gap: 4 }}>
           {CLASSES.map(([k, label]) => (
             <button key={k} onClick={() => setCls(k)}
