@@ -894,6 +894,38 @@ Combine them?`)) return;
     setBusy(false); setTick(t => t + 1);
   }
 
+  // delete a whole planting group — its rows (and combo children) leave the plan
+  async function deleteGroup(g) {
+    const gPots = g.vars.reduce((a, v) => a + v.pots, 0);
+    const names = [...new Set(g.vars.map(v => v.variety))];
+    if (!window.confirm(`🗑 Delete Group ${g.n}?
+
+Plant wk ${g.plant ?? "?"} · finish wk ${g.ready ?? "?"} · ${names.length} color${names.length !== 1 ? "s" : ""} · ${gPots.toLocaleString()} pots
+
+The rows leave the plan entirely (other groups keep theirs). This can't be undone.`)) return;
+    setBusy(true);
+    try {
+      const ids = g.rows.map(r => r.id);
+      for (let i = 0; i < ids.length; i += 100) {
+        const chunk = ids.slice(i, i + 100);
+        const { error: ke } = await sb.from("scheduled_crops").delete().in("combo_parent_id", chunk);
+        if (ke) throw new Error(ke.message);
+        const { error } = await sb.from("scheduled_crops").delete().in("id", chunk);
+        if (error) throw new Error(error.message);
+      }
+      try {
+        for (const it of [...new Set(g.rows.map(r => r.item_name))]) {
+          await sb.from("item_change_log").insert({ plan_id: plan.id, item_name: it,
+            change_type: "group_deleted",
+            detail: { group: g.n, plant: `${g.plantYear ?? "?"}w${g.plant ?? "?"}`, ready: `${g.readyYear ?? "?"}w${g.ready ?? "?"}`, pots: gPots },
+            changed_by: displayName || null, source: "family-page" });
+        }
+      } catch { /* audit must not block */ }
+      setTick(t => t + 1);
+    } catch (e) { window.alert("Delete failed: " + e.message); }
+    setBusy(false);
+  }
+
   // set a group's PLANT week directly (Caleb 8/11: "a plant date that I set is
   // necessary") — ship re-derives per series (rooted backs off rooting weeks),
   // the FINISH stays exactly where it was.
@@ -2197,6 +2229,9 @@ Combine the groups?`)) return;
                     </span>
                   );
                 })()}
+                <button className="no-print" disabled={busy} onClick={e => { e.stopPropagation(); deleteGroup(g); }}
+                  title="delete this whole group — its rows leave the plan"
+                  style={{ background: "none", border: "none", cursor: "pointer", fontSize: 12, padding: 0, opacity: 0.55 }}>🗑</button>
                 <span onClick={e => e.stopPropagation()} style={{ display: "inline-flex", gap: 5, alignItems: "center" }}>
                   {dupG?.key === g.key ? (
                     <>
