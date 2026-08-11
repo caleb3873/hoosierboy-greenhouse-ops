@@ -8350,8 +8350,10 @@ function DraftOrderCard({ o, oLines, families, onOpenFamily, onChanged }) {
           </div>
           <div style={{ fontSize: 12, color: COLORS.muted, marginTop: 2 }}>
             {o.broker}{o.supplier ? ` → ${o.supplier}` : ""}{o.farm ? <b style={{ color: COLORS.dark }}> · {o.farm}</b> : ""} · {act.length} line{act.length !== 1 ? "s" : ""}
-            {(() => { const extra = act.reduce((s, l) => s + (l.qty_needed != null ? Math.max(0, (+l.qty_ordered || 0) - +l.qty_needed) : 0), 0);
-              return extra > 0 ? <b style={{ color: COLORS.amber }}> · +{extra.toLocaleString()} extras over need</b> : null; })()}
+            {(() => {
+              let extra = 0, cost = 0;
+              act.forEach(l => { if (l.qty_needed != null) { const ex = Math.max(0, (+l.qty_ordered || 0) - +l.qty_needed); extra += ex; if (l.unit_price != null) cost += ex * +l.unit_price; } });
+              return extra > 0 ? <b style={{ color: COLORS.amber }}> · +{extra.toLocaleString()} extras over need ({fmtMoney(cost)})</b> : null; })()}
           </div>
           {underMin && <div style={{ fontSize: 11, fontWeight: 800, color: COLORS.red, marginTop: 4 }}>⚠ {(+o.total_qty || 0).toLocaleString()} of 2,000 farm minimum — {(2000 - (+o.total_qty || 0)).toLocaleString()} short; add items or combine weeks</div>}
           {underMin && families?.length > 0 && (
@@ -8392,7 +8394,8 @@ function DraftOrderCard({ o, oLines, families, onOpenFamily, onChanged }) {
                     {l.qty_needed != null && (
                       <div title="what the plan actually needs (internal — not on the broker sheet)"
                         style={{ fontSize: 9.5, fontVariantNumeric: "tabular-nums", color: (+l.qty_ordered - +l.qty_needed) > 0 ? COLORS.amber : COLORS.muted, fontWeight: 700, marginTop: 1 }}>
-                        need {(+l.qty_needed).toLocaleString()}{(+l.qty_ordered - +l.qty_needed) > 0 ? ` · +${(+l.qty_ordered - +l.qty_needed)} extra` : ""}
+                        need {(+l.qty_needed).toLocaleString()}{(() => { const ex = +l.qty_ordered - +l.qty_needed;
+                          return ex > 0 ? ` · +${ex} extra${l.unit_price != null ? ` ($${(ex * +l.unit_price).toFixed(0)})` : ""}` : ""; })()}
                       </div>
                     )}
                   </td>
