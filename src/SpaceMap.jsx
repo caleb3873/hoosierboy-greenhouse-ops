@@ -203,6 +203,8 @@ export default function SpaceMap({ plan: fixedPlan }) {
     const cap = capOf(bench, k);
     if (cap == null) { window.alert(`No ${k} capacity number for ${bench.code} — add it to the chart first.`); return; }
     const used = byBench[bench.id]?.byClass[k] || 0;
+    const otherUnits = Object.entries(byBench[bench.id]?.byClass || {}).filter(([x]) => x !== k).reduce((sm, [, v]) => sm + v, 0);
+    if (otherUnits > 0) { window.alert(`${bench.code} is already holding a different container — one container per bench. Clear it (🧹) or pick another bench.`); return; }
     const free = cap - used;
     if (free <= 0) { window.alert(`${bench.code} is full for this container (${used}/${cap}).`); return; }
     const freePots = k === "tray45" ? free * 10 : free;
@@ -351,7 +353,7 @@ export default function SpaceMap({ plan: fixedPlan }) {
     return (
       <div onClick={() => placeItem && !busy && allocate(placeItem, b)} {...dropProps(b)}
         style={{ flex: "1 1 120px", minWidth: 110, maxWidth: 200, minHeight: 126, display: "flex", flexDirection: "column",
-          background: blank ? "#fbfdf8" : pct >= 1 ? "#fbe3e0" : "#fdf6e3", border: `1.5px solid ${pct >= 1 ? C.red : C.border}`,
+          background: blank ? "#fbfdf8" : (pct >= 1 || (usedOther > 0 && used === 0)) ? "#fbe3e0" : "#fdf6e3", border: `1.5px solid ${(pct >= 1 || (usedOther > 0 && used === 0)) ? C.red : C.border}`,
           borderRadius: 10, padding: "8px 9px", cursor: placeItem && mode === "plan" ? "copy" : "default" }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 5 }}>
           <b style={{ fontFamily: "ui-monospace,Menlo,monospace", fontSize: 11.5 }}>{b.code}</b>
@@ -363,7 +365,12 @@ export default function SpaceMap({ plan: fixedPlan }) {
           )}
         </div>
         <div style={{ textAlign: "center", margin: "8px 0 2px" }}>
-          {cap != null ? (
+          {usedOther > 0 && used === 0 ? (
+            <>
+              <div style={{ fontSize: 18, fontWeight: 800, color: C.red }}>IN USE</div>
+              <div style={{ fontSize: 8.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: C.muted }}>other container</div>
+            </>
+          ) : cap != null ? (
             <>
               <div style={{ fontSize: 22, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: blank ? C.dark : pct >= 1 ? C.red : C.amber }}>
                 {blank ? cap.toLocaleString() : `${used}/${cap}`}
@@ -371,6 +378,7 @@ export default function SpaceMap({ plan: fixedPlan }) {
               <div style={{ fontSize: 8.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: C.muted }}>
                 {blank ? (k === "tray45" ? `${spacing} trays` : CLASSES.find(([x]) => x === k)?.[1]) : `${cap - used} open`}
               </div>
+              {usedOther > 0 && <div style={{ fontSize: 8.5, fontWeight: 800, color: C.amber }}>⚠ mixed containers</div>}
             </>
           ) : <div style={{ fontSize: 10, color: C.muted, marginTop: 6 }}>no {CLASSES.find(([x]) => x === k)?.[1]} cap</div>}
         </div>
@@ -388,7 +396,6 @@ export default function SpaceMap({ plan: fixedPlan }) {
             <b style={{ fontVariantNumeric: "tabular-nums" }}>{a.qty.toLocaleString()}</b> {a.name}
           </div>
         ))}
-        {usedOther > 0 && <div style={{ fontSize: 8.5, color: C.amber, fontWeight: 700 }}>+{usedOther} other-container</div>}
       </div>
     );
   };
@@ -404,8 +411,8 @@ export default function SpaceMap({ plan: fixedPlan }) {
     const blank = !info;
     return (
       <div onClick={() => placeItem && !busy && allocate(placeItem, b)} {...dropProps(b)}
-        style={{ display: "flex", alignItems: "center", gap: 10, background: blank ? "#fbfdf8" : pct >= 1 ? "#fbe3e0" : "#fdf6e3",
-          border: `1.5px solid ${pct >= 1 ? C.red : C.border}`, borderRadius: 9, padding: "7px 10px", cursor: placeItem && mode === "plan" ? "copy" : "default" }}>
+        style={{ display: "flex", alignItems: "center", gap: 10, background: blank ? "#fbfdf8" : (pct >= 1 || (usedOther > 0 && used === 0)) ? "#fbe3e0" : "#fdf6e3",
+          border: `1.5px solid ${(pct >= 1 || (usedOther > 0 && used === 0)) ? C.red : C.border}`, borderRadius: 9, padding: "7px 10px", cursor: placeItem && mode === "plan" ? "copy" : "default" }}>
         <div style={{ width: 74 }}>
           <b style={{ fontFamily: "ui-monospace,Menlo,monospace", fontSize: 11.5 }}>{b.code}</b>
           <div style={{ fontSize: 9, fontWeight: 800, color: C.muted }}>
@@ -417,13 +424,18 @@ export default function SpaceMap({ plan: fixedPlan }) {
           </div>
         </div>
         <div style={{ width: 92, textAlign: "right" }}>
-          {cap != null ? (
+          {usedOther > 0 && used === 0 ? (
+            <>
+              <span style={{ fontSize: 14, fontWeight: 800, color: C.red }}>IN USE</span>
+              <div style={{ fontSize: 8, fontWeight: 800, textTransform: "uppercase", color: C.muted }}>other container</div>
+            </>
+          ) : cap != null ? (
             <>
               <span style={{ fontSize: 17, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: blank ? C.dark : pct >= 1 ? C.red : C.amber }}>
                 {blank ? cap.toLocaleString() : `${used}/${cap}`}
               </span>
               <div style={{ fontSize: 8, fontWeight: 800, textTransform: "uppercase", color: C.muted }}>
-                {blank ? (k === "tray45" ? `${spacing}` : "cap") : `${cap - used} open`}
+                {blank ? (k === "tray45" ? `${spacing}` : "cap") : `${cap - used} open`}{usedOther > 0 ? " · ⚠ mixed" : ""}
               </div>
             </>
           ) : <span style={{ fontSize: 9.5, color: C.muted }}>no cap</span>}
@@ -442,7 +454,6 @@ export default function SpaceMap({ plan: fixedPlan }) {
               <b style={{ fontVariantNumeric: "tabular-nums" }}>{a.qty.toLocaleString()}</b> {a.name}
             </div>
           ))}
-          {usedOther > 0 && <div style={{ fontSize: 8.5, color: C.amber, fontWeight: 700 }}>+{usedOther} other-container</div>}
         </div>
       </div>
     );
