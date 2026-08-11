@@ -8350,6 +8350,8 @@ function DraftOrderCard({ o, oLines, families, onOpenFamily, onChanged }) {
           </div>
           <div style={{ fontSize: 12, color: COLORS.muted, marginTop: 2 }}>
             {o.broker}{o.supplier ? ` → ${o.supplier}` : ""}{o.farm ? <b style={{ color: COLORS.dark }}> · {o.farm}</b> : ""} · {act.length} line{act.length !== 1 ? "s" : ""}
+            {(() => { const extra = act.reduce((s, l) => s + (l.qty_needed != null ? Math.max(0, (+l.qty_ordered || 0) - +l.qty_needed) : 0), 0);
+              return extra > 0 ? <b style={{ color: COLORS.amber }}> · +{extra.toLocaleString()} extras over need</b> : null; })()}
           </div>
           {underMin && <div style={{ fontSize: 11, fontWeight: 800, color: COLORS.red, marginTop: 4 }}>⚠ {(+o.total_qty || 0).toLocaleString()} of 2,000 farm minimum — {(2000 - (+o.total_qty || 0)).toLocaleString()} short; add items or combine weeks</div>}
           {underMin && families?.length > 0 && (
@@ -8387,6 +8389,12 @@ function DraftOrderCard({ o, oLines, families, onOpenFamily, onChanged }) {
                     <input type="number" step={100} min={0} defaultValue={+l.qty_ordered || 0} disabled={busy}
                       onBlur={e => { const v = Math.max(0, Math.round(+e.target.value || 0)); if (v !== +l.qty_ordered) saveLine(l, { qty_ordered: v }); }}
                       style={{ ...inp, border: `1px solid ${offGrid ? COLORS.red : COLORS.border}` }} title={offGrid ? "URC/CALL order in 100s, minimum 100 per color" : undefined} />
+                    {l.qty_needed != null && (
+                      <div title="what the plan actually needs (internal — not on the broker sheet)"
+                        style={{ fontSize: 9.5, fontVariantNumeric: "tabular-nums", color: (+l.qty_ordered - +l.qty_needed) > 0 ? COLORS.amber : COLORS.muted, fontWeight: 700, marginTop: 1 }}>
+                        need {(+l.qty_needed).toLocaleString()}{(+l.qty_ordered - +l.qty_needed) > 0 ? ` · +${(+l.qty_ordered - +l.qty_needed)} extra` : ""}
+                      </div>
+                    )}
                   </td>
                   <td style={{ padding: "4px 8px", borderBottom: `1px solid ${COLORS.border}`, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{l.unit_price != null ? "$" + (+l.unit_price).toFixed(3) : <span style={{ color: COLORS.amber, fontWeight: 800 }}>no $</span>}</td>
                   <td style={{ padding: "4px 8px", borderBottom: `1px solid ${COLORS.border}`, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{l.ext_price != null ? fmtMoney(+l.ext_price) : "—"}</td>
