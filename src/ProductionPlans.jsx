@@ -379,6 +379,11 @@ function PlanDashboard({ plan, initialTab }) {
     : (isHouseplant ? "catalog" : "dashboard");
   const [tab, setTabState]        = useState(startingTab);
   const setTab = (t) => { setTabState(t); try { localStorage.setItem("gh_plan_tab", t); } catch {} };
+  useEffect(() => {   // family-page lock-in: "review and submit?" → land on Orders with the draft open
+    const go = () => setTab("orders");
+    window.addEventListener("hb-goto-orders", go);
+    return () => window.removeEventListener("hb-goto-orders", go);
+  }, []); // eslint-disable-line
   const [pl, setPL]               = useState(null);
   const [housesProfit, setHouses] = useState([]);
   const [houses, setHousesList]   = useState([]);
@@ -8170,6 +8175,55 @@ async function recomputeOrderTotals(sb, orderId) {
   }).eq("id", orderId);
 }
 
+// 🧩 Extras — every ordered line above its plan need: the surplus ledger. Track
+// where the extras will find a home in the prod note (internal only).
+function ExtrasView({ lines, orders, onChanged }) {
+  const sb = getSupabase();
+  const omap = Object.fromEntries(orders.map(o => [o.id, o]));
+  const rows = lines.filter(l => l.status === "active" && l.qty_needed != null && (+l.qty_ordered || 0) > +l.qty_needed)
+    .map(l => ({ ...l, _o: omap[l.purchase_order_id] || {}, _ex: (+l.qty_ordered || 0) - +l.qty_needed }))
+    .sort((a, b) => (b._ex * (+b.unit_price || 0)) - (a._ex * (+a.unit_price || 0)));
+  const totEx = rows.reduce((s, r) => s + r._ex, 0);
+  const totCost = rows.reduce((s, r) => s + r._ex * (+r.unit_price || 0), 0);
+  const td3 = { padding: "5px 8px", borderBottom: `1px solid ${COLORS.border}` };
+  return (
+    <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 14 }}>
+      <div style={{ display: "flex", gap: 14, alignItems: "baseline", marginBottom: 10, flexWrap: "wrap" }}>
+        <b style={{ fontSize: 14 }}>🧩 Extra plants — rounding & minimums surplus</b>
+        <span style={{ fontSize: 12.5, color: COLORS.muted }}><b>{totEx.toLocaleString()}</b> plants · <b>{fmtMoney(totCost)}</b> — give them a home in the note</span>
+      </div>
+      {!rows.length && <div style={{ color: COLORS.muted, fontSize: 13 }}>No extras on order — every line matches its need (or was locked before need-tracking; re-lock to fill it).</div>}
+      {rows.length > 0 && (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12.5 }}>
+            <thead><tr>{["Variety", "Order", "Wk", "Ordered", "Need", "Extra", "Extra $", "Where they'll go"].map((h, i) => (
+              <th key={h} style={{ textAlign: i >= 3 && i <= 6 ? "right" : "left", padding: "6px 8px", fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: COLORS.muted, borderBottom: `2px solid ${COLORS.border}` }}>{h}</th>
+            ))}</tr></thead>
+            <tbody>
+              {rows.map(r => (
+                <tr key={r.id}>
+                  <td style={{ ...td3, fontWeight: 600 }}>{r.variety_name}</td>
+                  <td style={{ ...td3, fontFamily: "ui-monospace,Menlo,monospace", fontSize: 11 }}>{r._o.order_number || "—"}</td>
+                  <td style={{ ...td3, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r._o.ship_week || "—"}</td>
+                  <td style={{ ...td3, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{(+r.qty_ordered).toLocaleString()}</td>
+                  <td style={{ ...td3, textAlign: "right", fontVariantNumeric: "tabular-nums", color: COLORS.muted }}>{(+r.qty_needed).toLocaleString()}</td>
+                  <td style={{ ...td3, textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 800, color: COLORS.amber }}>+{r._ex.toLocaleString()}</td>
+                  <td style={{ ...td3, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.unit_price != null ? fmtMoney(r._ex * +r.unit_price) : "—"}</td>
+                  <td style={td3}>
+                    <input defaultValue={r.prod_note || ""} placeholder="e.g. bump 10\" HB recipe, backup for shrink…"
+                      onBlur={e => { const v = e.target.value.trim() || null; if ((v || "") !== (r.prod_note || "")) sb.from("purchase_order_lines").update({ prod_note: v }).eq("id", r.id).then(onChanged); }}
+                      style={{ width: 240, padding: "4px 7px", borderRadius: 6, border: `1px solid ${COLORS.border}`, fontFamily: "inherit", fontSize: 12 }} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // 🌱 By item — every line on order, flat: search, sort, multi-select → production
 // notes (internal; broker-facing line notes stay separate and go on the XLSX).
 function OrderItemsView({ lines, orders, famMap, onChanged, onOpenFamily }) {
@@ -8276,10 +8330,10 @@ function OrderItemsView({ lines, orders, famMap, onChanged, onOpenFamily }) {
   );
 }
 
-function DraftOrderCard({ o, oLines, families, onOpenFamily, onChanged }) {
+function DraftOrderCard({ o, oLines, families, onOpenFamily, onChanged, startOpen }) {
   const sb = getSupabase();
   const [busy, setBusy] = useState(false);
-  const [open, setOpen] = useState(false);   // collapsed by default — header carries totals + the min warning
+  const [open, setOpen] = useState(!!startOpen);   // collapsed by default — header carries totals + the min warning
   const underMin = (+o.total_qty || 0) < 2000;   // hard rule: 2,000 per supplier by default
   const act = oLines.filter(l => l.status === "active");
 
@@ -8353,7 +8407,8 @@ function DraftOrderCard({ o, oLines, families, onOpenFamily, onChanged }) {
             {(() => {
               let extra = 0, cost = 0;
               act.forEach(l => { if (l.qty_needed != null) { const ex = Math.max(0, (+l.qty_ordered || 0) - +l.qty_needed); extra += ex; if (l.unit_price != null) cost += ex * +l.unit_price; } });
-              return extra > 0 ? <b style={{ color: COLORS.amber }}> · +{extra.toLocaleString()} extras over need ({fmtMoney(cost)})</b> : null; })()}
+              const pctOf = +o.total_cost > 0 ? Math.round(cost * 100 / +o.total_cost) : null;
+              return extra > 0 ? <b style={{ color: COLORS.amber }}> · +{extra.toLocaleString()} extras over need ({fmtMoney(cost)}{pctOf != null ? ` · ${pctOf}% of the order` : ""})</b> : null; })()}
           </div>
           {underMin && <div style={{ fontSize: 11, fontWeight: 800, color: COLORS.red, marginTop: 4 }}>⚠ {(+o.total_qty || 0).toLocaleString()} of 2,000 farm minimum — {(2000 - (+o.total_qty || 0)).toLocaleString()} short; add items or combine weeks</div>}
           {underMin && families?.length > 0 && (
@@ -8435,7 +8490,15 @@ function OrdersTab({ plan }) {
   const [lines,  setLines]  = useState([]);
   const [expanded, setExpanded] = useState(null);
   const [tick, setTick] = useState(0);
-  const [view, setView] = useState("orders");        // 📦 by order | 🌱 by item
+  const [view, setView] = useState("orders");        // 📦 by order | 🌱 by item | 🧩 extras
+  const [openNums] = useState(() => {                // drafts to auto-expand (lock-in handoff)
+    try {
+      const f = JSON.parse(localStorage.getItem("hb_open_drafts") || "null");
+      localStorage.removeItem("hb_open_drafts");
+      if (f && f.planId === plan.id && Date.now() - f.ts < 120000) return new Set(f.nums || []);
+    } catch {}
+    return new Set();
+  });
   const [fBroker, setFBroker] = useState("");        // by-order filters
   const [fStatus, setFStatus] = useState("");
   const [selOrds, setSelOrds] = useState(() => new Set());  // multi-select → one combined XLSX
@@ -8537,7 +8600,7 @@ function OrdersTab({ plan }) {
   return (
     <div style={{ display: "grid", gap: 16 }}>
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        {[["orders", "📦 By order"], ["items", "🌱 By item"]].map(([m, label]) => (
+        {[["orders", "📦 By order"], ["items", "🌱 By item"], ["extras", "🧩 Extras"]].map(([m, label]) => (
           <button key={m} onClick={() => setView(m)}
             style={{ padding: "6px 14px", borderRadius: 8, fontWeight: 800, fontSize: 12.5, cursor: "pointer", fontFamily: "inherit",
               border: `1.5px solid ${view === m ? COLORS.light : COLORS.border}`,
@@ -8582,6 +8645,7 @@ function OrdersTab({ plan }) {
         );
       })()}
       {view === "items" && <OrderItemsView lines={lines} orders={orders} famMap={famMap} onChanged={() => setTick(t => t + 1)} onOpenFamily={setShowFamily} />}
+      {view === "extras" && <ExtrasView lines={lines} orders={orders} onChanged={() => setTick(t => t + 1)} />}
       {view === "orders" && drafts.length > 0 && (
         <>
           <div style={{ fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".5px", color: COLORS.amber }}>
@@ -8594,6 +8658,7 @@ function OrdersTab({ plan }) {
                 style={{ marginTop: 22, width: 17, height: 17, flex: "0 0 auto", accentColor: "#7fb069" }} />
               <div style={{ flex: 1 }}>
                 <DraftOrderCard o={o} oLines={lines.filter(l => l.purchase_order_id === o.id)}
+                  startOpen={openNums.has(o.order_number)}
                   families={famsOf(o)} onOpenFamily={setShowFamily} onChanged={() => setTick(t => t + 1)} />
               </div>
             </div>
