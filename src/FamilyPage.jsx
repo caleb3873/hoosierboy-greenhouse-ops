@@ -739,7 +739,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
     if (!s0 || !s0.id || s0.series_name === "(unassigned)") return;
     // re-read the row fresh: in a bulk loop, two colors of one series would otherwise
     // both see the render-time nulls and the second would overwrite the first's fill
-    const { data: s } = await sb.from("crop_recipe_series").select("id,form,prop_tray_id").eq("id", s0.id).maybeSingle();
+    const { data: s } = await sb.from("crop_recipe_series").select("id,form,prop_tray_id,order_multiple").eq("id", s0.id).maybeSingle();
     if (!s) return;
     const upd = {};
     const FORM_FROM_CLASS = { urc: "URC", callused: "CALL", plug: "PLUG", liner: "LINER", seed: "SEED", bareroot: "BULB" };
@@ -755,6 +755,11 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
           || trayOpts.find(t => new RegExp(`(^|\\D)${n}(\\D|$)`).test(String(t.name || "")));
         if (tray) upd.prop_tray_id = tray.id;
       }
+    }
+    if (!s.order_multiple) {
+      // the same digits are the SELL increment — young plants come by the tray
+      const m2 = String(q.form_raw || "").match(/(\d{2,4})/);
+      if (m2 && +m2[1] >= 20) upd.order_multiple = +m2[1];
     }
     if (!Object.keys(upd).length) return;
     await sb.from("crop_recipe_series").update({ ...upd, updated_at: new Date().toISOString() }).eq("id", s.id);
@@ -1113,6 +1118,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
       if (String(o.rooting_weeks ?? "") !== String(s.rooting_weeks ?? "")) ch.push(`${s.series_name} root ${o.rooting_weeks ?? "—"} → ${s.rooting_weeks ?? "—"}w`);
       if ((o.pinned_broker || null) !== (s.pinned_broker || null)) ch.push(`${s.series_name} broker 📌 ${o.pinned_broker || "—"} → ${s.pinned_broker || "—"} (one material, one broker; existing row costs unchanged — re-quote applies them)`);
       if ((o.prop_tray_id || null) !== (s.prop_tray_id || null)) ch.push(`${s.series_name} tray → ${trayOpts.find(t => t.id === s.prop_tray_id)?.name || "—"}`);
+      if ((o.order_multiple || null) !== (s.order_multiple || null)) ch.push(`${s.series_name} sold in ${o.order_multiple || "—"} → ${s.order_multiple || "—"}s (projections round up to this)`);
     });
     if (!ch.length) { setLocked(true); setSavedMsg("no changes"); return; }
     if (!window.confirm(`Save the ${recipe.crop_name} ${recipe.size_label} recipe?\n\n• ${ch.join("\n• ")}\n\nCascades to every color, group and task using this recipe.`)) return;
@@ -1124,8 +1130,9 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
       if (o.form !== s.form || String(o.rooting_weeks ?? "") !== String(s.rooting_weeks ?? "")
         || (o.pinned_broker || null) !== (s.pinned_broker || null)
         || (o.series_name || "") !== s.series_name
-        || (o.prop_tray_id || null) !== (s.prop_tray_id || null)) {
-        await sb.from("crop_recipe_series").update({ form: s.form, rooting_weeks: s.rooting_weeks,
+        || (o.prop_tray_id || null) !== (s.prop_tray_id || null)
+        || (o.order_multiple || null) !== (s.order_multiple || null)) {
+        await sb.from("crop_recipe_series").update({ form: s.form, rooting_weeks: s.rooting_weeks, order_multiple: s.order_multiple || null,
           series_name: s.series_name.trim() || o.series_name,   // blank rename falls back to the old name
           prop_tray_id: s.prop_tray_id || null,
           pinned_broker: s.pinned_broker || null, pinned_supplier: s.pinned_supplier || null,
@@ -1296,7 +1303,15 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
   }
 
   async function setVarQty(vr, newTotal) {
-    const tot = Math.max(0, Math.round(newTotal));   // POTS
+    let tot = Math.max(0, Math.round(newTotal));     // POTS
+    // liners sell by the tray: round the PLANTS up to the series' multiple
+    // (want 1,000 gerbera in 144s → order 1,008 → plan 1,008 pots at ppp 1)
+    const mult = +(seriesOf(vr.variety)?.order_multiple || 0);
+    if (tot > 0 && mult > 1) {
+      const ppp = Math.max(1, +vr.rows[0]?.ppp || 1);
+      const snapped = Math.ceil((tot * ppp) / mult) * mult;
+      tot = Math.round(snapped / ppp);
+    }
     const curPots = vr.rows.reduce((a, r) => a + (+r.qty_pots || 0) * potFactor(r), 0);
     if (tot === curPots) return;
     setBusy(true);
@@ -1713,7 +1728,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
             </div>
             <div style={{ overflowX: "auto" }}>
               <table style={{ borderCollapse: "collapse", width: "100%" }}>
-                <thead><tr>{["Series", "Form", "Prop (wks)", "Tray", "Total wks", ""].map((h, i) => <th key={i} style={th}>{h}</th>)}</tr></thead>
+                <thead><tr>{["Series", "Form", "Prop (wks)", "Tray", "Sold in", "Total wks", ""].map((h, i) => <th key={i} style={th}>{h}</th>)}</tr></thead>
                 <tbody>
                   {series.filter(s => s.series_name !== "(unassigned)").map(s => (
                     <tr key={s.id}>
@@ -1757,6 +1772,11 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
                           <option value="">— direct stick (no tray)</option>
                           {trayOpts.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
                         </select>
+                      </td>
+                      <td style={td} title="supplier sells this liner in increments of this many plants — projections round UP to the next multiple (1,000 wanted in 144s → 1,008). Auto-fills from the quote; type to override.">
+                        <input type="number" value={s.order_multiple ?? ""} placeholder="—"
+                          onChange={e => setSeries(series.map(x => x.id === s.id ? { ...x, order_multiple: e.target.value === "" ? null : Math.max(1, Math.round(+e.target.value)) } : x))}
+                          style={{ width: 54, padding: "3px 5px", borderRadius: 6, border: `1.5px solid ${C.creamBr}`, fontFamily: "ui-monospace,Menlo,monospace", fontSize: 12, fontWeight: 700 }} />
                       </td>
                       <td style={{ ...td, fontFamily: "ui-monospace,Menlo,monospace", fontWeight: 800, color: C.dark }}
                         title="the static total — prop weeks (arrive→transplant) + finish weeks (transplant→ready). Edit the parts; this adds itself up.">
