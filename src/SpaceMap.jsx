@@ -56,6 +56,8 @@ export default function SpaceMap({ plan: fixedPlan }) {
   const [rows, setRows] = useState([]);
   const [pool, setPool] = useState([]);
   const [decided, setDecided] = useState(null);
+  const [grouping, setGrouping] = useState("round");   // round (family × week) | item (color × week)
+  const [recipeNames, setRecipeNames] = useState({});
   const [showAll, setShowAll] = useState(false);
   const [famOpen, setFamOpen] = useState(null);
   const [placeItem, setPlaceItem] = useState("");
@@ -114,6 +116,13 @@ export default function SpaceMap({ plan: fixedPlan }) {
         off += 1000;
       }
       setPool(all);
+      const rids = [...new Set(all.map(r => r.recipe_id).filter(Boolean))];
+      const rn = {};
+      for (let i = 0; i < rids.length; i += 150) {
+        const { data } = await sb.from("crop_recipes").select("id,crop_name,size_label,display_name").in("id", rids.slice(i, i + 150));
+        (data || []).forEach(x => { rn[x.id] = x.display_name || `${x.size_label || ""} ${x.crop_name || ""}`.trim(); });
+      }
+      setRecipeNames(rn);
       let dec = [], doff = 0;
       for (;;) {
         const { data } = await sb.from("plan_targets").select("item_name")
@@ -126,19 +135,23 @@ export default function SpaceMap({ plan: fixedPlan }) {
     })();
   }, [sb, planId, tick]);
 
-  // one entry per item × PLANT WEEK — the plant date decides what goes down
-  // together, so a multi-group item never places as one blob
+  // the plant date decides what goes down together. Two grains:
+  //   round = whole FAMILY at one plant week (all colors placed as a unit)
+  //   item  = one color at one plant week
   const unplaced = useMemo(() => {
     const m = {};
     pool.forEach(r => {
       if (!showAll && decided && !decided.has(r.item_name)) return;
-      const key = `${r.item_name}||${r.plant_year ?? ""}w${r.plant_week ?? "?"}`;
-      const o = m[key] || (m[key] = { item: r.item_name, wk: r.plant_week, yr: r.plant_year, qty: 0, rows: [], cls: classOfItem(r.item_name), rid: null });
-      o.qty += +r.qty_pots || 0; o.rows.push(r);
+      const wkKey = `${r.plant_year ?? ""}w${r.plant_week ?? "?"}`;
+      const byRound = grouping === "round" && r.recipe_id;
+      const key = byRound ? `R${r.recipe_id}||${wkKey}` : `${r.item_name}||${wkKey}`;
+      const label = byRound ? (recipeNames[r.recipe_id] || r.item_name) : r.item_name;
+      const o = m[key] || (m[key] = { item: label, wk: r.plant_week, yr: r.plant_year, qty: 0, rows: [], cls: classOfItem(r.item_name), rid: r.recipe_id || null, names: new Set() });
+      o.qty += +r.qty_pots || 0; o.rows.push(r); o.names.add(r.item_name);
       if (r.recipe_id && !o.rid) o.rid = r.recipe_id;
     });
     return m;
-  }, [pool, decided, showAll]);
+  }, [pool, decided, showAll, grouping, recipeNames]);
   const hiddenCount = useMemo(() => {
     if (showAll || !decided) return 0;
     return new Set(pool.filter(r => !decided.has(r.item_name)).map(r => r.item_name)).size;
@@ -438,8 +451,14 @@ export default function SpaceMap({ plan: fixedPlan }) {
       <div style={{ display: "grid", gridTemplateColumns: mode === "plan" ? "280px 1fr" : "1fr", gap: 14, alignItems: "start" }}>
         {mode === "plan" && (
           <div style={{ background: C.card, border: `1.5px solid ${placeItem ? C.light : C.border}`, borderRadius: 12, padding: "10px 12px", position: "sticky", top: 8, maxHeight: "82vh", overflowY: "auto" }}>
-            <div style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: C.muted, marginBottom: 6 }}>
-              📥 To place — {CLASSES.find(([k]) => k === cls)?.[1]}
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+              <span style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: C.muted }}>📥 To place</span>
+              <span style={{ flex: 1 }} />
+              {[["round", "by round"], ["item", "by color"]].map(([g, label]) => (
+                <button key={g} onClick={() => { setGrouping(g); setPlaceItem(""); }}
+                  style={{ padding: "2px 8px", borderRadius: 7, fontWeight: 800, fontSize: 10, cursor: "pointer", fontFamily: FONT,
+                    border: `1.5px solid ${grouping === g ? C.light : C.border}`, background: grouping === g ? "#eef6e8" : "#fff", color: grouping === g ? C.dark : C.muted }}>{label}</button>
+              ))}
             </div>
             <input value={poolQ} onChange={e => setPoolQ(e.target.value)} placeholder="search unplaced…"
               style={{ width: "100%", boxSizing: "border-box", padding: "6px 9px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontFamily: FONT, fontSize: 12, marginBottom: 8 }} />
@@ -459,12 +478,16 @@ export default function SpaceMap({ plan: fixedPlan }) {
             {poolList.slice(0, 120).map(([key, o]) => (
               <div key={key} draggable onDragStart={e => { e.dataTransfer.setData("text/plain", key); setPlaceItem(key); }}
                 onClick={() => setPlaceItem(placeItem === key ? "" : key)}
-                onDoubleClick={() => o.rid ? setFamOpen(o.rid) : window.alert("No family page linked to this item.")}
-                title="drag onto the house · double-click opens the family page"
-                style={{ padding: "5px 8px", borderRadius: 8, marginBottom: 3, cursor: "grab", fontSize: 11.5, lineHeight: 1.35,
+                title="drag onto the house, or tap then tap benches"
+                style={{ padding: "5px 8px", borderRadius: 8, marginBottom: 3, cursor: "grab", fontSize: 11.5, lineHeight: 1.35, position: "relative",
                   border: `1.5px solid ${placeItem === key ? C.light : C.border}`, background: placeItem === key ? "#eef6e8" : "#fbfdf8" }}>
                 <b style={{ fontVariantNumeric: "tabular-nums" }}>{o.qty.toLocaleString()}</b> {o.item}
                 <span style={{ fontSize: 9.5, fontWeight: 800, color: C.amber, marginLeft: 5 }}>wk {o.wk ?? "?"}</span>
+                {grouping === "round" && o.names.size > 1 && <span style={{ fontSize: 9, color: C.muted, marginLeft: 4 }}>{o.names.size} colors</span>}
+                {o.rid && (
+                  <button onClick={e => { e.stopPropagation(); setFamOpen(o.rid); }} title="open the family page"
+                    style={{ position: "absolute", right: 4, top: 4, padding: "1px 6px", borderRadius: 6, border: `1px solid ${C.border}`, background: "#fff", color: C.muted, fontSize: 9.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>⤴ fam</button>
+                )}
               </div>
             ))}
             {poolList.length > 120 && <div style={{ fontSize: 10.5, color: C.muted }}>…{poolList.length - 120} more — search to narrow</div>}
