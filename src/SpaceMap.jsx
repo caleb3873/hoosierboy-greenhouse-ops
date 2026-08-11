@@ -102,7 +102,7 @@ export default function SpaceMap({ plan: fixedPlan }) {
       const ids = b.map(x => x.id);
       let sc = [];
       for (let i = 0; i < ids.length; i += 80) {
-        const { data } = await sb.from("scheduled_crops").select("id,item_name,qty_pots,plant_week,bench_id,placed_at")
+        const { data } = await sb.from("scheduled_crops").select("id,item_name,qty_pots,plant_week,bench_id,placed_at,recipe_id")
           .eq("plan_id", planId).in("bench_id", ids.slice(i, i + 80)).not("is_combo_component", "is", true).gt("qty_pots", 0).limit(2000);
         sc = sc.concat(data || []);
       }
@@ -184,8 +184,9 @@ export default function SpaceMap({ plan: fixedPlan }) {
     const m = {};
     src.forEach(r => {
       const o = m[r.bench_id] || (m[r.bench_id] = { agg: {}, byClass: {} });
-      const a = o.agg[r.item_name] || (o.agg[r.item_name] = { name: r.item_name, qty: 0, ids: [], firstId: r.id, wk: r.plant_week });
+      const a = o.agg[r.item_name] || (o.agg[r.item_name] = { name: r.item_name, qty: 0, ids: [], firstId: r.id, wk: r.plant_week, rid: r.recipe_id || null });
       a.qty += +r.qty_pots || 0; a.ids.push(r.id);
+      if (r.recipe_id && !a.rid) a.rid = r.recipe_id;
       const k = classOfItem(r.item_name) || "other";
       o.byClass[k] = (o.byClass[k] || 0) + inUnits(+r.qty_pots || 0, k);
     });
@@ -380,7 +381,9 @@ export default function SpaceMap({ plan: fixedPlan }) {
         )}
         <div style={{ flex: 1 }} />
         {(info?.items || []).map(a => (
-          <div key={a.name} onClick={e => { e.stopPropagation(); unplace(a); }} title={mode === "plan" ? "click to pull off" : undefined}
+          <div key={a.name} onClick={e => { e.stopPropagation(); unplace(a); }}
+            onContextMenu={e => { e.preventDefault(); e.stopPropagation(); if (a.rid) setFamOpen(a.rid); }}
+            title={mode === "plan" ? "click: pull off · right-click: open the family" : "right-click: open the family"}
             style={{ fontSize: 9.5, cursor: mode === "plan" ? "pointer" : "default", lineHeight: 1.4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: mode === "lastyear" ? C.muted : C.dark }}>
             <b style={{ fontVariantNumeric: "tabular-nums" }}>{a.qty.toLocaleString()}</b> {a.name}
           </div>
@@ -432,7 +435,9 @@ export default function SpaceMap({ plan: fixedPlan }) {
             </div>
           )}
           {(info?.items || []).map(a => (
-            <div key={a.name} onClick={e => { e.stopPropagation(); unplace(a); }} title={mode === "plan" ? "click to pull off" : undefined}
+            <div key={a.name} onClick={e => { e.stopPropagation(); unplace(a); }}
+              onContextMenu={e => { e.preventDefault(); e.stopPropagation(); if (a.rid) setFamOpen(a.rid); }}
+              title={mode === "plan" ? "click: pull off · right-click: open the family" : "right-click: open the family"}
               style={{ fontSize: 10, cursor: mode === "plan" ? "pointer" : "default", lineHeight: 1.4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: mode === "lastyear" ? C.muted : C.dark }}>
               <b style={{ fontVariantNumeric: "tabular-nums" }}>{a.qty.toLocaleString()}</b> {a.name}
             </div>
