@@ -18,7 +18,8 @@ const QN = ["02","03","04","05","06","07","08","09","10","11","12","13","14","15
 const HOUSES = [
   { key: "BWS", label: "West Side", benchLike: "BWS%", rows: [["South", /^BWSS/], ["North (09–16 ⅓)", /^BWSN/]], lineLike: ["BWSH%"] },
   { key: "DBM", label: "Bluff Main", benchLike: "DBM%", rows: [["West", /^DBMW/], ["East", /^DBME/]], lineLike: ["DBMH%", "DBML%"] },
-  ...QN.map(n => ({ key: `Q${n}`, label: `Quonset ${n}`, benchLike: `EQ${n}%`, rows: [["Benches (walk order)", new RegExp(`^EQ${n}\\d\\d$`)]], lineLike: [`EQH${n}%`, `EQL${n}%`] })),
+  // positions 01-04 only — EQ__05+ records are TURNED-SPACE duplicates, not benches
+  ...QN.map(n => ({ key: `Q${n}`, label: `Quonset ${n}`, benchLike: `EQ${n}%`, rows: [["Benches (walk order)", new RegExp(`^EQ${n}0[1-4]$`)]], lineLike: [`EQH${n}%`, `EQL${n}%`] })),
 ];
 
 export function classOfItem(name) {
@@ -232,7 +233,9 @@ export default function SpaceMap({ plan: fixedPlan }) {
     setBusy(false); setTick(t => t + 1);
   }
 
-  const benchRows = (house?.rows || []).map(([label, re]) => [label, benches.filter(b => re.test(b.code) && !["basket_line", "low_line"].includes(b.bench_type)).sort((a, b) => a.code.localeCompare(b.code))]);
+  const benchRows = (house?.rows || []).map(([label, re]) => [label,
+    benches.filter(b => re.test(b.code) && !["basket_line", "low_line"].includes(b.bench_type) && (b.bench_type || b.cap_overrides))
+      .sort((a, b) => a.code.localeCompare(b.code))]);
   const lineBenches = benches.filter(b => ["basket_line", "low_line"].includes(b.bench_type)).sort((a, b) => a.code.localeCompare(b.code));
 
   const dragProps = b => ({
