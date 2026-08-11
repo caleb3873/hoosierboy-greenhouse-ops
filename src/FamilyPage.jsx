@@ -1562,9 +1562,17 @@ Combine the groups?`)) return;
     setBusy(true);
     try {
       const { orders, skipped } = await lockBrokerOrders(sb, plan.id, specs);
-      window.alert(`Drafted:\n${orders.map(o => `  ${o.orderNumber} — ${o.broker}${o.supplier ? " → " + o.supplier : ""}${o.farm ? " (" + o.farm + ")" : ""} wk${o.shipWeek} · ${o.qty.toLocaleString()} plants`).join("\n") || "  (nothing — no orderable lines)"}${skipped.length ? `\n\nSkipped (no broker/week): ${[...new Set(skipped.map(l => l.varietyName))].join(", ")}` : ""}\n\nReview + download on the plan's 📋 Orders tab.`);
       setSelVars(new Set());
       setEditOverride(false); setTick(t => t + 1);   // page re-locks; banner picks up the fresh drafts
+      const summary = orders.map(o => `  ${o.orderNumber} — ${o.broker}${o.supplier ? " → " + o.supplier : ""}${o.farm ? " (" + o.farm + ")" : ""} wk${o.shipWeek} · ${o.qty.toLocaleString()} plants`).join("\n") || "  (nothing — no orderable lines)";
+      const skipNote = skipped.length ? `\n\nSkipped (no broker/week): ${[...new Set(skipped.map(l => l.varietyName))].join(", ")}` : "";
+      if (orders.length && window.confirm(`Drafted:\n${summary}${skipNote}\n\nReview and submit your order now?`)) {
+        try { localStorage.setItem("hb_open_drafts", JSON.stringify({ planId: plan.id, nums: orders.map(o => o.orderNumber), ts: Date.now() })); } catch {}
+        window.dispatchEvent(new CustomEvent("hb-goto-orders"));
+        onClose?.();
+      } else if (!orders.length) {
+        window.alert(`Drafted:\n${summary}${skipNote}`);
+      }
     } catch (e) { window.alert("Order draft failed: " + e.message); }
     setBusy(false);
   }
