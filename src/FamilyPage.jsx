@@ -926,6 +926,37 @@ The rows leave the plan entirely (other groups keep theirs). This can't be undon
     setBusy(false);
   }
 
+  // set a group's SHIP (arrival) week directly — plant and finish stay put;
+  // receive/stick floor tasks move with the new arrival
+  async function applyGroupShip(g, w, y) {
+    if (!w || w > 53) return;
+    const acc = { moved: 0, flags: [] };
+    setBusy(true);
+    for (const vr of g.vars) {
+      const old = vr.rows[0];
+      for (const r of vr.rows) {
+        const { error } = await sb.from("scheduled_crops").update({ ship_week: w, ship_year: y }).eq("id", r.id);
+        if (error) { window.alert(`⚠ Ship-week change did NOT save (${error.message}) — the group is unchanged.`); setBusy(false); return; }
+      }
+      const its = [...new Set(vr.rows.map(r => r.item_name))];
+      const res = await rippleTasks(sb, plan.id, its,
+        { ship: w, shipYear: y, plant: g.plant, plantYear: g.plantYear },
+        { wk: old?.ship_week, yr: old?.ship_year ?? old?.plant_year }, displayName);
+      acc.moved += res.moved; acc.flags.push(...res.flags);
+    }
+    try {
+      for (const it of [...new Set(g.rows.map(r => r.item_name))]) {
+        await sb.from("item_change_log").insert({ plan_id: plan.id, item_name: it,
+          change_type: "group_ship_change",
+          detail: { group: g.n, ship: `${y}w${w}`, note: "ship week set directly — plant + finish untouched (family page)" },
+          changed_by: displayName || null, source: "family-page" });
+      }
+    } catch { /* audit must not block */ }
+    setFlashKey(g.key);
+    setRipple(acc.moved || acc.flags.length ? acc : null);
+    setBusy(false); setTick(t => t + 1);
+  }
+
   // set a group's PLANT week directly (Caleb 8/11: "a plant date that I set is
   // necessary") — ship re-derives per series (rooted backs off rooting weeks),
   // the FINISH stays exactly where it was.
@@ -2185,7 +2216,12 @@ Combine the groups?`)) return;
                 <b style={{ fontSize: 12 }}>Group {g.n}</b>
                 {flashKey === g.key && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.amber, background: C.amberBg, borderRadius: 5, padding: "2px 7px" }}>you just edited this — groups number by finish order</span>}
                 <span style={{ fontSize: 11, color: C.muted }} onClick={e => e.stopPropagation()}>
-                  ship <b style={wkStyle}>{g.shipMin == null ? "—" : g.shipMinAbs === g.shipMaxAbs ? wkFmt(g.shipMinYr, g.shipMin) : `${wkFmt(g.shipMinYr, g.shipMin)}–${wkFmt(g.shipMaxYr, g.shipMax)}`}</b> → plant{" "}
+                  ship{" "}
+                  <FinishWkInput key={`s${g.key}|${g.shipMin}`} wk={g.shipMin} yr={g.shipMinYr ?? g.plantYear ?? plan.year ?? 2027} disabled={busy} showDate={false} width={50}
+                    amber={g.shipMinAbs !== g.shipMaxAbs} placeholder={g.shipMinAbs !== g.shipMaxAbs ? "mixed" : "YYWW"}
+                    title={`this group's SHIP (arrival) week — type a week or 📅 pick a date; sets every color in the group, plant + finish stay put${g.shipMinAbs !== g.shipMaxAbs ? `. Currently mixed: ${wkFmt(g.shipMinYr, g.shipMin)}–${wkFmt(g.shipMaxYr, g.shipMax)} (series rooting differs)` : ""}`}
+                    onCommit={(w, y) => applyGroupShip(g, w, y)} />
+                  {" "}→ plant{" "}
                   <FinishWkInput key={`p${g.key}|${g.plant}`} wk={g.plant} yr={g.plantYear ?? plan.year ?? 2027} disabled={busy} showDate={false} width={50}
                     title="this group's PLANT week — type a week or 📅 pick a date; ship re-derives per series, the finish stays where it is"
                     onCommit={(w, y) => applyGroupPlant(g, w, y)} />
