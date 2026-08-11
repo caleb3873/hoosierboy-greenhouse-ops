@@ -1509,6 +1509,17 @@ Combine the groups?`)) return;
   async function lockInOrders() {
     const wanted = selVars.size ? selVars : new Set(seasonVars.filter(v => v.pots > 0).map(v => v.variety));
     if (!wanted.size) { window.alert("Nothing to order — no colors with planned pots."); return; }
+    // ONE BROKER PER ITEM: any round missing sourcing inherits it from the
+    // variety's other rows before quotes get a say (Caleb: "once we select a
+    // broker for an item, that is the broker" — no drifting to another supplier)
+    const varSrc = {};
+    rows.forEach(r => {
+      const vn = vmap[r.variety_id]?.variety;
+      if (!vn) return;
+      const o = varSrc[vn] || (varSrc[vn] = {});
+      if (r.broker && !o.broker) { o.broker = r.broker; o.supplier = r.supplier || o.supplier || null; }
+      if (r.liner_unit_cost != null && o.price == null) o.price = +r.liner_unit_cost;
+    });
     const agg = {};
     rows.forEach(r => {
       if (r.is_combo_component) return;
@@ -1530,6 +1541,8 @@ Combine the groups?`)) return;
       // among this broker's quotes, the one whose landed price matches the locked
       // row price is the quote that was applied — its farm/origin rides along
       // (Dümmen Ethiopia vs Mexico are different farms with different minimums)
+      const inh = varSrc[l.varietyName] || {};
+      l = { ...l, broker: l.broker || inh.broker || null, supplier: l.supplier || inh.supplier || null, price: l.price ?? inh.price ?? null };
       const cands = qs.filter(x => !l.broker || x.broker === l.broker);
       const q = (l.price != null && cands.length > 1
         ? cands.slice().sort((a, b) => Math.abs(+a.landed - l.price) - Math.abs(+b.landed - l.price))[0]
