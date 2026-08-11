@@ -106,7 +106,7 @@ export default function SpaceMap({ plan: fixedPlan }) {
       // unplaced = no placed_at stamp — an inherited bench code doesn't count as placed
       let all = [], off = 0;
       for (;;) {
-        const { data } = await sb.from("scheduled_crops").select("id,item_name,qty_pots,plant_week,bench_id,recipe_id")
+        const { data } = await sb.from("scheduled_crops").select("id,item_name,qty_pots,plant_week,plant_year,bench_id,recipe_id")
           .eq("plan_id", planId).is("placed_at", null).not("is_combo_component", "is", true).gt("qty_pots", 0)
           .range(off, off + 999);
         all = all.concat(data || []);
@@ -126,12 +126,15 @@ export default function SpaceMap({ plan: fixedPlan }) {
     })();
   }, [sb, planId, tick]);
 
+  // one entry per item × PLANT WEEK — the plant date decides what goes down
+  // together, so a multi-group item never places as one blob
   const unplaced = useMemo(() => {
     const m = {};
     pool.forEach(r => {
       if (!showAll && decided && !decided.has(r.item_name)) return;
-      const o = m[r.item_name] || (m[r.item_name] = { qty: 0, rows: [], cls: classOfItem(r.item_name), wks: new Set(), rid: null });
-      o.qty += +r.qty_pots || 0; o.rows.push(r); if (r.plant_week) o.wks.add(r.plant_week);
+      const key = `${r.item_name}||${r.plant_year ?? ""}w${r.plant_week ?? "?"}`;
+      const o = m[key] || (m[key] = { item: r.item_name, wk: r.plant_week, yr: r.plant_year, qty: 0, rows: [], cls: classOfItem(r.item_name), rid: null });
+      o.qty += +r.qty_pots || 0; o.rows.push(r);
       if (r.recipe_id && !o.rid) o.rid = r.recipe_id;
     });
     return m;
@@ -167,10 +170,11 @@ export default function SpaceMap({ plan: fixedPlan }) {
     return m;
   }, [placedRows, lastYearRows, mode]); // eslint-disable-line
 
-  async function allocate(itemName, bench) {
+  async function allocate(itemKey, bench) {
     if (mode === "lastyear") return;
-    const it = unplaced[itemName];
+    const it = unplaced[itemKey];
     if (!it) return;
+    const itemName = `${it.item} (wk ${it.wk ?? "?"})`;
     const k = it.cls || cls;
     const cap = capOf(bench, k);
     if (cap == null) { window.alert(`No ${k} capacity number for ${bench.code} — add it to the chart first.`); return; }
@@ -205,7 +209,7 @@ export default function SpaceMap({ plan: fixedPlan }) {
         if (r) {
           const { data: kids } = await sb.from("scheduled_crops").select("id").eq("combo_parent_id", r.id).limit(1);
           if (kids?.length) {
-            window.alert(`${itemName} is a combo — rows move whole. Placed what fit; ${want} still unplaced.`);
+            window.alert(`${it.item} is a combo — rows move whole. Placed what fit; ${want} still unplaced.`);
           } else {
             const { data: full, error: fe } = await sb.from("scheduled_crops").select("*").eq("id", r.id).single();
             if (fe) throw new Error(fe.message);
@@ -230,15 +234,15 @@ export default function SpaceMap({ plan: fixedPlan }) {
     setBusy(false);
   }
 
-  async function trimToFit(itemName) {
-    const it = unplaced[itemName];
+  async function trimToFit(itemKey) {
+    const it = unplaced[itemKey];
     if (!it || !it.qty) return;
-    if (!window.confirm(`✂ Trim the plan? This CUTS ${it.qty.toLocaleString()} unplaced pots of\n${itemName}\nso the plan matches the space. Placed quantities stay.`)) return;
+    if (!window.confirm(`✂ Trim the plan? This CUTS ${it.qty.toLocaleString()} unplaced pots of\n${it.item} (wk ${it.wk ?? "?"})\nso the plan matches the space. Placed quantities stay.`)) return;
     setBusy(true);
     try {
       for (const r of it.rows) {
         const { data: kids } = await sb.from("scheduled_crops").select("id").eq("combo_parent_id", r.id).limit(1);
-        if (kids?.length) { window.alert(`${itemName} is a combo — trim it from its family page instead.`); break; }
+        if (kids?.length) { window.alert(`${it.item} is a combo — trim it from its family page instead.`); break; }
         const { error } = await sb.from("scheduled_crops").delete().eq("id", r.id);
         if (error) throw new Error(error.message);
       }
@@ -380,8 +384,8 @@ export default function SpaceMap({ plan: fixedPlan }) {
   };
 
   const poolList = Object.entries(unplaced)
-    .filter(([n, o]) => o.cls === cls && (!poolQ || n.toLowerCase().includes(poolQ.toLowerCase())))
-    .sort(([a], [b]) => a.localeCompare(b));
+    .filter(([, o]) => o.cls === cls && (!poolQ || o.item.toLowerCase().includes(poolQ.toLowerCase())))
+    .sort(([, a], [, b]) => a.item.localeCompare(b.item) || (a.wk || 0) - (b.wk || 0));
 
   const Toggle = ({ k, label }) => (
     <label style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11.5, fontWeight: 700, color: layers[k] ? C.dark : C.muted, cursor: "pointer" }}>
@@ -439,9 +443,9 @@ export default function SpaceMap({ plan: fixedPlan }) {
             </div>
             <input value={poolQ} onChange={e => setPoolQ(e.target.value)} placeholder="search unplaced…"
               style={{ width: "100%", boxSizing: "border-box", padding: "6px 9px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontFamily: FONT, fontSize: 12, marginBottom: 8 }} />
-            {placeItem && (
+            {placeItem && unplaced[placeItem] && (
               <div style={{ background: "#eef6e8", border: `1px solid ${C.light}`, borderRadius: 8, padding: "6px 9px", marginBottom: 8, fontSize: 11.5 }}>
-                placing: <b>{placeItem}</b>
+                placing: <b>{unplaced[placeItem].item}</b> <span style={{ color: C.amber, fontWeight: 800 }}>wk {unplaced[placeItem].wk ?? "?"}</span>
                 <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
                   {unplaced[placeItem]?.qty > 0 && (
                     <button disabled={busy} onClick={() => trimToFit(placeItem)}
@@ -452,15 +456,15 @@ export default function SpaceMap({ plan: fixedPlan }) {
                 </div>
               </div>
             )}
-            {poolList.slice(0, 120).map(([n, o]) => (
-              <div key={n} draggable onDragStart={e => { e.dataTransfer.setData("text/plain", n); setPlaceItem(n); }}
-                onClick={() => setPlaceItem(placeItem === n ? "" : n)}
+            {poolList.slice(0, 120).map(([key, o]) => (
+              <div key={key} draggable onDragStart={e => { e.dataTransfer.setData("text/plain", key); setPlaceItem(key); }}
+                onClick={() => setPlaceItem(placeItem === key ? "" : key)}
                 onDoubleClick={() => o.rid ? setFamOpen(o.rid) : window.alert("No family page linked to this item.")}
                 title="drag onto the house · double-click opens the family page"
                 style={{ padding: "5px 8px", borderRadius: 8, marginBottom: 3, cursor: "grab", fontSize: 11.5, lineHeight: 1.35,
-                  border: `1.5px solid ${placeItem === n ? C.light : C.border}`, background: placeItem === n ? "#eef6e8" : "#fbfdf8" }}>
-                <b style={{ fontVariantNumeric: "tabular-nums" }}>{o.qty.toLocaleString()}</b> {n}
-                <div style={{ fontSize: 9.5, color: C.muted }}>wk {[...o.wks].sort((a, b) => a - b).join(", ") || "?"}</div>
+                  border: `1.5px solid ${placeItem === key ? C.light : C.border}`, background: placeItem === key ? "#eef6e8" : "#fbfdf8" }}>
+                <b style={{ fontVariantNumeric: "tabular-nums" }}>{o.qty.toLocaleString()}</b> {o.item}
+                <span style={{ fontSize: 9.5, fontWeight: 800, color: C.amber, marginLeft: 5 }}>wk {o.wk ?? "?"}</span>
               </div>
             ))}
             {poolList.length > 120 && <div style={{ fontSize: 10.5, color: C.muted }}>…{poolList.length - 120} more — search to narrow</div>}
