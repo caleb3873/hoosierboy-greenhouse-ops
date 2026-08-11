@@ -18,7 +18,9 @@ update benches set bench_type='mid8'  where code ~ '^EQ\d\d(02|03)$';
 
 -- houses 06/07 have no physical benches but are planned as if they do —
 -- create the missing standard positions
-insert into benches (code, bench_type, zone_type, notes)
-select c, case when c ~ '(01|04)$' then 'wall4' else 'mid8' end, 'quonset', 'virtual — house has no physical benches, planned per standard quonset rules'
+insert into benches (code, bench_type, zone_type, zone_label, notes)
+select c, case when c ~ '(01|04)$' then 'wall4' else 'mid8' end, 'quonset',
+  'Bluff Quonset ' || substring(c from 3 for 2),
+  'virtual — house has no physical benches, planned per standard quonset rules'
 from (values ('EQ0603'),('EQ0604'),('EQ0704')) v(c)
 where not exists (select 1 from benches b where b.code = v.c);
