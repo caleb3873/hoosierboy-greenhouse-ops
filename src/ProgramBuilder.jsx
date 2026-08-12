@@ -658,7 +658,7 @@ function ItemEditorModal({ sb, item, onClose, onSaved }) {
 // 160 or 288? whose price?" so the human gets the whole quote set: form, tray,
 // broker, supplier, minimums, list vs landed. Exact key matches float to the
 // top with a ●; the search box covers everything else.
-const QUOTE_COLS = "id,crop,variety,broker,supplier,form_class,form_raw,item_min,list_price,landed,royalty,freight,variety_key";
+const QUOTE_COLS = "id,crop,variety,broker,supplier,form_class,form_raw,cells,item_min,list_price,landed,royalty,freight,variety_key";
 const QUOTE_SEASON = "2026-2027"; // the loaded broker files
 export function QuotePicker({ sb, varietyKey, initialQuery, current, onPick, onClose }) {
   const [q, setQ] = useState(initialQuery || "");
@@ -777,7 +777,7 @@ export function QuotePicker({ sb, varietyKey, initialQuery, current, onPick, onC
           : <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead><tr>
                 <th style={{ ...th, cursor: "default" }}></th>
-                <Th col="variety">Variety</Th><Th col="form_class">Form</Th><Th col="broker">Broker</Th><Th col="supplier">Supplier</Th>
+                <Th col="variety">Variety</Th><Th col="form_class">Form</Th><Th col="cells" right>Cells</Th><Th col="broker">Broker</Th><Th col="supplier">Supplier</Th>
                 <Th col="item_min" right>Min</Th><Th col="list_price" right>List</Th><Th col="landed" right>Landed</Th>
                 <th style={{ ...th, cursor: "default" }}></th>
               </tr></thead>
@@ -787,7 +787,14 @@ export function QuotePicker({ sb, varietyKey, initialQuery, current, onPick, onC
                     style={{ cursor: "pointer", background: sel?.id === r.id ? "#e4f0dc" : r.exact ? "#f2f8ee" : "#fff" }}>
                     <td style={{ ...td, color: C.green, fontWeight: 800 }}>{r.exact ? "●" : ""}</td>
                     <td style={{ ...td, fontWeight: 700 }}>{r.variety}<div style={{ fontSize: 10.5, fontWeight: 400, color: C.muted }}>{r.crop}</div></td>
-                    <td style={td}>{r.form_class}{r.form_raw ? <div style={{ fontSize: 10.5, color: C.muted }}>{r.form_raw}</div> : null}</td>
+                    <td style={td}>
+                      <span style={{ fontFamily: "ui-monospace,Menlo,monospace", fontSize: 10.5, fontWeight: 800, padding: "1px 6px", borderRadius: 5,
+                        background: /urc|callus/i.test(r.form_class || "") ? "#fdf3e0" : /liner|plug/i.test(r.form_class || "") ? "#e8f2fb" : "#f0f0ec",
+                        color: /urc|callus/i.test(r.form_class || "") ? "#a86a10" : /liner|plug/i.test(r.form_class || "") ? "#2b6cb0" : "#666" }}>
+                        {(r.form_class || "?").toUpperCase()}</span>
+                      {r.form_raw ? <div style={{ fontSize: 10, color: C.muted }}>{r.form_raw}</div> : null}
+                    </td>
+                    <td style={{ ...td, textAlign: "right", fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{r.cells || "—"}</td>
                     <td style={td}>{r.broker}</td>
                     <td style={td}>{r.supplier}</td>
                     <td style={{ ...td, textAlign: "right", color: C.muted }}>{r.item_min || "—"}</td>

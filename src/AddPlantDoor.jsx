@@ -109,7 +109,7 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
       const s = q.trim().replace(/[%,()]/g, "");
       if (s.length < 2) { setCatHits([]); setRawCap(false); return; }
       const toks = s.split(/\s+/).filter(Boolean);
-      let cq = sb.from("broker_prices").select("variety_key,crop,variety,broker,supplier,form_class,landed").limit(1000);
+      let cq = sb.from("broker_prices").select("variety_key,crop,variety,broker,supplier,form_class,form_raw,cells,landed").limit(1000);
       toks.forEach(t => { cq = cq.or(`variety.ilike.%${t}%,crop.ilike.%${t}%`); });
       const { data } = await cq;
       setRawCap((data || []).length === 1000);   // hit the fetch cap — the list may be partial
@@ -117,7 +117,7 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
       (data || []).forEach(r => {
         const o = byKey[r.variety_key] || (byKey[r.variety_key] = { key: r.variety_key, crop: r.crop, name: r.variety, quotes: [] });
         if (r.variety && r.variety.length < o.name.length) o.name = r.variety;   // shortest = cleanest label
-        o.quotes.push({ broker: r.broker, supplier: r.supplier, form: r.form_class, landed: +r.landed });
+        o.quotes.push({ broker: r.broker, supplier: r.supplier, form: r.form_class, cells: r.cells || null, formRaw: r.form_raw || null, landed: +r.landed });
       });
       const all = Object.values(byKey).map(o => ({
         ...o,
@@ -218,7 +218,7 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
     (async () => {
       const sm = sMatchFor(variety.variety);
       const fc = FORM_TO_CLASS(sm?.form);
-      let qq = sb.from("broker_prices").select("broker,supplier,form_class,landed").eq("variety_key", variety.variety_key).order("landed");
+      let qq = sb.from("broker_prices").select("broker,supplier,form_class,form_raw,cells,landed").eq("variety_key", variety.variety_key).order("landed");
       if (fc) qq = qq.eq("form_class", fc);
       const { data: quotes } = await qq.limit(10);
       let best = null;
@@ -542,7 +542,8 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
                           {c.known && <span style={{ marginLeft: 6, fontSize: 9.5, fontWeight: 800, color: C.green, background: "#eaf5e9", borderRadius: 6, padding: "1px 6px" }}>in library</span>}
                           <div style={{ fontSize: 10.5, color: C.muted, marginTop: 1 }}>
                             {c.best.supplier ? <><b style={{ color: C.text }}>{c.best.supplier}</b> · </> : null}
-                            {c.best.broker} · {c.best.form || "?"} from <b style={{ color: C.dark }}>${c.min.toFixed(3)}</b>
+                            {c.best.broker} · <b style={{ fontFamily: "ui-monospace,Menlo,monospace", color: /urc|callus/i.test(c.best.form || "") ? "#a86a10" : "#2b6cb0" }}>{(c.best.form || "?").toUpperCase()}{c.best.cells ? ` ${c.best.cells}` : ""}</b> from <b style={{ color: C.dark }}>${c.min.toFixed(3)}</b>
+                            {[...new Set(c.quotes.filter(x => x.cells && x.cells !== c.best.cells).map(x => x.cells))].length > 0 && <span style={{ color: C.muted }}> · also in {[...new Set(c.quotes.filter(x => x.cells && x.cells !== c.best.cells).map(x => x.cells))].sort((a, b) => a - b).join("/")}</span>}
                             {c.brokers.length > 1 ? ` · +${c.brokers.length - 1} more broker${c.brokers.length > 2 ? "s" : ""}` : ""}
                           </div>
                         </button>
@@ -681,7 +682,7 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
           <div style={{ marginTop: 12, border: `1px solid ${C.creamBr}`, borderRadius: 11, overflow: "hidden", background: C.cream }}>
             <div style={rrow}><span style={rk}>Source</span>
               <span style={{ flex: 1 }}>{quote
-                ? <>{quote.broker}{quote.supplier ? ` · ${quote.supplier}` : ""} · <b>${(+quote.landed).toFixed(3)}</b>/liner
+                ? <>{quote.broker}{quote.supplier ? ` · ${quote.supplier}` : ""} · <b style={{ fontFamily: "ui-monospace,Menlo,monospace", color: /urc|callus/i.test(quote.form_class || "") ? "#a86a10" : "#2b6cb0" }}>{(quote.form_class || "?").toUpperCase()}{quote.cells ? ` ${quote.cells}-cell` : ""}</b> · <b>${(+quote.landed).toFixed(3)}</b>/plant
                     {quote.pinnedHit ? <span style={{ marginLeft: 6, fontSize: 10, color: C.green, fontWeight: 800 }}>📌 pinned</span>
                       : sMatch?.pinned_broker ? <span style={{ marginLeft: 6, fontSize: 10, color: C.amber, fontWeight: 800 }}>⚠ pin is {sMatch.pinned_broker}</span> : null}
                     {quote.alts > 0 && <span style={{ color: C.muted, fontSize: 11 }}> · {quote.alts} alt{quote.alts > 1 ? "s" : ""}</span>}</>

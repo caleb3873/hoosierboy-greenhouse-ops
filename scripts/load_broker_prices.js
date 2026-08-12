@@ -29,7 +29,7 @@ const jsonPath = process.argv[2] || '/tmp/broker_prices.json';
   if (delErr) { console.error('delete failed:', delErr.message); process.exit(1); }
 
   const recs = rows.map(r => ({
-    broker: r.broker, supplier: r.supplier, form_class: r.formClass, form_raw: r.form || null,
+    broker: r.broker, supplier: r.supplier, form_class: r.formClass, form_raw: r.form || null, cells: r.cells ?? null,
     crop: r.crop || null, variety: r.variety || null, variety_key: r.key || null, match_key: r.mkey || null,
     list_price: r.listPrice ?? null, landed: r.landed ?? null, royalty: r.royalty ?? null, freight: r.freight ?? null,
     exclusivity: r.exclusivity || null, season: SEASON, source_file: r.sourceFile || null, origin: r.origin || null, item_min: r.itemMin || null,

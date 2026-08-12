@@ -61,6 +61,9 @@ function classForm(raw) {
   if (/cell tray|mega tray|\bplug\b|\d+\s*cell|\bstrip\b/.test(f)) return 'plug';   // Raker "51 STRIP" = strip plug tray
   // Ball "Lin 72" and EHR-AED "72 C.P." (cell plug) are the same cell liner — same class so they match
   if (/\blin\b|liner|\blin\s|^lin|\d+\s*c\.?\s*p\.?\b|\bc\.?\s*p\.?\b/.test(f)) return 'liner';
+  if (/ln\s*\d|s?ln\d|ln$/.test(f)) return 'liner';          // Ball size codes: CustLN 72, CstLN128TX, CtSLN72TX
+  if (/pl\s*\d|pl\d+v?$/.test(f)) return 'plug';             // CustPL 128, CustPL162V
+  if (/^pot\b|\dgal\b|gal$/.test(f)) return 'pot';           // Pot 1Gal (prefinished pot programs)
   if (/bareroot|\bbrt\b|\bbr\b|bare ?root|eye\b/.test(f)) return 'bareroot';
   if (/pref/.test(f)) return 'prefinished';
   if (/autostix|astix|basewell|as\d/.test(f)) return 'urc_autostix';
@@ -92,6 +95,7 @@ function breederFromName(fn) {
   if (/foremost/.test(f)) return 'Foremost';
   if (/dickman/.test(f)) return 'Dickman';
   if (/pell/.test(f)) return 'Pell';
+  if (/pacific|pp&l|ppl\b/.test(f)) return 'Pacific Plug & Liner';
   if (/walters/.test(f)) return 'Walters';
   if (/creek hill/.test(f)) return 'Creek Hill';
   if (/emerald/.test(f)) return 'Emerald Coast';
@@ -300,8 +304,10 @@ function parseFile(broker, file) {
       const fw = tidy(cleanVariety).split(' ')[0] || '';
       const cult = (fw && (GENUS_SYN[fw] || fw) === gtok) ? cleanVariety.split(/\s+/).slice(1).join(' ') : cleanVariety;
       const display = titleCase((gtok + ' ' + cult).replace(/\s+/g, ' ').trim());
+      const cellsM = String(rawForm || '').match(/(\d{2,3})/);
+      const cells = cellsM && +cellsM[1] >= 18 && +cellsM[1] <= 512 ? +cellsM[1] : null;
       out.push({
-        broker, supplier: breeder, breeder, sheet: sn, form: rawForm, formClass,
+        broker, supplier: breeder, breeder, sheet: sn, form: rawForm, formClass, cells,
         crop: cropV || botanical || variety.split(' ')[0],
         botanical, variety: display, rawVariety: cleanVariety,
         listPrice: +(+listPrice).toFixed(5),
