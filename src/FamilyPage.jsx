@@ -1698,9 +1698,18 @@ Combine the groups?`)) return;
       <div style={{ fontFamily: FONT }}>
         {/* header */}
         <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginBottom: 4 }}>
-          <div title={recipe.display_name ? `custom name for ${recipe.size_label} ${recipe.crop_name} — rename in ⚙ Manage families` : undefined}
+          <div title={recipe.display_name ? `custom name for ${recipe.size_label} ${recipe.crop_name}` : undefined}
             style={{ fontSize: 21, fontWeight: 800, color: C.dark, fontFamily: "'DM Serif Display',Georgia,serif" }}>
             {recipe.display_name || `${recipe.size_label} ${recipe.crop_name}`} — the whole family
+            <button onClick={async () => {
+              const cur = recipe.display_name || `${recipe.size_label} ${recipe.crop_name}`;
+              const v = window.prompt("Family display name (blank resets to size + crop):", cur);
+              if (v == null) return;
+              const display_name = v.trim() && v.trim() !== `${recipe.size_label} ${recipe.crop_name}` ? v.trim() : null;
+              await sb.from("crop_recipes").update({ display_name, updated_at: new Date().toISOString() }).eq("id", recipeId);
+              setRecipe(r => ({ ...r, display_name }));
+            }} title="rename this family (display name — the size + crop underneath stay the same)"
+              style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14, marginLeft: 6, opacity: 0.55, fontFamily: FONT }}>✎</button>
           </div>
           <div style={{ fontSize: 12, color: C.muted }}>{groups.length} planting group{groups.length === 1 ? "" : "s"} · {Object.keys(vmap).length} varieties · {plan.name}</div>
           {famTgt?.note && (
