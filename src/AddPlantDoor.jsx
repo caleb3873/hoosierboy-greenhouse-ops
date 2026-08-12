@@ -185,7 +185,12 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
 
   // the SIZE drives everything; the recipe is whatever existing recipe carries that size for
   // this crop (or null → a stub gets created at confirm — you don't have to define it here)
-  const recipe = useMemo(() => recipes.find(r => r.size_label === sizeSel) || null, [recipes, sizeSel]);
+  const [destId, setDestId] = useState("");   // "" = auto (crop+size); or a specific family id
+  const recipe = useMemo(() => {
+    if (destId) { const d = recipes.find(r => r.id === destId); if (d) return d; }
+    return recipes.find(r => r.size_label === sizeSel) || null;
+  }, [recipes, sizeSel, destId]);
+  useEffect(() => { setDestId(""); }, [cropName]);   // new crop → back to auto-match
   useEffect(() => { setFamPerennial(recipe?.plant_class === "perennial"); }, [recipe]);
 
   // recipe chosen → its series
@@ -276,6 +281,25 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
   // resolve the recipe for this crop+size, or STUB one silently — you add products to the
   // catalog by size; the recipe details (crop weeks, prop, tray) get filled on the family
   // page later. This is how the catalog gets assembled fast (Caleb 7/29).
+  // same crop + same size but a DIFFERENT program (annual vs perennial phlox):
+  // start a separate family — the typed name becomes its identity
+  async function newFamilyHere() {
+    const nm = window.prompt(`Name the new family (it sits beside the existing ${sizeSel} ${cropName} family):`, `${cropName} PERENNIAL`);
+    if (!nm || !nm.trim()) return;
+    const cropId = nm.trim().toUpperCase();
+    if (recipes.some(r => r.crop_name?.toUpperCase() === cropId && r.size_label === sizeSel)) { window.alert("A family with that name already exists at this size — pick it from the list instead."); return; }
+    const { data: ins, error } = await sb.from("crop_recipes").insert({
+      crop_name: cropId, size_label: sizeSel, pots_per_unit: inferPPU(sizeSel), ppp: 1,
+      display_name: nm.trim(), plant_class: famPerennial ? "perennial" : null,
+      updated_by: displayName || "planner",
+      seeded_from: { source: "add-door", note: `split from ${cropName} at ${sizeSel} — set crop weeks on the family page` },
+    }).select("*").single();
+    if (error) { window.alert("Couldn't create the family: " + error.message); return; }
+    await sb.from("crop_recipe_series").upsert({ recipe_id: ins.id, series_name: "(unassigned)" }, { onConflict: "recipe_id,series_name" });
+    setRecipes(rs => [...rs, ins]);
+    setDestId(ins.id);
+  }
+
   async function resolveRecipe(crop, sizeLabel) {
     const existing = recipes.find(r => r.size_label === sizeLabel && r.crop_name?.toLowerCase() === crop.toLowerCase());
     if (existing) return existing;
@@ -384,7 +408,7 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
     if (!canConfirm) return;
     setBusy(true); setErr("");
     try {
-      const rec = await resolveRecipe(variety.crop_name, sizeSel);   // existing recipe, or a fresh stub
+      const rec = destId ? recipes.find(r => r.id === destId) : await resolveRecipe(variety.crop_name, sizeSel);
       // single add honors the edited item name — same write set as the family path
       const res = await writeItem(variety, rec, u, itemName.trim());
       if (res.skipped) { setErr(`"${res.name}" already exists in ${plan.name} — open it instead, or change the name.`); setBusy(false); return; }
@@ -398,7 +422,7 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
     setBusy(true); setErr("");
     const added = [], skipped = [];
     try {
-      const rec = await resolveRecipe(cropName, sizeSel);   // existing recipe, or a fresh stub for this size
+      const rec = destId ? recipes.find(r => r.id === destId) : await resolveRecipe(cropName, sizeSel);
       for (const c of sel) {
         const v = await ensureVariety(c);
         const res = await writeItem(v, rec, u);
@@ -435,13 +459,13 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
         <div style={{ marginTop: 5 }}>
           {recipe ? (
             <div style={{ fontSize: 11, color: C.dark, background: "#eef6e8", border: `1px solid ${C.light}`, borderRadius: 8, padding: "6px 9px" }}>
-              🌿 <b>Adds to</b> {recipe.display_name || `${recipe.size_label} ${recipe.crop_name}`}
-              {recipes.length > 1 && (
-                <select value={sizeSel} onChange={e => setSizeSel(e.target.value)} title="switch to a different existing family for this crop"
-                  style={{ marginLeft: 8, padding: "2px 5px", borderRadius: 6, border: `1px solid ${C.creamBr}`, fontSize: 11, fontWeight: 700, fontFamily: FONT, cursor: "pointer" }}>
-                  {recipes.map(r => <option key={r.id} value={r.size_label}>{r.display_name || `${r.size_label} ${r.crop_name}`}</option>)}
-                </select>
-              )}
+              🌿 <b>Adds to</b>{" "}
+              <select value={recipe.id} onChange={e => e.target.value === "__new__" ? newFamilyHere() : setDestId(e.target.value)}
+                title="pick which family this plant lands in — or start a new one (annual vs perennial programs stay separate)"
+                style={{ marginLeft: 4, padding: "2px 5px", borderRadius: 6, border: `1px solid ${C.light}`, fontSize: 11, fontWeight: 800, fontFamily: FONT, cursor: "pointer", maxWidth: 240 }}>
+                {recipes.map(r => <option key={r.id} value={r.id}>{r.display_name || `${r.size_label} ${r.crop_name}`}{r.plant_class === "perennial" ? " 🌲" : ""}</option>)}
+                <option value="__new__">＋ new family at this size…</option>
+              </select>
               <span style={{ color: C.muted, marginLeft: 6 }}>{recipe.crop_weeks != null ? `· crop ${recipe.crop_weeks}w` : "· crop weeks set later"}</span>
             </div>
           ) : (
