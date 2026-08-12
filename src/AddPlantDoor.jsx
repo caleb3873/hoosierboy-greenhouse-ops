@@ -324,8 +324,11 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
       qty_plants_ordered: null,               // supply committed at ordering, not here
       crop_weeks: cw,
       ready_week: chain.readyWk, ready_year: chain.readyYear ?? planYear,
-      plant_week: p?.wk ?? null, plant_year: p?.year ?? null,
-      ship_week: s?.wk ?? null, ship_year: s?.year ?? null,
+      // no crop weeks yet (brand-new family) → placeholder chain AT the ready week;
+      // ship_week is NOT NULL in the DB, and the real chain re-derives the moment
+      // the recipe gets crop weeks on the family page
+      plant_week: p?.wk ?? chain.readyWk, plant_year: p?.year ?? (chain.readyYear ?? planYear),
+      ship_week: s?.wk ?? p?.wk ?? chain.readyWk, ship_year: s?.year ?? p?.year ?? (chain.readyYear ?? planYear),
       prop_method: sm?.form || null, prop_tray_id: sm?.prop_tray_id || null,
       broker: best?.broker || sm?.pinned_broker || null,
       supplier: best?.supplier || sm?.pinned_supplier || null,
