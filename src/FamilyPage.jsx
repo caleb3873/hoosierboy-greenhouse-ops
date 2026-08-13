@@ -1526,7 +1526,9 @@ Combine the groups?`)) return;
       const v = vmap[r.variety_id];
       const vname = v?.variety;
       if (!vname || !wanted.has(vname)) return;
-      const plants = +r.qty_plants_ordered || (+r.qty_pots || 0) * (+r.ppp || 1);
+      // ORDER FROM THE PLAN, not the old supply record — qty_plants_ordered is a
+      // stale replay commitment on many rows (this is what kept re-drafting 5,200)
+      const plants = (+r.qty_pots || 0) * (Math.max(1, Math.round(+r.ppp || 1)));
       if (!(plants > 0)) return;
       const k = `${vname}|${r.plant_year ?? "?"}|${r.plant_week ?? "?"}`;
       const o = agg[k] || (agg[k] = { varietyName: vname, varietyId: r.variety_id, recipeId,
