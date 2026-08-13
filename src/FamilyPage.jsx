@@ -1570,7 +1570,7 @@ Combine the groups?`)) return;
       setEditOverride(false); setTick(t => t + 1);   // page re-locks; banner picks up the fresh drafts
       const summary = orders.map(o => `  ${o.orderNumber} — ${o.broker}${o.supplier ? " → " + o.supplier : ""}${o.farm ? " (" + o.farm + ")" : ""} wk${o.shipWeek} · ${o.qty.toLocaleString()} plants`).join("\n") || "  (nothing — no orderable lines)";
       const skipNote = skipped.length ? `\n\nSkipped (no broker/week): ${[...new Set(skipped.map(l => l.varietyName))].join(", ")}` : "";
-      if (orders.length && window.confirm(`Drafted:\n${summary}${skipNote}\n\nReview and submit your order now?`)) {
+      if (orders.length && window.confirm(`✓ DRAFT SAVED:\n${summary}${skipNote}\n\nOpen the Orders tab to review & send it now?\n(Cancel = stay here — the draft is saved either way and waits on the Orders tab.)`)) {
         try { localStorage.setItem("hb_open_drafts", JSON.stringify({ planId: plan.id, nums: orders.map(o => o.orderNumber), ts: Date.now() })); } catch {}
         window.dispatchEvent(new CustomEvent("hb-goto-orders"));
         onClose?.();
