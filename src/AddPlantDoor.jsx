@@ -103,16 +103,37 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
   const [catHits, setCatHits] = useState([]);
   const [catShow, setCatShow] = useState(30);
   const [supFilt, setSupFilt] = useState("");
+  const [formFilt, setFormFilt] = useState("");
+  const [facets, setFacets] = useState([]);      // full supplier×form counts (RPC — never truncated)
   const [rawCap, setRawCap] = useState(false);
+  useEffect(() => { sb.rpc("broker_catalog_facets").then(({ data }) => setFacets(data || [])); }, [sb]);
   useEffect(() => {
     const t = setTimeout(async () => {
       const s = q.trim().replace(/[%,()]/g, "");
-      if (s.length < 2) { setCatHits([]); setRawCap(false); return; }
+      const scoped = supFilt || formFilt;
+      if (!scoped && s.length < 2) { setCatHits([]); setRawCap(false); return; }
       const toks = s.split(/\s+/).filter(Boolean);
-      let cq = sb.from("broker_prices").select("variety_key,crop,variety,broker,supplier,form_class,form_raw,cells,landed").limit(1000);
-      toks.forEach(t => { cq = cq.or(`variety.ilike.%${t}%,crop.ilike.%${t}%`); });
-      const { data } = await cq;
-      setRawCap((data || []).length === 1000);   // hit the fetch cap — the list may be partial
+      const COLS = "variety_key,crop,variety,broker,supplier,form_class,form_raw,cells,landed";
+      let data = [];
+      if (scoped) {
+        // supplier/form picked → browse the WHOLE scoped catalog (paged, no silent cap)
+        for (let off = 0; off < 6000; off += 1000) {
+          let cq = sb.from("broker_prices").select(COLS).range(off, off + 999);
+          if (supFilt) cq = cq.eq("supplier", supFilt);
+          if (formFilt) cq = cq.eq("form_class", formFilt);
+          toks.forEach(t => { cq = cq.or(`variety.ilike.%${t}%,crop.ilike.%${t}%`); });
+          const { data: pg } = await cq;
+          data = data.concat(pg || []);
+          if (!pg || pg.length < 1000) break;
+        }
+        setRawCap(data.length >= 6000);
+      } else {
+        let cq = sb.from("broker_prices").select(COLS).limit(1000);
+        toks.forEach(t => { cq = cq.or(`variety.ilike.%${t}%,crop.ilike.%${t}%`); });
+        const { data: pg } = await cq;
+        data = pg || [];
+        setRawCap(data.length === 1000);   // hit the fetch cap — pick a supplier to see everything
+      }
       const byKey = {};
       (data || []).forEach(r => {
         const o = byKey[r.variety_key] || (byKey[r.variety_key] = { key: r.variety_key, crop: r.crop, name: r.variety, quotes: [] });
@@ -133,10 +154,10 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
         (kn || []).forEach(k => ks.add(k.variety_key));
       }
       setCatHits(all.map(x => ({ ...x, known: ks.has(x.key) })));
-      setCatShow(30); setSupFilt("");
+      setCatShow(30);
     }, 250);
     return () => clearTimeout(t);
-  }, [q, sb]);
+  }, [q, supFilt, formFilt, sb]);
 
   // supplier (breeder) filter options — how many varieties each supplier covers in this search
   const suppliers = useMemo(() => {
@@ -146,13 +167,13 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
   }, [catHits]);
   // filtered view: with a supplier picked, each hit shows THAT supplier's quotes/price
   const catView = useMemo(() => {
-    if (!supFilt) return catHits;
-    return catHits.filter(h => h.quotes.some(x => x.supplier === supFilt)).map(h => {
-      const qs = h.quotes.filter(x => x.supplier === supFilt);
+    if (!supFilt && !formFilt) return catHits;
+    return catHits.filter(h => h.quotes.some(x => (!supFilt || x.supplier === supFilt) && (!formFilt || x.form === formFilt))).map(h => {
+      const qs = h.quotes.filter(x => (!supFilt || x.supplier === supFilt) && (!formFilt || x.form === formFilt));
       return { ...h, quotes: qs, min: Math.min(...qs.map(x => x.landed)),
         brokers: [...new Set(qs.map(x => x.broker))], best: qs.reduce((a, b) => a.landed <= b.landed ? a : b) };
     });
-  }, [catHits, supFilt]);
+  }, [catHits, supFilt, formFilt]);
 
   async function pickCatalog(c) {
     setBusy(true); setErr("");
@@ -516,16 +537,35 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
           {!variety ? (
             <>
               <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="🔍 Search the broker catalogs — cultivar or series…" style={ctl} />
+              <div style={{ display: "flex", gap: 6, marginTop: 6, alignItems: "center", flexWrap: "wrap" }}>
+                <select value={supFilt} onChange={e => { setSupFilt(e.target.value); setCatShow(30); }}
+                  title="pick a supplier to browse their ENTIRE catalog — no search needed"
+                  style={{ padding: "5px 8px", borderRadius: 7, border: `1.5px solid ${supFilt ? C.light : C.creamBr}`, fontSize: 11.5, fontWeight: 700, fontFamily: FONT, maxWidth: 220, background: supFilt ? "#eef6e8" : "#fff" }}>
+                  <option value="">All suppliers…</option>
+                  {[...new Set(facets.map(f => f.supplier))].map(sp => {
+                    const n = facets.filter(f => f.supplier === sp).reduce((a, f) => a + +f.n, 0);
+                    return <option key={sp} value={sp}>{sp} ({n})</option>;
+                  })}
+                </select>
+                <select value={formFilt} onChange={e => { setFormFilt(e.target.value); setCatShow(30); }}
+                  title="filter by form — liner, URC, callused, plug…"
+                  style={{ padding: "5px 8px", borderRadius: 7, border: `1.5px solid ${formFilt ? C.light : C.creamBr}`, fontSize: 11.5, fontWeight: 700, fontFamily: FONT, background: formFilt ? "#eef6e8" : "#fff" }}>
+                  <option value="">All forms…</option>
+                  {[...new Set(facets.filter(f => !supFilt || f.supplier === supFilt).map(f => f.form_class))].sort().map(fc => {
+                    const n = facets.filter(f => f.form_class === fc && (!supFilt || f.supplier === supFilt)).reduce((a, f) => a + +f.n, 0);
+                    return <option key={fc} value={fc}>{(fc || "?").toUpperCase()} ({n})</option>;
+                  })}
+                </select>
+                {(supFilt || formFilt) && <button onClick={() => { setSupFilt(""); setFormFilt(""); }}
+                  style={{ background: "none", border: "none", color: C.muted, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>✕ clear</button>}
+                {!supFilt && !formFilt && q.trim().length < 2 && <span style={{ fontSize: 10.5, color: C.muted }}>type to search, or pick a supplier to browse their whole book</span>}
+              </div>
               {!!catHits.length && (
                 <div style={{ border: `1px solid ${C.creamBr}`, borderRadius: 10, marginTop: 6, overflow: "hidden", background: "#fff" }}>
                   <div style={{ padding: "4px 11px", fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".5px", color: C.muted, background: C.chip, display: "flex", alignItems: "center", gap: 8 }}>
                     <span style={{ flex: 1 }}>Broker catalogs · {catView.length} match{catView.length === 1 ? "" : "es"} · click = add one · ☑ = family</span>
-                    <select value={supFilt} onChange={e => { setSupFilt(e.target.value); setCatShow(30); }}
-                      title="filter by supplier (breeder)"
-                      style={{ padding: "2px 5px", borderRadius: 6, border: `1px solid ${C.creamBr}`, fontSize: 10, fontWeight: 700, fontFamily: FONT, maxWidth: 190, background: supFilt ? C.amberBg : "#fff" }}>
-                      <option value="">All suppliers</option>
-                      {suppliers.map(([s, n]) => <option key={s} value={s}>{s} ({n})</option>)}
-                    </select>
+                    {supFilt && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.green }}>{supFilt}</span>}
+                    {formFilt && <span style={{ fontSize: 9.5, fontWeight: 800, color: "#2b6cb0" }}>{formFilt.toUpperCase()}</span>}
                   </div>
                   {catView.slice(0, catShow).map(c => {
                     const checked = sel.some(x => x.key === c.key);
