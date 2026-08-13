@@ -974,9 +974,10 @@ The rows leave the plan entirely (other groups keep theirs). This can't be undon
     setBusy(false); setTick(t => t + 1);
   }
 
-  // set a group's PLANT week directly (Caleb 8/11: "a plant date that I set is
-  // necessary") — ship re-derives per series (rooted backs off rooting weeks),
-  // the FINISH stays exactly where it was.
+  // set a group's PLANT week directly — the plant knob moves the PLANT ONLY (Caleb
+  // 8/13: "the numbers shouldn't adjust if i'm manually entering ship, plant and
+  // ready numbers"). Ship and finish stay exactly where he set them; each knob owns
+  // exactly its own date. Floor transplant tasks still follow the plant week.
   async function applyGroupPlant(g, w, y) {
     if (!w || w > 53) return;
     const twin = displayGroups.find(o => o.key !== g.key && o.plant === w && (o.plantYear ?? plan.year) === y
@@ -986,24 +987,17 @@ The rows leave the plan entirely (other groups keep theirs). This can't be undon
 Same plant date with different treatment stays separate on its own; this merge only happens because the finishes match too.
 
 Combine the groups?`)) return;
-    const wrap = wrapWk;
     const acc = { moved: 0, flags: [] };
     setBusy(true);
     for (const vr of g.vars) {
-      const sSpec = seriesOf(vr.variety) || {};
-      const rooted = /^(URC|CALL)/i.test(sSpec.form || "");
-      const p = { wk: w, yr: y };
-      const sh = rooted ? wrap(p.wk - Math.round(+(sSpec.rooting_weeks ?? 0)), p.yr) : p;
       const old = vr.rows[0];
       for (const r of vr.rows) {
-        const { error } = await sb.from("scheduled_crops").update({
-          plant_week: p.wk, plant_year: p.yr, ship_week: sh.wk, ship_year: sh.yr,
-        }).eq("id", r.id);
+        const { error } = await sb.from("scheduled_crops").update({ plant_week: w, plant_year: y }).eq("id", r.id);
         if (error) { window.alert(`⚠ Plant-week change did NOT save (${error.message}) — the group is unchanged.`); setBusy(false); return; }
       }
       const its = [...new Set(vr.rows.map(r => r.item_name))];
       const res = await rippleTasks(sb, plan.id, its,
-        { ship: sh.wk, shipYear: sh.yr, plant: p.wk, plantYear: p.yr },
+        { ship: old?.ship_week, shipYear: old?.ship_year ?? old?.plant_year, plant: w, plantYear: y },
         { wk: old?.ship_week, yr: old?.ship_year ?? old?.plant_year }, displayName);
       acc.moved += res.moved; acc.flags.push(...res.flags);
     }
@@ -1250,7 +1244,7 @@ Combine the groups?`)) return;
   }
   async function save() {
     const a = JSON.parse(snap); const ch = [];
-    ["crop_weeks", "ppp", "pots_per_unit", "overage_pct", "hold_tolerance_wks"].forEach(k => {
+    ["ppp", "pots_per_unit", "overage_pct", "hold_tolerance_wks"].forEach(k => {
       if (String(a.r[k] ?? "") !== String(recipe[k] ?? "")) ch.push(`${k.replace(/_/g, " ")} ${a.r[k] ?? "—"} → ${recipe[k] ?? "—"}`);
     });
     series.forEach(s => {
@@ -1263,9 +1257,11 @@ Combine the groups?`)) return;
       if ((o.order_multiple || null) !== (s.order_multiple || null)) ch.push(`${s.series_name} sold in ${o.order_multiple || "—"} → ${s.order_multiple || "—"}s (projections round up to this)`);
     });
     if (!ch.length) { setLocked(true); setSavedMsg("no changes"); return; }
-    if (!window.confirm(`Save the ${recipe.crop_name} ${recipe.size_label} recipe?\n\n• ${ch.join("\n• ")}\n\nCascades to every color, group and task using this recipe.`)) return;
+    if (!window.confirm(`Save the ${recipe.crop_name} ${recipe.size_label} recipe?\n\n• ${ch.join("\n• ")}\n\nApplies to this family's propagation specs — your group dates are NOT touched (they're the source of truth).`)) return;
     setBusy(true);
-    const { id, created_at, ...rec } = recipe;
+    // crop_weeks stays out of the update — it self-populates from group edits and this
+    // save must never clobber a fresher auto value (8/13 pivot: recipe = propagation)
+    const { id, created_at, crop_weeks, ...rec } = recipe;
     await sb.from("crop_recipes").update({ ...rec, updated_by: displayName || "planner", updated_at: new Date().toISOString() }).eq("id", recipeId);
     for (const s of series) {
       const o = a.s.find(x => x.id === s.id) || {};
@@ -1282,57 +1278,10 @@ Combine the groups?`)) return;
       }
     }
     addedSeries.current = [];   // saved rows are legit now — Cancel must not touch them later
-    setBusy(false); setLocked(true); setSavedMsg(`✅ saved — ${ch.length} change${ch.length > 1 ? "s" : ""} (crop_recipes)`);
-
-    // ── the ripple, first slice: recipe saved → offer to re-derive the plan's chain.
-    // Ready stays the anchor (it's the sales commitment); plant = ready − crop weeks;
-    // ship = plant − series rooting (URC/CALL) else plant. Year-wrapped.
-    const wrap = (wk, yr) => wk <= 0 ? { wk: wk + 52, yr: (yr ?? plan.year ?? 2027) - 1 } : { wk, yr: yr ?? plan.year ?? 2027 };
-    const cw = Math.round(+recipe.crop_weeks || 0);
-    const patches = [];
-    (rows || []).forEach(r => {
-      if (r.ready_week == null || !cw) return;
-      const v = vmap[r.variety_id];
-      const sSpec = seriesOf(v?.variety) || {};
-      const rooted = /^(URC|CALL)/i.test(sSpec.form || r.prop_method || "");
-      const root = rooted ? Math.round(+(sSpec.rooting_weeks ?? 0)) : 0;
-      const ry = r.ready_year ?? r.plant_year ?? plan.year ?? 2027;
-      const p = wrap(r.ready_week - cw, ry);
-      const sh = wrap(p.wk - root, p.yr);
-      if (p.wk !== r.plant_week || sh.wk !== r.ship_week || cw !== r.crop_weeks) {
-        patches.push({ id: r.id, item: r.item_name, plant_week: p.wk, plant_year: p.yr, ship_week: sh.wk, ship_year: sh.yr, crop_weeks: cw,
-          was: `plant ${r.plant_week ?? "—"}/ship ${r.ship_week ?? "—"}`, now: `plant ${p.wk}/ship ${sh.wk}` });
-      }
-    });
-    if (!patches.length) return;
-    const sample = [...new Set(patches.map(x => `${x.was} → ${x.now}`))].slice(0, 4).join("\n• ");
-    if (!window.confirm(`Cascade the recipe to the plan?\n\n${patches.length} row${patches.length > 1 ? "s" : ""} re-derive from their READY week (the anchor):\n• ${sample}${patches.length > 4 ? "\n• …" : ""}\n\nFloor tasks don't move yet (ripple engine phase) — skip if this plan is already in motion.`)) {
-      setSavedMsg(`✅ recipe saved — plan NOT cascaded (drift badges will show the gap)`); return;
-    }
-    setBusy(true);
-    for (const x of patches) {
-      await sb.from("scheduled_crops").update({ plant_week: x.plant_week, plant_year: x.plant_year, ship_week: x.ship_week, ship_year: x.ship_year, crop_weeks: x.crop_weeks }).eq("id", x.id);
-    }
-    try {
-      const items = [...new Set(patches.map(x => x.item))];
-      for (const it of items) {
-        await sb.from("item_change_log").insert({ plan_id: plan.id, item_name: it, change_type: "recipe_cascade",
-          detail: { rows: patches.filter(x => x.item === it).length, crop_weeks: cw, note: "chain re-derived from ready after recipe save" },
-          changed_by: displayName || null, source: "family-page" });
-      }
-    } catch { /* audit must not block */ }
-    const casAcc = { moved: 0, flags: [] };
-    const byItem = {};
-    patches.forEach(x => { byItem[x.item] = x; });
-    for (const [it, x] of Object.entries(byItem)) {
-      const oldRow = (rows || []).find(r => r.item_name === it);
-      const res = await rippleTasks(sb, plan.id, [it],
-        { ship: x.ship_week, shipYear: x.ship_year, plant: x.plant_week, plantYear: x.plant_year },
-        { wk: oldRow?.ship_week, yr: oldRow?.ship_year ?? oldRow?.plant_year }, displayName);
-      casAcc.moved += res.moved; casAcc.flags.push(...res.flags);
-    }
-    setRipple(casAcc.moved || casAcc.flags.length ? casAcc : null);
-    setBusy(false); setSavedMsg(`✅ recipe saved + cascaded to ${patches.length} rows`); setTick(t => t + 1);
+    setBusy(false); setLocked(true); setSavedMsg(`✅ saved — ${ch.length} change${ch.length > 1 ? "s" : ""} (propagation specs only; group dates untouched)`);
+    // The recipe-save CASCADE is gone on purpose (Caleb 8/13 pivot): the recipe is
+    // propagation only — it never re-derives the plan's plant/ship weeks. The group
+    // knobs own timing; the recipe's finish weeks just mirror what the groups say.
   }
 
   // walkthrough targets vs plan rows: target_units are SELLABLE UNITS (SvP grain);
@@ -1862,11 +1811,11 @@ Combine the groups?`)) return;
             background: locked ? C.chip : C.amberBg, borderBottom: (recipeOpen || !locked) ? `1px solid ${C.border}` : "none", borderRadius: (recipeOpen || !locked) ? "12px 12px 0 0" : 12 }}>
             <span style={{ color: C.muted, fontSize: 11, transform: (recipeOpen || !locked) ? "rotate(90deg)" : "none", display: "inline-block", transition: "transform .15s" }}>▶</span>
             <b style={{ fontSize: 12.5, color: locked ? C.text : C.amber }}>
-              {locked ? "🔒 Family recipe — source of truth; edits cascade everywhere" : "✏️ EDITING THE RECIPE — nothing commits until you save"}
+              {locked ? "🔒 Propagation recipe — form · prop time · tray · sourcing (timing lives on the groups)" : "✏️ EDITING THE RECIPE — nothing commits until you save"}
             </b>
             {locked && !recipeOpen && recipe && (
               <span style={{ fontSize: 11, color: C.muted }}>
-                {recipe.crop_weeks != null ? `${Math.round(+recipe.crop_weeks)} finish wks` : "finish wks —"} · {series.filter(x => x.series_name !== "(unassigned)").length} series
+                {recipe.crop_weeks != null ? `finish ~${Math.round(+recipe.crop_weeks)}w (auto)` : "finish — (fills from your groups)"} · {series.filter(x => x.series_name !== "(unassigned)").length} series
               </span>
             )}
             {savedMsg && <span style={{ fontSize: 11.5, color: /^(⚠|couldn't)/i.test(savedMsg) ? C.red : C.green }}>{savedMsg}</span>}
@@ -1897,8 +1846,15 @@ Combine the groups?`)) return;
           </div>
           {(recipeOpen || !locked) && (
           <div style={{ padding: "10px 14px", opacity: locked ? .65 : 1, pointerEvents: locked ? "none" : "auto" }}>
-            <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 12.5, marginBottom: 8 }}>
-              {[["crop_weeks", "finish wks (plant→ready)"], ["ppp", "ppp"], ["pots_per_unit", "pots/unit"], ["overage_pct", "overage %"], ["hold_tolerance_wks", "hold tol. wks"]].map(([k, l]) => (
+            <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 12.5, marginBottom: 8, alignItems: "center" }}>
+              {/* finish weeks are NOT edited here anymore (Caleb 8/13 pivot: recipe =
+                  propagation only) — the number self-populates from his group edits and
+                  is shown as a read-only reference */}
+              <span title="self-populates from the group plant→ready spans you set — a guideline for new adds, never a correction"
+                style={{ fontSize: 10.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: C.muted }}>
+                finish (auto) <b style={{ fontFamily: "ui-monospace,Menlo,monospace", fontSize: 12, color: C.text }}>{recipe.crop_weeks != null ? `${Math.round(+recipe.crop_weeks)}w` : "—"}</b>
+              </span>
+              {[["ppp", "ppp"], ["pots_per_unit", "pots/unit"], ["overage_pct", "overage %"], ["hold_tolerance_wks", "hold tol. wks"]].map(([k, l]) => (
                 <label key={k} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: C.muted }}>
                   {l}<input type="number" value={recipe[k] ?? ""} onChange={e => setRecipe({ ...recipe, [k]: e.target.value === "" ? null : +e.target.value })}
                     style={{ width: 52, padding: "4px 6px", borderRadius: 7, border: `1.5px solid ${C.creamBr}`, fontFamily: "ui-monospace,Menlo,monospace", fontSize: 12, fontWeight: 700 }} />
@@ -2312,7 +2268,7 @@ Combine the groups?`)) return;
                     onCommit={(w, y) => applyGroupShip(g, w, y)} />
                   {" "}→ plant{" "}
                   <FinishWkInput key={`p${g.key}|${g.plant}`} wk={g.plant} yr={g.plantYear ?? plan.year ?? 2027} disabled={busy} showDate={false} width={50}
-                    title="this group's PLANT week — type a week or 📅 pick a date; ship re-derives per series, the finish stays where it is"
+                    title="this group's PLANT week — type a week or 📅 pick a date; moves the plant week ONLY (ship + finish stay where you set them)"
                     onCommit={(w, y) => applyGroupPlant(g, w, y)} />
                   {" "}→ ready{" "}
                   <FinishWkInput key={`${g.key}|${g.ready}`} wk={g.ready} yr={g.readyYear ?? g.plantYear} disabled={busy}
@@ -2837,7 +2793,6 @@ function CultureCard({ recipe, series, locked, setRecipe, setSeries }) {
           {Object.entries(bySeries).sort(([ka, a], [kb, b]) => rankOf(a) - rankOf(b) || ka.localeCompare(kb)).map(([key, g]) => {
             const name = seriesKeyOf(g);
             const p = propOf(g), f = finishOf(g);
-            const mid = f ? Math.round((f.lo + f.hi) / 2) : null;
             return (
               <div key={g.id} style={{ padding: "6px 0", borderBottom: `1px solid #f0f4ec` }}>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 12.5 }}>
@@ -2848,8 +2803,7 @@ function CultureCard({ recipe, series, locked, setRecipe, setSeries }) {
                   {p != null && <span>prop <b>{p.lo === p.hi ? p.lo : `${p.lo}–${p.hi}`} wk</b> {btn(`→ prop ${p.hi}`, () => setSeries(series.map(x =>
                     (x.series_name !== "(unassigned)" && name.toLowerCase().startsWith(x.series_name.toLowerCase())) || /^(URC|CALL)/i.test(x.form || "")
                       ? { ...x, rooting_weeks: p.hi } : x)), `set ${p.hi} prop weeks (range upper) on this family's rooted series`)}</span>}
-                  {f && <span>finish <b>{f.lo}–{f.hi} wk</b> <span style={{ color: C.muted, fontSize: 10.5 }}>@{f.size}"</span>{" "}
-                    {btn(`→ finish ${mid}`, () => setRecipe({ ...recipe, crop_weeks: mid }), `set finish weeks to the midpoint (${mid})`)}</span>}
+                  {f && <span title="culture-guide reference only — your group dates set the real timing">finish <b>{f.lo}–{f.hi} wk</b> <span style={{ color: C.muted, fontSize: 10.5 }}>@{f.size}"</span></span>}
                   {String(g.requires_heat) === "True" && <span style={{ fontSize: 10, color: C.amber, fontWeight: 800 }}>🔥 bottom heat</span>}
                   <button onClick={() => setDetail(d => d === g.id ? null : g.id)}
                     style={{ marginLeft: "auto", background: "none", border: "none", color: C.muted, fontSize: 10.5, cursor: "pointer", fontWeight: 700, fontFamily: FONT }}>
