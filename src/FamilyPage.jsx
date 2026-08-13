@@ -2119,7 +2119,7 @@ Combine the groups?`)) return;
                     <input type="checkbox" checked={seasonVars.length > 0 && seasonVars.every(v => selVars.has(v.variety))}
                       onChange={e => setSelVars(e.target.checked ? new Set(seasonVars.map(v => v.variety)) : new Set())} />
                   </th>
-                  {["Variety", "Series", "Form", "Planned '26", "'26 sold", "vs '26 sold", "'27 Planned (pots)", "PPP", "Plants to order", "⑃", "$/liner", "Broker"].map(h => <th key={h} style={th}>{h}</th>)}
+                  {["Variety", "Series", "Form", "Planned '26", "'26 sold", "vs '26 sold", "'27 Planned (pots)", "PPP", "Plants", "Order qty", "⑃", "$/liner", "Broker"].map(h => <th key={h} style={th}>{h}</th>)}
                 </tr></thead>
                 <tbody>
                   {seasonVars.map(vr => {
@@ -2159,15 +2159,20 @@ Combine the groups?`)) return;
                         {(() => {   // eyes-on before ordering: the ppp you've set × pots = plants
                           const ppps = [...new Set(vr.rows.map(r => Math.max(1, Math.round(+r.ppp || 1))))];
                           const plants = vr.rows.reduce((a, r) => a + (+r.qty_pots || 0) * Math.max(1, Math.round(+r.ppp || 1)), 0);
-                          const mult = +(seriesOf(vr.variety)?.order_multiple || 0);
-                          const orderQty = mult > 1 && plants > 0 ? Math.ceil(plants / mult) * mult : plants;
+                          const sSp = seriesOf(vr.variety) || {};
+                          const mult = +(sSp.order_multiple || 0);
+                          let orderQty = mult > 1 && plants > 0 ? Math.ceil(plants / mult) * mult : plants;
+                          // URC/CALL hard rule: 100 minimum per color, ordered in 100s — the same
+                          // rounding the lock-in engine applies
+                          if (plants > 0 && /^(URC|CALL)/i.test(sSp.form || "")) orderQty = Math.max(100, Math.ceil(orderQty / 100) * 100);
                           return (<>
                             <td style={{ ...td, textAlign: "center", fontVariantNumeric: "tabular-nums", color: ppps.length === 1 && ppps[0] === 1 ? C.muted : C.dark, fontWeight: 700 }}
                               title="plants per pot on this color's rows">×{ppps.join("/")}</td>
-                            <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 800 }}
-                              title={mult > 1 ? `plants = pots × ppp; sold in ${mult}s → the order rounds up` : "plants = pots × ppp — what lock-in will order"}>
-                              {plants.toLocaleString()}
-                              {orderQty !== plants && <span style={{ color: C.amber, fontWeight: 800 }}> → {orderQty.toLocaleString()}</span>}
+                            <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}
+                              title="plants = pots × ppp">{plants.toLocaleString()}</td>
+                            <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 800, color: orderQty !== plants ? C.amber : C.dark }}
+                              title={`what lock-in will order${/^(URC|CALL)/i.test(sSp.form || "") ? " — URC/CALL round up to 100s (min 100)" : ""}${mult > 1 ? ` · sold in ${mult}s` : ""}${orderQty !== plants ? ` · +${(orderQty - plants).toLocaleString()} extra` : ""}`}>
+                              {orderQty > 0 ? orderQty.toLocaleString() : "—"}
                             </td>
                           </>);
                         })()}
