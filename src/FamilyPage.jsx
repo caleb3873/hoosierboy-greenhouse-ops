@@ -2119,7 +2119,7 @@ Combine the groups?`)) return;
                     <input type="checkbox" checked={seasonVars.length > 0 && seasonVars.every(v => selVars.has(v.variety))}
                       onChange={e => setSelVars(e.target.checked ? new Set(seasonVars.map(v => v.variety)) : new Set())} />
                   </th>
-                  {["Variety", "Series", "Form", "Planned '26", "'26 sold", "vs '26 sold", "'27 Planned (pots)", "Rounds", "$/liner", "Broker"].map(h => <th key={h} style={th}>{h}</th>)}
+                  {["Variety", "Series", "Form", "Planned '26", "'26 sold", "vs '26 sold", "'27 Planned (pots)", "PPP", "Plants to order", "⑃", "$/liner", "Broker"].map(h => <th key={h} style={th}>{h}</th>)}
                 </tr></thead>
                 <tbody>
                   {seasonVars.map(vr => {
@@ -2156,12 +2156,22 @@ Combine the groups?`)) return;
                         <td style={{ ...td, textAlign: "right" }} title="the whole-season total for this color — distributes across its rounds proportionally">
                           <QtyInput value={vr.pots} disabled={busy} onCommit={v => setVarQty(vr, v)} />
                         </td>
+                        {(() => {   // eyes-on before ordering: the ppp you've set × pots = plants
+                          const ppps = [...new Set(vr.rows.map(r => Math.max(1, Math.round(+r.ppp || 1))))];
+                          const plants = vr.rows.reduce((a, r) => a + (+r.qty_pots || 0) * Math.max(1, Math.round(+r.ppp || 1)), 0);
+                          const mult = +(seriesOf(vr.variety)?.order_multiple || 0);
+                          const orderQty = mult > 1 && plants > 0 ? Math.ceil(plants / mult) * mult : plants;
+                          return (<>
+                            <td style={{ ...td, textAlign: "center", fontVariantNumeric: "tabular-nums", color: ppps.length === 1 && ppps[0] === 1 ? C.muted : C.dark, fontWeight: 700 }}
+                              title="plants per pot on this color's rows">×{ppps.join("/")}</td>
+                            <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 800 }}
+                              title={mult > 1 ? `plants = pots × ppp; sold in ${mult}s → the order rounds up` : "plants = pots × ppp — what lock-in will order"}>
+                              {plants.toLocaleString()}
+                              {orderQty !== plants && <span style={{ color: C.amber, fontWeight: 800 }}> → {orderQty.toLocaleString()}</span>}
+                            </td>
+                          </>);
+                        })()}
                         <td style={{ ...td, whiteSpace: "nowrap" }}>
-                          {vr.rounds.filter(r => r.pots > 0).map(r => (
-                            <span key={r.key} title={`Group ${r.n}`} style={{ display: "inline-block", marginRight: 4, fontSize: 10, fontWeight: 700, fontFamily: "ui-monospace,Menlo,monospace", background: C.chip, borderRadius: 5, padding: "1.5px 6px", color: C.text }}>
-                              {r.ready != null ? `${String((r.readyYear ?? 0) % 100).padStart(2, "0")}${String(r.ready).padStart(2, "0")}` : "?"}·{r.pots.toLocaleString()}
-                            </span>
-                          ))}
                           {dividing ? (
                             <span style={{ display: "inline-flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
                               {/* one finish per round — "this group wk 18, this group wk 19"; type a week or 📅 pick a date */}
@@ -2224,7 +2234,7 @@ Combine the groups?`)) return;
                       </tr>
                     );
                   })}
-                  {!seasonVars.length && <tr><td style={{ ...td, color: C.muted }} colSpan={11}>No colors in this family yet — ＋ Add a color.</td></tr>}
+                  {!seasonVars.length && <tr><td style={{ ...td, color: C.muted }} colSpan={13}>No colors in this family yet — ＋ Add a color.</td></tr>}
                 </tbody>
               </table>
             </div>
