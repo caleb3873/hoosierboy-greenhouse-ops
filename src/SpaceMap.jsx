@@ -202,6 +202,16 @@ export default function SpaceMap({ plan: fixedPlan }) {
     const k = it.cls || cls;
     const cap = capOf(bench, k);
     if (cap == null) { window.alert(`No ${k} capacity number for ${bench.code} — add it to the chart first.`); return; }
+    // basket lines are FIXED spacing (Caleb 8/13): a 10" line is always a 10" line —
+    // the basket's size must match the line's size, no exceptions
+    if (k === "basket" && ["basket_line", "low_line"].includes(bench.bench_type)) {
+      const lineSize = String(bench.cap_overrides?.hb_size || "10");
+      const itemSize = (String(it.item).toUpperCase().match(/^HB (\d+)/) || [])[1] || "10";
+      if (lineSize !== itemSize) {
+        window.alert(`${bench.code} is a fixed ${lineSize}" line — ${it.item} is a ${itemSize}" basket. Lines don't change spacing; pick a ${itemSize}" line.`);
+        return;
+      }
+    }
     const used = byBench[bench.id]?.byClass[k] || 0;
     const otherUnits = Object.entries(byBench[bench.id]?.byClass || {}).filter(([x]) => x !== k).reduce((sm, [, v]) => sm + v, 0);
     if (otherUnits > 0) { window.alert(`${bench.code} is already holding a different container — one container per bench. Clear it (🧹) or pick another bench.`); return; }
@@ -298,14 +308,39 @@ export default function SpaceMap({ plan: fixedPlan }) {
   async function trimToFit(itemKey) {
     const it = unplaced[itemKey];
     if (!it || !it.qty) return;
-    if (!window.confirm(`✂ Trim the plan? This CUTS ${it.qty.toLocaleString()} unplaced pots of\n${it.item} (wk ${it.wk ?? "?"})\nso the plan matches the space. Placed quantities stay.`)) return;
+    // show WHAT remains before anything is cut, and make the cut ripple: the trimmed
+    // number restamps the projection so family + walkthrough follow (Caleb 8/13 —
+    // "it gets trimmed and it doesn't change anything")
+    const brk = it.rows.map(r => `  ${(+r.qty_pots).toLocaleString()} — ${r.item_name} (wk ${r.plant_week ?? "?"})`).join("\n");
+    if (!window.confirm(`✂ Still unplaced on ${it.item}:\n${brk}\n\nOK = DELETE these ${it.qty.toLocaleString()} pots and update the projection to the trimmed number (family page + walkthrough follow).\n\nWant to rework the quantities instead? Cancel here and use the 🌿 family button — trimming there repopulates everything the same way.`)) return;
     setBusy(true);
+    const stamp = new Date().toISOString();
     try {
+      const names = [...new Set(it.rows.map(r => r.item_name))];
       for (const r of it.rows) {
         const { data: kids } = await sb.from("scheduled_crops").select("id").eq("combo_parent_id", r.id).limit(1);
         if (kids?.length) { window.alert(`${it.item} is a combo — trim it from its family page instead.`); break; }
         const { error } = await sb.from("scheduled_crops").delete().eq("id", r.id);
         if (error) throw new Error(error.message);
+      }
+      // restamp the decision layer to the surviving totals — trim = a real plan change
+      for (const name of names) {
+        const { data: rest } = await sb.from("scheduled_crops").select("qty_pots,ppp,plants_per_unit,pack_size")
+          .eq("plan_id", planId).eq("item_name", name).not("is_combo_component", "is", true);
+        const pots = (rest || []).reduce((a, r) => {
+          const ppp = Math.max(1, +r.ppp || 1); const ppu = Math.max(1, +r.plants_per_unit || +r.pack_size || 1);
+          return a + (+r.qty_pots || 0) * (ppp >= ppu && ppu > 1 ? ppu : 1);
+        }, 0);
+        await sb.from("plan_targets").upsert({
+          plan_id: planId, item_name: name, target_units: pots, decision: pots === 0 ? "drop" : "cut",
+          applied_at: stamp, applied_by: "space-trim", applied_units: pots,
+          decided_at: stamp, decided_by: "space-trim", updated_at: stamp,
+        }, { onConflict: "plan_id,item_name" });
+        try {
+          await sb.from("item_change_log").insert({ plan_id: planId, item_name: name, change_type: "space_trim",
+            detail: { trimmed: it.qty, remaining_pots: pots, note: "unplaced remainder cut on the Space map; projection restamped" },
+            changed_by: "space-trim", source: "space-map" });
+        } catch { /* audit must not block */ }
       }
       setTick(t => t + 1); setPlaceItem("");
     } catch (e) { window.alert("Trim failed: " + e.message); }
@@ -480,7 +515,8 @@ export default function SpaceMap({ plan: fixedPlan }) {
         </div>
         <div style={{ fontSize: 12.5, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: blank ? C.dark : pct >= 1 ? C.red : C.amber }}>{blank ? (cap ?? "?") : used}</div>
         {!blank && cap != null && <div style={{ fontSize: 8, color: C.muted }}>/{cap}</div>}
-        {b.cap_overrides?.hb_size && b.cap_overrides.hb_size !== "10" && <div style={{ fontSize: 8, fontWeight: 800, color: C.amber }}>{b.cap_overrides.hb_size}"</div>}
+        {/* fixed line spacing — always shown; only same-size baskets land here */}
+        <div style={{ fontSize: 8, fontWeight: 800, color: (b.cap_overrides?.hb_size || "10") === "10" ? C.muted : C.amber }}>{b.cap_overrides?.hb_size || "10"}"</div>
       </div>
     );
   };
@@ -559,8 +595,13 @@ export default function SpaceMap({ plan: fixedPlan }) {
                 <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
                   {unplaced[placeItem]?.qty > 0 && (
                     <button disabled={busy} onClick={() => trimToFit(placeItem)}
-                      title="cut the still-unplaced remainder so the plan matches the space"
-                      style={{ padding: "3px 9px", borderRadius: 7, border: `1px solid ${C.red}`, background: "#fff", color: C.red, fontWeight: 800, fontSize: 10.5, cursor: "pointer", fontFamily: FONT }}>✂ Trim to fit</button>
+                      title="shows the unplaced remainder first, then cuts it AND restamps the projection (family + walkthrough follow)"
+                      style={{ padding: "3px 9px", borderRadius: 7, border: `1px solid ${C.red}`, background: "#fff", color: C.red, fontWeight: 800, fontSize: 10.5, cursor: "pointer", fontFamily: FONT }}>✂ Trim extra</button>
+                  )}
+                  {unplaced[placeItem]?.rid && (
+                    <button disabled={busy} onClick={() => setFamOpen(unplaced[placeItem].rid)}
+                      title="rework the quantities on the family page instead — trims there repopulate targets, orders and this tray"
+                      style={{ padding: "3px 9px", borderRadius: 7, border: `1px solid ${C.light}`, background: "#fff", color: C.dark, fontWeight: 800, fontSize: 10.5, cursor: "pointer", fontFamily: FONT }}>🌿 in family</button>
                   )}
                   <button onClick={() => setPlaceItem("")} style={{ background: "none", border: "none", color: C.muted, fontWeight: 700, fontSize: 10.5, cursor: "pointer", fontFamily: FONT }}>done ✕</button>
                 </div>

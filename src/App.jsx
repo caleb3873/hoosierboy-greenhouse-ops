@@ -2,6 +2,7 @@ import { useState } from "react";
 import { AuthProvider, LoginScreen, UserMenu, useAuth, RecoveryPasswordForm } from "./Auth";
 import { SharedGalleryViewer } from "./Sharing";
 import { SalesVisitViewer } from "./SalesVisits";
+import MumTruckBuilder from "./MumTruckBuilder";
 import InventoryValuation from "./InventoryValuation";
 import TagManager from "./TagManager";
 import { ExtractionProvider, useExtraction } from "./ExtractionContext";
@@ -467,6 +468,9 @@ export default function App() {
   // Public sales-visit page (?sv=<slug>) — a customer-facing deal sheet (Sales Visits module)
   const svSlug = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("sv") : null;
   if (svSlug) return <SalesVisitViewer slug={svSlug} />;
+  // Public mum truck builder (?mums=<store>) — Sullivan store managers build their own trucks
+  const mumSlug = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("mums") : null;
+  if (mumSlug) return <MumTruckBuilder slug={mumSlug} />;
   return (
     <AuthProvider>
       <ExtractionProvider>

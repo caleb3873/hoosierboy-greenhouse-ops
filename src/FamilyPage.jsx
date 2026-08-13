@@ -3,7 +3,7 @@
 // variety roster with sold-vs-planned, and the RECIPE editor (lock/save) writing the
 // live spine (crop_recipes + crop_recipe_series). The page is a VIEW over the spine —
 // recipe + plan rows + sales — never a second place to enter a fact.
-import { useState, useEffect, useMemo, useRef } from "react";
+import { Fragment, useState, useEffect, useMemo, useRef } from "react";
 import { getSupabase, getCultureClient } from "./supabase";
 import { useAuth } from "./Auth";
 import { rippleTasks, isoWeekOf } from "./ripple";
@@ -211,6 +211,8 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
   const [recipe, setRecipe] = useState(null);
   const [series, setSeries] = useState([]);
   const [rows, setRows] = useState(null);
+  const [kids, setKids] = useState([]);        // combo component rows (children of this family's parents)
+  const [openCombo, setOpenCombo] = useState({});   // item_name -> components panel expanded
   const [vmap, setVmap] = useState({});
   const [trays, setTrays] = useState({});      // container id -> {name, cells_per_flat}
   const [bmap, setBmap] = useState({});        // bench id -> code
@@ -256,7 +258,20 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
         .select("id,item_name,variety_id,qty_pots,ppp,pack_size,plants_per_unit,qty_plants_ordered,plant_week,plant_year,ship_week,ship_year,ready_week,ready_year,broker,supplier,liner_unit_cost,prop_method,bench_id,is_combo_component,notes")
         .eq("plan_id", plan.id).eq("recipe_id", recipeId).not("is_combo_component", "is", true).limit(2000);
       setRows(sc || []);
-      const vids = [...new Set((sc || []).map(r => r.variety_id).filter(Boolean))];
+      // combo children — the per-component layer (multi-species containers). Loaded by
+      // parent id, chunked: children don't reliably carry the family's recipe_id.
+      let kk = [];
+      {
+        const pids = (sc || []).map(r => r.id);
+        for (let i = 0; i < pids.length; i += 100) {
+          const { data: kb } = await sb.from("scheduled_crops")
+            .select("id,combo_parent_id,item_name,variety_id,qty_pots,ppp,ship_week,ship_year,plant_week,plant_year,prop_method,broker,supplier,liner_unit_cost")
+            .in("combo_parent_id", pids.slice(i, i + 100));
+          kk = kk.concat(kb || []);
+        }
+        setKids(kk);
+      }
+      const vids = [...new Set([...(sc || []).map(r => r.variety_id), ...kk.map(r => r.variety_id)].filter(Boolean))];
       // 🔒 orders locked in on this family? (draft or sent) — the page locks
       {
         const { data: pos } = await sb.from("purchase_orders")
@@ -1476,6 +1491,64 @@ Combine the groups?`)) return;
     setBusy(false); setTick(t => t + 1);
   }
 
+  // ── COMBO COMPONENT LAYER (Caleb 8/13) ─────────────────────────────────────
+  // Multi-species containers: the roster row shows the COMBINATION; ▾ reveals the
+  // components — per-basket count, prop time, ship week, and the total each
+  // component orders (baskets × per-basket). Finish/plant stay group-level; ship +
+  // prop time are per-component (staggered arrivals).
+  const comboByItem = useMemo(() => {
+    if (!kids.length || !rows) return {};
+    const parentById = Object.fromEntries(rows.map(r => [r.id, r]));
+    const m = {};
+    kids.forEach(k => {
+      const p = parentById[k.combo_parent_id]; if (!p) return;
+      const vn = vmap[k.variety_id]?.variety || k.item_name || "?";
+      const byComp = (m[p.item_name] = m[p.item_name] || {});
+      const c = byComp[vn] || (byComp[vn] = { variety: vn, varietyId: k.variety_id, rows: [],
+        perB: Math.max(1, Math.round(+k.ppp || 1)), ship: k.ship_week, shipYear: k.ship_year,
+        plant: k.plant_week, plantYear: k.plant_year, prop: k.prop_method,
+        broker: k.broker, supplier: k.supplier, cost: k.liner_unit_cost != null ? +k.liner_unit_cost : null });
+      c.rows.push(k);
+      if (c.cost == null && k.liner_unit_cost != null) c.cost = +k.liner_unit_cost;
+      if (!c.broker && k.broker) { c.broker = k.broker; c.supplier = k.supplier || null; }
+    });
+    return m;
+  }, [kids, rows, vmap]);
+
+  async function editComponent(comp, patchOf, logNote) {
+    setBusy(true);
+    try {
+      for (const k of comp.rows) {
+        const { error } = await sb.from("scheduled_crops").update(patchOf(k)).eq("id", k.id);
+        if (error) throw new Error(error.message);
+      }
+      try {
+        await sb.from("item_change_log").insert({ plan_id: plan.id, item_name: comp.rows[0]?.item_name || comp.variety,
+          change_type: "combo_component_edit", detail: { component: comp.variety, note: logNote },
+          changed_by: displayName || null, source: "family-page" });
+      } catch { /* audit must not block */ }
+    } catch (e) { window.alert("Component edit didn't save: " + (e.message || e)); }
+    setBusy(false); setTick(t => t + 1);
+  }
+  const setCompPerB = (comp, v) => {
+    const n = Math.max(1, Math.round(+v || 1));
+    if (n === comp.perB) return;
+    editComponent(comp, () => ({ ppp: n }), `per-basket ${comp.perB} → ${n}`);
+  };
+  const setCompShip = (comp, w, y) => {
+    if (!w || w > 53) return;
+    editComponent(comp, () => ({ ship_week: w, ship_year: y }), `ship → ${y}w${w} (component arrival set directly)`);
+  };
+  const setCompProp = (comp, v) => {
+    const wks = Math.max(0, Math.round(+v || 0));
+    // prop time = plant − ship: setting it re-derives THIS component's ship from its
+    // own plant week (the one knob pair that derives — they're two views of one gap)
+    editComponent(comp, k => {
+      const sh = wrapWk((k.plant_week ?? 0) - wks, k.plant_year ?? plan.year ?? 2027);
+      return { ship_week: sh.wk, ship_year: sh.yr };
+    }, `prop time → ${wks}w (ship re-derived per row)`);
+  };
+
   // ⑃ Divide a color's season total into rounds AT THE WEEKS YOU NAME (Caleb 8/5:
   // "i want this group to finish week 18 and this group to finish week 19").
   // ── 🛒 lock in broker orders — selected colors (or all) become draft POs,
@@ -1494,9 +1567,20 @@ Combine the groups?`)) return;
       if (r.broker && !o.broker) { o.broker = r.broker; o.supplier = r.supplier || o.supplier || null; }
       if (r.liner_unit_cost != null && o.price == null) o.price = +r.liner_unit_cost;
     });
+    kids.forEach(k => {   // component sourcing counts toward "one broker per item" too
+      const vn = vmap[k.variety_id]?.variety;
+      if (!vn) return;
+      const o = varSrc[vn] || (varSrc[vn] = {});
+      if (k.broker && !o.broker) { o.broker = k.broker; o.supplier = k.supplier || o.supplier || null; }
+      if (k.liner_unit_cost != null && o.price == null) o.price = +k.liner_unit_cost;
+    });
+    // combos order by COMPONENT: a parent with children is a basket, not a material —
+    // its plants come entirely from the component rows below (Caleb 8/13)
+    const hasKids = new Set(kids.map(k => k.combo_parent_id));
+    const rowById = Object.fromEntries(rows.map(r => [r.id, r]));
     const agg = {};
     rows.forEach(r => {
-      if (r.is_combo_component) return;
+      if (r.is_combo_component || hasKids.has(r.id)) return;
       const v = vmap[r.variety_id];
       const vname = v?.variety;
       if (!vname || !wanted.has(vname)) return;
@@ -1512,6 +1596,23 @@ Combine the groups?`)) return;
       if (r.broker && !o.broker) { o.broker = r.broker; o.supplier = r.supplier || null; }
       if (r.liner_unit_cost != null && o.price == null) o.price = +r.liner_unit_cost;
       if (r.prop_method && !o.prop) o.prop = r.prop_method;   // form fallback when the series has none
+    });
+    kids.forEach(k => {   // component lines: baskets × per-basket, at the COMPONENT's arrival week
+      const p = rowById[k.combo_parent_id];
+      if (!p) return;
+      const pv = vmap[p.variety_id]?.variety;
+      if (!pv || !wanted.has(pv)) return;
+      const kv = vmap[k.variety_id]?.variety;
+      if (!kv) return;
+      const plants = (+p.qty_pots || 0) * Math.max(1, Math.round(+k.ppp || 1));
+      if (!(plants > 0)) return;
+      const key = `combo:${kv}|${k.ship_year ?? "?"}|${k.ship_week ?? "?"}`;
+      const o = agg[key] || (agg[key] = { varietyName: kv, varietyId: k.variety_id, recipeId,
+        shipWeek: k.ship_week ?? k.plant_week, shipYear: k.ship_year ?? k.plant_year, plants: 0, broker: null, supplier: null, price: null });
+      o.plants += plants;
+      if (k.broker && !o.broker) { o.broker = k.broker; o.supplier = k.supplier || null; }
+      if (k.liner_unit_cost != null && o.price == null) o.price = +k.liner_unit_cost;
+      if (k.prop_method && !o.prop) o.prop = k.prop_method;
     });
     const specs = Object.values(agg).map(l => {
       const v = vmap[l.varietyId] || {};
@@ -2113,8 +2214,10 @@ Combine the groups?`)) return;
                     const soldShort = vr.ref26 > 0 && vr.sold != null && vr.sold < vr.ref26;   // didn't sell what we planned in '26
                     const delta = vr.sold > 0 && vr.pots > 0 ? Math.round((vr.pots - vr.sold) * 100 / vr.sold) : null;  // '27 plan vs '26 actual demand
                     const dividing = divideFor?.variety === vr.variety;
+                    const comboItem = [...vr.items].find(n => comboByItem[n]);
                     return (
-                      <tr key={vr.variety}>
+                      <Fragment key={vr.variety}>
+                      <tr>
                         <td style={td}>
                           <input type="checkbox" checked={selVars.has(vr.variety)}
                             onChange={e => setSelVars(sv => { const n = new Set(sv); if (e.target.checked) n.add(vr.variety); else n.delete(vr.variety); return n; })} />
@@ -2123,6 +2226,13 @@ Combine the groups?`)) return;
                           <span onClick={onOpenItem ? (e => { e.stopPropagation(); onOpenItem([...vr.items][0]); }) : undefined}
                             title={onOpenItem ? "open the item page" : undefined}
                             style={onOpenItem ? { cursor: "pointer", textDecoration: "underline dotted", textUnderlineOffset: 3 } : undefined}>{vr.variety}</span>
+                          {comboItem && (
+                            <button onClick={e => { e.stopPropagation(); setOpenCombo(o => ({ ...o, [comboItem]: !o[comboItem] })); }}
+                              title="the components in this combination — per-basket counts, prop time, arrival, order totals"
+                              style={{ marginLeft: 5, border: `1px solid ${openCombo[comboItem] ? C.light : C.border}`, background: openCombo[comboItem] ? "#eef6e8" : "#fff", color: C.dark, borderRadius: 6, fontSize: 9.5, fontWeight: 800, padding: "1px 6px", cursor: "pointer", fontFamily: FONT }}>
+                              {openCombo[comboItem] ? "▾" : "▸"} {Object.keys(comboByItem[comboItem]).length} components
+                            </button>
+                          )}
                           {vr.suggested && vr.pots === 0 && <span title="added as a suggestion — not in the plan number" style={{ marginLeft: 5, fontSize: 9, fontWeight: 800, color: C.amber, background: C.amberBg, borderRadius: 5, padding: "1px 6px" }}>💡 suggestion</span>}
                           {!!vr.benches.size && <div style={{ fontSize: 9.5, fontWeight: 500, color: C.muted, fontFamily: "ui-monospace,Menlo,monospace" }}>{[...vr.benches].sort().join(" ")}</div>}
                         </td>
@@ -2235,6 +2345,16 @@ Combine the groups?`)) return;
                           </span>
                         </td>
                       </tr>
+                      {comboItem && openCombo[comboItem] && (
+                        <tr>
+                          <td colSpan={14} style={{ ...td, background: "#f6faf2", padding: "8px 12px" }}>
+                            <ComboPanel comps={comboByItem[comboItem]} baskets={vr.pots} busy={busy}
+                              planYear={plan.year ?? 2027}
+                              onPerB={setCompPerB} onProp={setCompProp} onShip={setCompShip} />
+                          </td>
+                        </tr>
+                      )}
+                      </Fragment>
                     );
                   })}
                   {!seasonVars.length && <tr><td style={{ ...td, color: C.muted }} colSpan={13}>No colors in this family yet — ＋ Add a color.</td></tr>}
@@ -2349,14 +2469,23 @@ Combine the groups?`)) return;
                       {liveVars.map(vr => {
                         const s = seriesOf(vr.variety);
                         const pct = vr.pots > 0 && vr.sold != null ? Math.round(vr.sold * 100 / vr.pots) : null;
+                        const comboItem = [...vr.items].find(n => comboByItem[n]);
                         return (
-                          <tr key={vr.variety} onContextMenu={e => { e.preventDefault(); setCtx({ x: Math.min(e.clientX, window.innerWidth - 240), y: e.clientY, vr, gKey: g.key }); }}
+                          <Fragment key={vr.variety}>
+                          <tr onContextMenu={e => { e.preventDefault(); setCtx({ x: Math.min(e.clientX, window.innerWidth - 240), y: e.clientY, vr, gKey: g.key }); }}
                             title="right-click for actions">
                             <td style={{ ...td, fontWeight: 700 }}>
                               {/* the name IS the door to the item page — variety edits live there, not here */}
                               <span onClick={onOpenItem ? (e => { e.stopPropagation(); onOpenItem([...vr.items][0]); }) : undefined}
                                 title={onOpenItem ? "open the item page" : undefined}
                                 style={onOpenItem ? { cursor: "pointer", textDecoration: "underline dotted", textUnderlineOffset: 3 } : undefined}>{vr.variety}</span>
+                              {comboItem && (
+                                <button onClick={e => { e.stopPropagation(); setOpenCombo(o => ({ ...o, [comboItem]: !o[comboItem] })); }}
+                                  title="the components in this combination — per-basket counts, prop time, arrival, order totals"
+                                  style={{ marginLeft: 5, border: `1px solid ${openCombo[comboItem] ? C.light : C.border}`, background: openCombo[comboItem] ? "#eef6e8" : "#fff", color: C.dark, borderRadius: 6, fontSize: 9.5, fontWeight: 800, padding: "1px 6px", cursor: "pointer", fontFamily: FONT }}>
+                                  {openCombo[comboItem] ? "▾" : "▸"} {Object.keys(comboByItem[comboItem]).length} components
+                                </button>
+                              )}
                               {vr.suggested && vr.pots === 0 && <span title="added as a suggestion — not in the plan number. Give it pots (and trim the one it replaces) to bring it in." style={{ marginLeft: 5, fontSize: 9, fontWeight: 800, color: C.amber, background: C.amberBg, borderRadius: 5, padding: "1px 6px" }}>💡 suggestion</span>}
                               {vr.items.size > 1 && <span title={[...vr.items].join(" · ")} style={{ marginLeft: 5, fontSize: 9, fontWeight: 800, color: C.amber, background: C.amberBg, borderRadius: 5, padding: "1px 5px" }}>{vr.items.size} lines</span>}
                               {!!vr.benches.size && <div style={{ fontSize: 9.5, fontWeight: 500, color: C.muted, fontFamily: "ui-monospace,Menlo,monospace" }}>{[...vr.benches].sort().join(" ")}</div>}
@@ -2398,6 +2527,16 @@ Combine the groups?`)) return;
                               </span>
                             </td>
                           </tr>
+                          {comboItem && openCombo[comboItem] && (
+                            <tr>
+                              <td colSpan={9} style={{ ...td, background: "#f6faf2", padding: "8px 12px" }}>
+                                <ComboPanel comps={comboByItem[comboItem]} baskets={vr.pots} busy={busy}
+                                  planYear={plan.year ?? 2027}
+                                  onPerB={setCompPerB} onProp={setCompProp} onShip={setCompShip} />
+                              </td>
+                            </tr>
+                          )}
+                          </Fragment>
                         );
                       })}
                     </tbody>
@@ -2661,6 +2800,55 @@ Combine the groups?`)) return;
 // group ready-week input: shorthand ok ("18" or "2718"), commits on blur/Enter
 
 // commit-on-blur qty input (never resets mid-typing)
+// ── the component table behind a combination's ▾ (Caleb 8/13): per-basket count,
+// prop time, arrival week, and the order total each component drives. Finish +
+// plant ride the group; ship + prop time are per-component (staggered arrivals).
+function ComboPanel({ comps, baskets, busy, planYear, onPerB, onProp, onShip }) {
+  const th = { textAlign: "left", padding: "5px 8px", fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".5px", color: C.muted, borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap" };
+  const td = { padding: "5px 8px", fontSize: 12, color: C.text, borderBottom: `1px solid ${C.border}`, verticalAlign: "middle" };
+  const list = Object.values(comps).sort((a, b) => a.variety.localeCompare(b.variety));
+  return (
+    <div>
+      <div style={{ fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: C.muted, marginBottom: 3 }}>
+        components · {baskets.toLocaleString()} baskets — plant + finish ride the group; prop time &amp; arrival are per component
+      </div>
+      <table style={{ borderCollapse: "collapse", width: "100%", background: "#fff", borderRadius: 8 }}>
+        <thead><tr>{["Component", "Per basket", "Form", "Prop wks", "Ship (arrive)", "Order total", "$/plant", "Broker"].map(h => <th key={h} style={th}>{h}</th>)}</tr></thead>
+        <tbody>
+          {list.map(c => {
+            const propWks = c.plant != null && c.ship != null
+              ? absWkNum(c.plantYear ?? planYear, c.plant) - absWkNum(c.shipYear ?? c.plantYear ?? planYear, c.ship) : null;
+            const tot = baskets * c.perB;
+            const rounded = /^(URC|CALL)/i.test(c.prop || "") && tot > 0 ? Math.max(100, Math.ceil(tot / 100) * 100) : tot;
+            return (
+              <tr key={c.variety}>
+                <td style={{ ...td, fontWeight: 700 }}>{c.variety}</td>
+                <td style={{ ...td, textAlign: "right" }} title="plants of this component in each basket">
+                  <QtyInput value={c.perB} disabled={busy} onCommit={v => onPerB(c, v)} />
+                </td>
+                <td style={td}><span style={{ fontFamily: "ui-monospace,Menlo,monospace", fontSize: 10, fontWeight: 700, padding: "1px 5px", borderRadius: 5, background: /CALL/.test(c.prop || "") ? C.amberBg : C.chip, color: /CALL/.test(c.prop || "") ? C.amber : C.green }}>{c.prop || "—"}</span></td>
+                <td style={{ ...td, textAlign: "right" }} title="propagation time = plant − arrival; setting it moves THIS component's arrival week">
+                  <QtyInput value={propWks ?? 0} disabled={busy} onCommit={v => onProp(c, v)} />
+                </td>
+                <td style={td}>
+                  <FinishWkInput wk={c.ship} yr={c.shipYear ?? c.plantYear ?? planYear} disabled={busy} showDate={false} width={52}
+                    title="this component's arrival (ship) week — type a week or 📅 pick a date" onCommit={(w, y) => onShip(c, w, y)} />
+                </td>
+                <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 800, color: rounded !== tot ? C.amber : C.dark }}
+                  title={rounded !== tot ? `need ${tot.toLocaleString()} — URC/CALL round to 100s → ${rounded.toLocaleString()} ordered` : "baskets × per-basket"}>
+                  {rounded > 0 ? rounded.toLocaleString() : "—"}
+                </td>
+                <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{c.cost != null ? `$${(+c.cost).toFixed(3)}` : "—"}</td>
+                <td style={{ ...td, color: C.muted, fontSize: 11 }}>{c.broker || "—"}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function QtyInput({ value, onCommit, disabled }) {
   const [draft, setDraft] = useState(String(value));
   const [focus, setFocus] = useState(false);
