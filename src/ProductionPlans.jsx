@@ -8411,13 +8411,15 @@ function DraftOrderCard({ o, oLines, families, onOpenFamily, onChanged, startOpe
               return extra > 0 ? <b style={{ color: COLORS.amber }}> · +{extra.toLocaleString()} extras over need ({fmtMoney(cost)}{pctOf != null ? ` · ${pctOf}% of the order` : ""})</b> : null; })()}
           </div>
           {underMin && <div style={{ fontSize: 11, fontWeight: 800, color: COLORS.red, marginTop: 4 }}>⚠ {(+o.total_qty || 0).toLocaleString()} of 2,000 farm minimum — {(2000 - (+o.total_qty || 0)).toLocaleString()} short; add items or combine weeks</div>}
-          {underMin && families?.length > 0 && (
+          {families?.length > 0 && (
             <div onClick={e => e.stopPropagation()} style={{ display: "flex", gap: 6, marginTop: 5, flexWrap: "wrap" }}>
               {families.map(f => (
-                <button key={f.rid} onClick={() => onOpenFamily(f.rid)} title="open the family page to add items or shift weeks"
+                <button key={f.rid} onClick={() => onOpenFamily(f.rid)}
+                  title="open the family page — after editing, hit 🛒 Lock in order there to refresh this draft's quantities"
                   style={{ background: "#fff", border: `1.5px solid ${COLORS.light}`, color: COLORS.dark, borderRadius: 7, padding: "3px 10px", fontWeight: 800, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>
-                  → adjust {f.label}</button>
+                  ⤴ {f.label}</button>
               ))}
+              <span style={{ fontSize: 10, color: COLORS.muted, alignSelf: "center" }}>drafts snapshot at lock time — re-lock on the family to refresh</span>
             </div>
           )}
         </div>
