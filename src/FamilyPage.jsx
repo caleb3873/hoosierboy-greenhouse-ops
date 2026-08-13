@@ -1529,7 +1529,9 @@ Combine the groups?`)) return;
       const plants = +r.qty_plants_ordered || (+r.qty_pots || 0) * (+r.ppp || 1);
       if (!(plants > 0)) return;
       const k = `${vname}|${r.plant_year ?? "?"}|${r.plant_week ?? "?"}`;
-      const o = agg[k] || (agg[k] = { varietyName: vname, varietyId: r.variety_id, recipeId, shipWeek: r.plant_week, shipYear: r.plant_year, plants: 0, broker: null, supplier: null, price: null });
+      const o = agg[k] || (agg[k] = { varietyName: vname, varietyId: r.variety_id, recipeId,
+        // ship = the row's SHIP week (rooted forms ship weeks before planting); plant week is only the fallback
+        shipWeek: r.ship_week ?? r.plant_week, shipYear: r.ship_year ?? r.plant_year, plants: 0, broker: null, supplier: null, price: null });
       o.plants += plants;
       if (r.broker && !o.broker) { o.broker = r.broker; o.supplier = r.supplier || null; }
       if (r.liner_unit_cost != null && o.price == null) o.price = +r.liner_unit_cost;

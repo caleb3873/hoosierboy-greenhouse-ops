@@ -8700,6 +8700,11 @@ function OrdersTab({ plan }) {
                   <div style={{ fontWeight: 800, fontSize: 18, color: COLORS.dark }}>{(+o.total_qty || 0).toLocaleString()} liners</div>
                   <div style={{ fontSize: 12, color: COLORS.light, fontWeight: 700 }}>{fmtMoney(+o.total_cost)}</div>
                 </div>
+                {o.status === "pending" && (
+                  <button onClick={e => { e.stopPropagation(); if (window.confirm(`Pull ${o.order_number} back to DRAFT? It leaves the pending list — edit or delete it there, then re-send.`)) { getSupabase().from("purchase_orders").update({ status: "draft", date_ordered: null }).eq("id", o.id).then(() => setTick(t => t + 1)); } }}
+                    title="made a mistake after downloading? back to draft to fix or delete"
+                    style={{ background: "#fff", border: `1.5px solid ${COLORS.border}`, color: COLORS.muted, borderRadius: 8, padding: "4px 10px", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>↩ to draft</button>
+                )}
                 {o.status === "pending" && !o.ack_pdf_path && o.date_ordered && (() => {
                   const days = Math.floor((new Date() - new Date(o.date_ordered + "T00:00:00")) / 86400000);
                   const late = days >= 7;
