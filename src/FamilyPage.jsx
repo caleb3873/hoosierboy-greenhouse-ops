@@ -774,12 +774,37 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
     const targetRows = v.rows && v.rows.length ? v.rows : (rows || []).filter(x => x.variety_id === vid && !x.is_combo_component);
     if (!targetRows.length) { window.alert("No plan rows for this color to attach a quote to."); return; }
     if (!window.confirm(`Lock ${v.variety} to this quote?\n\n${r.variety} — ${[r.broker, r.supplier].filter(Boolean).join(" / ")} · ${r.form_class}${r.form_raw ? ` (${r.form_raw})` : ""} @ $${(+r.landed).toFixed(3)}/plant\n\nSets the cost on ${targetRows.length} row(s) and remembers this match for every future quote upload.`)) return;
+    // picking a DIFFERENT form on purpose (URC → liners, Caleb 8/13 lavender): the series
+    // follows the pick, so order quantities re-round to the new form — 100s per color for
+    // URC/CALL, the tray multiple for liners/plugs — instead of silently keeping the old math
+    let formSwitch = null;
+    {
+      const FORM_FROM_CLASS = { urc: "URC", callused: "CALL", plug: "PLUG", liner: "LINER", seed: "SEED", bareroot: "BULB" };
+      const s0 = seriesOf(v.variety);
+      const nf = FORM_FROM_CLASS[r.form_class];
+      if (s0?.id && s0.series_name !== "(unassigned)" && nf && s0.form && nf !== s0.form) {
+        const cells = +(r.cells || String(r.form_raw || "").match(/(\d{2,4})/)?.[1] || 0);
+        if (window.confirm(`This quote is ${nf} but the ${s0.series_name} series is set up as ${s0.form}.
+
+Switch the series to ${nf}? Order quantities re-round to ${/^(URC|CALL)/.test(nf) ? "100s per color" : cells >= 20 ? `the ${cells}-cell tray multiple` : "the tray multiple"} and the rows' prop method follows. (Cancel keeps ${s0.form} — the price still locks.)`)) {
+          const upd = { form: nf, updated_at: new Date().toISOString() };
+          if (/^(URC|CALL)/.test(nf)) upd.order_multiple = null;
+          else if (cells >= 20) upd.order_multiple = cells;
+          formSwitch = { id: s0.id, upd, nf };
+        }
+      }
+    }
     setBusy(true);
     try {
       for (const x of targetRows) {
         // sourcing_locked = the reprice engine refreshes this only from THIS broker/supplier,
         // never re-points it by name-match (the lock is permanent for future ordering)
-        await sb.from("scheduled_crops").update({ liner_unit_cost: +r.landed, broker: r.broker, supplier: r.supplier, sourcing_locked: true }).eq("id", x.id);
+        await sb.from("scheduled_crops").update({ liner_unit_cost: +r.landed, broker: r.broker, supplier: r.supplier, sourcing_locked: true,
+          ...(formSwitch ? { prop_method: formSwitch.nf } : {}) }).eq("id", x.id);
+      }
+      if (formSwitch) {
+        await sb.from("crop_recipe_series").update(formSwitch.upd).eq("id", formSwitch.id);
+        setSeries(sr => sr.map(x => x.id === formSwitch.id ? { ...x, ...formSwitch.upd } : x));
       }
       if (vid && r.variety_key) {
         const { data: vrow } = await sb.from("variety_library").select("variety_key,match_aliases").eq("id", vid).single();
@@ -839,60 +864,50 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
     return () => window.removeEventListener("keydown", esc);
   }, []);
 
-  // ripple slice 2 — the group READY knob: set a new finish week and every row in the
-  // group re-derives its chain from the recipe (plant = ready − crop · ship = plant − its
-  // series' rooting), year-wrapped. Audit-logged per item. Floor tasks still don't move.
+  // the group READY knob — WORKING RULE (Caleb 8/13): the group's own ship/plant/ready
+  // dates are the source of truth for timing. Setting the finish moves the FINISH ONLY —
+  // plant + ship stay exactly where he put them (pinches/PGRs stretch a crop past the
+  // recipe). The recipe's finish weeks are a GUIDELINE that populates FROM this edit
+  // (plant→ready span), never the other way around.
   async function applyGroupReady(g, raw) {
     const digits = String(raw || "").replace(/\D/g, "");
     if (!digits) return;
-    const finWks = finishWksOr(recipe, g.plantYear, g.plant, g.readyYear, g.ready);
-    if (finWks == null) return;
     const ready = digits.length <= 2 ? +digits : +digits.slice(2);
     const readyYear = digits.length <= 2 ? (g.readyYear ?? plan.year ?? 2027) : 2000 + +digits.slice(0, 2);
     if (!ready || ready > 53) return;
     if (readyInPast(readyYear, ready)) return;
-    {   // merging two groups takes a yes: same finish AND the derived plant week collides
-      const pChk = wrapWk(ready - finWks, readyYear);
+    {   // merging two groups takes a yes: same plant AND same finish = one group
       const twin = displayGroups.find(o => o.key !== g.key && o.ready === ready && (o.readyYear ?? "?") === (readyYear ?? "?")
-        && o.plant === pChk.wk && (o.plantYear ?? plan.year) === pChk.yr);
-      if (twin && !window.confirm(`Group ${twin.n} already finishes wk ${ready} from plant wk ${pChk.wk} — this change will COMBINE the two groups into one.
+        && o.plant === g.plant && (o.plantYear ?? plan.year) === (g.plantYear ?? plan.year));
+      if (twin && !window.confirm(`Group ${twin.n} already plants wk ${g.plant} and finishes wk ${ready} — this change will COMBINE the two groups into one.
 
 Combine them?`)) return;
     }
-    const wrap = wrapWk;
-    const acc = { moved: 0, flags: [] };
     setBusy(true);
     for (const vr of g.vars) {
-      const sSpec = seriesOf(vr.variety) || {};
-      const rooted = /^(URC|CALL)/i.test(sSpec.form || "");
-      const p = wrap(ready - finWks, readyYear);
-      const sh = rooted ? wrap(p.wk - Math.round(+(sSpec.rooting_weeks ?? 0)), p.yr) : p;
       for (const r of vr.rows) {
-        const { error } = await sb.from("scheduled_crops").update({
-          ready_week: ready, ready_year: readyYear,
-          plant_week: p.wk, plant_year: p.yr, ship_week: sh.wk, ship_year: sh.yr,
-        }).eq("id", r.id);
+        const { error } = await sb.from("scheduled_crops").update({ ready_week: ready, ready_year: readyYear }).eq("id", r.id);
         if (error) { window.alert(`⚠ Week change did NOT save (${error.message}) — the group is unchanged in the database.`); setBusy(false); return; }
       }
-      const its = [...new Set(vr.rows.map(r => r.item_name))];
-      const old = vr.rows[0];
-      const res = await rippleTasks(sb, plan.id, its,
-        { ship: sh.wk, shipYear: sh.yr, plant: p.wk, plantYear: p.yr },
-        { wk: old?.ship_week, yr: old?.ship_year ?? old?.plant_year }, displayName);
-      acc.moved += res.moved; acc.flags.push(...res.flags);
+    }
+    // guideline follows the group: recipe finish weeks = this group's plant→ready span
+    if (g.plant != null) {
+      const span = absWkNum(readyYear, ready) - absWkNum(g.plantYear ?? readyYear, g.plant);
+      if (span >= 0 && span < 80 && Math.round(+recipe?.crop_weeks) !== span) {
+        await sb.from("crop_recipes").update({ crop_weeks: span, updated_by: displayName || "planner" }).eq("id", recipeId);
+        setRecipe(rc => (rc ? { ...rc, crop_weeks: span } : rc));
+      }
     }
     try {
       const items = [...new Set(g.rows.map(r => r.item_name))];
       for (const it of items) {
         await sb.from("item_change_log").insert({ plan_id: plan.id, item_name: it,
           change_type: "group_ready_change",
-          detail: { group: g.n, ready: `${readyYear}w${ready}`, note: "chain re-derived from recipe (family page group knob)" },
+          detail: { group: g.n, ready: `${readyYear}w${ready}`, note: "finish set directly — plant + ship untouched; recipe guideline follows the group (8/13 timing rule)" },
           changed_by: displayName || null, source: "family-page" });
       }
     } catch { /* audit must not block */ }
-    const pNew = wrap(ready - finWks, readyYear);
-    setFlashKey(`${pNew.yr}|${pNew.wk}|${readyYear}|${ready}`);
-    setRipple(acc.moved || acc.flags.length ? acc : null);
+    setFlashKey(`${g.plantYear ?? "?"}|${g.plant ?? "?"}|${readyYear}|${ready}`);
     setBusy(false); setTick(t => t + 1);
   }
 
@@ -992,11 +1007,19 @@ Combine the groups?`)) return;
         { wk: old?.ship_week, yr: old?.ship_year ?? old?.plant_year }, displayName);
       acc.moved += res.moved; acc.flags.push(...res.flags);
     }
+    // guideline follows the group (8/13 timing rule): finish weeks = new plant→ready span
+    if (g.ready != null) {
+      const span = absWkNum(g.readyYear ?? y, g.ready) - absWkNum(y, w);
+      if (span >= 0 && span < 80 && Math.round(+recipe?.crop_weeks) !== span) {
+        await sb.from("crop_recipes").update({ crop_weeks: span, updated_by: displayName || "planner" }).eq("id", recipeId);
+        setRecipe(rc => (rc ? { ...rc, crop_weeks: span } : rc));
+      }
+    }
     try {
       for (const it of [...new Set(g.rows.map(r => r.item_name))]) {
         await sb.from("item_change_log").insert({ plan_id: plan.id, item_name: it,
           change_type: "group_plant_change",
-          detail: { group: g.n, plant: `${y}w${w}`, note: "plant date set directly — finish untouched (family page)" },
+          detail: { group: g.n, plant: `${y}w${w}`, note: "plant date set directly — finish untouched; recipe guideline follows the group (8/13 timing rule)" },
           changed_by: displayName || null, source: "family-page" });
       }
     } catch { /* audit must not block */ }
@@ -1539,6 +1562,7 @@ Combine the groups?`)) return;
       o.plants += plants;
       if (r.broker && !o.broker) { o.broker = r.broker; o.supplier = r.supplier || null; }
       if (r.liner_unit_cost != null && o.price == null) o.price = +r.liner_unit_cost;
+      if (r.prop_method && !o.prop) o.prop = r.prop_method;   // form fallback when the series has none
     });
     const specs = Object.values(agg).map(l => {
       const v = vmap[l.varietyId] || {};
@@ -1560,7 +1584,9 @@ Combine the groups?`)) return;
         farm: farmOf(supplier, recipe?.crop_name, recipe?.plant_class === "perennial", q?.origin),
         price: l.price ?? (q ? +q.landed : null),
         material: q?.material || null,
-        form: seriesOf(l.varietyName)?.form || q?.form_class || null,
+        // series form → row prop method → quote class: an (unassigned) series must
+        // not skip URC/CALL 100s rounding (Caleb 8/13, 9" fiber geraniums)
+        form: seriesOf(l.varietyName)?.form || l.prop || q?.form_class || null,
       };
     });
     const noBroker = specs.filter(l => !l.broker).map(l => l.varietyName);
@@ -2145,7 +2171,12 @@ Combine the groups?`)) return;
                           {!!vr.benches.size && <div style={{ fontSize: 9.5, fontWeight: 500, color: C.muted, fontFamily: "ui-monospace,Menlo,monospace" }}>{[...vr.benches].sort().join(" ")}</div>}
                         </td>
                         <td style={{ ...td, color: C.muted, fontSize: 11 }}>{s?.series_name || "—"}</td>
-                        <td style={td}><span style={{ fontFamily: "ui-monospace,Menlo,monospace", fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 5, background: /CALL/.test(s?.form || "") ? C.amberBg : C.chip, color: /CALL/.test(s?.form || "") ? C.amber : C.green }}>{s?.form || "—"}</span></td>
+                        {(() => {   // series form when set; else the rows' prop method (muted = inherited)
+                          const inh = !s?.form ? vr.rows.map(r => r.prop_method).find(Boolean) : null;
+                          const f = s?.form || inh;
+                          return <td style={td}><span title={inh ? "from the rows' prop method — set the form on the series (recipe editor) to make it official" : undefined}
+                            style={{ fontFamily: "ui-monospace,Menlo,monospace", fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 5, opacity: inh ? 0.65 : 1, background: /CALL/.test(f || "") ? C.amberBg : C.chip, color: /CALL/.test(f || "") ? C.amber : C.green }}>{f || "—"}</span></td>;
+                        })()}
                         <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", color: C.muted }} title="what this color was planned for in 2026 — frozen reference">{vr.ref26 ? vr.ref26.toLocaleString() : "—"}</td>
                         <td title={soldShort ? `sold ${(vr.ref26 - vr.sold).toLocaleString()} short of the '26 plan` : undefined}
                           style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", color: soldShort ? "#d94f3d" : undefined, fontWeight: soldShort ? 800 : undefined }}>{vr.sold ? vr.sold.toLocaleString() : "—"}</td>
@@ -2167,15 +2198,22 @@ Combine the groups?`)) return;
                           const mult = +(sSp.order_multiple || 0);
                           let orderQty = mult > 1 && plants > 0 ? Math.ceil(plants / mult) * mult : plants;
                           // URC/CALL hard rule: 100 minimum per color, ordered in 100s — the same
-                          // rounding the lock-in engine applies
-                          if (plants > 0 && /^(URC|CALL)/i.test(sSp.form || "")) orderQty = Math.max(100, Math.ceil(orderQty / 100) * 100);
+                          // rounding the lock-in engine applies. The series' form when it has one,
+                          // else the rows' prop method, else the locked quote's class — an
+                          // (unassigned) series must not silently skip the rounding (Caleb 8/13,
+                          // 9" fiber geraniums drafting 3,588 instead of 3,600)
+                          const vv0 = vmap[vr.rows[0]?.variety_id] || {};
+                          const qForm = [vv0.variety_key, ...(vv0.match_aliases || [])].filter(Boolean)
+                            .flatMap(k => quotesByKey[k] || [])[0]?.form_class || "";
+                          const effForm = sSp.form || vr.rows.map(r => r.prop_method).find(Boolean) || qForm;
+                          if (plants > 0 && /^(URC|CALL)/i.test(effForm)) orderQty = Math.max(100, Math.ceil(orderQty / 100) * 100);
                           return (<>
                             <td style={{ ...td, textAlign: "center", fontVariantNumeric: "tabular-nums", color: ppps.length === 1 && ppps[0] === 1 ? C.muted : C.dark, fontWeight: 700 }}
                               title="plants per pot on this color's rows">×{ppps.join("/")}</td>
                             <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}
                               title="plants = pots × ppp">{plants.toLocaleString()}</td>
                             <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 800, color: orderQty !== plants ? C.amber : C.dark }}
-                              title={`what lock-in will order${/^(URC|CALL)/i.test(sSp.form || "") ? " — URC/CALL round up to 100s (min 100)" : ""}${mult > 1 ? ` · sold in ${mult}s` : ""}${orderQty !== plants ? ` · +${(orderQty - plants).toLocaleString()} extra` : ""}`}>
+                              title={`what lock-in will order${/^(URC|CALL)/i.test(effForm) ? " — URC/CALL round up to 100s (min 100)" : ""}${mult > 1 ? ` · sold in ${mult}s` : ""}${orderQty !== plants ? ` · +${(orderQty - plants).toLocaleString()} extra` : ""}`}>
                               {orderQty > 0 ? orderQty.toLocaleString() : "—"}
                             </td>
                           </>);
@@ -2278,17 +2316,18 @@ Combine the groups?`)) return;
                     onCommit={(w, y) => applyGroupPlant(g, w, y)} />
                   {" "}→ ready{" "}
                   <FinishWkInput key={`${g.key}|${g.ready}`} wk={g.ready} yr={g.readyYear ?? g.plantYear} disabled={busy}
-                    title="this group's finish — type a week or 📅 pick a date; the whole group's chain re-derives from the recipe"
+                    title="this group's finish — type a week or 📅 pick a date; plant + ship stay put (the group's dates are the source of truth — the recipe guideline follows)"
                     onCommit={(w, y) => applyGroupReady(g, `${String(y % 100).padStart(2, "0")}${String(w).padStart(2, "0")}`)} />
                 </span>
                 <span style={{ flex: 1 }} />
-                {(() => {   // drift referee: does the actual plant week agree with ready − recipe crop weeks? (year-wrap aware)
+                {(() => {   // quiet guideline reference — the GROUP's dates are the source of truth
+                  // (8/13 timing rule); this just notes what the recipe's finish weeks would say
                   const expRaw = g.ready != null && recipe?.crop_weeks != null ? g.ready - Math.round(+recipe.crop_weeks) : null;
                   const exp = expRaw == null ? null : (expRaw <= 0 ? expRaw + 52 : expRaw);
                   return exp != null && g.plant != null && exp !== g.plant
-                    ? <span title={`recipe says plant = ready − ${recipe.crop_weeks} crop wks = wk${exp}; plan says wk${g.plant}`}
-                        style={{ fontSize: 9.5, fontWeight: 800, color: C.amber, background: C.amberBg, borderRadius: 5, padding: "2px 7px" }}>
-                        ⚠ recipe drift {g.plant > exp ? "+" : ""}{g.plant - exp}wk</span>
+                    ? <span title={`recipe guideline (${recipe.crop_weeks}w finish) would plant wk${exp} — this group's dates win; the guideline updates itself when you edit the group's weeks`}
+                        style={{ fontSize: 9.5, fontWeight: 700, color: C.muted, background: "#f0f4ec", borderRadius: 5, padding: "2px 7px" }}>
+                        guide wk{exp}</span>
                     : null;
                 })()}
                 <span style={{ fontSize: 11, color: C.muted }}>{liveVars.length} varieties · {gPots.toLocaleString()} pots</span>
@@ -2367,7 +2406,12 @@ Combine the groups?`)) return;
                               {!!vr.benches.size && <div style={{ fontSize: 9.5, fontWeight: 500, color: C.muted, fontFamily: "ui-monospace,Menlo,monospace" }}>{[...vr.benches].sort().join(" ")}</div>}
                             </td>
                             <td style={{ ...td, color: C.muted, fontSize: 11 }}>{s?.series_name || "—"}</td>
-                            <td style={td}><span style={{ fontFamily: "ui-monospace,Menlo,monospace", fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 5, background: /CALL/.test(s?.form || "") ? C.amberBg : C.chip, color: /CALL/.test(s?.form || "") ? C.amber : C.green }}>{s?.form || "—"}</span></td>
+                            {(() => {   // series form when set; else the rows' prop method (muted = inherited)
+                              const inh = !s?.form ? vr.rows.map(r => r.prop_method).find(Boolean) : null;
+                              const f = s?.form || inh;
+                              return <td style={td}><span title={inh ? "from the rows' prop method — set the form on the series (recipe editor) to make it official" : undefined}
+                                style={{ fontFamily: "ui-monospace,Menlo,monospace", fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 5, opacity: inh ? 0.65 : 1, background: /CALL/.test(f || "") ? C.amberBg : C.chip, color: /CALL/.test(f || "") ? C.amber : C.green }}>{f || "—"}</span></td>;
+                            })()}
                             <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", color: C.muted }} title="what this color was planned for in 2026 — a frozen reference; it does NOT change as you edit or apply the 2027 plan">{vr.ref26 ? vr.ref26.toLocaleString() : "—"}</td>
                             <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{vr.sold ? vr.sold.toLocaleString() : "—"}</td>
                             <td style={{ ...td, minWidth: 90 }}>
@@ -2545,7 +2589,7 @@ Combine the groups?`)) return;
         )}
 
         <div style={{ fontSize: 10.5, color: C.muted, textAlign: "center", marginTop: 4 }}>
-          Sold figures come from the canonical SKU map (item → sku → sales), allocated FIFO across the groups that grew each item — combo-modeled lines included. Qty edits redistribute across bench rows (largest remainder) and log to the item history. ⚠ drift badges = plan weeks disagree with the recipe's chain.
+          Sold figures come from the canonical SKU map (item → sku → sales), allocated FIFO across the groups that grew each item — combo-modeled lines included. Qty edits redistribute across bench rows (largest remainder) and log to the item history. Group ship/plant/ready dates are the source of truth for timing — the recipe's finish weeks are a guideline that follows your group edits (muted "guide" chips just note the difference).
         </div>
 
         {addDoor && (

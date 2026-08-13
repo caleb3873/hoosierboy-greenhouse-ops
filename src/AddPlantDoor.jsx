@@ -31,6 +31,7 @@ function isoWeekMonday(year, week) {
 const yyww = (wk, year) => wk == null ? "—" : `${String(year).slice(2)}${String(wk).padStart(2, "0")}`;
 const FORM_TO_CLASS = f => /^URC/i.test(f || "") ? "urc" : /^(CALL|DIRECT)/i.test(f || "") ? "callused"
   : /^PLUG/i.test(f || "") ? "plug" : /^SEED/i.test(f || "") ? "seed" : null;
+const CLASS_TO_FORM = { urc: "URC", callused: "CALL", plug: "PLUG", liner: "LINER", seed: "SEED", bareroot: "BULB" };
 const titleCase = s => String(s || "").replace(/\b\w/g, ch => ch.toUpperCase());
 function sizePrefix(sizeLabel) {
   let m;
@@ -233,6 +234,46 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
     || (sel.length ? stripCrop(sel[0].crop, sel[0].name) : null)),
     [series, variety, sel]); // eslint-disable-line
 
+  // SERIES gets assigned AT ADD TIME (Caleb 8/13) — pick an existing one or type a new
+  // name; a real series row is created on the recipe with the quote's form + tray
+  // multiple, so the family table stops showing (unassigned) and the URC/CALL 100s
+  // rounding + liner tray multiples work from day one. Default guess: the matched
+  // series, else the variety's first word (names lead with the series).
+  const [seriesIn, setSeriesIn] = useState("");
+  useEffect(() => {
+    const vn = variety?.variety || (sel.length ? stripCrop(sel[0].crop, sel[0].name) : "");
+    if (!vn) { setSeriesIn(""); return; }
+    const named = series.filter(s => s.series_name !== "(unassigned)")
+      .sort((a, b) => b.series_name.length - a.series_name.length)
+      .find(s => vn.toLowerCase().startsWith(s.series_name.toLowerCase()));
+    setSeriesIn(named ? named.series_name : titleCase(vn.split(" ")[0] || ""));
+  }, [variety, sel, series]);
+
+  async function ensureSeries(rec, name, sampleQuote) {
+    const nm = titleCase(String(name || "").trim());
+    if (!nm) return null;
+    const qForm = CLASS_TO_FORM[sampleQuote?.form_class] || CLASS_TO_FORM[sampleQuote?.form] || null;
+    const cells = +(sampleQuote?.cells || 0) >= 20 ? +sampleQuote.cells : null;
+    const { data: ex } = await sb.from("crop_recipe_series").select("*").eq("recipe_id", rec.id).ilike("series_name", nm).limit(1);
+    if (ex?.length) {   // fill the blanks only — an established series spec is not overwritten here
+      const upd = {};
+      if (!ex[0].form && qForm) upd.form = qForm;
+      if (!ex[0].order_multiple && cells && !/^(URC|CALL)/.test(qForm || "")) upd.order_multiple = cells;
+      if (Object.keys(upd).length) {
+        await sb.from("crop_recipe_series").update({ ...upd, updated_at: new Date().toISOString() }).eq("id", ex[0].id);
+        return { ...ex[0], ...upd };
+      }
+      return ex[0];
+    }
+    const { data: ins, error } = await sb.from("crop_recipe_series").insert({
+      recipe_id: rec.id, series_name: nm, form: qForm,
+      order_multiple: qForm && !/^(URC|CALL)/.test(qForm) ? cells : null,
+    }).select("*").single();
+    if (error) return null;   // the series must never block the add itself
+    setSeries(sr => [...sr, ins]);
+    return ins;
+  }
+
   // single-add: best quote (pinned broker first, then cheapest) for the chosen variety
   useEffect(() => {
     if (!recipe || !variety || !series.length) { setQuote(null); return; }
@@ -273,11 +314,11 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
     // ready week; plant/ship fill in once the recipe gets crop weeks on the family page
     if (recipe?.crop_weeks == null) return { readyWk, readyYear, weeksUnknown: true };
     const p = wrapWk(readyWk - Math.round(+recipe.crop_weeks), readyYear);
-    const rooted = /^(URC|CALL)/i.test(sMatch?.form || "");
+    const rooted = /^(URC|CALL)/i.test(sMatch?.form || CLASS_TO_FORM[quote?.form_class] || "");
     const root = rooted ? Math.round(+(sMatch?.rooting_weeks ?? 0)) : 0;
     const s = wrapWk(p.wk - root, p.year);
     return { readyWk, readyYear, plant: p, ship: s, rooted, root };
-  }, [recipe, sMatch, mode, readyDate, readyWkIn, planYear]);
+  }, [recipe, sMatch, quote, mode, readyDate, readyWkIn, planYear]);
 
   // pots-per-unit for a not-yet-created size follows the house convention (4.5" sells in
   // flats of 10, everything else 1) so the pot math holds even before the recipe exists
@@ -337,22 +378,25 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
   }
 
   // one item = one write set: plant row + decision + tasks + history
-  async function writeItem(v, recipeRow, unitsIn, nameOverride) {
-    const sm = sMatchFor(v.variety);
+  async function writeItem(v, recipeRow, unitsIn, nameOverride, smOverride) {
+    const sm = smOverride || sMatchFor(v.variety);
     // crop weeks may be unknown for a fresh catalog stub — then plant/ship stay null (filled
     // when the recipe gets weeks); the row still lands with its ready week
     const cw = recipeRow.crop_weeks != null ? Math.round(+recipeRow.crop_weeks) : null;
     const readyYr = chain.readyYear ?? planYear;
-    const rooted = /^(URC|CALL)/i.test(sm?.form || "");
-    const root = rooted ? Math.round(+(sm?.rooting_weeks ?? 0)) : 0;
-    const p = cw != null ? wrapWk(chain.readyWk - cw, readyYr) : null;
-    const s = p ? wrapWk(p.wk - root, p.year) : null;
     const fc = FORM_TO_CLASS(sm?.form);
-    let qq = sb.from("broker_prices").select("broker,supplier,landed").eq("variety_key", v.variety_key).order("landed");
+    let qq = sb.from("broker_prices").select("broker,supplier,form_class,landed").eq("variety_key", v.variety_key).order("landed");
     if (fc) qq = qq.eq("form_class", fc);
     const { data: quotes } = await qq.limit(5);
     const best = quotes?.length
       ? ((sm?.pinned_broker && quotes.find(x => x.broker === sm.pinned_broker)) || quotes[0]) : null;
+    // form: the series' when it has one, else the quote's class — the row must carry a
+    // prop method either way, or ordering skips the URC/CALL rounding (Caleb 8/13)
+    const effForm = sm?.form || CLASS_TO_FORM[best?.form_class] || null;
+    const rooted = /^(URC|CALL)/i.test(effForm || "");
+    const root = rooted ? Math.round(+(sm?.rooting_weeks ?? 0)) : 0;
+    const p = cw != null ? wrapWk(chain.readyWk - cw, readyYr) : null;
+    const s = p ? wrapWk(p.wk - root, p.year) : null;
     const name = nameOverride || `${sizePrefix(recipeRow.size_label)} ${v.crop_name} ${v.variety}`.toUpperCase();
     const { data: clash } = await sb.from("scheduled_crops").select("id").eq("plan_id", plan.id).eq("item_name", name).limit(1);
     if (clash?.length) return { name, skipped: true };
@@ -374,7 +418,7 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
       // the recipe gets crop weeks on the family page
       plant_week: p?.wk ?? chain.readyWk, plant_year: p?.year ?? (chain.readyYear ?? planYear),
       ship_week: s?.wk ?? p?.wk ?? chain.readyWk, ship_year: s?.year ?? p?.year ?? (chain.readyYear ?? planYear),
-      prop_method: sm?.form || null, prop_tray_id: sm?.prop_tray_id || null,
+      prop_method: effForm, prop_tray_id: sm?.prop_tray_id || null,
       broker: best?.broker || sm?.pinned_broker || null,
       supplier: best?.supplier || sm?.pinned_supplier || null,
       liner_unit_cost: best?.landed != null ? +best.landed : null,
@@ -392,6 +436,15 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
       decided_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     }, { onConflict: "plan_id,item_name" });
     if (e2) throw new Error(`${name}: ${e2.message}`);
+    try {   // the typed number IS the projection (Caleb 8/13): the family total follows the
+      // add automatically — no second entry on the family page or in the walkthrough
+      const { data: ft } = await sb.from("family_targets").select("planned_pots").eq("plan_id", plan.id).eq("recipe_id", recipeRow.id).maybeSingle();
+      await sb.from("family_targets").upsert({
+        plan_id: plan.id, recipe_id: recipeRow.id,
+        planned_pots: (+(ft?.planned_pots) || 0) + uPots,
+        decided_by: displayName || "planner", decided_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+      }, { onConflict: "plan_id,recipe_id" });
+    } catch { /* the projection bump must never block the add */ }
     if (unitsIn > 0 && p) {   // tasks need a plant week — a weeks-unknown stub gets them once the recipe has crop weeks
       const tasks = [];
       if (rooted) tasks.push({
@@ -430,8 +483,9 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
     setBusy(true); setErr("");
     try {
       const rec = destId ? recipes.find(r => r.id === destId) : await resolveRecipe(variety.crop_name, sizeSel);
+      const sRow = await ensureSeries(rec, seriesIn, quote);   // series assigned at add time (8/13)
       // single add honors the edited item name — same write set as the family path
-      const res = await writeItem(variety, rec, u, itemName.trim());
+      const res = await writeItem(variety, rec, u, itemName.trim(), sRow);
       if (res.skipped) { setErr(`"${res.name}" already exists in ${plan.name} — open it instead, or change the name.`); setBusy(false); return; }
       onCreated?.(res.name);
       onClose();
@@ -444,9 +498,10 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
     const added = [], skipped = [];
     try {
       const rec = destId ? recipes.find(r => r.id === destId) : await resolveRecipe(cropName, sizeSel);
+      const sRow = await ensureSeries(rec, seriesIn, sel[0]?.best);   // one family = one series, assigned at add time (8/13)
       for (const c of sel) {
         const v = await ensureVariety(c);
-        const res = await writeItem(v, rec, u);
+        const res = await writeItem(v, rec, u, undefined, sRow);
         (res.skipped ? skipped : added).push(res.name);
       }
       if (famPerennial !== (rec.plant_class === "perennial")) {
@@ -498,6 +553,20 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
               </div>
             </div>
           )}
+        </div>
+      )}
+      {/* SERIES — assigned right here (Caleb 8/13): pick an existing one or type a new
+          name; the row is created on the recipe with the quote's form + tray multiple */}
+      {sizeSel && (
+        <div style={{ marginTop: 5, display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".5px", color: C.muted, flex: "none" }}>Series</span>
+          <input list="apd-series" value={seriesIn} onChange={e => setSeriesIn(e.target.value)}
+            placeholder="pick or type — assigned on add"
+            title="the series this plant belongs to — created on the recipe if it's new (form + sell-multiple come from the quote); blank = leave unassigned"
+            style={{ flex: 1, padding: "5px 8px", borderRadius: 7, border: `1.5px solid ${C.creamBr}`, fontSize: 12, fontWeight: 700, fontFamily: FONT }} />
+          <datalist id="apd-series">
+            {series.filter(s => s.series_name !== "(unassigned)").map(s => <option key={s.id} value={s.series_name} />)}
+          </datalist>
         </div>
       )}
     </div>
@@ -730,7 +799,14 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
               <span style={{ fontFamily: MONO, fontSize: 9.5, color: C.muted }}>← broker_prices</span>
             </div>
             <div style={rrow}><span style={rk}>Prop</span>
-              <span style={{ flex: 1 }}><b>{sMatch?.form || "—"}</b>{sMatch?.rooting_weeks != null && /^(URC|CALL)/i.test(sMatch?.form || "") ? ` · root ${sMatch.rooting_weeks}w` : ""}{sMatch?.series_name ? ` · ${sMatch.series_name} series` : ""}</span>
+              <span style={{ flex: 1 }}>
+                {sMatch?.form
+                  ? <><b>{sMatch.form}</b>{sMatch?.rooting_weeks != null && /^(URC|CALL)/i.test(sMatch.form) ? ` · root ${sMatch.rooting_weeks}w` : ""}</>
+                  : quote?.form_class
+                  ? <><b>{CLASS_TO_FORM[quote.form_class] || quote.form_class.toUpperCase()}</b> <span style={{ color: C.muted, fontSize: 11 }}>(from the quote — lands on the series at confirm)</span></>
+                  : <b>—</b>}
+                {(seriesIn || sMatch?.series_name) ? ` · ${seriesIn || sMatch.series_name} series` : ""}
+              </span>
               <span style={{ fontFamily: MONO, fontSize: 9.5, color: C.muted }}>← recipe series</span>
             </div>
             <div style={rrow}><span style={rk}>Chain</span>
