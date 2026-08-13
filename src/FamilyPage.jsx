@@ -262,10 +262,12 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
         const { data: pos } = await sb.from("purchase_orders")
           .select("id,order_number,status,ship_date,ship_week,broker,farm")
           .eq("plan_id", plan.id).in("status", ["draft", "sent", "pending", "confirmed", "ordered"]);
-        if (pos?.length && vids.length) {
+        if (pos?.length) {
+          // lines are stamped with their source FAMILY at lock-in — match on that,
+          // not variety (combo families share varieties with mono orders)
           const { data: pls } = await sb.from("purchase_order_lines")
             .select("purchase_order_id,variety_id,form,status")
-            .in("purchase_order_id", pos.map(o => o.id)).in("variety_id", vids);
+            .in("purchase_order_id", pos.map(o => o.id)).eq("recipe_id", recipeId);
           const mine = (pls || []).filter(l => l.status === "active");
           const byOrd = {};
           mine.forEach(l => {
