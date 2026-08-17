@@ -539,7 +539,7 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
               <select value={recipe.id} onChange={e => e.target.value === "__new__" ? newFamilyHere() : setDestId(e.target.value)}
                 title="pick which family this plant lands in — or start a new one (annual vs perennial programs stay separate)"
                 style={{ marginLeft: 4, padding: "2px 5px", borderRadius: 6, border: `1px solid ${C.light}`, fontSize: 11, fontWeight: 800, fontFamily: FONT, cursor: "pointer", maxWidth: 240 }}>
-                {recipes.map(r => <option key={r.id} value={r.id}>{r.display_name || `${r.size_label} ${r.crop_name}`}{r.plant_class === "perennial" ? " 🌲" : ""}</option>)}
+                {recipes.map(r => <option key={r.id} value={r.id}>{(r.display_name || `${r.size_label} ${r.crop_name}`).toUpperCase()}{r.plant_class === "perennial" ? " 🌲" : ""}</option>)}
                 <option value="__new__">＋ new family at this size…</option>
               </select>
               <span style={{ color: C.muted, marginLeft: 6 }}>{recipe.crop_weeks != null ? `· crop ${recipe.crop_weeks}w` : "· crop weeks set later"}</span>

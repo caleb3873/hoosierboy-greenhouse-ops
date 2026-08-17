@@ -2809,7 +2809,9 @@ function SalesVsPlanTab({ plan }) {
         const { data } = await sb.from("crop_recipes").select("id,crop_name,size_label,plant_class,display_name").in("id", ids.slice(i, i + 200));
         recs.push(...(data || []));
       }
-      setFamList(recs.map(r => ({ id: r.id, label: r.display_name || `${r.size_label} ${r.crop_name}`, n: counts[r.id] }))
+      // ALL CAPS — case variants made twin-looking families ("4.5" Pot" vs "4.5" POT",
+      // Caleb 8/17); uppercase everywhere so case can never read as a different family
+      setFamList(recs.map(r => ({ id: r.id, label: (r.display_name || `${r.size_label} ${r.crop_name}`).toUpperCase(), n: counts[r.id] }))
         .sort((a, b) => plantOrder(a.label, b.label)));
       const perRec = new Set(recs.filter(r => r.plant_class === "perennial").map(r => r.id));
       setPerItems(new Set(Object.entries(itemRec).filter(([, rid]) => perRec.has(rid)).map(([n]) => n)));
@@ -3700,7 +3702,10 @@ function SalesVsPlanTab({ plan }) {
               <tbody>
                 {fams.map(f => {
                   const st = f.planned > 0 ? Math.round(f.sold / f.planned * 100) : null;
-                  const proj = f.id ? famTgts[f.id]?.planned_pots : null;
+                  const saved = f.id ? famTgts[f.id]?.planned_pots : null;
+                  // no projection typed yet → the live PLANNED pots stand in as the
+                  // projection (Caleb 8/17: "have planned fill in the projection number")
+                  const proj = saved ?? (f.id && f.pots > 0 ? f.pots : null);
                   const delta = proj != null ? (f.pots || 0) - proj : null;   // allocated (live planned POTS) vs the static projection
                   return (
                     <tr key={f.id || "un"} onClick={() => f.id && setShowFamily(f.id)}
@@ -3739,11 +3744,13 @@ function SalesVsPlanTab({ plan }) {
                           defaultValue={proj ?? ""}
                           placeholder="—"
                           inputMode="numeric" disabled={!f.id}
-                          title="the family projection in POTS — static reference agreed at the family grain; allocate colors on the family page (disperse evenly / by '26 sales, or type per color)"
-                          onBlur={e => { const s = e.target.value.trim(); if (s === "" || +s.replace(/[^0-9.]/g, "") === proj) return; saveFamilyTarget(f, s); }}
+                          title={saved != null
+                            ? "the family projection in POTS — static reference agreed at the family grain; allocate colors on the family page (disperse evenly / by '26 sales, or type per color)"
+                            : "no projection typed yet — showing the live planned pots as the projection; type a number to set it explicitly"}
+                          onBlur={e => { const s = e.target.value.trim(); if (s === "" || +s.replace(/[^0-9.]/g, "") === saved) return; saveFamilyTarget(f, s); }}
                           onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
                           style={{ width: 72, padding: "3px 6px", textAlign: "right", borderRadius: 6, fontSize: 12.5, fontFamily: "inherit", boxSizing: "border-box",
-                            border: `1.5px solid ${proj != null ? COLORS.light : COLORS.border}`, fontWeight: proj != null ? 700 : 400 }} />
+                            border: `1.5px solid ${saved != null ? COLORS.light : COLORS.border}`, fontWeight: saved != null ? 700 : 400, opacity: saved == null && proj != null ? 0.75 : 1 }} />
                         {delta != null && delta !== 0 && (
                           <div style={{ fontSize: 10, fontWeight: 700, color: COLORS.amber, marginTop: 2 }}
                             title="allocated across colors vs the projection — open the family page to disperse the remainder">
