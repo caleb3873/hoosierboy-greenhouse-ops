@@ -3276,14 +3276,18 @@ export function TaskViewer({ task, onBack, onAppend, readOnly = true }) {
               style={{ flex: 1, padding: "12px 0", borderRadius: 10, border: "none", background: note.trim() ? "#1e2d1a" : "#c8d8c0", color: "#c8e6b8", fontSize: 14, fontWeight: 800, cursor: note.trim() ? "pointer" : "default", fontFamily: "inherit" }}>
               Save Note
             </button>
+            <label style={{ flex: 1, padding: "12px 0", borderRadius: 10, border: "1.5px solid #7fb069", background: "#eef6e7", color: "#1e2d1a", fontSize: 14, fontWeight: 800, cursor: uploading ? "default" : "pointer", fontFamily: "inherit", textAlign: "center" }}>
+              {uploading > 0 ? `Uploading… ${uploading}` : "📷 Camera"}
+              {/* Android needs an explicit capture input — the plain picker is library-only there */}
+              <input type="file" accept="image/*" capture="environment" onChange={handlePhoto} style={{ display: "none" }} disabled={uploading > 0} />
+            </label>
             <button onClick={() => fileRef.current?.click()} disabled={uploading > 0}
               style={{ flex: 1, padding: "12px 0", borderRadius: 10, border: "1.5px solid #c8d8c0", background: "#fafcf8", color: "#7a8c74", fontSize: 14, fontWeight: 800, cursor: uploading ? "default" : "pointer", fontFamily: "inherit" }}>
-              {uploading > 0 ? `Uploading… ${uploading}` : "📷 Add Photos"}
+              🖼 Library
             </button>
-            {/* no `capture` + multiple → OS lets you pick many from the library OR take one */}
             <input ref={fileRef} type="file" accept="image/*" multiple onChange={handlePhoto} style={{ display: "none" }} />
           </div>
-          <div style={{ fontSize: 11, color: "#aabba0", marginTop: 6, textAlign: "center" }}>Tap to take a photo or pick several from your camera roll at once.</div>
+          <div style={{ fontSize: 11, color: "#aabba0", marginTop: 6, textAlign: "center" }}>Camera shoots straight in — Library picks several from your roll at once.</div>
         </div>
 
         <button onClick={onBack}
@@ -3484,10 +3488,18 @@ function TaskDetail({ task, onBack, onSave }) {
                 {t.photos.map((p, i) => <TaskPhoto key={i} src={p} size={110} />)}
               </div>
             )}
-            <label style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", boxSizing: "border-box", padding: "15px 16px", borderRadius: 10, border: "2px solid #7fb069", background: "#eef6e7", color: "#1e2d1a", fontSize: 15, fontWeight: 800, cursor: uploadingPhoto ? "default" : "pointer" }}>
-              {uploadingPhoto ? "Uploading…" : "📷 Take / add photos"}
-              <input type="file" accept="image/*" multiple disabled={uploadingPhoto} onChange={handlePhoto} style={{ display: "none" }} />
-            </label>
+            {/* Android's picker never offers the camera without `capture` (Caleb 8/17) —
+                so the camera gets its OWN input; the library one stays multi-select */}
+            <div style={{ display: "flex", gap: 8 }}>
+              <label style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, boxSizing: "border-box", padding: "15px 8px", borderRadius: 10, border: "2px solid #7fb069", background: "#eef6e7", color: "#1e2d1a", fontSize: 15, fontWeight: 800, cursor: uploadingPhoto ? "default" : "pointer" }}>
+                {uploadingPhoto ? "Uploading…" : "📷 Camera"}
+                <input type="file" accept="image/*" capture="environment" disabled={uploadingPhoto} onChange={handlePhoto} style={{ display: "none" }} />
+              </label>
+              <label style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, boxSizing: "border-box", padding: "15px 8px", borderRadius: 10, border: "2px solid #c8d8c0", background: "#fafcf8", color: "#1e2d1a", fontSize: 15, fontWeight: 800, cursor: uploadingPhoto ? "default" : "pointer" }}>
+                🖼 Library
+                <input type="file" accept="image/*" multiple disabled={uploadingPhoto} onChange={handlePhoto} style={{ display: "none" }} />
+              </label>
+            </div>
             <div style={{ fontSize: 12, color: "#7a8c74", marginTop: 6, textAlign: "center" }}>Snap the plant size now — it saves to this task when you go back.</div>
           </Section>
 
@@ -3577,6 +3589,10 @@ function TaskDetail({ task, onBack, onSave }) {
             {(t.photos || []).map((p, i) => (
               <TaskPhoto key={i} src={p} onRemove={() => removePhoto(i)} />
             ))}
+            <label style={{ width: 90, height: 90, borderRadius: 10, border: "2px dashed #7fb069", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: 24, background: uploadingPhoto ? "#f0f5ee" : "#eef6e7" }}>
+              {uploadingPhoto ? "..." : "📷"}
+              <input type="file" accept="image/*" capture="environment" onChange={handlePhoto} style={{ display: "none" }} disabled={uploadingPhoto} />
+            </label>
             <label style={{ width: 90, height: 90, borderRadius: 10, border: "2px dashed #c8d8c0", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: 24, color: "#7a8c74", background: uploadingPhoto ? "#f0f5ee" : "#fafcf8" }}>
               {uploadingPhoto ? "..." : "+"}
               <input type="file" accept="image/*" multiple onChange={handlePhoto} style={{ display: "none" }} disabled={uploadingPhoto} />
