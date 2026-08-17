@@ -258,7 +258,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
       const { data: ftRow } = await sb.from("family_targets").select("*").eq("plan_id", plan.id).eq("recipe_id", recipeId).maybeSingle();
       setFamTgt(ftRow || null);
       const { data: sc } = await sb.from("scheduled_crops")
-        .select("id,item_name,variety_id,qty_pots,ppp,pack_size,plants_per_unit,qty_plants_ordered,plant_week,plant_year,ship_week,ship_year,ready_week,ready_year,broker,supplier,liner_unit_cost,prop_method,bench_id,is_combo_component,notes")
+        .select("id,item_name,variety_id,qty_pots,ppp,pack_size,plants_per_unit,qty_plants_ordered,plant_week,plant_year,ship_week,ship_year,ready_week,ready_year,broker,supplier,liner_unit_cost,prop_method,bench_id,is_combo_component,notes,group_tag")
         .eq("plan_id", plan.id).eq("recipe_id", recipeId).not("is_combo_component", "is", true).limit(2000);
       setRows(sc || []);
       // combo children — the per-component layer (multi-species containers). Loaded by
@@ -408,8 +408,10 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
       // ONE ROUND = ONE WEEK OF PLANTING (Caleb 8/10): everything planting in the
       // same week is the SAME group, whatever its variety or finish week. Finish
       // shows as a range when series diverge — it must never split a planting week.
-      const k = `${r.plant_year ?? "?"}|${r.plant_week ?? "?"}|${r.ready_year ?? "?"}|${r.ready_week ?? "?"}`;
-      const g = (m[k] = m[k] || { key: k, plant: r.plant_week, plantYear: r.plant_year,
+      // A group_tag pins rows into their OWN group even on matching dates
+      // (Caleb 8/17: House 23 material stays its own group beside House 21's).
+      const k = `${r.plant_year ?? "?"}|${r.plant_week ?? "?"}|${r.ready_year ?? "?"}|${r.ready_week ?? "?"}|${r.group_tag ?? ""}`;
+      const g = (m[k] = m[k] || { key: k, plant: r.plant_week, plantYear: r.plant_year, tag: r.group_tag || null,
         ready: r.ready_week, readyYear: r.ready_year, shipMin: null, shipMax: null, rows: [] });
       g.rows.push(r);
       if (r.ready_week != null) g.ready = Math.min(g.ready ?? 99, r.ready_week);
@@ -894,9 +896,9 @@ Switch the series to ${nf}? Order quantities re-round to ${/^(URC|CALL)/.test(nf
     const readyYear = digits.length <= 2 ? (g.readyYear ?? plan.year ?? 2027) : 2000 + +digits.slice(0, 2);
     if (!ready || ready > 53) return;
     if (readyInPast(readyYear, ready)) return;
-    {   // merging two groups takes a yes: same plant AND same finish = one group
+    {   // merging two groups takes a yes: same plant AND same finish AND same tag = one group
       const twin = displayGroups.find(o => o.key !== g.key && o.ready === ready && (o.readyYear ?? "?") === (readyYear ?? "?")
-        && o.plant === g.plant && (o.plantYear ?? plan.year) === (g.plantYear ?? plan.year));
+        && o.plant === g.plant && (o.plantYear ?? plan.year) === (g.plantYear ?? plan.year) && (o.tag || "") === (g.tag || ""));
       if (twin && !window.confirm(`Group ${twin.n} already plants wk ${g.plant} and finishes wk ${ready} — this change will COMBINE the two groups into one.
 
 Combine them?`)) return;
@@ -999,7 +1001,7 @@ The rows leave the plan entirely (other groups keep theirs). This can't be undon
   async function applyGroupPlant(g, w, y) {
     if (!w || w > 53) return;
     const twin = displayGroups.find(o => o.key !== g.key && o.plant === w && (o.plantYear ?? plan.year) === y
-      && o.ready === g.ready && (o.readyYear ?? "?") === (g.readyYear ?? "?"));
+      && o.ready === g.ready && (o.readyYear ?? "?") === (g.readyYear ?? "?") && (o.tag || "") === (g.tag || ""));
     if (twin && !window.confirm(`Group ${twin.n} already plants wk ${w} with the SAME finish (wk ${g.ready ?? "?"}) — moving this group there will COMBINE them into one group.
 
 Same plant date with different treatment stays separate on its own; this merge only happens because the finishes match too.
@@ -2384,6 +2386,8 @@ Combine the groups?`)) return;
                 onClick={() => setOpenG({ ...openG, [g.key]: !open })}>
                 <span style={{ color: C.muted, fontSize: 11, transform: open ? "rotate(90deg)" : "none", display: "inline-block", transition: "transform .15s" }}>▶</span>
                 <b style={{ fontSize: 12 }}>Group {g.n}</b>
+                {g.tag && <span title="pinned as its own group — stays separate even when its dates match another group"
+                  style={{ fontSize: 9.5, fontWeight: 800, color: "#2b6cb0", background: "#e8f0fb", borderRadius: 5, padding: "2px 7px" }}>📌 {g.tag}</span>}
                 {flashKey === g.key && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.amber, background: C.amberBg, borderRadius: 5, padding: "2px 7px" }}>you just edited this — groups number by finish order</span>}
                 <span style={{ fontSize: 11, color: C.muted, pointerEvents: pageLocked ? "none" : undefined }} onClick={e => e.stopPropagation()}>
                   ship{" "}
