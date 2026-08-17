@@ -8165,7 +8165,10 @@ function SrcMatcher({ sb, onChanged }) {
 }
 
 // ── Draft broker orders — created by 🛒 Lock in order on family pages ────────
-const fnameSafe = t => String(t || "").replace(/"/g, "in").replace(/[\/\\:*?<>|]/g, "-").trim();
+// filenames must survive every browser save-dialog + Windows + email gateways:
+// quotes → "in", forbidden chars → "-", and NOTHING non-ASCII (em dashes killed
+// extensions on some saves → files opened in Numbers; Caleb 8/17 — never again)
+const fnameSafe = t => String(t || "").replace(/"/g, "in").replace(/[\/\\:*?<>|]/g, "-").replace(/[^\x20-\x7e]/g, "-").replace(/-{2,}/g, "-").trim();
 async function recomputeOrderTotals(sb, orderId) {
   const { data } = await sb.from("purchase_order_lines").select("qty_ordered,ext_price,status").eq("purchase_order_id", orderId);
   const act = (data || []).filter(x => x.status === "active");
@@ -8384,8 +8387,8 @@ function DraftOrderCard({ o, oLines, families, onOpenFamily, onChanged, startOpe
     ws["!cols"] = [{ wch: 12 }, { wch: 34 }, { wch: 8 }, { wch: 9 }, { wch: 9 }, { wch: 11 }, { wch: 30 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Order");
-    const famTag = families?.length === 1 ? ` — ${fnameSafe(families[0].label)}` : "";
-    XLSX.writeFile(wb, `${o.order_number}${famTag}.xlsx`);
+    const famTag = families?.length === 1 ? ` - ${fnameSafe(families[0].label)}` : "";
+    XLSX.writeFile(wb, `${o.order_number}${famTag}.xlsx`, { bookType: "xlsx" });
     // downloading = it's going to the broker → the draft becomes PENDING (awaiting ack)
     if (o.status === "draft") {
       await sb.from("purchase_orders").update({ status: "pending", date_ordered: new Date().toISOString().slice(0, 10) }).eq("id", o.id);
@@ -8569,8 +8572,8 @@ function OrdersTab({ plan }) {
     const wkTag = wks.length ? ` wk${Math.min(...wks)}${Math.max(...wks) !== Math.min(...wks) ? "-" + Math.max(...wks) : ""}` : "";
     const chosenLines = lines.filter(l => selOrds.has(l.purchase_order_id));
     const fams = [...new Set(chosenLines.map(l => (famMap[`line:${l.id}`] || famMap[l.variety_id])?.label).filter(Boolean))];
-    const famTag = fams.length === 1 ? ` — ${fnameSafe(fams[0])}` : "";
-    XLSX.writeFile(wb, `${brokers} orders${wkTag}${famTag} (${chosen.length}).xlsx`);
+    const famTag = fams.length === 1 ? ` - ${fnameSafe(fams[0])}` : "";
+    XLSX.writeFile(wb, fnameSafe(`${brokers} orders${wkTag}${famTag} (${chosen.length})`) + ".xlsx", { bookType: "xlsx" });
     // downloading = they're going to the broker → drafts become PENDING (awaiting ack)
     const draftIds = chosen.filter(o => o.status === "draft").map(o => o.id);
     if (draftIds.length) {
