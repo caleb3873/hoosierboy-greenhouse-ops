@@ -239,6 +239,9 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
   const [mixOpen, setMixOpen] = useState(false);       // 🎨 color-mix pop-out explorer
   const [poInfo, setPoInfo] = useState({ orders: [], lines: 0 });  // orders locked in on this family
   const [editOverride, setEditOverride] = useState(false);         // 🔓 deliberately editing locked orders
+  // the order-lock shield blocks EDITS, never SIGHT (Caleb 8/17: "we need to be able
+  // to still see rounds") — view controls re-enable themselves under the shield
+  const pageLocked = (poInfo?.orders?.length || 0) > 0 && !editOverride;
 
   lockedRef.current = locked;
   useEffect(() => {
@@ -2124,6 +2127,7 @@ Combine the groups?`)) return;
           {[["colors", "🎨 By color — season totals"], ["rounds", "📅 By round"]].map(([m, label]) => (
             <button key={m} onClick={() => setViewMode(m)}
               style={{ padding: "6px 13px", borderRadius: 8, fontWeight: 800, fontSize: 12, cursor: "pointer", fontFamily: FONT,
+                pointerEvents: "auto",   // pure view switch — stays alive under the order-lock shield
                 border: `1.5px solid ${viewMode === m ? C.light : C.border}`,
                 background: viewMode === m ? "#eef6e8" : "#fff", color: viewMode === m ? C.dark : C.muted }}>
               {label}
@@ -2229,7 +2233,7 @@ Combine the groups?`)) return;
                           {comboItem && (
                             <button onClick={e => { e.stopPropagation(); setOpenCombo(o => ({ ...o, [comboItem]: !o[comboItem] })); }}
                               title="the components in this combination — per-basket counts, prop time, arrival, order totals"
-                              style={{ marginLeft: 5, border: `1px solid ${openCombo[comboItem] ? C.light : C.border}`, background: openCombo[comboItem] ? "#eef6e8" : "#fff", color: C.dark, borderRadius: 6, fontSize: 9.5, fontWeight: 800, padding: "1px 6px", cursor: "pointer", fontFamily: FONT }}>
+                              style={{ marginLeft: 5, pointerEvents: "auto", border: `1px solid ${openCombo[comboItem] ? C.light : C.border}`, background: openCombo[comboItem] ? "#eef6e8" : "#fff", color: C.dark, borderRadius: 6, fontSize: 9.5, fontWeight: 800, padding: "1px 6px", cursor: "pointer", fontFamily: FONT }}>
                               {openCombo[comboItem] ? "▾" : "▸"} {Object.keys(comboByItem[comboItem]).length} components
                             </button>
                           )}
@@ -2374,13 +2378,14 @@ Combine the groups?`)) return;
             <div key={g.key} id={`fam-grp-${g.key}`} style={{ ...card,
               boxShadow: flashKey === g.key ? "0 0 0 3px #e8b53a66" : "none", transition: "box-shadow 1.2s" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px", cursor: "pointer",
+                pointerEvents: "auto",   // expanding a round is SIGHT, not an edit — alive under the order-lock shield
                 background: flashKey === g.key ? "#fdf3dc" : C.cream, transition: "background 1.2s",
                 borderBottom: open ? `1px solid ${C.border}` : "none", borderRadius: open ? "12px 12px 0 0" : 12 }}
                 onClick={() => setOpenG({ ...openG, [g.key]: !open })}>
                 <span style={{ color: C.muted, fontSize: 11, transform: open ? "rotate(90deg)" : "none", display: "inline-block", transition: "transform .15s" }}>▶</span>
                 <b style={{ fontSize: 12 }}>Group {g.n}</b>
                 {flashKey === g.key && <span style={{ fontSize: 9.5, fontWeight: 800, color: C.amber, background: C.amberBg, borderRadius: 5, padding: "2px 7px" }}>you just edited this — groups number by finish order</span>}
-                <span style={{ fontSize: 11, color: C.muted }} onClick={e => e.stopPropagation()}>
+                <span style={{ fontSize: 11, color: C.muted, pointerEvents: pageLocked ? "none" : undefined }} onClick={e => e.stopPropagation()}>
                   ship{" "}
                   <FinishWkInput key={`s${g.key}|${g.shipMin}`} wk={g.shipMin} yr={g.shipMinYr ?? g.plantYear ?? plan.year ?? 2027} disabled={busy} showDate={false} width={50}
                     amber={g.shipMinAbs !== g.shipMaxAbs} placeholder={g.shipMinAbs !== g.shipMaxAbs ? "mixed" : "YYWW"}
@@ -2418,12 +2423,12 @@ Combine the groups?`)) return;
                   };
                   if (cap == null) return (
                     <button className="no-print" onClick={editCap} title="set this group's bench cap (last season's bench load) to get a live over/under readout"
-                      style={{ background: "none", border: `1px dashed ${C.border}`, borderRadius: 6, color: C.muted, fontSize: 9.5, fontWeight: 700, padding: "1px 7px", cursor: "pointer", fontFamily: FONT }}>＋ cap</button>
+                      style={{ background: "none", border: `1px dashed ${C.border}`, borderRadius: 6, color: C.muted, fontSize: 9.5, fontWeight: 700, padding: "1px 7px", cursor: "pointer", fontFamily: FONT, pointerEvents: pageLocked ? "none" : undefined }}>＋ cap</button>
                   );
                   const d = gPots - cap;
                   return (
                     <span onClick={editCap} title="vs last season's bench cap — click to change"
-                      style={{ display: "inline-flex", alignItems: "center", gap: 5, cursor: "pointer", fontSize: 10.5, fontWeight: 800,
+                      style={{ display: "inline-flex", alignItems: "center", gap: 5, cursor: "pointer", fontSize: 10.5, fontWeight: 800, pointerEvents: pageLocked ? "none" : undefined,
                         background: d > 0 ? "#fbe9e5" : d < 0 ? "#eef6e8" : C.chip, border: `1.5px solid ${d > 0 ? "#e5b0a5" : d < 0 ? C.light : C.border}`,
                         borderRadius: 8, padding: "2px 9px", color: d > 0 ? "#c0392b" : d < 0 ? "#2e7d32" : C.muted, fontVariantNumeric: "tabular-nums" }}>
                       cap {cap.toLocaleString()}
@@ -2433,8 +2438,8 @@ Combine the groups?`)) return;
                 })()}
                 <button className="no-print" disabled={busy} onClick={e => { e.stopPropagation(); deleteGroup(g); }}
                   title="delete this whole group — its rows leave the plan"
-                  style={{ background: "none", border: "none", cursor: "pointer", fontSize: 12, padding: 0, opacity: 0.55 }}>🗑</button>
-                <span onClick={e => e.stopPropagation()} style={{ display: "inline-flex", gap: 5, alignItems: "center" }}>
+                  style={{ background: "none", border: "none", cursor: "pointer", fontSize: 12, padding: 0, opacity: 0.55, pointerEvents: pageLocked ? "none" : undefined }}>🗑</button>
+                <span onClick={e => e.stopPropagation()} style={{ display: "inline-flex", gap: 5, alignItems: "center", pointerEvents: pageLocked ? "none" : undefined }}>
                   {dupG?.key === g.key ? (
                     <>
                       <input autoFocus value={dupG.wk} onChange={e => setDupG({ key: g.key, wk: e.target.value })}
@@ -2482,7 +2487,7 @@ Combine the groups?`)) return;
                               {comboItem && (
                                 <button onClick={e => { e.stopPropagation(); setOpenCombo(o => ({ ...o, [comboItem]: !o[comboItem] })); }}
                                   title="the components in this combination — per-basket counts, prop time, arrival, order totals"
-                                  style={{ marginLeft: 5, border: `1px solid ${openCombo[comboItem] ? C.light : C.border}`, background: openCombo[comboItem] ? "#eef6e8" : "#fff", color: C.dark, borderRadius: 6, fontSize: 9.5, fontWeight: 800, padding: "1px 6px", cursor: "pointer", fontFamily: FONT }}>
+                                  style={{ marginLeft: 5, pointerEvents: "auto", border: `1px solid ${openCombo[comboItem] ? C.light : C.border}`, background: openCombo[comboItem] ? "#eef6e8" : "#fff", color: C.dark, borderRadius: 6, fontSize: 9.5, fontWeight: 800, padding: "1px 6px", cursor: "pointer", fontFamily: FONT }}>
                                   {openCombo[comboItem] ? "▾" : "▸"} {Object.keys(comboByItem[comboItem]).length} components
                                 </button>
                               )}
