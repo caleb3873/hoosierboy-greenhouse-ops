@@ -8685,16 +8685,23 @@ function OrdersTab({ plan }) {
         const active = oLines.filter(l => l.status === "active");
         const cancelled = oLines.filter(l => l.status === "cancelled");
         const isOpen = expanded === o.id;
+        // confirmed reads GREEN at a glance (Caleb 8/17: "hard to differentiate what's
+        // confirmed or not") — pending keeps an amber edge until the ack lands
+        const conf = o.status === "confirmed";
         return (
           <div key={o.id} style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
             <input type="checkbox" checked={selOrds.has(o.id)} title="select for a combined XLSX"
               onChange={e => setSelOrds(sv => { const n = new Set(sv); if (e.target.checked) n.add(o.id); else n.delete(o.id); return n; })}
               style={{ marginTop: 22, width: 17, height: 17, flex: "0 0 auto", accentColor: "#7fb069" }} />
-          <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 16, flex: 1 }}>
+          <div style={{ background: conf ? "#f2f9ee" : COLORS.card, borderRadius: 10, padding: 16, flex: 1,
+            border: conf ? "1.5px solid #7fb069" : `1px solid ${COLORS.border}`,
+            borderLeft: conf ? "6px solid #2e7d32" : o.status === "pending" ? `6px solid ${COLORS.amber}` : `1px solid ${COLORS.border}` }}>
             <div onClick={() => setExpanded(isOpen ? null : o.id)} style={{ cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <div>
                 <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 20, color: COLORS.dark }}>
                   Order #{o.order_number} <span style={{ fontSize: 13, color: COLORS.muted, fontWeight: 400 }}>· wk{o.ship_week} · {o.ship_date}</span>
+                  {conf && <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 800, background: "#2e7d32", color: "#fff", borderRadius: 7, padding: "3px 9px", verticalAlign: "middle", fontFamily: "'DM Sans', sans-serif" }}>✓ CONFIRMED</span>}
+                  {o.status === "pending" && <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 800, background: COLORS.amber, color: "#fff", borderRadius: 7, padding: "3px 9px", verticalAlign: "middle", fontFamily: "'DM Sans', sans-serif" }}>⏳ AWAITING ACK</span>}
                 </div>
                 <div style={{ fontSize: 12, color: COLORS.muted, marginTop: 2 }}>
                   {o.broker} → {o.supplier} · contact {o.contact} · ordered {o.date_ordered} · {o.terms}
