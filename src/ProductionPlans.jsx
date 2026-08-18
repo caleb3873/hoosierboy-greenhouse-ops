@@ -1834,13 +1834,14 @@ function YearOverYearTab({ plan }) {
     // ivy/vinca GERANIUMS, which are real sellable varieties, not the vine component
     const COMPONENT = /^(?!.*\bgeranium\b).*(?:\bVINE\b|\bIVY\b|HEDERA|MU[EH]+LENBECKIA|CAREX)/i;
       const [xw, tot, wkRows, sc, tgRes] = await Promise.all([
-        srcPageAll(sb, "sales_sku_map", "sku,plan_item_name"),
+        srcPageAll(sb, "sales_sku_map", "sku,plan_item_name,hist_pack"),
         srcPageAll(sb, "sales_totals", "sku,units,revenue"),
         srcPageAll(sb, "sales_weekly", "sku,wk,units"),
         srcPageAll(sb, "scheduled_crops", "id,item_name,notes,broker,supplier,qty_pots,ppp,plants_per_unit,ready_week,ship_week,combo_parent_id,is_combo_component", f => f.eq("plan_id", plan.id)),
         sb.from("plan_targets").select("*").eq("plan_id", plan.id),
       ]);
-      const skuToItem = {}; xw.forEach(x => { if (x.plan_item_name) skuToItem[x.sku] = x.plan_item_name; });
+      const skuToItem = {}, skuHist = {};
+      xw.forEach(x => { if (x.plan_item_name) skuToItem[x.sku] = x.plan_item_name; if (+x.hist_pack > 0) skuHist[x.sku] = +x.hist_pack; });
       const parentIds = new Set(sc.map(r => r.combo_parent_id).filter(Boolean));
       const withParents = new Set(sc.filter(r => parentIds.has(r.id)).map(r => r.item_name));
       const plan27 = {}, ppp = {}, ppu = {}, ready = {}, newSet = new Set(), srcSet = new Set();
@@ -1860,8 +1861,11 @@ function YearOverYearTab({ plan }) {
       const weeks = [...new Set(wkRows.map(w => +w.wk))].sort((a, b) => a - b);
       const wIdx = Object.fromEntries(weeks.map((w, i) => [w, i]));
       const sold = {}, rev = {}, wkly = {};
-      for (const t of tot) { const it = skuToItem[t.sku]; if (!it) continue; sold[it] = (sold[it] || 0) + +t.units; rev[it] = (rev[it] || 0) + +t.revenue; }
-      for (const w of wkRows) { const it = skuToItem[w.sku]; if (!it) continue; (wkly[it] = wkly[it] || Array(weeks.length).fill(0))[wIdx[+w.wk]] += +w.units; }
+      // hist_pack pin (8/18): units sold under an old pack scale by hist/current so the
+      // downstream ×pack conversion lands on TRUE pots (1 QT items were 4.5" 10-packs)
+      const scaleOf = (sku, it) => { const hp = skuHist[sku]; return hp ? hp / Math.max(1, ppu[it] || 1) : 1; };
+      for (const t of tot) { const it = skuToItem[t.sku]; if (!it) continue; sold[it] = (sold[it] || 0) + +t.units * scaleOf(t.sku, it); rev[it] = (rev[it] || 0) + +t.revenue; }
+      for (const w of wkRows) { const it = skuToItem[w.sku]; if (!it) continue; (wkly[it] = wkly[it] || Array(weeks.length).fill(0))[wIdx[+w.wk]] += +w.units * scaleOf(w.sku, it); }
       setBase({ plan27, ppp, ppu, ready, newSet, srcSet, sold, rev, wkly, weeks });
       setTargets(Object.fromEntries((tgRes.data || []).map(t => [t.item_name, t])));
     })();

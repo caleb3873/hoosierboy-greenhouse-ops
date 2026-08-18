@@ -320,18 +320,25 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
       // '26 sales via the CANONICAL join: item_name → sales_sku_map → sku → sales_totals
       // (SKU is the durable match key — combo-modeled lines like "GERANIUM COMBO RED" attach correctly)
       const itemNames = [...new Set((sc || []).map(r => r.item_name))];
-      let soldMap = {}, tgs = [];
+      let soldMap = {}, soldPots = {}, tgs = [];
       if (itemNames.length) {
         // walkthrough decisions (Sales vs Plan 2027 targets) — the dig-in surface must greet you with them.
         // current_units = the plan quantity captured when the decision was made = the frozen '26 baseline.
         ({ data: tgs } = await sb.from("plan_targets").select("item_name,target_units,current_units,decision,decided_by,applied_at,applied_units").eq("plan_id", plan.id).in("item_name", itemNames));
         setTmap(Object.fromEntries((tgs || []).map(t => [t.item_name, t])));
-        const { data: maps } = await sb.from("sales_sku_map").select("sku,plan_item_name").in("plan_item_name", itemNames);
+        const { data: maps } = await sb.from("sales_sku_map").select("sku,plan_item_name,hist_pack").in("plan_item_name", itemNames);
         const skuToItem = Object.fromEntries((maps || []).map(m => [m.sku, m.plan_item_name]));
+        // hist_pack = the pack those units were SOLD in ('26) — items converted to a new
+        // pack (1 QT cases of 8, ex-4.5" flats of 10) must not re-read history at the new pack
+        const skuHist = Object.fromEntries((maps || []).filter(m => +m.hist_pack > 0).map(m => [m.sku, +m.hist_pack]));
         const skus = Object.keys(skuToItem);
         if (skus.length) {
           const { data: st } = await sb.from("sales_totals").select("sku,units").in("sku", skus);
-          (st || []).forEach(s => { const it = skuToItem[s.sku]; soldMap[it] = (soldMap[it] || 0) + (+s.units || 0); });
+          (st || []).forEach(s => {
+            const it = skuToItem[s.sku];
+            if (skuHist[s.sku]) soldPots[it] = (soldPots[it] || 0) + (+s.units || 0) * skuHist[s.sku];
+            else soldMap[it] = (soldMap[it] || 0) + (+s.units || 0);
+          });
         }
       }
       // sales arrive in SELLABLE UNITS (cases for 4.5") — convert to POTS here, once,
@@ -342,6 +349,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
         packByItem[r.item_name] = Math.max(packByItem[r.item_name] || 1, ppu);
       });
       Object.keys(soldMap).forEach(it => { soldMap[it] = soldMap[it] * (packByItem[it] || 1); });
+      Object.keys(soldPots).forEach(it => { soldMap[it] = (soldMap[it] || 0) + soldPots[it]; });   // hist-pack skus arrive as pots already
       setSoldByItem(soldMap);
       // Frozen "Planned '26" reference — what each item was planned for going into the projection.
       // Source: plan_targets.current_units, now pinned to POTS (grain migration 8/4 converted the
