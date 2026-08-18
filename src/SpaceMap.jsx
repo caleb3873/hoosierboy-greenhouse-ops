@@ -11,9 +11,12 @@ const C = { dark: "#1e2d1a", light: "#7fb069", cream: "#c8e6b8", muted: "#7a8c74
 const FONT = "'DM Sans', sans-serif";
 
 const CLASSES = [
-  ["tray45", '4.5" trays'], ["fiber_lg", 'Fiber LG (12")'], ["fiber_sm", 'Fiber SM / 9"'],
+  ["tray45", '4.5" trays'], ["qt", "1 QT (8s)"], ["fiber_lg", 'Fiber LG (12")'], ["fiber_sm", 'Fiber SM / 9"'],
   ["pot11", '11"'], ["pot10", '10"'], ["canyon14", '14" canyon'], ["basket", "🧺 baskets"],
 ];
+// "qt" is a FILTER lens, not a capacity class: quarts share tray45 slots (8-packs in
+// the same footprint as 10-pack staggers), so all capacity math stays tray45
+const capClassOf = k => (k === "qt" ? "tray45" : k);
 const QN = ["02","03","04","05","06","07","08","09","10","11","12","13","14","15","16","17","18","19","20","21","22","23","25"];
 const HOUSES = [
   { key: "BWS", label: "West Side", benchLike: "BWS%", vertical: true, banks: [["South row", /^BWSS/, true], ["North row (09–16 ⅓)", /^BWSN/, true]], lineLike: ["BWSH%"] },
@@ -205,7 +208,7 @@ export default function SpaceMap({ plan: fixedPlan }) {
     const it = unplaced[itemKey];
     if (!it) return;
     const itemName = `${it.item} (wk ${it.wk ?? "?"})`;
-    const k = it.cls || cls;
+    const k = it.cls || capClassOf(cls);
     const cap = capOf(bench, k);
     if (cap == null) { window.alert(`No ${k} capacity number for ${bench.code} — add it to the chart first.`); return; }
     // basket lines are FIXED spacing (Caleb 8/13): a 10" line is always a 10" line —
@@ -384,7 +387,7 @@ export default function SpaceMap({ plan: fixedPlan }) {
 
   // ── a bench drawn as a bench: vertical column, capacity front and center ──
   const BenchCol = ({ b }) => {
-    const k = cls;
+    const k = capClassOf(cls);
     const cap = capOf(b, k);
     const info = byBench[b.id];
     const used = info?.byClass[k] || 0;
@@ -443,7 +446,7 @@ export default function SpaceMap({ plan: fixedPlan }) {
 
   // ── wide bench card for the big houses (stacked vertically, walk down) ──
   const BenchWide = ({ b }) => {
-    const k = cls;
+    const k = capClassOf(cls);
     const cap = capOf(b, k);
     const info = byBench[b.id];
     const used = info?.byClass[k] || 0;
@@ -528,7 +531,10 @@ export default function SpaceMap({ plan: fixedPlan }) {
   };
 
   const poolList = Object.entries(unplaced)
-    .filter(([, o]) => o.cls === cls && (!poolQ || o.item.toLowerCase().includes(poolQ.toLowerCase())))
+    .filter(([, o]) => (cls === "qt"
+      ? /^1 QT/.test(String(o.item).toUpperCase())
+      : cls === "tray45" ? o.cls === "tray45" && !/^1 QT/.test(String(o.item).toUpperCase()) : o.cls === cls)
+      && (!poolQ || o.item.toLowerCase().includes(poolQ.toLowerCase())))
     .sort(([, a], [, b]) => a.item.localeCompare(b.item) || (a.wk || 0) - (b.wk || 0));
 
   const Toggle = ({ k, label }) => (
