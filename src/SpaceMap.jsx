@@ -30,6 +30,9 @@ export function classOfItem(name) {
   if (/^POT 11|^11"/.test(n)) return "pot11";
   if (/^POT 10|^10"/.test(n)) return "pot10";
   if (/^4\.5"|^1801|^FLAT/.test(n)) return "tray45";
+  // perennial quarts (SP470DTS deep, 8-pack carriers) bench like 4.5 trays for now —
+  // give them their own chart class if the carrier density proves different
+  if (/^1 QT/.test(n)) return "tray45";
   return null;
 }
 const TYPE_LABEL = { full8: "8'", full6: "6'", full4: "4'", third8: "⅓·8'", third4: "⅓·4'", wall4: "4' wall", mid8: "8' mid", basket_line: "line", low_line: "low" };

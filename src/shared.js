@@ -329,6 +329,9 @@ export function sizeLabelForItem(name) {
 // alpha == cultivar → series → color.
 export function sizeSortVal(label) {
   const s = String(label || "").trim();
+  // volume sizes: the deep quart (SP470DTS) sits right after 4.5"; gallons ~8" class
+  if (/^1\s*QT/i.test(s)) return 4.7;
+  if (/^1\s*GAL/i.test(s)) return 8;
   let m = s.match(/^(?:pot\s+)?([\d.]+)\s*"/i);          // 4.5" Pot · POT 7.5" · 9" Pan
   if (m) return +m[1];
   if (/^fiber/i.test(s)) return 100 + (/lg/i.test(s) ? 2 : 1);
