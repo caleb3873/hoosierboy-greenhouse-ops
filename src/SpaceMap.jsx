@@ -178,7 +178,10 @@ export default function SpaceMap({ plan: fixedPlan }) {
     }
     return ov[k] ?? rule[k] ?? null;
   }
-  const inUnits = (q, k) => k === "tray45" ? Math.ceil(q / 10) : q;
+  // tray45 capacity counts TRAY SLOTS: 4.5" flats hold 10 pots; the quart 8-pack
+  // carriers occupy the SAME slot at 8 pots (Caleb 8/18)
+  const potsPerSlot = name => /^1 QT/.test(String(name || "").toUpperCase()) ? 8 : 10;
+  const inUnits = (q, k, name) => k === "tray45" ? Math.ceil(q / potsPerSlot(name)) : q;
 
   const placedRows = useMemo(() => rows.filter(r => r.placed_at), [rows]);
   const lastYearRows = useMemo(() => rows.filter(r => !r.placed_at), [rows]);
@@ -191,7 +194,7 @@ export default function SpaceMap({ plan: fixedPlan }) {
       a.qty += +r.qty_pots || 0; a.ids.push(r.id);
       if (r.recipe_id && !a.rid) a.rid = r.recipe_id;
       const k = classOfItem(r.item_name) || "other";
-      o.byClass[k] = (o.byClass[k] || 0) + inUnits(+r.qty_pots || 0, k);
+      o.byClass[k] = (o.byClass[k] || 0) + inUnits(+r.qty_pots || 0, k, r.item_name);
     });
     Object.values(m).forEach(o => { o.items = Object.values(o.agg).sort((a, b) => a.name.localeCompare(b.name)); });
     return m;
@@ -220,7 +223,7 @@ export default function SpaceMap({ plan: fixedPlan }) {
     if (otherUnits > 0) { window.alert(`${bench.code} is already holding a different container — one container per bench. Clear it (🧹) or pick another bench.`); return; }
     const free = cap - used;
     if (free <= 0) { window.alert(`${bench.code} is full for this container (${used}/${cap}).`); return; }
-    const freePots = k === "tray45" ? free * 10 : free;
+    const freePots = k === "tray45" ? free * potsPerSlot(it.item) : free;
     const suggested = Math.min(freePots, it.qty);
     const raw = window.prompt(`Place how many of\n${itemName}\non ${bench.code}?\n(${free} ${k === "tray45" ? "tray" : "pot"} spots free · ${it.qty.toLocaleString()} unplaced)`, String(suggested));
     if (raw == null) return;
