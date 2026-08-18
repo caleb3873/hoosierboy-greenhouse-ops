@@ -332,7 +332,7 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
 
   // pots-per-unit for a not-yet-created size follows the house convention (4.5" sells in
   // flats of 10, everything else 1) so the pot math holds even before the recipe exists
-  const inferPPU = sz => /^\s*4\.5"/.test(String(sz || "")) ? 10 : 1;
+  const inferPPU = sz => /^\s*4\.5"/.test(String(sz || "")) ? 10 : /^\s*1\s*QT/i.test(String(sz || "")) ? 8 : 1;
   // item-name prefill whenever the single pick / size changes (stays editable)
   useEffect(() => {
     if (!sizeSel || !variety) return;
