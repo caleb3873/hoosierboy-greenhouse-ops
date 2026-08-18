@@ -32,7 +32,7 @@ export default function SoilWorksheet({ plan }) {
       const page = async (tbl, sel, filt) => { let out = [], f = 0; for (;;) { let q = sb.from(tbl).select(sel).range(f, f + 999); if (filt) q = filt(q); const { data } = await q; out = out.concat(data || []); if (!data || data.length < 1000) break; f += 1000; } return out; };
       const [sc, cn, rc, mx] = await Promise.all([
         page("scheduled_crops", "id,item_name,qty_pots,ppp,plants_per_unit,pack_size,prop_method,container_id,recipe_id,is_combo_component,combo_parent_id", q => q.eq("plan_id", plan.id)),
-        sb.from("containers").select("id,name,fill_volume_cu_ft"),
+        sb.from("containers").select("id,name,fill_volume_cu_ft,cells_per_flat"),
         sb.from("crop_recipes").select("id,default_container_id"),
         sb.from("soil_mixes").select("*").order("name"),
       ]);
@@ -57,8 +57,11 @@ export default function SoilWorksheet({ plan }) {
         const cid = r.container_id || recDef[r.recipe_id];
         const con = cid ? cons[cid] : null;
         if (con && con.fill_volume_cu_ft != null) {
-          const o = byCon[con.id] || (byCon[con.id] = { name: con.name, fill: +con.fill_volume_cu_ft, pots: 0 });
-          o.pots += pots;
+          // multi-cell flats (1801s etc.): rows count PLANTS but the fill is PER FLAT —
+          // divide by cells_per_flat or the soil total runs 18× hot (Caleb caught it 8/18)
+          const cells = +con.cells_per_flat > 1 ? +con.cells_per_flat : 1;
+          const o = byCon[con.id] || (byCon[con.id] = { name: con.name + (cells > 1 ? ` (${cells}-cell flats)` : ""), fill: +con.fill_volume_cu_ft, pots: 0 });
+          o.pots += pots / cells;
         } else if (pots > 0) {
           const key = con ? con.name : "no container assigned";
           missing[key] = (missing[key] || 0) + pots;
