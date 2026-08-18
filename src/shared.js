@@ -300,6 +300,8 @@ export const URGENCY_LEVELS = [
 export function sizeLabelForItem(name) {
   const s = String(name || "").trim().toUpperCase();
   let m;
+  if (/^1\s*QT/.test(s)) return "1 QT";        // perennial deep quarts (SP470DTS)
+  if (/^1\s*GAL/.test(s)) return "1 GAL";
   if ((m = s.match(/^HB\s*(\d+(?:\.\d+)?)/))) return `HB ${m[1]}"`;
   if ((m = s.match(/^POT\s*(\d+(?:\.\d+)?)/))) return `POT ${m[1]}"`;
   if ((m = s.match(/^(\d+(?:\.\d+)?)"\s*POT\b/))) return `POT ${m[1]}"`;

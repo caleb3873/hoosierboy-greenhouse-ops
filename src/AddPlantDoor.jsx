@@ -90,12 +90,22 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
     return { id, crop_name: crop, variety: vname, variety_key: c.key };
   }
 
-  useEffect(() => {   // the size vocabulary — every size we already carry, for the Size dropdown
+  const [conSizes, setConSizes] = useState([]);   // containers ARE the size source of truth (8/18)
+  useEffect(() => {   // the size vocabulary — container-backed sizes first, plus any recipe-only labels
     (async () => {
-      const { data } = await sb.from("crop_recipes").select("size_label").limit(400);
-      setSizeOptions([...new Set((data || []).map(r => r.size_label))].sort((a, b) => sizeSortVal(a) - sizeSortVal(b) || a.localeCompare(b)));
+      const [{ data: recs }, { data: cs }] = await Promise.all([
+        sb.from("crop_recipes").select("size_label").limit(400),
+        sb.from("containers").select("id,size_label,name_prefix").not("size_label", "is", null),
+      ]);
+      setConSizes(cs || []);
+      setSizeOptions([...new Set([...(cs || []).map(c => c.size_label), ...(recs || []).map(r => r.size_label)])]
+        .filter(Boolean).sort((a, b) => sizeSortVal(a) - sizeSortVal(b) || a.localeCompare(b)));
     })();
   }, [sb]); // eslint-disable-line
+  // the SIZE's container supplies the item-name prefix AND the default pot — picking a
+  // size links the pot automatically (Caleb 8/18: "a source of truth if you will")
+  const sizeCon = useMemo(() => conSizes.find(c => c.size_label === sizeSel) || null, [conSizes, sizeSel]);
+  const prefixFor = sz => (conSizes.find(c => c.size_label === sz)?.name_prefix) || sizePrefix(sz);
 
   // material search — the broker catalogs ONLY (39k quote lines, by cultivar/series).
   // If nobody quotes it, it doesn't appear: you can't buy a plant with no supplier.
@@ -326,7 +336,7 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
   // item-name prefill whenever the single pick / size changes (stays editable)
   useEffect(() => {
     if (!sizeSel || !variety) return;
-    setItemName(`${sizePrefix(sizeSel)} ${variety.crop_name} ${variety.variety}`.toUpperCase());
+    setItemName(`${prefixFor(sizeSel)} ${variety.crop_name} ${variety.variety}`.toUpperCase());
   }, [sizeSel, variety]);
 
   const u = Math.max(0, parseInt(units, 10) || 0);
@@ -352,6 +362,7 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
     if (recipes.some(r => r.crop_name?.toUpperCase() === cropId && r.size_label === sizeSel)) { window.alert("A family with that name already exists at this size — pick it from the list instead."); return; }
     const { data: ins, error } = await sb.from("crop_recipes").insert({
       crop_name: cropId, size_label: sizeSel, pots_per_unit: inferPPU(sizeSel), ppp: 1,
+      default_container_id: sizeCon?.id || null,
       display_name: nm.trim(), plant_class: famPerennial ? "perennial" : null,
       updated_by: displayName || "planner",
       seeded_from: { source: "add-door", note: `split from ${cropName} at ${sizeSel} — set crop weeks on the family page` },
@@ -367,6 +378,7 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
     if (existing) return existing;
     const { data: ins, error } = await sb.from("crop_recipes").upsert({
       crop_name: crop, size_label: sizeLabel, pots_per_unit: inferPPU(sizeLabel), ppp: 1,
+      default_container_id: conSizes.find(c => c.size_label === sizeLabel)?.id || null,
       display_name: newFamName.trim() || null,   // optional custom family name (Caleb 7/30)
       updated_by: displayName || "planner",
       seeded_from: { source: "add-door", note: "catalog stub — set crop weeks / prop on the family page" },
@@ -397,7 +409,7 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
     const root = rooted ? Math.round(+(sm?.rooting_weeks ?? 0)) : 0;
     const p = cw != null ? wrapWk(chain.readyWk - cw, readyYr) : null;
     const s = p ? wrapWk(p.wk - root, p.year) : null;
-    const name = nameOverride || `${sizePrefix(recipeRow.size_label)} ${v.crop_name} ${v.variety}`.toUpperCase();
+    const name = nameOverride || `${prefixFor(recipeRow.size_label)} ${v.crop_name} ${v.variety}`.toUpperCase();
     const { data: clash } = await sb.from("scheduled_crops").select("id").eq("plan_id", plan.id).eq("item_name", name).limit(1);
     if (clash?.length) return { name, skipped: true };
     const uPots = unitsIn;   // POTS (one unit, pots) — no × pack
