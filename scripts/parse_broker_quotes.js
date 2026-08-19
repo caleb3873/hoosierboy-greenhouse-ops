@@ -335,19 +335,51 @@ function dedupKey(fn) {
   if (pq) return pq[0].toUpperCase();
   return fn.replace(/\s*\(\d+\)(?=\.xls[xb]?$)/i, '').replace(/\.xls[xb]?$/i, '').toLowerCase().trim();
 }
+// WHOLE-QUOTE REPLACEMENT (Caleb 2026-08-19: "anything that is not on [the new list] that
+// was on it for 2026 is no longer going to be offered — an updated quote replaces the old
+// quote ENTIRELY"). A supplier's new-season list for the same quote category supersedes
+// every older file of that category, even under a different PQ number — otherwise
+// discontinued varieties linger as orderable-looking ghosts (per-variety recency can't
+// catch a variety the new file simply omits). Identity = supplier + category from the
+// filename (the two tokens before the date range); winner = latest quote END date, ties
+// broken by file mtime. Files without a parseable supplier_category_start_end shape are
+// exempt (one-off availability exports etc.).
+function quoteIdentity(fn) {
+  const base = fn.replace(/\.xls[xb]?$/i, '');
+  const parts = base.split('_');
+  const dateOf = t => (String(t).trim().match(/^(\d{4}-\d{2}-\d{2})/) || String(t).trim().match(/^(\d{2}-\d{2}-\d{4})/) || [])[1] || null;
+  const di = parts.findIndex(t => dateOf(t));
+  if (di < 2 || !dateOf(parts[di + 1] || '')) return null;
+  const norm = s => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
+  const end = dateOf(parts[di + 1]);
+  const yyyymmdd = /^\d{4}/.test(end) ? end.replace(/-/g, '') : end.replace(/^(\d{2})-(\d{2})-(\d{4})$/, '$3$1$2');
+  return { key: norm(parts[di - 2]) + '|' + norm(parts[di - 1]), end: +yyyymmdd };
+}
 let all = [];
-const counts = {}, dropped = [];
+const counts = {}, dropped = [], replaced = [];
 for (const [broker, dir] of Object.entries(QUOTE_DIRS)) {
   const files = fs.readdirSync(dir).filter(x => /\.xls[xb]?$/i.test(x) && !x.startsWith('~'))
     .map(fn => ({ fn, mtime: fs.statSync(dir + '/' + fn).mtimeMs }));
   const byKey = {};
   for (const f of files) { const k = dedupKey(f.fn); if (!byKey[k] || f.mtime > byKey[k].mtime) { if (byKey[k]) dropped.push(byKey[k].fn); byKey[k] = f; } else dropped.push(f.fn); }
-  for (const { fn } of Object.values(byKey)) {
+  const byQuote = {};   // broker-scoped: supplier|category -> winning file
+  for (const f of Object.values(byKey)) {
+    const qi = quoteIdentity(f.fn);
+    if (!qi) { (byQuote[Symbol()] = f); f._exempt = true; continue; }
+    const cur = byQuote[qi.key];
+    if (!cur || qi.end > cur._end || (qi.end === cur._end && f.mtime > cur.mtime)) {
+      if (cur) replaced.push(`  ${broker}: "${cur.fn}" → replaced entirely by "${f.fn}"`);
+      f._end = qi.end; byQuote[qi.key] = f;
+    } else replaced.push(`  ${broker}: "${f.fn}" → replaced entirely by "${cur.fn}"`);
+  }
+  const winners = [...Object.values(byKey)].filter(f => f._exempt || Object.values(byQuote).includes(f));
+  for (const { fn } of winners) {
     try { const rows = parseFile(broker, dir + '/' + fn); counts[broker] = (counts[broker] || 0) + rows.length; all = all.concat(rows); }
     catch (e) { console.error('ERR', fn, e.message); }
   }
 }
 if (dropped.length) console.log('deduped (older/duplicate copies skipped):', dropped.length);
+if (replaced.length) console.log(`whole-quote replacement — ${replaced.length} superseded file(s) dropped entirely:\n` + replaced.join('\n'));
 
 // HARD RULE (Caleb 2026-07-29): duplicative quotes WITHIN a broker resolve to the most
 // recently uploaded file — newest file mtime wins per (broker, supplier|form|variety).
