@@ -109,9 +109,12 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
     let children = [];
     if (ids.length) {
       const { data: ch } = await sb.from("scheduled_crops")
-        .select("id,combo_parent_id,variety_id,qty_plants_ordered,liner_unit_cost,broker,supplier,prop_method,prop_tray_id")
+        .select("id,combo_parent_id,variety_id,ppp,qty_plants_ordered,liner_unit_cost,broker,supplier,prop_method,prop_tray_id")
         .in("combo_parent_id", ids);
-      children = ch || [];
+      // component plant counts: explicit order qty when stamped, else parent pots × per-pot
+      // count — kid rows carry qty 0 by design, so without this everything reads 0 (8/19)
+      const parentPots = Object.fromEntries((parents || []).map(p => [p.id, +p.qty_pots || 0]));
+      children = (ch || []).map(c => ({ ...c, qty_plants_ordered: +c.qty_plants_ordered || (parentPots[c.combo_parent_id] || 0) * Math.max(1, Math.round(+c.ppp || 1)) }));
     }
     // prop cost inputs: plug trays + the sticking rate
     const [trayRes, csRes] = await Promise.all([

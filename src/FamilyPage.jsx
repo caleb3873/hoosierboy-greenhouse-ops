@@ -258,7 +258,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
       const { data: ftRow } = await sb.from("family_targets").select("*").eq("plan_id", plan.id).eq("recipe_id", recipeId).maybeSingle();
       setFamTgt(ftRow || null);
       const { data: sc } = await sb.from("scheduled_crops")
-        .select("id,item_name,variety_id,qty_pots,ppp,pack_size,plants_per_unit,qty_plants_ordered,plant_week,plant_year,ship_week,ship_year,ready_week,ready_year,broker,supplier,liner_unit_cost,prop_method,bench_id,is_combo_component,notes,group_tag")
+        .select("id,item_name,variety_id,qty_pots,ppp,pack_size,plants_per_unit,qty_plants_ordered,plant_week,plant_year,ship_week,ship_year,ready_week,ready_year,broker,supplier,liner_unit_cost,prop_method,bench_id,is_combo_component,notes,group_tag,color")
         .eq("plan_id", plan.id).eq("recipe_id", recipeId).not("is_combo_component", "is", true).limit(2000);
       setRows(sc || []);
       // combo children — the per-component layer (multi-species containers). Loaded by
@@ -411,6 +411,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
   // planting groups: cluster parent rows by (plant_week | ship_week), finish order
   const groups = useMemo(() => {
     if (!rows) return [];
+    const comboParentIds = new Set((kids || []).map(k => k.combo_parent_id));
     const m = {};
     rows.forEach(r => {
       // ONE ROUND = ONE WEEK OF PLANTING (Caleb 8/10): everything planting in the
@@ -440,7 +441,10 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
       const byVar = {};
       g.rows.forEach(r => {
         const v = vmap[r.variety_id];
-        const key = v?.variety || r.item_name;
+        // a combo parent shows as the COMBO (its color/name), never its lead component —
+        // clicking it opens the combo's item page (Caleb 8/19)
+        const isCombo = comboParentIds.has(r.id);
+        const key = isCombo ? (r.color ? String(r.color).toUpperCase() : r.item_name) : (v?.variety || r.item_name);
         const o = byVar[key] || (byVar[key] = { variety: key, vkey: v?.variety_key, rows: [], pots: 0,
           liner: null, broker: null, items: new Set(), benches: new Set(), suggested: false });
         o.rows.push(r);
@@ -517,7 +521,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
       });
     });
     return gs;
-  }, [rows, vmap, soldByItem, ref26ByItem, seriesOf, bmap]);
+  }, [rows, kids, vmap, soldByItem, ref26ByItem, seriesOf, bmap]);
 
   // "not returning" tuck: a variety with ZERO pots family-wide and no grow intent
   // (no positive target, no grow decision) leaves the roster — the 2027 view shows
