@@ -65,18 +65,23 @@ export default function FundraiserPlanner() {
     setItems(xs => xs.filter(x => x.id !== it.id));
   };
 
+  // one 2026 item can be split across SEVERAL 2027 items (Caleb 8/19) — each
+  // attachment carries its own unit share; a fresh attach defaults to whatever
+  // of the 2026 row is still unallocated.
+  const allocated = useMemo(() => {
+    const m = {};
+    (items || []).forEach(it => (it.replaces || []).forEach(r => { const k = r.description + "|" + r.size; m[k] = (m[k] || 0) + (+r.units || 0); }));
+    return m;
+  }, [items]);
+
   const attach = (it, row) => {
     const cur = it.replaces || [];
     if (cur.some(r => r.description === row.description && r.size === row.size)) return;
-    saveNow(it.id, { replaces: [...cur, { description: row.description, size: row.size, units: row.units, avg_price: row.avg_price }] });
+    const remainder = Math.max(0, (row.units || 0) - (allocated[row.description + "|" + row.size] || 0));
+    saveNow(it.id, { replaces: [...cur, { description: row.description, size: row.size, units: remainder || row.units, total_units: row.units }] });
   };
   const detach = (it, row) => saveNow(it.id, { replaces: (it.replaces || []).filter(r => !(r.description === row.description && r.size === row.size)) });
-
-  const attachedKeys = useMemo(() => {
-    const s = new Set();
-    (items || []).forEach(it => (it.replaces || []).forEach(r => s.add(r.description + "|" + r.size)));
-    return s;
-  }, [items]);
+  const setShare = (it, row, units) => save(it.id, { replaces: (it.replaces || []).map(r => (r.description === row.description && r.size === row.size) ? { ...r, units: units === "" ? 0 : +units } : r) });
 
   const cats = useMemo(() => {
     const order = [];
@@ -158,8 +163,9 @@ export default function FundraiserPlanner() {
                         <div style={{ marginTop: 6 }}>
                           {(it.replaces || []).map(r => (
                             <div key={r.description + r.size} style={{ display: "flex", gap: 4, fontSize: 10.5, color: C.muted, alignItems: "center" }}>
-                              <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={`${r.description} (${r.size})`}>↳ {r.description}</span>
-                              <b style={{ color: C.dark }}>{r.units}</b>
+                              <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={`${r.description} (${r.size})${r.total_units ? ` — ${r.total_units} sold 2026` : ""}`}>↳ {r.description}</span>
+                              <input type="number" value={r.units ?? ""} onChange={e => setShare(it, r, e.target.value)} title="this item's share of the 2026 units"
+                                style={{ width: 46, border: `1px solid ${C.border}`, borderRadius: 5, padding: "1px 3px", fontSize: 10.5, fontFamily: FONT, fontWeight: 700, color: C.dark, textAlign: "right" }} />
                               <span onClick={() => detach(it, r)} style={{ cursor: "pointer", color: C.red }} title="detach">✕</span>
                             </div>
                           ))}
@@ -200,16 +206,20 @@ export default function FundraiserPlanner() {
           </div>
           <div style={{ overflowY: "auto", flex: 1 }}>
             {filtered.slice(0, 400).map(r => {
-              const used = attachedKeys.has(r.description + "|" + r.size);
+              const got = allocated[r.description + "|" + r.size] || 0;
+              const full = got >= (r.units || 0) && got > 0;
+              const over = got > (r.units || 0);
               return (
                 <div key={r.description + r.size}
                   onClick={() => { if (attachFor) { const it = items.find(x => x.id === attachFor); if (it) attach(it, r); } }}
                   style={{ display: "flex", gap: 6, padding: "4px 6px", borderRadius: 7, fontSize: 11.5, alignItems: "center",
-                           cursor: attachFor ? "pointer" : "default", background: used ? "#f2f8ee" : "transparent",
+                           cursor: attachFor ? "pointer" : "default", background: full ? "#f2f8ee" : got ? "#fdf6e9" : "transparent",
                            borderBottom: `1px solid ${C.chip}` }}>
-                  <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: used ? C.muted : C.dark }} title={r.description}>
-                    {used ? "✓ " : ""}{r.description}
+                  <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: full ? C.muted : C.dark }} title={r.description}>
+                    {full ? "✓ " : ""}{r.description}
                   </span>
+                  {got > 0 && !full && <span style={{ fontSize: 9.5, color: C.amber, fontWeight: 700 }}>{got}/{r.units}</span>}
+                  {over && <span style={{ fontSize: 9.5, color: C.red, fontWeight: 700 }} title="allocated more than 2026 sold">{got}/{r.units}!</span>}
                   <span style={{ color: C.muted, fontSize: 10 }}>{r.size}</span>
                   <b style={{ width: 40, textAlign: "right" }}>{(r.units || 0).toLocaleString()}</b>
                 </div>
