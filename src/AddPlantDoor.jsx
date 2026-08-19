@@ -57,7 +57,8 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
   const [sizeSel, setSizeSel] = useState("");         // chosen SIZE label — the recipe is resolved/stubbed from it
   const [newFamName, setNewFamName] = useState("");   // optional custom name when CREATING a new family
   const [series, setSeries] = useState([]);          // series of the chosen recipe
-  const [quote, setQuote] = useState(null);          // {landed, broker, supplier, alts}
+  const [quotes, setQuotes] = useState([]);           // ALL quotes for the picked variety
+  const [qSel, setQSel] = useState({ broker: "", supplier: "", form: "" });   // broker → supplier → form cascade (Caleb 8/19)
   const [mode, setMode] = useState(initialReadyWk != null ? "week" : "date");
   const [readyDate, setReadyDate] = useState(`${planYear}-04-15`);
   const [readyWkIn, setReadyWkIn] = useState(initialReadyWk != null ? String(initialReadyWk) : "16");
@@ -284,25 +285,39 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
     return ins;
   }
 
-  // single-add: best quote (pinned broker first, then cheapest) for the chosen variety
+  // single-add: fetch EVERY quote for the variety (key + aliases — same set as the
+  // family page), then pick through the broker → supplier → form cascade. Brokers
+  // share suppliers and have exclusive ones, so the pick order is broker-first (8/19).
   useEffect(() => {
-    if (!recipe || !variety || !series.length) { setQuote(null); return; }
+    if (!recipe || !variety || !series.length) { setQuotes([]); return; }
     (async () => {
-      const sm = sMatchFor(variety.variety);
-      const fc = FORM_TO_CLASS(sm?.form);
-      // match by canonical key PLUS hand-locked aliases — the SAME key set the family
-      // page's quote panel uses, so both doors show the same quotes (Caleb 8/19)
-      let qq = sb.from("broker_prices").select("broker,supplier,form_class,form_raw,cells,landed").in("variety_key", [variety.variety_key, ...(variety.match_aliases || [])].filter(Boolean)).order("landed");
-      if (fc) qq = qq.eq("form_class", fc);
-      const { data: quotes } = await qq.limit(10);
-      let best = null;
-      if (quotes?.length) {
-        best = (sm?.pinned_broker && quotes.find(x => x.broker === sm.pinned_broker)) || quotes[0];
-        best = { ...best, alts: quotes.length - 1, pinnedHit: best.broker === sm?.pinned_broker };
-      }
-      setQuote(best);
+      const { data } = await sb.from("broker_prices").select("broker,supplier,form_class,form_raw,cells,landed")
+        .in("variety_key", [variety.variety_key, ...(variety.match_aliases || [])].filter(Boolean))
+        .gt("landed", 0).order("landed").limit(200);
+      setQuotes(data || []);
     })();
   }, [recipe, variety, series, sb]); // eslint-disable-line
+  useEffect(() => {   // defaults: pinned broker (in the series' form when possible) else cheapest
+    if (!quotes.length) { setQSel({ broker: "", supplier: "", form: "" }); return; }
+    const sm = sMatchFor(variety?.variety);
+    const fc = FORM_TO_CLASS(sm?.form);
+    const pick = (sm?.pinned_broker && quotes.find(x => x.broker === sm.pinned_broker && (!fc || x.form_class === fc)))
+      || (sm?.pinned_broker && quotes.find(x => x.broker === sm.pinned_broker))
+      || (fc && quotes.find(x => x.form_class === fc)) || quotes[0];
+    setQSel({ broker: pick.broker, supplier: pick.supplier || "", form: pick.form_class || "" });
+  }, [quotes]); // eslint-disable-line
+  const qBrokers = useMemo(() => [...new Set(quotes.map(x => x.broker))], [quotes]);
+  const qSuppliers = useMemo(() => [...new Set(quotes.filter(x => x.broker === qSel.broker).map(x => x.supplier || ""))], [quotes, qSel.broker]);
+  const qForms = useMemo(() => [...new Set(quotes.filter(x => x.broker === qSel.broker && (x.supplier || "") === qSel.supplier).map(x => x.form_class || ""))], [quotes, qSel]);
+  const pickBroker = b => { const m = quotes.filter(x => x.broker === b); const c = m[0]; setQSel({ broker: b, supplier: c?.supplier || "", form: c?.form_class || "" }); };
+  const pickSupplier = sp => { const m = quotes.filter(x => x.broker === qSel.broker && (x.supplier || "") === sp); setQSel(v => ({ ...v, supplier: sp, form: m[0]?.form_class || "" })); };
+  const quote = useMemo(() => {
+    const m = quotes.filter(x => x.broker === qSel.broker && (x.supplier || "") === qSel.supplier && (x.form_class || "") === qSel.form);
+    if (!m.length) return null;
+    const sm = sMatchFor(variety?.variety);
+    const best = m.reduce((a, b) => ((a.landed ?? 9e9) <= (b.landed ?? 9e9) ? a : b));
+    return { ...best, alts: quotes.length - m.length, pinnedHit: best.broker === sm?.pinned_broker };
+  }, [quotes, qSel, variety]); // eslint-disable-line
 
   // the chain: ready − crop = plant · plant − root = ship (URC/CALL; plug/seed ship at plant).
   // Week input takes "15" (plan year) or YYWW ("2715"); a PAST ready week blocks confirm —
@@ -392,18 +407,21 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
   }
 
   // one item = one write set: plant row + decision + tasks + history
-  async function writeItem(v, recipeRow, unitsIn, nameOverride, smOverride) {
+  async function writeItem(v, recipeRow, unitsIn, nameOverride, smOverride, quoteOverride) {
     const sm = smOverride || sMatchFor(v.variety);
     // crop weeks may be unknown for a fresh catalog stub — then plant/ship stay null (filled
     // when the recipe gets weeks); the row still lands with its ready week
     const cw = recipeRow.crop_weeks != null ? Math.round(+recipeRow.crop_weeks) : null;
     const readyYr = chain.readyYear ?? planYear;
     const fc = FORM_TO_CLASS(sm?.form);
-    let qq = sb.from("broker_prices").select("broker,supplier,form_class,landed").in("variety_key", [v.variety_key, ...(v.match_aliases || [])].filter(Boolean)).order("landed");
-    if (fc) qq = qq.eq("form_class", fc);
-    const { data: quotes } = await qq.limit(5);
-    const best = quotes?.length
-      ? ((sm?.pinned_broker && quotes.find(x => x.broker === sm.pinned_broker)) || quotes[0]) : null;
+    let best = quoteOverride || null;
+    if (!best) {
+      let qq = sb.from("broker_prices").select("broker,supplier,form_class,landed").in("variety_key", [v.variety_key, ...(v.match_aliases || [])].filter(Boolean)).order("landed");
+      if (fc) qq = qq.eq("form_class", fc);
+      const { data: quotes } = await qq.limit(5);
+      best = quotes?.length
+        ? ((sm?.pinned_broker && quotes.find(x => x.broker === sm.pinned_broker)) || quotes[0]) : null;
+    }
     // form: the series' when it has one, else the quote's class — the row must carry a
     // prop method either way, or ordering skips the URC/CALL rounding (Caleb 8/13)
     const effForm = sm?.form || CLASS_TO_FORM[best?.form_class] || null;
@@ -499,7 +517,7 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
       const rec = destId ? recipes.find(r => r.id === destId) : await resolveRecipe(variety.crop_name, sizeSel);
       const sRow = await ensureSeries(rec, seriesIn, quote);   // series assigned at add time (8/13)
       // single add honors the edited item name — same write set as the family path
-      const res = await writeItem(variety, rec, u, itemName.trim(), sRow);
+      const res = await writeItem(variety, rec, u, itemName.trim(), sRow, quote);
       if (res.skipped) { setErr(`"${res.name}" already exists in ${plan.name} — open it instead, or change the name.`); setBusy(false); return; }
       onCreated?.(res.name);
       onClose();
@@ -804,12 +822,24 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
         {!famMode && variety && sizeSel && (
           <div style={{ marginTop: 12, border: `1px solid ${C.creamBr}`, borderRadius: 11, overflow: "hidden", background: C.cream }}>
             <div style={rrow}><span style={rk}>Source</span>
-              <span style={{ flex: 1 }}>{quote
-                ? <>{quote.broker}{quote.supplier ? ` · ${quote.supplier}` : ""} · <b style={{ fontFamily: "ui-monospace,Menlo,monospace", color: /urc|callus/i.test(quote.form_class || "") ? "#a86a10" : "#2b6cb0" }}>{(quote.form_class || "?").toUpperCase()}{quote.cells ? ` ${quote.cells}-cell` : ""}</b> · <b>${(+quote.landed).toFixed(3)}</b>/plant
-                    {quote.pinnedHit ? <span style={{ marginLeft: 6, fontSize: 10, color: C.green, fontWeight: 800 }}>📌 pinned</span>
-                      : sMatch?.pinned_broker ? <span style={{ marginLeft: 6, fontSize: 10, color: C.amber, fontWeight: 800 }}>⚠ pin is {sMatch.pinned_broker}</span> : null}
-                    {quote.alts > 0 && <span style={{ color: C.muted, fontSize: 11 }}> · {quote.alts} alt{quote.alts > 1 ? "s" : ""}</span>}</>
-                : <span style={{ color: C.amber }}>no quote in this form — the supplier exists, match the form on the family page</span>}</span>
+              <span style={{ flex: 1, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                {quotes.length ? <>
+                  <select value={qSel.broker} onChange={e => pickBroker(e.target.value)} style={{ border: `1px solid ${C.creamBr}`, borderRadius: 7, padding: "2px 5px", fontSize: 12, fontFamily: "inherit" }}>
+                    {qBrokers.map(b => <option key={b} value={b}>{b}</option>)}
+                  </select>
+                  <select value={qSel.supplier} onChange={e => pickSupplier(e.target.value)} style={{ border: `1px solid ${C.creamBr}`, borderRadius: 7, padding: "2px 5px", fontSize: 12, fontFamily: "inherit", maxWidth: 170 }}>
+                    {qSuppliers.map(sp => <option key={sp} value={sp}>{sp || "(no supplier)"}</option>)}
+                  </select>
+                  <select value={qSel.form} onChange={e => setQSel(v => ({ ...v, form: e.target.value }))} style={{ border: `1px solid ${C.creamBr}`, borderRadius: 7, padding: "2px 5px", fontSize: 12, fontFamily: "inherit" }}>
+                    {qForms.map(f => <option key={f} value={f}>{(f || "?").toUpperCase()}</option>)}
+                  </select>
+                  {quote
+                    ? <><b style={{ fontFamily: "ui-monospace,Menlo,monospace", color: /urc|callus/i.test(quote.form_class || "") ? "#a86a10" : "#2b6cb0" }}>{quote.cells ? `${quote.cells}-cell` : (quote.form_class || "?").toUpperCase()}</b> · <b>${(+quote.landed).toFixed(3)}</b>/plant
+                        {quote.pinnedHit ? <span style={{ marginLeft: 4, fontSize: 10, color: C.green, fontWeight: 800 }}>📌 pinned</span>
+                          : sMatch?.pinned_broker ? <span style={{ marginLeft: 4, fontSize: 10, color: C.amber, fontWeight: 800 }}>⚠ pin is {sMatch.pinned_broker}</span> : null}</>
+                    : <span style={{ color: C.amber }}>pick a form</span>}
+                </> : <span style={{ color: C.amber }}>no quotes for this variety in the book</span>}
+              </span>
               <span style={{ fontFamily: MONO, fontSize: 9.5, color: C.muted }}>← broker_prices</span>
             </div>
             <div style={rrow}><span style={rk}>Prop</span>
