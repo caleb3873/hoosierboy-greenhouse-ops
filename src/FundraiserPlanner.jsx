@@ -28,14 +28,10 @@ export default function FundraiserPlanner() {
     (async () => {
       const { data } = await sb.from("fundraiser_items").select("*").eq("year", YEAR).order("sort", { ascending: true });
       setItems(data || []);
-      let all = [], off = 0;
-      for (;;) {
-        const { data: s } = await sb.from("sales_totals").select("description,size,units,avg_price").range(off, off + 999);
-        all = all.concat(s || []);
-        if (!s || s.length < 1000) break;
-        off += 1000;
-      }
-      setSales(all.filter(r => r.description));
+      // reference = the REAL fundraiser numbers (Fundraiser Info/FUNDRAISER INFO/
+      // "spring fundraiser items sold 2026.xlsx" → fundraiser_sales), not storewide sales
+      const { data: s } = await sb.from("fundraiser_sales").select("category,description,units").eq("year", 2026).order("units", { ascending: false });
+      setSales((s || []).map(r => ({ description: r.description, size: r.category, units: r.units })));
     })();
   }, [sb]);
 
@@ -115,7 +111,7 @@ export default function FundraiserPlanner() {
       </div>
       <div style={{ display: "flex", gap: 22, margin: "10px 0 16px", fontSize: 14, flexWrap: "wrap" }}>
         <b>{totPlanned.toLocaleString()} planned</b>
-        <span style={{ color: C.muted }}>vs {totLast.toLocaleString()} attached 2026 units</span>
+        <span style={{ color: C.muted }}>vs {totLast.toLocaleString()} matched 2026 fundraiser units</span>
         <span style={{ color: totPlanned - totLast >= 0 ? C.light : C.red, fontWeight: 600 }}>{totPlanned - totLast >= 0 ? "+" : ""}{(totPlanned - totLast).toLocaleString()}</span>
         {totRev > 0 && <span style={{ color: C.muted }}>≈ ${totRev.toLocaleString(undefined, { maximumFractionDigits: 0 })} at entered prices</span>}
         {err && <span style={{ color: C.red }}>⚠ {err}</span>}
@@ -170,7 +166,7 @@ export default function FundraiserPlanner() {
                           <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
                             <button onClick={() => setAttachFor(attachFor === it.id ? null : it.id)}
                               style={{ border: `1px dashed ${attachFor === it.id ? C.amber : C.border}`, background: attachFor === it.id ? "#fdf3e3" : "transparent", borderRadius: 7, padding: "2px 8px", cursor: "pointer", fontFamily: FONT, fontSize: 11, color: attachFor === it.id ? C.amber : C.muted }}>
-                              {attachFor === it.id ? "⬅ click sales rows →" : "⚭ replaces…"}
+                              {attachFor === it.id ? "⬅ click 2026 rows →" : "⚭ matches / replaces…"}
                             </button>
                             <button onClick={() => removeItem(it)} style={{ marginLeft: "auto", border: "none", background: "transparent", cursor: "pointer", color: C.muted, fontSize: 11 }} title="remove item">🗑</button>
                           </div>
@@ -188,8 +184,8 @@ export default function FundraiserPlanner() {
 
         {/* ── 2026 sales reference ── */}
         <div style={{ width: 360, flexShrink: 0, position: "sticky", top: 12, maxHeight: "calc(100vh - 40px)", display: "flex", flexDirection: "column", background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 12 }}>
-          <div style={{ fontFamily: SERIF, fontSize: 17, marginBottom: 6 }}>2026 spring sales</div>
-          <input value={q} onChange={e => setQ(e.target.value)} placeholder="search descriptions…"
+          <div style={{ fontFamily: SERIF, fontSize: 17, marginBottom: 6 }}>2026 fundraiser sales</div>
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="search 2026 fundraiser items…"
             style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: "6px 9px", fontFamily: FONT, fontSize: 13, marginBottom: 6 }} />
           <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 8 }}>
             <span onClick={() => setSizeF("")} style={{ cursor: "pointer", fontSize: 10.5, padding: "2px 7px", borderRadius: 9, background: !sizeF ? C.dark : C.chip, color: !sizeF ? "#fff" : C.muted }}>all</span>
