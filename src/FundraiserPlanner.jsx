@@ -20,6 +20,9 @@ export default function FundraiserPlanner() {
   const [q, setQ] = useState("");
   const [sizeF, setSizeF] = useState("");
   const [attachFor, setAttachFor] = useState(null);   // item id currently attaching
+  const [view, setView] = useState("cards");          // cards | table (one-row-per-item punch-in)
+  const [pcts, setPcts] = useState({});               // per-row +% drafts (input aid, qty is what saves)
+  const [bulkPct, setBulkPct] = useState("");
   const [err, setErr] = useState("");
   const timers = useRef({});
 
@@ -124,6 +127,28 @@ export default function FundraiserPlanner() {
 
   const lastYrOf = it => (it.replaces || []).reduce((s, r) => s + (r.units || 0), 0);
 
+  // "sorted by size": pull a pot/basket size out of the item name (he renames names
+  // to carry size), falling back to the sun/size tag, else the category
+  const sizeOf = it => {
+    const src = `${it.name || ""} ${it.sun || ""}`.toUpperCase();
+    const m = src.match(/(\d{1,2}(?:\.\d)?)\s*(?:"|”|IN\b|INCH)/);
+    const hb = /\bHB\b|BASKET/.test(src) && !/MARKET/.test(src);
+    if (m) return `${m[1]}"${hb ? " HB" : ""}`;
+    return it.category || "OTHER";
+  };
+  const sizeGroups = useMemo(() => {
+    const g = {};
+    (items || []).forEach(it => { const k = sizeOf(it); (g[k] = g[k] || []).push(it); });
+    const num = k => { const m = k.match(/^(\d+(?:\.\d)?)/); return m ? +m[1] : 999; };
+    return Object.entries(g).sort((a, b) => num(a[0]) - num(b[0]) || a[0].localeCompare(b[0]))
+      .map(([k, xs]) => [k, xs.sort((a, b) => (a.name || "").localeCompare(b.name || ""))]);
+  }, [items]);
+  const applyPct = (it, val) => {
+    setPcts(ps => ({ ...ps, [it.id]: val }));
+    const ly = lastYrOf(it);
+    if (val !== "" && ly > 0) save(it.id, { qty: Math.round(ly * (1 + (+val) / 100)) });
+  };
+
   if (!items) return <div style={{ padding: 40, fontFamily: FONT, color: C.muted }}>Loading the worksheet…</div>;
 
   const totPlanned = items.reduce((s, x) => s + (+x.qty || 0), 0);
@@ -136,6 +161,12 @@ export default function FundraiserPlanner() {
       <div style={{ display: "flex", alignItems: "baseline", gap: 16, flexWrap: "wrap" }}>
         <h1 style={{ fontFamily: SERIF, fontSize: 30, margin: 0 }}>🎗 Fundraiser {YEAR}</h1>
         <span style={{ color: C.muted, fontSize: 13 }}>slash-sheet worksheet — type quantities, attach what each item replaces from 2026</span>
+        <span style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
+          {[["cards", "🖼 Cards"], ["table", "☰ Table"]].map(([v, lbl]) => (
+            <button key={v} onClick={() => setView(v)}
+              style={{ border: `1px solid ${view === v ? C.dark : C.border}`, background: view === v ? C.dark : "#fff", color: view === v ? "#fff" : C.muted, borderRadius: 8, padding: "4px 12px", cursor: "pointer", fontFamily: FONT, fontSize: 12.5, fontWeight: 600 }}>{lbl}</button>
+          ))}
+        </span>
       </div>
       <div style={{ display: "flex", gap: 22, margin: "10px 0 16px", fontSize: 14, flexWrap: "wrap" }}>
         <b>{totPlanned.toLocaleString()} planned</b>
@@ -146,8 +177,50 @@ export default function FundraiserPlanner() {
       </div>
 
       <div style={{ marginRight: 384 }}>
+        {/* ── TABLE VIEW: one row per item, sorted by size — review LY, punch 2027 qty (manual or +% of LY) + spring price ── */}
+        {view === "table" && (
+          <div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10, fontSize: 12.5, color: C.muted }}>
+              apply <input type="number" value={bulkPct} onChange={e => setBulkPct(e.target.value)} placeholder="%" style={{ width: 54, border: `1px solid ${C.border}`, borderRadius: 7, padding: "3px 6px", fontFamily: FONT, fontSize: 12.5 }} />
+              % over last year to every matched row
+              <button onClick={() => { if (bulkPct === "") return; items.forEach(it => { if (lastYrOf(it) > 0) applyPct(it, bulkPct); }); }}
+                style={{ border: `1px solid ${C.light}`, background: C.chip, borderRadius: 7, padding: "3px 10px", cursor: "pointer", fontFamily: FONT, fontSize: 12 }}>apply to all</button>
+            </div>
+            <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "44px 1fr 90px 64px 84px 84px 90px", gap: 8, padding: "8px 12px", fontSize: 10.5, fontWeight: 700, color: C.muted, letterSpacing: .4, borderBottom: `2px solid ${C.light}` }}>
+                <span></span><span>ITEM</span><span style={{ textAlign: "right" }}>2026 SOLD</span><span style={{ textAlign: "right" }}>+%</span><span style={{ textAlign: "right" }}>2027 QTY</span><span style={{ textAlign: "right" }}>2027 $</span><span style={{ textAlign: "right" }}>REVENUE</span>
+              </div>
+              {sizeGroups.map(([size, xs]) => (
+                <div key={size}>
+                  <div style={{ padding: "6px 12px", background: C.chip, fontFamily: SERIF, fontSize: 14, borderBottom: `1px solid ${C.border}` }}>
+                    {size} <span style={{ fontFamily: FONT, fontSize: 11, color: C.muted }}>· {xs.reduce((t, x) => t + lastYrOf(x), 0).toLocaleString()} LY → {xs.reduce((t, x) => t + (+x.qty || 0), 0).toLocaleString()} planned</span>
+                  </div>
+                  {xs.map(it => {
+                    const ly = lastYrOf(it);
+                    return (
+                      <div key={it.id} style={{ display: "grid", gridTemplateColumns: "44px 1fr 90px 64px 84px 84px 90px", gap: 8, padding: "5px 12px", alignItems: "center", borderBottom: `1px solid ${C.chip}` }}>
+                        {it.photo_url ? <img src={it.photo_url} alt="" style={{ width: 40, height: 30, objectFit: "cover", borderRadius: 5 }} /> : <span />}
+                        <input value={it.name || ""} onChange={e => save(it.id, { name: e.target.value.toUpperCase() })}
+                          style={{ border: "none", background: "transparent", fontFamily: FONT, fontSize: 12.5, fontWeight: 600, color: C.dark, outline: "none", minWidth: 0 }} />
+                        <span style={{ textAlign: "right", fontSize: 12.5, color: ly ? C.dark : C.muted, fontWeight: ly ? 700 : 400 }}>{ly ? ly.toLocaleString() : "—"}</span>
+                        <input type="number" value={pcts[it.id] ?? ""} placeholder="%" disabled={!ly} onChange={e => applyPct(it, e.target.value)}
+                          style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 6, padding: "3px 5px", fontSize: 11.5, fontFamily: FONT, textAlign: "right", background: ly ? "#fff" : C.chip }} />
+                        <input type="number" value={it.qty ?? ""} placeholder="qty" onChange={e => { setPcts(ps => ({ ...ps, [it.id]: "" })); save(it.id, { qty: e.target.value === "" ? null : +e.target.value }); }}
+                          style={{ width: "100%", border: `2px solid ${C.light}`, borderRadius: 7, padding: "3px 6px", fontSize: 13, fontWeight: 700, fontFamily: FONT, textAlign: "right" }} />
+                        <input type="number" step="0.01" value={it.price ?? ""} placeholder="$" onChange={e => save(it.id, { price: e.target.value === "" ? null : +e.target.value })}
+                          style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 7, padding: "3px 6px", fontSize: 12, fontFamily: FONT, textAlign: "right" }} />
+                        <span style={{ textAlign: "right", fontSize: 12, color: C.muted }}>{(+it.qty || 0) && (+it.price || 0) ? `$${((+it.qty) * (+it.price)).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "—"}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* ── 2027 catalog by category ── */}
-        <div style={{ minWidth: 0 }}>
+        <div style={{ minWidth: 0, display: view === "cards" ? undefined : "none" }}>
           {cats.map(cat => {
             const xs = items.filter(it => (it.category || "UNSORTED") === cat);
             const cp = xs.reduce((s, x) => s + (+x.qty || 0), 0), cl = xs.reduce((s, x) => s + lastYrOf(x), 0);
