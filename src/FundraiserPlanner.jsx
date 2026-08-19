@@ -74,13 +74,36 @@ export default function FundraiserPlanner() {
     return m;
   }, [items]);
 
-  const attach = (it, row) => {
-    const cur = it.replaces || [];
-    if (cur.some(r => r.description === row.description && r.size === row.size)) return;
-    const remainder = Math.max(0, (row.units || 0) - (allocated[row.description + "|" + row.size] || 0));
-    saveNow(it.id, { replaces: [...cur, { description: row.description, size: row.size, units: remainder || row.units, total_units: row.units }] });
+  // sharing rule (Caleb 8/19): a 2026 item matched to several 2027 items SPLITS
+  // EVENLY — attach a 3rd and everyone re-levels to thirds; detach re-levels the rest.
+  const same = (a, b) => a.description === b.description && a.size === b.size;
+  const splitRow = (row, addId, dropId) => {
+    const total = row.total_units ?? row.units ?? 0;
+    let holders = items.filter(x => (x.replaces || []).some(r => same(r, row))).map(x => x.id);
+    if (addId && !holders.includes(addId)) holders.push(addId);
+    if (dropId) holders = holders.filter(id => id !== dropId);
+    const n = holders.length;
+    const base = n ? Math.floor(total / n) : 0, rem = n ? total - base * n : 0;
+    setItems(xs => xs.map(x => {
+      let rep = x.replaces || [];
+      if (x.id === dropId) rep = rep.filter(r => !same(r, row));
+      const hi = holders.indexOf(x.id);
+      if (hi >= 0) {
+        const share = base + (hi < rem ? 1 : 0);
+        rep = rep.some(r => same(r, row))
+          ? rep.map(r => same(r, row) ? { ...r, units: share, total_units: total } : r)
+          : [...rep, { description: row.description, size: row.size, units: share, total_units: total }];
+      }
+      if (x.id === dropId || hi >= 0) {
+        sb.from("fundraiser_items").update({ replaces: rep, updated_at: new Date().toISOString() }).eq("id", x.id)
+          .then(({ error }) => error && setErr(error.message));
+        return { ...x, replaces: rep };
+      }
+      return x;
+    }));
   };
-  const detach = (it, row) => saveNow(it.id, { replaces: (it.replaces || []).filter(r => !(r.description === row.description && r.size === row.size)) });
+  const attach = (it, row) => { if (!(it.replaces || []).some(r => same(r, row))) splitRow(row, it.id, null); };
+  const detach = (it, row) => splitRow(row, null, it.id);
   const setShare = (it, row, units) => save(it.id, { replaces: (it.replaces || []).map(r => (r.description === row.description && r.size === row.size) ? { ...r, units: units === "" ? 0 : +units } : r) });
 
   const cats = useMemo(() => {
