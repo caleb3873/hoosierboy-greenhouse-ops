@@ -48,6 +48,85 @@ function zoneOf(code) {
   return null;
 }
 
+// what's ON this spot — contents, combo components, timing, sourcing; unplace is
+// just one button here instead of the only thing a click can do (Caleb 8/19)
+function DrillCard({ sb, d, mode, onClose, onFamily, onUnplace }) {
+  const [det, setDet] = useState(null);
+  useEffect(() => {
+    (async () => {
+      const ids = d.items.flatMap(a => a.ids);
+      const { data: rs } = await sb.from("scheduled_crops")
+        .select("id,item_name,qty_pots,plant_week,plant_year,ship_week,ship_year,supplier,broker,prop_method,prop_tray_size,liner_unit_cost,notes,recipe_id")
+        .in("id", ids);
+      const { data: kids } = await sb.from("scheduled_crops")
+        .select("combo_parent_id,ppp,variety_id,supplier,broker,prop_method,liner_unit_cost,ship_week,notes")
+        .in("combo_parent_id", ids);
+      const vids = [...new Set((kids || []).map(k => k.variety_id).filter(Boolean))];
+      const vmap = {};
+      for (let i = 0; i < vids.length; i += 100) {
+        const { data: vs } = await sb.from("variety_library").select("id,crop_name,variety").in("id", vids.slice(i, i + 100));
+        (vs || []).forEach(v => { vmap[v.id] = v; });
+      }
+      setDet({ rows: rs || [], kids: kids || [], vmap });
+    })();
+  }, [sb, d]);
+  const wk = (w, y) => (w ? `wk ${w}${y ? "/" + String(y).slice(-2) : ""}` : "—");
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(20,30,16,.45)", zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 14, padding: "16px 18px", width: 480, maxWidth: "94vw", maxHeight: "84vh", overflowY: "auto", fontFamily: FONT, color: C.dark, boxShadow: "0 18px 50px rgba(0,0,0,.3)" }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+          <b style={{ fontFamily: "ui-monospace,Menlo,monospace", fontSize: 15 }}>{d.bench.code}</b>
+          <span style={{ fontSize: 11.5, color: C.muted }}>{d.items.length} item{d.items.length !== 1 ? "s" : ""} on this spot</span>
+          <button onClick={onClose} style={{ marginLeft: "auto", border: "none", background: "none", cursor: "pointer", fontSize: 15, color: C.muted }}>✕</button>
+        </div>
+        {!det && <div style={{ padding: 18, color: C.muted, fontSize: 12.5 }}>looking inside…</div>}
+        {det && d.items.map(a => {
+          const rows = det.rows.filter(r => a.ids.includes(r.id));
+          const r0 = rows[0] || {};
+          const kidsHere = det.kids.filter(k => a.ids.includes(k.combo_parent_id));
+          const comps = {};
+          kidsHere.forEach(k => {
+            const v = det.vmap[k.variety_id];
+            const nm = v ? `${v.crop_name} ${v.variety}` : "?";
+            if (!comps[nm]) comps[nm] = { ...k, nm };
+          });
+          return (
+            <div key={a.name} style={{ marginTop: 12, border: `1px solid ${C.border}`, borderRadius: 10, padding: "10px 12px" }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
+                <b style={{ fontSize: 13.5 }}>{a.name}</b>
+                <span style={{ fontVariantNumeric: "tabular-nums", fontWeight: 800, color: C.light, fontSize: 13.5 }}>{a.qty.toLocaleString()}</span>
+                <span style={{ fontSize: 10.5, color: C.muted }}>{Object.keys(comps).length ? "combo" : ""}</span>
+              </div>
+              <div style={{ fontSize: 11.5, color: C.muted, marginTop: 3 }}>
+                ship {wk(r0.ship_week, r0.ship_year)} · plant {wk(r0.plant_week, r0.plant_year)}
+                {r0.supplier ? <> · {r0.supplier}{r0.broker && r0.broker !== r0.supplier ? ` via ${r0.broker}` : ""}</> : null}
+                {r0.prop_method ? <> · {r0.prop_method}{r0.prop_tray_size ? `/${r0.prop_tray_size}` : ""}</> : null}
+                {r0.liner_unit_cost ? <> · ${(+r0.liner_unit_cost).toFixed(3)}</> : null}
+              </div>
+              {Object.keys(comps).length > 0 && (
+                <div style={{ marginTop: 8, borderTop: `1px dashed ${C.border}`, paddingTop: 7 }}>
+                  <div style={{ fontSize: 10, fontWeight: 800, color: C.muted, letterSpacing: .4, marginBottom: 3 }}>IN EACH ONE</div>
+                  {Object.values(comps).map(k => (
+                    <div key={k.nm} style={{ fontSize: 12, lineHeight: 1.7 }}>
+                      <b>{k.ppp || 1}×</b> {k.nm}
+                      <span style={{ color: C.muted, fontSize: 10.5 }}> — {k.supplier || "?"}{k.prop_method ? ` ${k.prop_method}` : ""}{k.liner_unit_cost ? ` $${(+k.liner_unit_cost).toFixed(3)}` : ""}{k.ship_week ? ` · arrives wk ${k.ship_week}` : ""}{k.notes && /outside/i.test(k.notes) ? " · outside edge" : ""}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {rows.length > 1 && <div style={{ fontSize: 10, color: C.muted, marginTop: 5 }}>{rows.length} rows on this spot ({rows.map(r => r.qty_pots).join(" + ")})</div>}
+              <div style={{ display: "flex", gap: 8, marginTop: 9 }}>
+                {a.rid && <button onClick={() => onFamily(a.rid)} style={{ border: `1px solid ${C.border}`, background: C.chip, borderRadius: 8, padding: "4px 12px", cursor: "pointer", fontFamily: FONT, fontSize: 11.5 }}>🌿 family page</button>}
+                {mode === "plan" && <button onClick={() => onUnplace(a)} style={{ marginLeft: "auto", border: `1px solid ${C.red}`, background: "#fff", color: C.red, borderRadius: 8, padding: "4px 12px", cursor: "pointer", fontFamily: FONT, fontSize: 11.5 }}>🗑 pull off this spot</button>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function SpaceMap({ plan: fixedPlan }) {
   const sb = getSupabase();
   const [plans, setPlans] = useState([]);
@@ -66,6 +145,7 @@ export default function SpaceMap({ plan: fixedPlan }) {
   const [recipeNames, setRecipeNames] = useState({});
   const [showAll, setShowAll] = useState(false);
   const [famOpen, setFamOpen] = useState(null);
+  const [drill, setDrill] = useState(null);           // { bench, items:[agg] } — click-to-inspect a placed spot
   const [placeItem, setPlaceItem] = useState("");
   const [poolQ, setPoolQ] = useState("");
   const [busy, setBusy] = useState(false);
@@ -433,9 +513,9 @@ export default function SpaceMap({ plan: fixedPlan }) {
         )}
         <div style={{ flex: 1 }} />
         {(info?.items || []).map(a => (
-          <div key={a.name} onClick={e => { e.stopPropagation(); unplace(a); }}
+          <div key={a.name} onClick={e => { e.stopPropagation(); setDrill({ bench: b, items: [a] }); }}
             onContextMenu={e => { e.preventDefault(); e.stopPropagation(); if (a.rid) setFamOpen(a.rid); }}
-            title={mode === "plan" ? "click: pull off · right-click: open the family" : "right-click: open the family"}
+            title="click: what's in this spot · right-click: open the family"
             style={{ fontSize: 9.5, cursor: mode === "plan" ? "pointer" : "default", lineHeight: 1.4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: mode === "lastyear" ? C.muted : C.dark }}>
             <b style={{ fontVariantNumeric: "tabular-nums" }}>{a.qty.toLocaleString()}</b> {a.name}
           </div>
@@ -491,9 +571,9 @@ export default function SpaceMap({ plan: fixedPlan }) {
             </div>
           )}
           {(info?.items || []).map(a => (
-            <div key={a.name} onClick={e => { e.stopPropagation(); unplace(a); }}
+            <div key={a.name} onClick={e => { e.stopPropagation(); setDrill({ bench: b, items: [a] }); }}
               onContextMenu={e => { e.preventDefault(); e.stopPropagation(); if (a.rid) setFamOpen(a.rid); }}
-              title={mode === "plan" ? "click: pull off · right-click: open the family" : "right-click: open the family"}
+              title="click: what's in this spot · right-click: open the family"
               style={{ fontSize: 10, cursor: mode === "plan" ? "pointer" : "default", lineHeight: 1.4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: mode === "lastyear" ? C.muted : C.dark }}>
               <b style={{ fontVariantNumeric: "tabular-nums" }}>{a.qty.toLocaleString()}</b> {a.name}
             </div>
@@ -512,8 +592,8 @@ export default function SpaceMap({ plan: fixedPlan }) {
     const blank = !info;
     const short = b.code.replace(/^(EQH|EQL)\d\d/, "").replace(/^(BWSH|DBMH|DBML|ASMH)/, "");
     return (
-      <div onClick={() => placeItem && !busy && allocate(placeItem, b)} {...dropProps(b)}
-        title={`${b.code} · ${used}/${cap ?? "?"}${info ? " — " + info.items.map(a => `${a.qty} ${a.name}`).join(", ") : ""}`}
+      <div onClick={() => { if (placeItem && !busy) allocate(placeItem, b); else if (info?.items?.length) setDrill({ bench: b, items: info.items }); }} {...dropProps(b)}
+        title={`${b.code} · ${used}/${cap ?? "?"}${info ? " — " + info.items.map(a => `${a.qty} ${a.name}`).join(", ") : " — empty"}${info ? " · click for details" : ""}`}
         style={{ width: 46, flex: "0 0 46px", textAlign: "center", background: blank ? "#fbfdf8" : pct >= 1 ? "#fbe3e0" : "#fdf6e3",
           border: `1.5px solid ${pct >= 1 ? C.red : C.border}`, borderRadius: 7, padding: "5px 2px", cursor: placeItem && mode === "plan" ? "copy" : "default" }}>
         <div style={{ fontFamily: "ui-monospace,Menlo,monospace", fontSize: 9, color: C.muted }}>
@@ -694,6 +774,9 @@ export default function SpaceMap({ plan: fixedPlan }) {
           )}
         </div>
       </div>
+      {drill && <DrillCard sb={sb} d={drill} mode={mode} onClose={() => setDrill(null)}
+        onFamily={rid => { setDrill(null); setFamOpen(rid); }}
+        onUnplace={async agg => { await unplace(agg); setDrill(null); }} />}
       {famOpen && (
         <FamilyPage plan={fixedPlan || plans.find(p => p.id === planId) || { id: planId }} recipeId={famOpen}
           onClose={() => { setFamOpen(null); setTick(t => t + 1); }} />
