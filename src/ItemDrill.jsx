@@ -183,7 +183,10 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
     Object.values(comps).forEach(c => { c.per = baskets ? Math.round(c.plants / baskets * 10) / 10 : 0; });
     // what was actually bought for this item — variety, form, source, cost
     const matKeys = {};
+    const parentHasKids = new Set(detail.children.map(c => c.combo_parent_id));
     for (const p of detail.parents) {
+      if (parentHasKids.has(p.id)) continue;   // a combo parent is a basket, not a material —
+                                               // its lead-component variety must NOT display as "the item" (8/19)
       const v = detail.vmap[p.variety_id];
       const k = [v ? `${v.crop_name || ""} ${v.variety || ""}`.trim() : "?", p.prop_method, p.broker || p.supplier, p.liner_unit_cost].join("|");
       const e = matKeys[k] || (matKeys[k] = { variety: v ? `${v.crop_name || ""} ${v.variety || ""}`.trim() : "?", prop: p.prop_method,
@@ -811,9 +814,12 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
               </button>
             )}
           </div>
-          {agg && agg.materials.length > 0 && (
+          {agg && (agg.materials.length > 0 || agg.comps.length > 0) && (
             <div style={{ fontSize: 12.5, color: C.text, marginBottom: 8 }}>
-              🌱 <b>Item:</b> {agg.materials.map(m => m.variety).join(" · ")}
+              🌱 <b>{agg.comps.length ? "Combo:" : "Item:"}</b>{" "}
+              {agg.comps.length
+                ? agg.comps.map(c => `${c.per || "?"}× ${c.label}`).join(" · ")
+                : agg.materials.map(m => m.variety).join(" · ")}
             </div>
           )}
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
