@@ -944,8 +944,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
           )}
           {/* 📅 TIMING — front and center (Caleb 8/19: "hard to find the finish date").
               Source of truth = this item's scheduled_crops rows (ready/plant/ship weeks). */}
-          <div style={{ background: "#fff", border: `1.5px solid ${C.light}`, borderRadius: 10, padding: "8px 12px", marginBottom: 8, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-            <span style={{ fontSize: 10.5, fontWeight: 800, color: "#3f6d33", textTransform: "uppercase" }}>📅 Timing</span>
+          <div style={{ background: "#fff", border: `1.5px solid ${C.light}`, borderRadius: 10, padding: "10px 12px", marginBottom: 10 }}>
             {(detail?.parents?.length > 0) && (() => {
               // REAL finish edit (Caleb 8/5) — moves this item's actual bench rows; the whole
               // chain (plant/ship) shifts by the same delta so multi-round items keep their
@@ -981,17 +980,30 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
                 load(); onMutated?.();
               };
               const aShip = aOf("ship"), aPlant = aOf("plant");
+              const Tile = ({ icon, label, sub, wk, yr, children }) => (
+                <div style={{ flex: 1, minWidth: 168, background: "#f4f8f0", border: `1px solid ${C.border}`, borderRadius: 10, padding: "10px 13px" }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 800, color: "#3f6d33", textTransform: "uppercase", letterSpacing: .4 }}>{icon} {label}</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 9, margin: "5px 0 3px", flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 27, fontWeight: 800, fontVariantNumeric: "tabular-nums", lineHeight: 1, color: wk != null ? C.text : C.muted }}>{wk != null ? `wk ${wk}` : "—"}</span>
+                    <span style={{ fontSize: 12, color: C.muted }}>{wk != null ? `'${String(yr ?? 2027).slice(-2)}` : "not set"}</span>
+                    {children}
+                  </div>
+                  <div style={{ fontSize: 10, color: C.muted }}>{sub}</div>
+                </div>
+              );
               return (
-                <div style={{ display: "flex", gap: 5, alignItems: "center", flexWrap: "wrap" }}>
-                  {aShip && <><span style={{ fontSize: 12.5 }}>Ship:</span>
-                    <FinishWkInput wk={aShip.ship_week} yr={aShip.ship_year ?? 2027} width={58}
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", width: "100%" }}>
+                  <Tile icon="🚚" label="Ship — arrives" sub="moves only arrival · rounds keep spacing" wk={aShip?.ship_week} yr={aShip?.ship_year}>
+                    {aShip && <FinishWkInput wk={aShip.ship_week} yr={aShip.ship_year ?? 2027} width={64}
                       title="material ARRIVAL week — moves only ship dates; rounds keep their spacing"
-                      onCommit={(wk, yr) => shiftField("ship", aShip, wk, yr)} /></>}
-                  {aPlant && <><span style={{ fontSize: 12.5 }}>Plant:</span>
-                    <FinishWkInput wk={aPlant.plant_week} yr={aPlant.plant_year ?? 2027} width={58}
+                      onCommit={(wk, yr) => shiftField("ship", aShip, wk, yr)} />}
+                  </Tile>
+                  <Tile icon="🌱" label="Plant" sub="components follow the planting week" wk={aPlant?.plant_week} yr={aPlant?.plant_year}>
+                    {aPlant && <FinishWkInput wk={aPlant.plant_week} yr={aPlant.plant_year ?? 2027} width={64}
                       title="PLANTING week — moves only plant dates; combo components follow automatically"
-                      onCommit={(wk, yr) => shiftField("plant", aPlant, wk, yr)} /></>}
-                  <span style={{ fontSize: 12.5 }}>Finish:</span>
+                      onCommit={(wk, yr) => shiftField("plant", aPlant, wk, yr)} />}
+                  </Tile>
+                  <Tile icon="🏁" label="Finish" sub="whole chain shifts — plant & ship follow" wk={anchor?.ready_week} yr={anchor?.ready_year}>
                   <FinishWkInput wk={anchor?.ready_week ?? null} yr={aYr} width={62} placeholder="YYWW"
                     title="this item's finish — type a week (18 or 2718) or 📅 pick a calendar date; the rows' whole chain shifts"
                     onCommit={async (wk, yr) => {
@@ -1046,7 +1058,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
                       load();
                       onMutated?.();
                     }} />
-                  <span style={{ fontSize: 10.5, color: C.muted }}>moves the rows — plant & ship follow{parents.length > 1 ? " · rounds keep their spacing" : ""}</span>
+                  </Tile>
                 </div>
               );
             })()}
