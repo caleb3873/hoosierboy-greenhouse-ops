@@ -186,8 +186,8 @@ export default function FundraiserPlanner() {
               <button onClick={() => { if (bulkPct === "") return; items.forEach(it => { if (lastYrOf(it) > 0) applyPct(it, bulkPct); }); }}
                 style={{ border: `1px solid ${C.light}`, background: C.chip, borderRadius: 7, padding: "3px 10px", cursor: "pointer", fontFamily: FONT, fontSize: 12 }}>apply to all</button>
             </div>
-            <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
-              <div style={{ display: "grid", gridTemplateColumns: "44px minmax(280px,1fr) 84px 58px 80px 78px 84px", gap: 8, padding: "8px 12px", fontSize: 10.5, fontWeight: 700, color: C.muted, letterSpacing: .4, borderBottom: `2px solid ${C.light}` }}>
+            <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "44px minmax(280px,1fr) 84px 58px 80px 78px 84px", gap: 8, padding: "8px 12px", fontSize: 10.5, fontWeight: 700, color: C.muted, letterSpacing: .4, borderBottom: `2px solid ${C.light}`, position: "sticky", top: 92, background: C.card, zIndex: 30 }}>
                 <span></span><span>ITEM</span><span style={{ textAlign: "right" }}>2026 SOLD</span><span style={{ textAlign: "right" }}>+%</span><span style={{ textAlign: "right" }}>2027 QTY</span><span style={{ textAlign: "right" }}>2027 $</span><span style={{ textAlign: "right" }}>REVENUE</span>
               </div>
               {sizeGroups.map(([size, xs]) => (
