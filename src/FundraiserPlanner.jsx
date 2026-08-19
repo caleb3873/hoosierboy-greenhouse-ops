@@ -136,7 +136,10 @@ export default function FundraiserPlanner() {
     const src = `${it.name || ""} ${it.sun || ""}`.toUpperCase();
     const m = src.match(/(\d{1,2}(?:\.\d)?)\s*(?:"|”|IN\b|INCH)/);
     const hb = /\bHB\b|BASKET/.test(src) && !/MARKET/.test(src);
-    if (m) return `${m[1]}"${hb ? " HB" : ""}`;
+    if (m) {
+      const base = `${m[1]}"${hb ? " HB" : ""}`;
+      return { '9"': '9" PLANTER', '11"': '11" DECO PLANTER' }[base] || base;
+    }
     return it.category || "OTHER";
   };
   const sizeGroups = useMemo(() => {
@@ -189,8 +192,8 @@ export default function FundraiserPlanner() {
               <button onClick={() => { if (bulkPct === "") return; items.forEach(it => { if (lastYrOf(it) > 0) applyPct(it, bulkPct); }); }}
                 style={{ border: `1px solid ${C.light}`, background: C.chip, borderRadius: 7, padding: "3px 10px", cursor: "pointer", fontFamily: FONT, fontSize: 12 }}>apply to all</button>
             </div>
-            <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "44px minmax(280px,1fr) 84px 58px 80px 78px 84px", gap: 8, padding: "8px 12px", fontSize: 10.5, fontWeight: 700, color: C.muted, letterSpacing: .4, borderBottom: `2px solid ${C.light}`, position: "sticky", top: 92, background: C.card, zIndex: 30 }}>
+            <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, maxHeight: "calc(100vh - 240px)", overflowY: "auto" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "44px minmax(280px,1fr) 84px 58px 80px 78px 84px", gap: 8, padding: "8px 12px", fontSize: 10.5, fontWeight: 700, color: C.muted, letterSpacing: .4, borderBottom: `2px solid ${C.light}`, position: "sticky", top: 0, background: C.card, zIndex: 30, boxShadow: "0 2px 6px rgba(30,45,26,.06)" }}>
                 <span></span><span>ITEM</span><span style={{ textAlign: "right" }}>2026 SOLD</span><span style={{ textAlign: "right" }}>+%</span><span style={{ textAlign: "right" }}>2027 QTY</span><span style={{ textAlign: "right" }}>2027 $</span><span style={{ textAlign: "right" }}>REVENUE</span>
               </div>
               {sizeGroups.map(([size, xs]) => (
