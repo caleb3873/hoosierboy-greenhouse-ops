@@ -1598,6 +1598,9 @@ Combine the groups?`)) return;
     const agg = {};
     rows.forEach(r => {
       if (r.is_combo_component || hasKids.has(r.id)) return;
+      // in-house stock (we trim our own cuttings — supplier SCHLEGEL) is never a
+      // purchase: it stays out of the draft POs entirely (Caleb 8/19, lysimachia)
+      if (String(r.supplier || "").toUpperCase() === "SCHLEGEL") return;
       const v = vmap[r.variety_id];
       const vname = v?.variety;
       if (!vname || !wanted.has(vname)) return;
@@ -1615,6 +1618,7 @@ Combine the groups?`)) return;
       if (r.prop_method && !o.prop) o.prop = r.prop_method;   // form fallback when the series has none
     });
     kids.forEach(k => {   // component lines: baskets × per-basket, at the COMPONENT's arrival week
+      if (String(k.supplier || "").toUpperCase() === "SCHLEGEL") return;   // in-house cuttings — not a purchase
       const p = rowById[k.combo_parent_id];
       if (!p) return;
       const pv = vmap[p.variety_id]?.variety;
