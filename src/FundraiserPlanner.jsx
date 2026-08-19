@@ -1,0 +1,227 @@
+// 🎗 Fundraiser 2027 — standalone planning WORKSHEET (Caleb 8/19: "like a worksheet…
+// doesn't have to tie in to the rest of the production plan build").
+// Left: the 2027 slash-sheet catalog (photos cropped from Mario's PDF), grouped by
+// made-up-on-the-fly categories. Type a qty per item, set price, and attach the
+// 2026 sales rows each item replaces — the card shows last-year units beside the
+// new number so production lands the right amounts. Right: searchable 2026 spring
+// sales reference (sales_totals) with size chips; attached rows get a ✓.
+import { useEffect, useMemo, useRef, useState } from "react";
+import { getSupabase } from "./supabase";
+
+const C = { dark: "#1e2d1a", light: "#7fb069", cream: "#c8e6b8", muted: "#7a8c74", red: "#d94f3d", amber: "#e89a3a", border: "#dfe7d8", chip: "#eef3e8", card: "#fff" };
+const FONT = "'DM Sans', sans-serif";
+const SERIF = "'DM Serif Display', serif";
+const YEAR = 2027;
+
+export default function FundraiserPlanner() {
+  const sb = getSupabase();
+  const [items, setItems] = useState(null);
+  const [sales, setSales] = useState([]);
+  const [q, setQ] = useState("");
+  const [sizeF, setSizeF] = useState("");
+  const [attachFor, setAttachFor] = useState(null);   // item id currently attaching
+  const [err, setErr] = useState("");
+  const timers = useRef({});
+
+  useEffect(() => {
+    if (!sb) return;
+    (async () => {
+      const { data } = await sb.from("fundraiser_items").select("*").eq("year", YEAR).order("sort", { ascending: true });
+      setItems(data || []);
+      let all = [], off = 0;
+      for (;;) {
+        const { data: s } = await sb.from("sales_totals").select("description,size,units,avg_price").range(off, off + 999);
+        all = all.concat(s || []);
+        if (!s || s.length < 1000) break;
+        off += 1000;
+      }
+      setSales(all.filter(r => r.description));
+    })();
+  }, [sb]);
+
+  // debounced field save — worksheet feel: type freely, it just keeps
+  const save = (id, patch) => {
+    setItems(xs => xs.map(x => x.id === id ? { ...x, ...patch } : x));
+    clearTimeout(timers.current[id]);
+    timers.current[id] = setTimeout(async () => {
+      const { error } = await sb.from("fundraiser_items").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", id);
+      if (error) setErr(error.message);
+    }, 500);
+  };
+  const saveNow = async (id, patch) => {
+    setItems(xs => xs.map(x => x.id === id ? { ...x, ...patch } : x));
+    const { error } = await sb.from("fundraiser_items").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", id);
+    if (error) setErr(error.message);
+  };
+
+  const addItem = async (category) => {
+    const name = window.prompt("New item name:");
+    if (!name) return;
+    const { data, error } = await sb.from("fundraiser_items")
+      .insert({ year: YEAR, name: name.toUpperCase(), category: category || "UNSORTED", sort: (items?.length || 0) + 1 })
+      .select().single();
+    if (error) { setErr(error.message); return; }
+    setItems(xs => [...xs, data]);
+  };
+  const removeItem = async (it) => {
+    if (!window.confirm(`Remove "${it.name}" from the 2027 worksheet?`)) return;
+    await sb.from("fundraiser_items").delete().eq("id", it.id);
+    setItems(xs => xs.filter(x => x.id !== it.id));
+  };
+
+  const attach = (it, row) => {
+    const cur = it.replaces || [];
+    if (cur.some(r => r.description === row.description && r.size === row.size)) return;
+    saveNow(it.id, { replaces: [...cur, { description: row.description, size: row.size, units: row.units, avg_price: row.avg_price }] });
+  };
+  const detach = (it, row) => saveNow(it.id, { replaces: (it.replaces || []).filter(r => !(r.description === row.description && r.size === row.size)) });
+
+  const attachedKeys = useMemo(() => {
+    const s = new Set();
+    (items || []).forEach(it => (it.replaces || []).forEach(r => s.add(r.description + "|" + r.size)));
+    return s;
+  }, [items]);
+
+  const cats = useMemo(() => {
+    const order = [];
+    (items || []).forEach(it => { const c = it.category || "UNSORTED"; if (!order.includes(c)) order.push(c); });
+    return order;
+  }, [items]);
+
+  const sizes = useMemo(() => {
+    const m = {};
+    sales.forEach(r => { const s = r.size || "?"; m[s] = (m[s] || 0) + (r.units || 0); });
+    return Object.entries(m).sort((a, b) => b[1] - a[1]);
+  }, [sales]);
+
+  const filtered = useMemo(() => sales
+    .filter(r => (!sizeF || r.size === sizeF) && (!q || r.description.toLowerCase().includes(q.toLowerCase())))
+    .sort((a, b) => (b.units || 0) - (a.units || 0)), [sales, q, sizeF]);
+
+  const lastYrOf = it => (it.replaces || []).reduce((s, r) => s + (r.units || 0), 0);
+
+  if (!items) return <div style={{ padding: 40, fontFamily: FONT, color: C.muted }}>Loading the worksheet…</div>;
+
+  const totPlanned = items.reduce((s, x) => s + (+x.qty || 0), 0);
+  const totLast = items.reduce((s, x) => s + lastYrOf(x), 0);
+  const totRev = items.reduce((s, x) => s + (+x.qty || 0) * (+x.price || 0), 0);
+
+  return (
+    <div style={{ fontFamily: FONT, color: C.dark, padding: "18px 22px", maxWidth: 1500, margin: "0 auto" }}>
+      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=DM+Serif+Display&display=swap" rel="stylesheet" />
+      <div style={{ display: "flex", alignItems: "baseline", gap: 16, flexWrap: "wrap" }}>
+        <h1 style={{ fontFamily: SERIF, fontSize: 30, margin: 0 }}>🎗 Fundraiser {YEAR}</h1>
+        <span style={{ color: C.muted, fontSize: 13 }}>slash-sheet worksheet — type quantities, attach what each item replaces from 2026</span>
+      </div>
+      <div style={{ display: "flex", gap: 22, margin: "10px 0 16px", fontSize: 14, flexWrap: "wrap" }}>
+        <b>{totPlanned.toLocaleString()} planned</b>
+        <span style={{ color: C.muted }}>vs {totLast.toLocaleString()} attached 2026 units</span>
+        <span style={{ color: totPlanned - totLast >= 0 ? C.light : C.red, fontWeight: 600 }}>{totPlanned - totLast >= 0 ? "+" : ""}{(totPlanned - totLast).toLocaleString()}</span>
+        {totRev > 0 && <span style={{ color: C.muted }}>≈ ${totRev.toLocaleString(undefined, { maximumFractionDigits: 0 })} at entered prices</span>}
+        {err && <span style={{ color: C.red }}>⚠ {err}</span>}
+      </div>
+
+      <div style={{ display: "flex", gap: 18, alignItems: "flex-start" }}>
+        {/* ── 2027 catalog by category ── */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {cats.map(cat => {
+            const xs = items.filter(it => (it.category || "UNSORTED") === cat);
+            const cp = xs.reduce((s, x) => s + (+x.qty || 0), 0), cl = xs.reduce((s, x) => s + lastYrOf(x), 0);
+            return (
+              <div key={cat} style={{ marginBottom: 22 }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 12, borderBottom: `2px solid ${C.light}`, paddingBottom: 4, marginBottom: 10 }}>
+                  <h2 style={{ fontFamily: SERIF, fontSize: 19, margin: 0 }}>{cat}</h2>
+                  <span style={{ fontSize: 12.5, color: C.muted }}>{cp.toLocaleString()} planned · {cl.toLocaleString()} last yr</span>
+                  <button onClick={() => addItem(cat)} style={{ marginLeft: "auto", border: `1px solid ${C.border}`, background: C.chip, borderRadius: 8, padding: "2px 10px", cursor: "pointer", fontFamily: FONT, fontSize: 12 }}>+ item</button>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: 12 }}>
+                  {xs.map(it => (
+                    <div key={it.id} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
+                      {it.photo_url
+                        ? <img src={it.photo_url} alt={it.name} style={{ width: "100%", height: 130, objectFit: "cover", display: "block" }} />
+                        : <div style={{ height: 130, background: C.chip, display: "flex", alignItems: "center", justifyContent: "center", color: C.muted, fontSize: 12 }}>no photo</div>}
+                      <div style={{ padding: "8px 10px 10px" }}>
+                        <input value={it.name || ""} onChange={e => save(it.id, { name: e.target.value.toUpperCase() })}
+                          style={{ width: "100%", border: "none", fontWeight: 700, fontSize: 13.5, fontFamily: FONT, color: C.dark, background: "transparent", outline: "none" }} />
+                        <div style={{ display: "flex", gap: 6, margin: "4px 0" }}>
+                          <input value={it.sun || ""} placeholder="sun/size tag" onChange={e => save(it.id, { sun: e.target.value })}
+                            style={{ flex: 1, minWidth: 0, border: `1px solid ${C.border}`, borderRadius: 6, padding: "2px 6px", fontSize: 10.5, fontFamily: FONT, color: C.muted }} />
+                          <input value={it.category || ""} list="fundraiser-cats" placeholder="category" onChange={e => save(it.id, { category: e.target.value.toUpperCase() })}
+                            style={{ flex: 1, minWidth: 0, border: `1px solid ${C.border}`, borderRadius: 6, padding: "2px 6px", fontSize: 10.5, fontFamily: FONT, color: C.dark }} />
+                        </div>
+                        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                          <input type="number" value={it.qty ?? ""} placeholder="qty" onChange={e => save(it.id, { qty: e.target.value === "" ? null : +e.target.value })}
+                            style={{ width: 74, border: `2px solid ${C.light}`, borderRadius: 8, padding: "4px 6px", fontSize: 15, fontWeight: 700, fontFamily: FONT }} />
+                          <span style={{ fontSize: 11, color: C.muted }}>$</span>
+                          <input type="number" step="0.01" value={it.price ?? ""} placeholder="price" onChange={e => save(it.id, { price: e.target.value === "" ? null : +e.target.value })}
+                            style={{ width: 64, border: `1px solid ${C.border}`, borderRadius: 8, padding: "4px 6px", fontSize: 12.5, fontFamily: FONT }} />
+                          <span style={{ marginLeft: "auto", fontSize: 11.5, color: lastYrOf(it) ? C.dark : C.muted, fontWeight: lastYrOf(it) ? 700 : 400 }}>
+                            {lastYrOf(it) ? `LY ${lastYrOf(it).toLocaleString()}` : "LY —"}
+                          </span>
+                        </div>
+                        <div style={{ marginTop: 6 }}>
+                          {(it.replaces || []).map(r => (
+                            <div key={r.description + r.size} style={{ display: "flex", gap: 4, fontSize: 10.5, color: C.muted, alignItems: "center" }}>
+                              <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={`${r.description} (${r.size})`}>↳ {r.description}</span>
+                              <b style={{ color: C.dark }}>{r.units}</b>
+                              <span onClick={() => detach(it, r)} style={{ cursor: "pointer", color: C.red }} title="detach">✕</span>
+                            </div>
+                          ))}
+                          <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                            <button onClick={() => setAttachFor(attachFor === it.id ? null : it.id)}
+                              style={{ border: `1px dashed ${attachFor === it.id ? C.amber : C.border}`, background: attachFor === it.id ? "#fdf3e3" : "transparent", borderRadius: 7, padding: "2px 8px", cursor: "pointer", fontFamily: FONT, fontSize: 11, color: attachFor === it.id ? C.amber : C.muted }}>
+                              {attachFor === it.id ? "⬅ click sales rows →" : "⚭ replaces…"}
+                            </button>
+                            <button onClick={() => removeItem(it)} style={{ marginLeft: "auto", border: "none", background: "transparent", cursor: "pointer", color: C.muted, fontSize: 11 }} title="remove item">🗑</button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+          <button onClick={() => addItem("")} style={{ border: `1px dashed ${C.border}`, background: "transparent", borderRadius: 10, padding: "8px 16px", cursor: "pointer", fontFamily: FONT, fontSize: 13, color: C.muted }}>+ Add item / new category</button>
+          <datalist id="fundraiser-cats">{cats.map(c => <option key={c} value={c} />)}</datalist>
+        </div>
+
+        {/* ── 2026 sales reference ── */}
+        <div style={{ width: 360, flexShrink: 0, position: "sticky", top: 12, maxHeight: "calc(100vh - 40px)", display: "flex", flexDirection: "column", background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 12 }}>
+          <div style={{ fontFamily: SERIF, fontSize: 17, marginBottom: 6 }}>2026 spring sales</div>
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="search descriptions…"
+            style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: "6px 9px", fontFamily: FONT, fontSize: 13, marginBottom: 6 }} />
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 8 }}>
+            <span onClick={() => setSizeF("")} style={{ cursor: "pointer", fontSize: 10.5, padding: "2px 7px", borderRadius: 9, background: !sizeF ? C.dark : C.chip, color: !sizeF ? "#fff" : C.muted }}>all</span>
+            {sizes.slice(0, 12).map(([s, u]) => (
+              <span key={s} onClick={() => setSizeF(sizeF === s ? "" : s)} title={`${u.toLocaleString()} units`}
+                style={{ cursor: "pointer", fontSize: 10.5, padding: "2px 7px", borderRadius: 9, background: sizeF === s ? C.dark : C.chip, color: sizeF === s ? "#fff" : C.muted }}>{s}</span>
+            ))}
+          </div>
+          <div style={{ fontSize: 11.5, color: C.muted, marginBottom: 6 }}>
+            {filtered.length} rows · {filtered.reduce((s, r) => s + (r.units || 0), 0).toLocaleString()} units
+            {attachFor && <b style={{ color: C.amber }}> — click a row to attach</b>}
+          </div>
+          <div style={{ overflowY: "auto", flex: 1 }}>
+            {filtered.slice(0, 400).map(r => {
+              const used = attachedKeys.has(r.description + "|" + r.size);
+              return (
+                <div key={r.description + r.size}
+                  onClick={() => { if (attachFor) { const it = items.find(x => x.id === attachFor); if (it) attach(it, r); } }}
+                  style={{ display: "flex", gap: 6, padding: "4px 6px", borderRadius: 7, fontSize: 11.5, alignItems: "center",
+                           cursor: attachFor ? "pointer" : "default", background: used ? "#f2f8ee" : "transparent",
+                           borderBottom: `1px solid ${C.chip}` }}>
+                  <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: used ? C.muted : C.dark }} title={r.description}>
+                    {used ? "✓ " : ""}{r.description}
+                  </span>
+                  <span style={{ color: C.muted, fontSize: 10 }}>{r.size}</span>
+                  <b style={{ width: 40, textAlign: "right" }}>{(r.units || 0).toLocaleString()}</b>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

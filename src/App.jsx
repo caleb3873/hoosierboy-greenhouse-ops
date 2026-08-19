@@ -39,6 +39,7 @@ import Campaigns            from "./Campaigns";
 import CatalogViewer        from "./CatalogViewer";
 import Orders               from "./Orders";
 import CatalogHotLists      from "./CatalogHotLists";
+import FundraiserPlanner    from "./FundraiserPlanner";
 import ShippingDrivers      from "./shipping/ShippingDrivers";
 import ShippingTrucks       from "./shipping/ShippingTrucks";
 import ShipperTasksView     from "./shipping/ShipperTasksView";
@@ -124,6 +125,7 @@ const NAV_GROUPS = [
       { id: "cat-hotlists",      label: "🔥 Hot Lists" },
       { id: "campaigns",         label: "📣 Campaigns" },
       { id: "catalog",           label: "📦 Catalog" },
+      { id: "fundraiser",        label: "🎗 Fundraiser 2027" },
     ],
   },
   {
@@ -297,6 +299,7 @@ function PlannerShell() {
         {page === "catalog"            && <CatalogViewer />}
         {page === "orders"             && <Orders />}
         {page === "cat-hotlists"       && <CatalogHotLists />}
+        {page === "fundraiser"         && <FundraiserPlanner />}
         {page === "ship-command"   && <ShippingCommand />}
         {page === "ship-routes"    && <ShippingRoutes />}
         {page === "ship-dashboard" && <ShippingDashboard />}
