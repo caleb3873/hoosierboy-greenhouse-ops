@@ -40,6 +40,7 @@ import CatalogViewer        from "./CatalogViewer";
 import Orders               from "./Orders";
 import CatalogHotLists      from "./CatalogHotLists";
 import FundraiserPlanner    from "./FundraiserPlanner";
+import PlanTotals           from "./PlanTotals";
 import ShippingDrivers      from "./shipping/ShippingDrivers";
 import ShippingTrucks       from "./shipping/ShippingTrucks";
 import ShipperTasksView     from "./shipping/ShipperTasksView";
@@ -81,6 +82,7 @@ const NAV_GROUPS = [
       { id: "containers", label: "🪴 Containers" },
       { id: "inventory-value", label: "📊 Inventory Value" },
       { id: "tags", label: "🏷 Tag Manager" },
+      { id: "plan-totals", label: "Σ Plan Totals" },
     ],
   },
   {
@@ -300,6 +302,7 @@ function PlannerShell() {
         {page === "orders"             && <Orders />}
         {page === "cat-hotlists"       && <CatalogHotLists />}
         {page === "fundraiser"         && <FundraiserPlanner />}
+        {page === "plan-totals"        && <PlanTotals embedded />}
         {page === "ship-command"   && <ShippingCommand />}
         {page === "ship-routes"    && <ShippingRoutes />}
         {page === "ship-dashboard" && <ShippingDashboard />}
@@ -471,6 +474,9 @@ export default function App() {
   // Public sales-visit page (?sv=<slug>) — a customer-facing deal sheet (Sales Visits module)
   const svSlug = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("sv") : null;
   if (svSlug) return <SalesVisitViewer slug={svSlug} />;
+  // Public plan totals (?totals=1) — size × color production totals, self-serve for Mario
+  const totalsFlag = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("totals") : null;
+  if (totalsFlag) return <PlanTotals />;
   // Public mum truck builder (?mums=<store>) — Sullivan store managers build their own trucks
   const mumSlug = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("mums") : null;
   if (mumSlug) return <MumTruckBuilder slug={mumSlug} />;
