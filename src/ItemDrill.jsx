@@ -15,6 +15,7 @@ import { useAuth } from "./Auth";
 import { makeKey } from "./brokerKey";
 import { plantOrder, wrapWk, weeksInYear, FinishWkInput } from "./shared";
 import { rippleTasks } from "./ripple";
+import { shiftKidsWithParents, wkDelta } from "./timing";
 
 const C = { dark: "#1e2d1a", light: "#7fb069", border: "#dfe7d8", muted: "#7a8c74",
   text: "#2f3b2a", red: "#c0392b", amber: "#c98a2e", green: "#2e7d32" };
@@ -109,7 +110,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
     let children = [];
     if (ids.length) {
       const { data: ch } = await sb.from("scheduled_crops")
-        .select("id,combo_parent_id,variety_id,ppp,qty_plants_ordered,liner_unit_cost,broker,supplier,prop_method,prop_tray_id")
+        .select("id,combo_parent_id,variety_id,ppp,qty_plants_ordered,liner_unit_cost,broker,supplier,prop_method,prop_tray_id,ship_week,ship_year")
         .in("combo_parent_id", ids);
       // component plant counts: explicit order qty when stamped, else parent pots × per-pot
       // count — kid rows carry qty 0 by design, so without this everything reads 0 (8/19)
@@ -173,7 +174,9 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
       const k = ch.variety_id;
       const o = comps[k] || (comps[k] = { variety_id: k, label: v ? `${v.crop_name || ""} ${v.variety || ""}`.trim() : "?",
         plants: 0, liner: +ch.liner_unit_cost || null, broker: ch.broker, supplier: ch.supplier,
-        prop_method: ch.prop_method, prop_tray_id: ch.prop_tray_id, propPer: propOf(ch) });
+        prop_method: ch.prop_method, prop_tray_id: ch.prop_tray_id, propPer: propOf(ch),
+        ids: [], ship_week: ch.ship_week ?? null, ship_year: ch.ship_year ?? null });
+      o.ids.push(ch.id);
       o.plants += +ch.qty_plants_ordered || 0;
       if (o.liner == null && ch.liner_unit_cost) o.liner = +ch.liner_unit_cost;
     }
@@ -646,7 +649,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
 
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 9200, display: "flex", alignItems: "center", justifyContent: "center", padding: 18 }}>
-      {familyId && <FamilyPage plan={plan} recipeId={familyId} onClose={() => setFamilyId(null)}
+      {familyId && <FamilyPage plan={plan} recipeId={familyId} onClose={() => { setFamilyId(null); load(); }}
         onOpenItem={name => { setFamilyId(null); if (name !== row.item && onReplace) onReplace(name, 0); }} />}
       <div onClick={e => e.stopPropagation()} style={{ background: "#f6f9f3", width: "min(760px, 94vw)", maxHeight: "92vh", overflow: "auto", padding: 20, borderRadius: 14, boxShadow: "0 14px 48px rgba(0,0,0,.35)", fontFamily: "'DM Sans','Segoe UI',sans-serif" }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
@@ -852,8 +855,41 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
                 .sort((a, b) => ((a.ready_year ?? 0) * 100 + a.ready_week) - ((b.ready_year ?? 0) * 100 + b.ready_week))[0];
               if (!anchor) return null;
               const aYr = anchor.ready_year ?? 2027;
+              const aOf = f => parents.filter(x => x[f + "_week"] != null)
+                .sort((a, b) => (((a[f + "_year"] ?? 0) * 100 + a[f + "_week"]) - ((b[f + "_year"] ?? 0) * 100 + b[f + "_week"])))[0];
+              const shiftField = async (field, a, wk, yr) => {
+                const ay = a[field + "_year"] ?? 2027;
+                if (wk === a[field + "_week"] && yr === ay) return;
+                const delta = wkDelta(a[field + "_week"], ay, wk, yr);
+                const kidDeltas = {};
+                for (const q of parents) {
+                  if (q[field + "_week"] == null) continue;
+                  const w = wrapWk(q[field + "_week"] + delta, q[field + "_year"] ?? ay);
+                  await sb.from("scheduled_crops").update({ [field + "_week"]: w.wk, [field + "_year"]: w.yr }).eq("id", q.id);
+                  if (field === "plant") kidDeltas[q.id] = delta;   // components follow planting
+                }
+                await shiftKidsWithParents(sb, kidDeltas);
+                try {
+                  const q0 = parents[0];
+                  await rippleTasks(sb, plan.id, [row.item],
+                    { ship: field === "ship" ? wk : q0.ship_week, shipYear: field === "ship" ? yr : (q0.ship_year ?? yr),
+                      plant: field === "plant" ? wk : q0.plant_week, plantYear: field === "plant" ? yr : (q0.plant_year ?? yr) },
+                    { wk: q0.ship_week, yr: q0.ship_year ?? q0.plant_year }, displayName);
+                } catch { /* never block the move */ }
+                logChange(field + "_change", { to: `${yr}w${wk}`, note: `item ${field} moved — rounds keep spacing${field === "plant" ? "; components followed" : ""}` });
+                load(); onMutated?.();
+              };
+              const aShip = aOf("ship"), aPlant = aOf("plant");
               return (
-                <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
+                <div style={{ display: "flex", gap: 5, alignItems: "center", flexWrap: "wrap" }}>
+                  {aShip && <><span style={{ fontSize: 12.5 }}>Ship:</span>
+                    <FinishWkInput wk={aShip.ship_week} yr={aShip.ship_year ?? 2027} width={58}
+                      title="material ARRIVAL week — moves only ship dates; rounds keep their spacing"
+                      onCommit={(wk, yr) => shiftField("ship", aShip, wk, yr)} /></>}
+                  {aPlant && <><span style={{ fontSize: 12.5 }}>Plant:</span>
+                    <FinishWkInput wk={aPlant.plant_week} yr={aPlant.plant_year ?? 2027} width={58}
+                      title="PLANTING week — moves only plant dates; combo components follow automatically"
+                      onCommit={(wk, yr) => shiftField("plant", aPlant, wk, yr)} /></>}
                   <span style={{ fontSize: 12.5 }}>Finish:</span>
                   <FinishWkInput wk={anchor.ready_week} yr={aYr} width={62}
                     title="this item's finish — type a week (18 or 2718) or 📅 pick a calendar date; the rows' whole chain shifts"
@@ -879,6 +915,10 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
                           moved++;
                         }
                       }
+                      // components travel with their baskets — same delta (one timing brain)
+                      const kidDeltas = {};
+                      parents.forEach(p => { kidDeltas[p.id] = delta; });
+                      await shiftKidsWithParents(sb, kidDeltas);
                       if (failed) window.alert(`Finish change stopped partway (${moved} of ${parents.length} rows moved): ${failed}`);
                       // the rows moved for REAL — clear any stale advisory shift so charts and
                       // buy-week math don't double-count old ◀▶ nudges on top of this
@@ -905,51 +945,69 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
             })()}
           </div>
 
-          {/* planting rounds — one total in the projection, split into waves with their
-              own finish dates. Auto-split follows the 2026 weekly sales curve. */}
+          {/* planting ROUNDS = the item's REAL rows, one plant week per round — the same
+              rounds the family page, Space page and ordering see (one truth, 8/19).
+              The old advisory rounds (plan_targets.rounds) are retired from editing. */}
           <div style={{ marginTop: 9 }}>
             <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
               <span style={{ fontSize: 12.5 }}>Rounds:</span>
-              {!(tgt?.rounds?.length) ? <>
-                <span style={{ fontSize: 11.5, color: C.muted }}>plants as one batch</span>
-                <button style={chip} onClick={() => saveRounds(salesSplit(2))}>＋ split into rounds</button>
-              </> : <>
-                <button style={chip} title="re-divide the current number of rounds by the 2026 weekly sales curve"
-                  onClick={() => saveRounds(salesSplit(tgt.rounds.length))}>↻ re-split by sales</button>
-                <button style={chip} onClick={() => saveRounds([...tgt.rounds, { units: 0, ready_week: (tgt.rounds[tgt.rounds.length - 1]?.ready_week ?? effReady ?? 14) + 2 }])}>＋ add round</button>
-                <button style={{ ...chip, border: "none", color: C.red }} onClick={() => saveRounds(null)}>× back to one batch</button>
-                {(() => {
-                  const sum = tgt.rounds.reduce((a, r) => a + (+r.units || 0), 0);
-                  const total = tgt?.target_units ?? row.planned;
-                  return sum !== total
-                    ? <span style={{ fontSize: 11.5, color: C.amber, fontWeight: 700 }}>rounds total {sum.toLocaleString()} ≠ {total.toLocaleString()} target (Δ{(sum - total).toLocaleString()})</span>
-                    : <span style={{ fontSize: 11.5, color: C.green, fontWeight: 700 }}>✓ matches target</span>;
-                })()}
-              </>}
+              {(() => {
+                const parents = detail?.parents || [];
+                if (!parents.length) return <span style={{ fontSize: 11.5, color: C.muted }}>no rows yet</span>;
+                const byWk = {};
+                parents.forEach(q => { const k = `${q.plant_year ?? "?"}|${q.plant_week ?? "?"}`; (byWk[k] = byWk[k] || []).push(q); });
+                const rounds = Object.values(byWk).sort((a, b) => (((a[0].ready_year ?? 0) * 100 + (a[0].ready_week ?? 0)) - ((b[0].ready_year ?? 0) * 100 + (b[0].ready_week ?? 0))));
+                return <>
+                  <span style={{ fontSize: 11.5, color: C.muted }}>{rounds.length === 1 ? "plants as one batch" : `${rounds.length} rounds (real rows)`}</span>
+                  <button style={chip} title="splitting/re-splitting rounds creates real rows — that lives on the family page (⑃ Divide)"
+                    onClick={openFamily}>⑃ divide on the family page</button>
+                </>;
+              })()}
             </div>
-            {(tgt?.rounds || []).map((r, i) => {
-              const next = tgt.rounds[i + 1];
-              const sold = (row.wk || []).reduce((s, u, j) => s + (weeks[j] >= r.ready_week && (next == null || weeks[j] < next.ready_week) ? u : 0), 0);
-              const patch = (p) => saveRounds(tgt.rounds.map((x, j) => j === i ? { ...x, ...p } : x));
-              return (
-                <div key={i} style={{ display: "flex", gap: 7, alignItems: "center", padding: "3px 0 0 14px", fontSize: 12.5, flexWrap: "wrap" }}>
-                  <span style={{ color: C.muted, fontWeight: 800, fontSize: 11 }}>R{i + 1}</span>
-                  <input defaultValue={r.units} key={`u${i}-${r.units}`} inputMode="numeric"
-                    onBlur={e => { const v = parseInt(e.target.value.replace(/\D/g, "")); if (!isNaN(v) && v !== r.units) patch({ units: v }); }}
-                    onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
-                    style={{ width: 62, padding: "4px 6px", textAlign: "right", borderRadius: 7, border: `1px solid ${C.border}`, fontSize: 12.5, fontFamily: "inherit" }} />
-                  <span style={{ fontSize: 11.5, color: C.muted }}>finish</span>
-                  <button style={chip} onClick={() => patch({ ready_week: r.ready_week - 1 })}>◀</button>
-                  <b>wk{r.ready_week}</b>
-                  <button style={chip} onClick={() => patch({ ready_week: r.ready_week + 1 })}>▶</button>
-                  <span style={{ fontSize: 11, color: C.muted }} title="what 2026 actually sold in this round's window">
-                    2026 sold {sold.toLocaleString()} in wk{r.ready_week}{next ? `–${next.ready_week - 1}` : "+"}
-                  </span>
-                  {tgt.rounds.length > 1 && <button onClick={() => saveRounds(tgt.rounds.filter((_, j) => j !== i))}
-                    style={{ background: "none", border: "none", color: C.red, cursor: "pointer", fontWeight: 800 }}>×</button>}
-                </div>
-              );
-            })}
+            {(() => {
+              const parents = detail?.parents || [];
+              if (parents.length < 1) return null;
+              const byWk = {};
+              parents.forEach(q => { const k = `${q.plant_year ?? "?"}|${q.plant_week ?? "?"}`; (byWk[k] = byWk[k] || []).push(q); });
+              const rounds = Object.values(byWk).sort((a, b) => (((a[0].ready_year ?? 0) * 100 + (a[0].ready_week ?? 0)) - ((b[0].ready_year ?? 0) * 100 + (b[0].ready_week ?? 0))));
+              if (rounds.length < 2) return null;
+              return rounds.map((rw, i) => {
+                const r0 = rw[0];
+                const pots = rw.reduce((t, q) => t + (+q.qty_pots || 0), 0);
+                const nextReady = rounds[i + 1]?.[0]?.ready_week;
+                const sold = (row.wk || []).reduce((t, u, j) => t + (r0.ready_week != null && weeks[j] >= r0.ready_week && (nextReady == null || weeks[j] < nextReady) ? u : 0), 0);
+                return (
+                  <div key={i} style={{ display: "flex", gap: 7, alignItems: "center", padding: "3px 0 0 14px", fontSize: 12.5, flexWrap: "wrap" }}>
+                    <span style={{ color: C.muted, fontWeight: 800, fontSize: 11 }}>R{i + 1}</span>
+                    <b style={{ fontVariantNumeric: "tabular-nums" }}>{pots.toLocaleString()}</b>
+                    <span style={{ fontSize: 11.5, color: C.muted }}>plant wk{r0.plant_week}{r0.ship_week != null && r0.ship_week !== r0.plant_week ? ` · arrives wk${r0.ship_week}` : ""} · finish</span>
+                    <FinishWkInput wk={r0.ready_week} yr={r0.ready_year ?? 2027} width={58}
+                      title="this ROUND's finish — its rows' whole chain shifts; components follow"
+                      onCommit={async (wk, yr) => {
+                        if (wk === r0.ready_week && yr === (r0.ready_year ?? 2027)) return;
+                        const delta = wkDelta(r0.ready_week, r0.ready_year ?? 2027, wk, yr);
+                        const kidDeltas = {};
+                        for (const q of rw) {
+                          const upd = {};
+                          for (const f of ["ready", "plant", "ship"]) {
+                            if (q[f + "_week"] == null) continue;
+                            const w = wrapWk(q[f + "_week"] + delta, q[f + "_year"] ?? 2027);
+                            upd[f + "_week"] = w.wk; upd[f + "_year"] = w.yr;
+                          }
+                          await sb.from("scheduled_crops").update(upd).eq("id", q.id);
+                          kidDeltas[q.id] = delta;
+                        }
+                        await shiftKidsWithParents(sb, kidDeltas);
+                        logChange("round_moved", { round: i + 1, to: `${yr}w${wk}`, rows: rw.length });
+                        load(); onMutated?.();
+                      }} />
+                    <span style={{ fontSize: 11, color: C.muted }} title="what 2026 actually sold in this round's window">
+                      {r0.ready_week != null ? `2026 sold ${sold.toLocaleString()} in wk${r0.ready_week}${nextReady ? `–${nextReady - 1}` : "+"}` : ""}
+                    </span>
+                  </div>
+                );
+              });
+            })()}
           </div>
           <div style={{ marginTop: 9 }}>
             <label style={{ display: "block", fontSize: 10, fontWeight: 800, color: "#3f6d33", textTransform: "uppercase", marginBottom: 3 }}>Note</label>
@@ -1018,6 +1076,20 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
                 </div>
               );
             })()}
+            {detail?.parents?.length > 0 && (
+              <div style={{ display: "flex", gap: 6, alignItems: "center", margin: "2px 0 8px", fontSize: 12.5 }}>
+                <span style={{ color: C.muted }}>sale price $</span>
+                <NumInput value={agg.planPrice ?? row.price ?? ""} decimal style={{ width: 70 }}
+                  onCommit={async v => {
+                    if (v == null || isNaN(+v)) return;
+                    await sb.from("scheduled_crops").update({ sale_price_per_pot: +v })
+                      .eq("plan_id", plan.id).eq("item_name", row.item).not("is_combo_component", "is", true);
+                    logChange("price_change", { to: +v });
+                    load(); onMutated?.();
+                  }} />
+                <span style={{ fontSize: 10.5, color: C.muted }}>writes to this item's rows — pricing & revenue views read the same number</span>
+              </div>
+            )}
             {agg.comps.map(c => (
               <div key={c.variety_id} style={{ display: "flex", gap: 8, alignItems: "center", padding: "4px 0", fontSize: 12.5, flexWrap: "wrap" }}>
                 <b onClick={() => setQuoteFor({ kind: "component", variety_id: c.variety_id, label: c.label,
@@ -1030,6 +1102,16 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
                     onBlur={e => { const v = parseFloat(e.target.value); if (!isNaN(v) && v !== c.per) setPer(c.variety_id, Math.max(0, v)); }}
                     onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
                     style={{ width: 52, marginLeft: 5, padding: "4px 6px", textAlign: "right", borderRadius: 7, border: `1px solid ${C.border}`, fontSize: 12.5, fontFamily: "inherit" }} />
+                </label>
+                <label title="when this plant ARRIVES (ship week) — same editor the family page's combo panel has" style={{ color: C.muted, fontSize: 11.5, display: "inline-flex", alignItems: "center", gap: 3 }}>
+                  arrives
+                  <FinishWkInput wk={c.ship_week} yr={c.ship_year ?? 2027} width={54}
+                    onCommit={async (wk, yr) => {
+                      if (wk === c.ship_week && yr === (c.ship_year ?? 2027)) return;
+                      await sb.from("scheduled_crops").update({ ship_week: wk, ship_year: yr }).in("id", c.ids);
+                      logChange("component_ship", { component: c.label, to: `${yr}w${wk}` });
+                      load(); onMutated?.();
+                    }} />
                 </label>
                 <span onClick={() => setQuoteFor({ kind: "component", variety_id: c.variety_id, label: c.label,
                     vkey: detail?.vmap[c.variety_id]?.variety_key || null,

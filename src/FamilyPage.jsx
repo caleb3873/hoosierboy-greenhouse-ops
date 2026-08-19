@@ -1023,10 +1023,12 @@ Combine the groups?`)) return;
     setBusy(true);
     for (const vr of g.vars) {
       const old = vr.rows[0];
+      const kidDeltas = plantDeltas(vr.rows, w, y);   // components travel with the basket
       for (const r of vr.rows) {
         const { error } = await sb.from("scheduled_crops").update({ plant_week: w, plant_year: y }).eq("id", r.id);
         if (error) { window.alert(`⚠ Plant-week change did NOT save (${error.message}) — the group is unchanged.`); setBusy(false); return; }
       }
+      await shiftKidsWithParents(sb, kidDeltas);
       const its = [...new Set(vr.rows.map(r => r.item_name))];
       const res = await rippleTasks(sb, plan.id, its,
         { ship: old?.ship_week, shipYear: old?.ship_year ?? old?.plant_year, plant: w, plantYear: y },
@@ -1075,7 +1077,9 @@ Combine the groups?`)) return;
     const patch = { plant_week: target.plant, plant_year: pYr,
       ship_week: sh.wk, ship_year: sh.yr,
       ready_week: target.ready ?? null, ready_year: target.readyYear ?? pYr };
+    const kidDeltas = plantDeltas(vr.rows, target.plant, pYr);
     for (const r of vr.rows) await sb.from("scheduled_crops").update(patch).eq("id", r.id);
+    await shiftKidsWithParents(sb, kidDeltas);
     const mvRes = await rippleTasks(sb, plan.id, [...new Set(vr.rows.map(r => r.item_name))],
       { ship: sh.wk, shipYear: sh.yr, plant: target.plant, plantYear: pYr },
       { wk: vr.rows[0]?.ship_week, yr: vr.rows[0]?.ship_year ?? vr.rows[0]?.plant_year }, displayName);
@@ -1134,6 +1138,7 @@ Combine the groups?`)) return;
         const rooted = /^(URC|CALL)/i.test(sSpec.form || "");
         const p = wrapWk(ready - finWks, readyYear);
         const sh = rooted ? wrapWk(p.wk - Math.round(+(sSpec.rooting_weeks ?? 0)), p.yr) : p;
+        const kidDeltas = plantDeltas(vr.rows, p.wk, p.yr);
         for (const r of vr.rows) {
           const { error } = await sb.from("scheduled_crops").update({
             ready_week: ready, ready_year: readyYear,
@@ -1141,6 +1146,7 @@ Combine the groups?`)) return;
           }).eq("id", r.id);
           if (error) { window.alert(`⚠ Week change stopped partway (${error.message}).`); setBusy(false); setTick(t => t + 1); return; }
         }
+        await shiftKidsWithParents(sb, kidDeltas);
         const res = await rippleTasks(sb, plan.id, [...new Set(vr.rows.map(r => r.item_name))],
           { ship: sh.wk, shipYear: sh.yr, plant: p.wk, plantYear: p.yr },
           { wk: vr.rows[0]?.ship_week, yr: vr.rows[0]?.ship_year ?? vr.rows[0]?.plant_year }, displayName);
@@ -1717,12 +1723,14 @@ Combine the groups?`)) return;
       // reuse existing rounds, RETIMED onto the requested weeks
       for (let k = 0; k < Math.min(n, ordered.length); k++) {
         const w = wks[k], { pl, sh } = chainFor(w);
+        const kidDeltas = plantDeltas(ordered[k].rows, pl.wk, pl.yr);
         for (const r of ordered[k].rows) {
           const { error } = await sb.from("scheduled_crops").update({
             ready_week: w.wk, ready_year: w.yr, plant_week: pl.wk, plant_year: pl.yr, ship_week: sh.wk, ship_year: sh.yr,
           }).eq("id", r.id);
           if (error) throw new Error(error.message);
         }
+        await shiftKidsWithParents(sb, kidDeltas);
         sets.push(ordered[k].rows);
       }
       // mint the missing rounds from the color's first row
