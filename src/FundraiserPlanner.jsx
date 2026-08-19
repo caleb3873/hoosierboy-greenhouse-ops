@@ -176,7 +176,7 @@ export default function FundraiserPlanner() {
         {err && <span style={{ color: C.red }}>⚠ {err}</span>}
       </div>
 
-      <div style={{ marginRight: 384 }}>
+      <div style={{ marginRight: view === "cards" ? 384 : 0 }}>
         {/* ── TABLE VIEW: one row per item, sorted by size — review LY, punch 2027 qty (manual or +% of LY) + spring price ── */}
         {view === "table" && (
           <div>
@@ -187,7 +187,7 @@ export default function FundraiserPlanner() {
                 style={{ border: `1px solid ${C.light}`, background: C.chip, borderRadius: 7, padding: "3px 10px", cursor: "pointer", fontFamily: FONT, fontSize: 12 }}>apply to all</button>
             </div>
             <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
-              <div style={{ display: "grid", gridTemplateColumns: "44px 1fr 90px 64px 84px 84px 90px", gap: 8, padding: "8px 12px", fontSize: 10.5, fontWeight: 700, color: C.muted, letterSpacing: .4, borderBottom: `2px solid ${C.light}` }}>
+              <div style={{ display: "grid", gridTemplateColumns: "44px minmax(280px,1fr) 84px 58px 80px 78px 84px", gap: 8, padding: "8px 12px", fontSize: 10.5, fontWeight: 700, color: C.muted, letterSpacing: .4, borderBottom: `2px solid ${C.light}` }}>
                 <span></span><span>ITEM</span><span style={{ textAlign: "right" }}>2026 SOLD</span><span style={{ textAlign: "right" }}>+%</span><span style={{ textAlign: "right" }}>2027 QTY</span><span style={{ textAlign: "right" }}>2027 $</span><span style={{ textAlign: "right" }}>REVENUE</span>
               </div>
               {sizeGroups.map(([size, xs]) => (
@@ -198,10 +198,10 @@ export default function FundraiserPlanner() {
                   {xs.map(it => {
                     const ly = lastYrOf(it);
                     return (
-                      <div key={it.id} style={{ display: "grid", gridTemplateColumns: "44px 1fr 90px 64px 84px 84px 90px", gap: 8, padding: "5px 12px", alignItems: "center", borderBottom: `1px solid ${C.chip}` }}>
+                      <div key={it.id} style={{ display: "grid", gridTemplateColumns: "44px minmax(280px,1fr) 84px 58px 80px 78px 84px", gap: 8, padding: "5px 12px", alignItems: "center", borderBottom: `1px solid ${C.chip}` }}>
                         {it.photo_url ? <img src={it.photo_url} alt="" style={{ width: 40, height: 30, objectFit: "cover", borderRadius: 5 }} /> : <span />}
                         <input value={it.name || ""} onChange={e => save(it.id, { name: e.target.value.toUpperCase() })}
-                          style={{ border: "none", background: "transparent", fontFamily: FONT, fontSize: 12.5, fontWeight: 600, color: C.dark, outline: "none", minWidth: 0 }} />
+                          style={{ border: "none", background: "transparent", fontFamily: FONT, fontSize: 12.5, fontWeight: 600, color: C.dark, outline: "none", minWidth: 0, width: "100%" }} />
                         <span style={{ textAlign: "right", fontSize: 12.5, color: ly ? C.dark : C.muted, fontWeight: ly ? 700 : 400 }}>{ly ? ly.toLocaleString() : "—"}</span>
                         <input type="number" value={pcts[it.id] ?? ""} placeholder="%" disabled={!ly} onChange={e => applyPct(it, e.target.value)}
                           style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 6, padding: "3px 5px", fontSize: 11.5, fontFamily: FONT, textAlign: "right", background: ly ? "#fff" : C.chip }} />
@@ -284,8 +284,8 @@ export default function FundraiserPlanner() {
           <datalist id="fundraiser-cats">{cats.map(c => <option key={c} value={c} />)}</datalist>
         </div>
 
-        {/* ── 2026 fundraiser reference — FIXED so it rides along while scrolling ── */}
-        <div style={{ position: "fixed", top: 104, right: 22, bottom: 14, width: 360, zIndex: 40, display: "flex", flexDirection: "column", background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 12, boxShadow: "0 6px 24px rgba(30,45,26,.10)" }}>
+        {/* ── 2026 fundraiser reference — FIXED so it rides along while scrolling (cards view only) ── */}
+        {view === "cards" && <div style={{ position: "fixed", top: 104, right: 22, bottom: 14, width: 360, zIndex: 40, display: "flex", flexDirection: "column", background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 12, boxShadow: "0 6px 24px rgba(30,45,26,.10)" }}>
           <div style={{ fontFamily: SERIF, fontSize: 17, marginBottom: 6 }}>2026 fundraiser sales</div>
           <input value={q} onChange={e => setQ(e.target.value)} placeholder="search 2026 fundraiser items…"
             style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: "6px 9px", fontFamily: FONT, fontSize: 13, marginBottom: 6 }} />
@@ -322,7 +322,7 @@ export default function FundraiserPlanner() {
               );
             })}
           </div>
-        </div>
+        </div>}
       </div>
     </div>
   );
