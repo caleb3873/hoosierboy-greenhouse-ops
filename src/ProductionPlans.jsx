@@ -953,7 +953,7 @@ function VarietyTab({ planId }) {
               <SortHdr col="breeder" label="Breeder" />
               <SortHdr col="color"   label="Color" />
               <th style={th}>Containers</th>
-              <SortHdr col="liners"  label="Liners"   align="right" />
+              <SortHdr col="liners"  label="Plants"   align="right" />
               <SortHdr col="pots"    label="Pots"     align="right" />
               <SortHdr col="cost"    label="Cost"     align="right" />
               <SortHdr col="revenue" label="Revenue"  align="right" />
@@ -8347,6 +8347,29 @@ function OrderItemsView({ lines, orders, famMap, onChanged, onOpenFamily }) {
   );
 }
 
+// order → XLSX, any status (Caleb 8/19: download vanished once a draft went pending).
+// URC/CALL lines with no tray assigned stick in 105s — say so on the sheet.
+export async function orderXlsxFile(o, actLines, famLabel) {
+  const XLSX = await import("xlsx");
+  const formOf = l => l.form && /^(URC|CALL)/i.test(l.form) ? `${l.form} · 105 tray` : (l.form || "");
+  const aoa = [
+    [`ORDER ${o.order_number}`], [`Broker: ${o.broker}`, `Supplier: ${o.supplier || ""}${o.farm ? " — " + o.farm : ""}`],
+    [`Ship week: ${o.ship_week} (${o.ship_date || ""})`, o.notes ? `Notes: ${o.notes}` : ""],
+    [],
+    ["Material #", "Variety", "Form", "Plants", "$/unit", "Ext $", "Notes"],
+    ...actLines.map(l => [l.material || "", l.variety_name, formOf(l), +l.qty_ordered || 0,
+      l.unit_price != null ? +(+l.unit_price).toFixed(4) : "", l.ext_price != null ? +(+l.ext_price).toFixed(2) : "", l.notes || ""]),
+    [],
+    ["", "TOTAL", "", +o.total_qty || 0, "", +o.total_cost || 0, ""],
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws["!cols"] = [{ wch: 12 }, { wch: 34 }, { wch: 14 }, { wch: 9 }, { wch: 9 }, { wch: 11 }, { wch: 30 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Order");
+  const famTag = famLabel ? ` - ${fnameSafe(String(famLabel))}` : "";
+  XLSX.writeFile(wb, `${o.order_number}${famTag}.xlsx`, { bookType: "xlsx" });
+}
+
 function DraftOrderCard({ o, oLines, families, onOpenFamily, onChanged, startOpen }) {
   const sb = getSupabase();
   const [busy, setBusy] = useState(false);
@@ -8386,23 +8409,12 @@ function DraftOrderCard({ o, oLines, families, onOpenFamily, onChanged, startOpe
     setBusy(false); onChanged();
   }
   async function downloadXlsx() {
-    const XLSX = await import("xlsx");
-    const aoa = [
-      [`ORDER ${o.order_number}`], [`Broker: ${o.broker}`, `Supplier: ${o.supplier || ""}${o.farm ? " — " + o.farm : ""}`],
-      [`Ship week: ${o.ship_week} (${o.ship_date || ""})`, o.notes ? `Notes: ${o.notes}` : ""],
-      [],
-      ["Material #", "Variety", "Form", "Qty", "$/unit", "Ext $", "Notes"],
-      ...act.map(l => [l.material || "", l.variety_name, l.form || "", +l.qty_ordered || 0,
-        l.unit_price != null ? +(+l.unit_price).toFixed(4) : "", l.ext_price != null ? +(+l.ext_price).toFixed(2) : "", l.notes || ""]),
-      [],
-      ["", "TOTAL", "", +o.total_qty || 0, "", +o.total_cost || 0, ""],
-    ];
-    const ws = XLSX.utils.aoa_to_sheet(aoa);
-    ws["!cols"] = [{ wch: 12 }, { wch: 34 }, { wch: 8 }, { wch: 9 }, { wch: 9 }, { wch: 11 }, { wch: 30 }];
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Order");
-    const famTag = families?.length === 1 ? ` - ${fnameSafe(families[0].label)}` : "";
-    XLSX.writeFile(wb, `${o.order_number}${famTag}.xlsx`, { bookType: "xlsx" });
+    try {
+      await orderXlsxFile(o, act, families?.length === 1 ? families[0].label : null);
+    } catch (e) {
+      window.alert("Download failed: " + (e.message || e) + "\n\nNothing was sent or changed — try again (a fresh page load fixes stale-bundle errors).");
+      return;
+    }
     // downloading = it's going to the broker → the draft becomes PENDING (awaiting ack)
     if (o.status === "draft") {
       await sb.from("purchase_orders").update({ status: "pending", date_ordered: new Date().toISOString().slice(0, 10) }).eq("id", o.id);
@@ -8460,7 +8472,7 @@ function DraftOrderCard({ o, oLines, families, onOpenFamily, onChanged, startOpe
                 <tr key={l.id}>
                   <td style={{ padding: "4px 8px", borderBottom: `1px solid ${COLORS.border}`, fontFamily: "ui-monospace,Menlo,monospace", fontSize: 11.5 }}>{l.material || <span style={{ color: COLORS.amber }}>—</span>}</td>
                   <td style={{ padding: "4px 8px", borderBottom: `1px solid ${COLORS.border}`, fontWeight: 600 }}>{l.variety_name}</td>
-                  <td style={{ padding: "4px 8px", borderBottom: `1px solid ${COLORS.border}`, fontSize: 11, color: COLORS.muted }}>{l.form || "—"}</td>
+                  <td style={{ padding: "4px 8px", borderBottom: `1px solid ${COLORS.border}`, fontSize: 11, color: COLORS.muted }}>{l.form ? (/^(URC|CALL)/i.test(l.form) ? `${l.form} · 105` : l.form) : "—"}</td>
                   <td style={{ padding: "4px 8px", borderBottom: `1px solid ${COLORS.border}`, textAlign: "right" }}>
                     <input type="number" step={100} min={0} defaultValue={+l.qty_ordered || 0} disabled={busy}
                       onBlur={e => { const v = Math.max(0, Math.round(+e.target.value || 0)); if (v !== +l.qty_ordered) saveLine(l, { qty_ordered: v }); }}
@@ -8688,7 +8700,7 @@ function OrdersTab({ plan }) {
       {/* Banner */}
       <div style={{ background: COLORS.dark, color: "#fff", borderRadius: 10, padding: 16, display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
         <Stat label="Orders"        value={orders.length}                                              dark />
-        <Stat label="Total liners"  value={grandQty.toLocaleString()}                                  dark />
+        <Stat label="Total plants"  value={grandQty.toLocaleString()}                                  dark />
         <Stat label="Total $"       value={fmtMoney(grandTotal)}                                       dark big />
         <Stat label="Amendments"    value={orders.reduce((s, o) => s + (+o.amendment_count || 0), 0)} dark />
       </div>
@@ -8723,9 +8735,14 @@ function OrdersTab({ plan }) {
               </div>
               <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
                 <div style={{ textAlign: "right" }}>
-                  <div style={{ fontWeight: 800, fontSize: 18, color: COLORS.dark }}>{(+o.total_qty || 0).toLocaleString()} liners</div>
+                  <div style={{ fontWeight: 800, fontSize: 18, color: COLORS.dark }}>{(+o.total_qty || 0).toLocaleString()} plants</div>
                   <div style={{ fontSize: 12, color: COLORS.light, fontWeight: 700 }}>{fmtMoney(+o.total_cost)}</div>
                 </div>
+                <button onClick={async e => { e.stopPropagation();
+                    try { await orderXlsxFile(o, lines.filter(l => l.purchase_order_id === o.id && l.status === "active"), null); }
+                    catch (err) { window.alert("Download failed: " + (err.message || err)); } }}
+                  title="re-download this order's XLSX — any status, any time"
+                  style={{ background: COLORS.dark, color: "#c8e6b8", border: "none", borderRadius: 8, padding: "4px 10px", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>⬇ XLSX</button>
                 {o.status === "pending" && (
                   <button onClick={e => { e.stopPropagation(); if (window.confirm(`Pull ${o.order_number} back to DRAFT? It leaves the pending list — edit or delete it there, then re-send.`)) { getSupabase().from("purchase_orders").update({ status: "draft", date_ordered: null }).eq("id", o.id).then(() => setTick(t => t + 1)); } }}
                     title="made a mistake after downloading? back to draft to fix or delete"
@@ -10209,7 +10226,7 @@ function HouseDrilldown({ houseName, houses, planId, onClose }) {
               <SortHdr col="plant_week" label="Plant Wk" />
               <SortHdr col="item" label="Item" />
               <SortHdr col="pots" label="Pots" align="right" />
-              <SortHdr col="liners" label="Liners" align="right" />
+              <SortHdr col="liners" label="Plants" align="right" />
               <SortHdr col="cost" label="Cost" align="right" />
               <SortHdr col="revenue" label="Revenue" align="right" />
               <SortHdr col="profit" label="Profit" align="right" />
