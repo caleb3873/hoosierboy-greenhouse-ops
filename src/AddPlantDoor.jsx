@@ -79,7 +79,7 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
   // reuse the library row if the key exists, else mint it from the quote — the broker
   // catalog is the only birthplace of new varieties now (no free-text creation)
   async function ensureVariety(c) {
-    const { data: dupe } = await sb.from("variety_library").select("id,crop_name,variety,variety_key").eq("variety_key", c.key).limit(1);
+    const { data: dupe } = await sb.from("variety_library").select("id,crop_name,variety,variety_key,match_aliases").eq("variety_key", c.key).limit(1);
     if (dupe?.length) return dupe[0];
     const crop = titleCase(c.crop);
     const vname = stripCrop(c.crop, c.name);
@@ -290,7 +290,9 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
     (async () => {
       const sm = sMatchFor(variety.variety);
       const fc = FORM_TO_CLASS(sm?.form);
-      let qq = sb.from("broker_prices").select("broker,supplier,form_class,form_raw,cells,landed").eq("variety_key", variety.variety_key).order("landed");
+      // match by canonical key PLUS hand-locked aliases — the SAME key set the family
+      // page's quote panel uses, so both doors show the same quotes (Caleb 8/19)
+      let qq = sb.from("broker_prices").select("broker,supplier,form_class,form_raw,cells,landed").in("variety_key", [variety.variety_key, ...(variety.match_aliases || [])].filter(Boolean)).order("landed");
       if (fc) qq = qq.eq("form_class", fc);
       const { data: quotes } = await qq.limit(10);
       let best = null;
@@ -397,7 +399,7 @@ export default function AddPlantDoor({ plan, onClose, onCreated, onOpenFamily, i
     const cw = recipeRow.crop_weeks != null ? Math.round(+recipeRow.crop_weeks) : null;
     const readyYr = chain.readyYear ?? planYear;
     const fc = FORM_TO_CLASS(sm?.form);
-    let qq = sb.from("broker_prices").select("broker,supplier,form_class,landed").eq("variety_key", v.variety_key).order("landed");
+    let qq = sb.from("broker_prices").select("broker,supplier,form_class,landed").in("variety_key", [v.variety_key, ...(v.match_aliases || [])].filter(Boolean)).order("landed");
     if (fc) qq = qq.eq("form_class", fc);
     const { data: quotes } = await qq.limit(5);
     const best = quotes?.length
