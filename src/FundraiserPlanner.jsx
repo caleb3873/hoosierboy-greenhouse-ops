@@ -131,6 +131,8 @@ export default function FundraiserPlanner() {
   // "sorted by size": pull a pot/basket size out of the item name (he renames names
   // to carry size), falling back to the sun/size tag, else the category
   const sizeOf = it => {
+    // houseplants stay ONE group in the table (Caleb 8/19), same as the card view
+    if ((it.category || "").toUpperCase().includes("HOUSEPLANT")) return "HOUSEPLANTS";
     const src = `${it.name || ""} ${it.sun || ""}`.toUpperCase();
     const m = src.match(/(\d{1,2}(?:\.\d)?)\s*(?:"|”|IN\b|INCH)/);
     const hb = /\bHB\b|BASKET/.test(src) && !/MARKET/.test(src);

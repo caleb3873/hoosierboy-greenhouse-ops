@@ -34,7 +34,10 @@
       }
       #root {
         max-width: 100vw;
-        overflow-x: hidden;
+        /* clip, not hidden: overflow-x hidden makes #root a scroll container and
+           silently breaks EVERY position:sticky inside the app (8/19: fundraiser
+           table header). clip clamps X the same without eating sticky. */
+        overflow-x: clip;
       }
       /* Inputs still get manipulation for snappier taps */
       input, textarea, select, button { touch-action: manipulation; }
