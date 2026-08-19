@@ -115,15 +115,16 @@ export default function FundraiserPlanner() {
     return order;
   }, [items]);
 
+  const sizeNum = k => { const m = String(k).match(/^(\d+(?:\.\d)?)/); return m ? +m[1] : 999; };
   const sizes = useMemo(() => {
     const m = {};
     sales.forEach(r => { const s = r.size || "?"; m[s] = (m[s] || 0) + (r.units || 0); });
-    return Object.entries(m).sort((a, b) => b[1] - a[1]);
+    return Object.entries(m).sort((a, b) => sizeNum(a[0]) - sizeNum(b[0]) || a[0].localeCompare(b[0]));
   }, [sales]);
 
   const filtered = useMemo(() => sales
     .filter(r => (!sizeF || r.size === sizeF) && (!q || r.description.toLowerCase().includes(q.toLowerCase())))
-    .sort((a, b) => (b.units || 0) - (a.units || 0)), [sales, q, sizeF]);
+    .sort((a, b) => sizeNum(a.size) - sizeNum(b.size) || String(a.size).localeCompare(b.size) || (b.units || 0) - (a.units || 0)), [sales, q, sizeF]);
 
   const lastYrOf = it => (it.replaces || []).reduce((s, r) => s + (r.units || 0), 0);
 
