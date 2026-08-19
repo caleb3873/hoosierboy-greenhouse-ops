@@ -122,9 +122,9 @@ export default function FundraiserPlanner() {
         {err && <span style={{ color: C.red }}>⚠ {err}</span>}
       </div>
 
-      <div style={{ display: "flex", gap: 18, alignItems: "flex-start" }}>
+      <div style={{ marginRight: 384 }}>
         {/* ── 2027 catalog by category ── */}
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ minWidth: 0 }}>
           {cats.map(cat => {
             const xs = items.filter(it => (it.category || "UNSORTED") === cat);
             const cp = xs.reduce((s, x) => s + (+x.qty || 0), 0), cl = xs.reduce((s, x) => s + lastYrOf(x), 0);
@@ -188,8 +188,8 @@ export default function FundraiserPlanner() {
           <datalist id="fundraiser-cats">{cats.map(c => <option key={c} value={c} />)}</datalist>
         </div>
 
-        {/* ── 2026 sales reference ── */}
-        <div style={{ width: 360, flexShrink: 0, position: "sticky", top: 12, maxHeight: "calc(100vh - 40px)", display: "flex", flexDirection: "column", background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 12 }}>
+        {/* ── 2026 fundraiser reference — FIXED so it rides along while scrolling ── */}
+        <div style={{ position: "fixed", top: 104, right: 22, bottom: 14, width: 360, zIndex: 40, display: "flex", flexDirection: "column", background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 12, boxShadow: "0 6px 24px rgba(30,45,26,.10)" }}>
           <div style={{ fontFamily: SERIF, fontSize: 17, marginBottom: 6 }}>2026 fundraiser sales</div>
           <input value={q} onChange={e => setQ(e.target.value)} placeholder="search 2026 fundraiser items…"
             style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: "6px 9px", fontFamily: FONT, fontSize: 13, marginBottom: 6 }} />
