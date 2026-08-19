@@ -12,3 +12,5 @@ create policy fundraiser_sales_read on fundraiser_sales for select using (true);
 drop policy if exists fundraiser_sales_write on fundraiser_sales;
 create policy fundraiser_sales_write on fundraiser_sales for insert with check (true);
 notify pgrst, 'reload schema';
+drop policy if exists fundraiser_sales_update on fundraiser_sales;
+create policy fundraiser_sales_update on fundraiser_sales for update using (true);
