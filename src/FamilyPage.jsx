@@ -1621,10 +1621,11 @@ Combine the groups?`)) return;
       if (String(k.supplier || "").toUpperCase() === "SCHLEGEL") return;   // in-house cuttings — not a purchase
       const p = rowById[k.combo_parent_id];
       if (!p) return;
-      // combo parents display (and get selected) by their COMBO name, so match the
-      // same key the family rows use — not the lead component's variety (8/19)
-      const pv = p.color ? String(p.color).toUpperCase() : (vmap[p.variety_id]?.variety || p.item_name);
-      if (!pv || (!wanted.has(pv) && !wanted.has(vmap[p.variety_id]?.variety))) return;
+      // combo parents display (and get selected) by their COMBO name — accept ANY of
+      // the keys a parent can display under (color, item name, lead variety), so the
+      // match can never miss the grouping's fallback chain (8/19 ×2)
+      const pKeys = [p.color && String(p.color).toUpperCase(), p.item_name, vmap[p.variety_id]?.variety].filter(Boolean);
+      if (!pKeys.some(x => wanted.has(x))) return;
       const kv = vmap[k.variety_id]?.variety;
       if (!kv) return;
       const plants = (+p.qty_pots || 0) * Math.max(1, Math.round(+k.ppp || 1));
