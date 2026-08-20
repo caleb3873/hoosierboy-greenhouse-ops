@@ -244,6 +244,20 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
   const pageLocked = (poInfo?.orders?.length || 0) > 0 && !editOverride;
 
   lockedRef.current = locked;
+  // live sync: refetch when the window comes back (item-page edits show without reopening).
+  // NEVER mid-edit — a confirm dialog closing fires 'focus', and reloading right then
+  // would clobber half-typed week inputs (bacopa consolidation scare, 8/20)
+  useEffect(() => {
+    const wake = () => {
+      if (document.hidden) return;
+      const a = document.activeElement;
+      if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return;
+      setTick(t => t + 1);
+    };
+    window.addEventListener("focus", wake);
+    document.addEventListener("visibilitychange", wake);
+    return () => { window.removeEventListener("focus", wake); document.removeEventListener("visibilitychange", wake); };
+  }, []);
   useEffect(() => {
     (async () => {
       const { data: rec } = await sb.from("crop_recipes").select("*").eq("id", recipeId).single();
