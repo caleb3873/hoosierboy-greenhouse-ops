@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
-import { useHouses, usePads, useManualTasks, useCropRuns, useContainers } from "./supabase";
+import { useHouses, usePads, useManualTasks, useCropRuns, useContainers, getSupabase } from "./supabase";
+import { useMemo } from "react";
 
 
 const LOCATIONS = ["Bluff Road", "Sprague Road"];
@@ -855,9 +856,64 @@ function PadCard({ pad, onEdit, onDelete, onDuplicate, onToggleActive }) {
   );
 }
 
+// map a house's NAME and a bench CODE onto the same key so the 2027 plan
+// placements (scheduled_crops → benches) can light up the property map
+function houseKeyOfName(name) {
+  const n = String(name || "");
+  const m = n.match(/Quonset\s*(\d\d)/i);
+  if (m) return "q" + m[1];
+  if (/bluff main/i.test(n)) return "dbm";
+  if (/sprague west/i.test(n)) return "bws";
+  if (/sprague main/i.test(n)) return "asm";
+  return null;
+}
+function houseKeyOfBench(code) {
+  const c = String(code || "");
+  let m = c.match(/^EQ[HL]?(\d\d)/);
+  if (m) return "q" + m[1];
+  if (c.startsWith("DBM")) return "dbm";
+  if (c.startsWith("BWS")) return "bws";
+  if (c.startsWith("ASM")) return "asm";
+  return null;
+}
+const SIZE_PREFIX = /^(4\.5"|1 QT|1 GAL|HB \d+"|FIBER (LG|SM)\.?|POT \d+"|\d+(\.\d+)?")\s*/i;
+
 // ── OVERVIEW DASHBOARD ────────────────────────────────────────────────────────
 function Overview({ houses, pads, locFilter }) {
   const [selected, setSelected] = useState(null); // { type: "house"|"pad", id }
+  // 2027 layer: what the CURRENT spring plan has PLACED in each house (placed_at set)
+  const [plan27, setPlan27] = useState({ name: null, byHouse: {} });
+  useEffect(() => {
+    const sb = getSupabase();
+    if (!sb) return;
+    (async () => {
+      const { data: plans } = await sb.from("production_plans").select("id,name").neq("status", "archived").order("created_at", { ascending: false });
+      const plan = (plans || []).find(p => /spring.*2027/i.test(p.name)) || (plans || [])[0];
+      if (!plan) return;
+      const { data: benches } = await sb.from("benches").select("id,code").limit(2000);
+      const bkey = {};
+      (benches || []).forEach(b => { const k = houseKeyOfBench(b.code); if (k) bkey[b.id] = k; });
+      let rows = [], off = 0;
+      for (;;) {
+        const { data } = await sb.from("scheduled_crops").select("bench_id,item_name,qty_pots")
+          .eq("plan_id", plan.id).not("placed_at", "is", null).not("is_combo_component", "is", true).gt("qty_pots", 0)
+          .range(off, off + 999);
+        rows = rows.concat(data || []);
+        if (!data || data.length < 1000) break;
+        off += 1000;
+      }
+      const byHouse = {};
+      rows.forEach(r => {
+        const k = bkey[r.bench_id];
+        if (!k) return;
+        const h = byHouse[k] || (byHouse[k] = { pots: 0, crops: {} });
+        h.pots += r.qty_pots;
+        const crop = String(r.item_name || "").replace(SIZE_PREFIX, "").split(" ").slice(0, 2).join(" ");
+        h.crops[crop] = (h.crops[crop] || 0) + r.qty_pots;
+      });
+      setPlan27({ name: plan.name, byHouse });
+    })();
+  }, []);
 
   const filtH = houses.filter(h => h.active !== false && (!locFilter || h.location === locFilter));
   const filtP = pads.filter(p => p.active !== false && (!locFilter || p.location === locFilter));
@@ -922,6 +978,19 @@ function Overview({ houses, pads, locFilter }) {
                         {st.sqFt > 0 && <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 4 }}>{st.sqFt.toLocaleString()} sq ft bench space</div>}
                       </>)}
                       {st.benches === 0 && <div style={{ fontSize: 11, color: "#aabba0", fontStyle: "italic" }}>No benches configured</div>}
+                      {(() => {
+                        const p27 = plan27.byHouse[houseKeyOfName(house.name)];
+                        if (!p27) return null;
+                        const tops = Object.entries(p27.crops).sort((a, b) => b[1] - a[1]).slice(0, 3);
+                        return (
+                          <div style={{ marginTop: 8, background: "#f0f8eb", border: "1px solid #cfe3c2", borderRadius: 8, padding: "6px 9px" }}>
+                            <div style={{ fontSize: 10, fontWeight: 800, color: "#3f6d33", letterSpacing: .4 }}>🌱 2027 PLACED · {p27.pots.toLocaleString()} pots</div>
+                            <div style={{ fontSize: 10.5, color: "#4a5c44", marginTop: 2, lineHeight: 1.5 }}>
+                              {tops.map(([c, n]) => `${c} ${n.toLocaleString()}`).join(" · ")}{Object.keys(p27.crops).length > 3 ? ` +${Object.keys(p27.crops).length - 3} more` : ""}
+                            </div>
+                          </div>
+                        );
+                      })()}
                       <div style={{ display: "flex", gap: 4, marginTop: 8, flexWrap: "wrap" }}>
                         {[...new Set(house.zones.map(z => z.type))].map(t => <span key={t} style={{ fontSize: 12 }}>{ztc(t).icon}</span>)}
                         {house.lighting && <Badge label={house.lighting} color="#8e44ad" />}
