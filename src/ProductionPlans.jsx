@@ -4,6 +4,7 @@
 
 import { useState, useEffect, useMemo, useRef, Fragment } from "react";
 import { getSupabase, getCultureClient } from "./supabase";
+import * as XLSX from "xlsx";   // static: it's in the main bundle anyway (BrokerReports/InventoryReport) — dynamic import() 404s on stale tabs after deploys and downloads silently die
 import { useAuth } from "./Auth";
 import { sizeLabelForItem, wrapWk, weeksInYear, pushTargetToRows } from "./shared";
 import CategoryProfiles from "./CategoryProfiles";
@@ -8350,7 +8351,6 @@ function OrderItemsView({ lines, orders, famMap, onChanged, onOpenFamily }) {
 // order → XLSX, any status (Caleb 8/19: download vanished once a draft went pending).
 // URC/CALL lines with no tray assigned stick in 105s — say so on the sheet.
 export async function orderXlsxFile(o, actLines, famLabel) {
-  const XLSX = await import("xlsx");
   const formOf = l => l.form && /^(URC|CALL)/i.test(l.form) ? `${l.form} · 105 tray` : (l.form || "");
   const aoa = [
     [`ORDER ${o.order_number}`], [`Broker: ${o.broker}`, `Supplier: ${o.supplier || ""}${o.farm ? " — " + o.farm : ""}`],
@@ -8575,8 +8575,7 @@ function OrdersTab({ plan }) {
     const chosen = orders.filter(o => selOrds.has(o.id))
       .sort((a, b) => ((+a.ship_year || 0) * 100 + (+a.ship_week || 0)) - ((+b.ship_year || 0) * 100 + (+b.ship_week || 0)));
     if (!chosen.length) return;
-    const XLSX = await import("xlsx");
-    const aoa = [];
+      const aoa = [];
     let gQ = 0, gC = 0;
     chosen.forEach(o => {
       const act = lines.filter(l => l.purchase_order_id === o.id && l.status === "active");
