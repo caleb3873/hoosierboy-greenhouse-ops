@@ -133,6 +133,104 @@ function DrillCard({ sb, d, mode, onClose, onFamily, onUnplace }) {
   );
 }
 
+// 🗺 ALL HOUSES — the whole property through the selected container lens: fill, OPEN
+// slots, and the PLANT WEEKS already working in each house, so week-11 spare space can
+// take another week-11 annual without opening quonsets one by one (Caleb 8/20).
+function AllHousesOverview({ sb, planId, rules, cls, onPick, tick }) {
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    if (!sb || !planId) return;
+    (async () => {
+      let benches = [], off = 0;
+      for (;;) {
+        const { data: bp } = await sb.from("benches").select("id,code,bench_type,cap_overrides").range(off, off + 999);
+        benches = benches.concat(bp || []);
+        if (!bp || bp.length < 1000) break;
+        off += 1000;
+      }
+      let rows = []; off = 0;
+      for (;;) {
+        const { data: rp } = await sb.from("scheduled_crops").select("bench_id,item_name,qty_pots,plant_week")
+          .eq("plan_id", planId).not("placed_at", "is", null).not("is_combo_component", "is", true).gt("qty_pots", 0)
+          .range(off, off + 999);
+        rows = rows.concat(rp || []);
+        if (!rp || rp.length < 1000) break;
+        off += 1000;
+      }
+      setData({ benches, rows });
+    })();
+  }, [sb, planId, tick]);
+  if (!data) return <div style={{ padding: 30, color: C.muted }}>surveying the property…</div>;
+
+  const k = capClassOf(cls);
+  const capOf = b => {
+    const zone = rules[zoneOf(b.code)] || {};
+    const rule = zone[b.bench_type] || {};
+    const ov = b.cap_overrides || {};
+    if (k === "tray45" || k === "tray45sp") {
+      const sk = k === "tray45sp" ? "tray45_spaced" : "tray45_tight";
+      return ov[sk] ?? ov.tray45 ?? rule[sk] ?? rule.tray45 ?? null;
+    }
+    if (k === "basket") return ov.basket ?? null;
+    return ov[k] ?? rule[k] ?? null;
+  };
+  const perSlot = name => /^1 QT/.test(String(name || "").toUpperCase()) ? 8 : 10;
+  const cards = HOUSES.map(h => {
+    const pats = [h.benchLike.replace("%", ""), ...(h.lineLike || []).map(x => x.replace("%", ""))];
+    const hb = data.benches.filter(b => pats.some(p => b.code.startsWith(p)));
+    const isLine = b => ["basket_line", "low_line"].includes(b.bench_type);
+    const domain = hb.filter(b => (k === "basket" ? isLine(b) : !isLine(b)) && (b.bench_type || b.cap_overrides));
+    const ids = new Set(domain.map(b => b.id));
+    let cap = 0, capBenches = 0;
+    domain.forEach(b => { const c = capOf(b); if (c != null) { cap += c; capBenches++; } });
+    let used = 0; const weeks = {};
+    data.rows.forEach(r => {
+      if (!ids.has(r.bench_id)) return;
+      const rc = classOfItem(r.item_name);
+      if ((k === "tray45" || k === "tray45sp") ? (rc !== "tray45" && rc !== "tray45sp") : k === "basket" ? rc !== "basket" : rc !== k) return;
+      used += k === "basket" ? r.qty_pots : (k === "tray45" || k === "tray45sp") ? Math.ceil(r.qty_pots / perSlot(r.item_name)) : r.qty_pots;
+      if (r.plant_week != null) weeks[r.plant_week] = (weeks[r.plant_week] || 0) + r.qty_pots;
+    });
+    return { key: h.key, label: h.label, cap, used, open: Math.max(0, cap - used), capBenches, weeks };
+  }).filter(c => c.capBenches > 0);
+  cards.sort((a, b) => b.open - a.open);
+  const totOpen = cards.reduce((t, c) => t + c.open, 0);
+  const unit = k === "basket" ? "baskets" : (k === "tray45" || k === "tray45sp") ? "trays" : "pots";
+  return (
+    <div>
+      <div style={{ fontSize: 12.5, color: C.muted, margin: "2px 0 10px" }}>
+        <b style={{ color: C.dark }}>{totOpen.toLocaleString()} {unit} open</b> across the property in this lens — sorted most-open first · click a house to work it · week chips = what already PLANTS there (match a week to co-plant efficiently)
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: 10 }}>
+        {cards.map(c => {
+          const pct = c.cap ? Math.min(1, c.used / c.cap) : 0;
+          const wks = Object.entries(c.weeks).sort((a, b) => +a[0] - +b[0]);
+          return (
+            <div key={c.key} onClick={() => onPick(c.key)}
+              style={{ background: C.card, border: `1.5px solid ${c.open > 0 ? C.light : C.border}`, borderRadius: 12, padding: "11px 13px", cursor: "pointer" }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                <b style={{ fontSize: 13.5 }}>{c.label}</b>
+                <span style={{ marginLeft: "auto", fontWeight: 800, fontSize: 16, fontVariantNumeric: "tabular-nums", color: c.open > 0 ? C.light : C.muted }}>{c.open.toLocaleString()}</span>
+                <span style={{ fontSize: 10, color: C.muted }}>open</span>
+              </div>
+              <div style={{ height: 5, background: "#e8ede3", borderRadius: 3, margin: "6px 0", overflow: "hidden" }}>
+                <div style={{ width: `${pct * 100}%`, height: "100%", background: pct >= 1 ? C.red : pct > 0.7 ? C.amber : C.light }} />
+              </div>
+              <div style={{ fontSize: 11, color: C.muted }}>{c.used.toLocaleString()} / {c.cap.toLocaleString()} {unit}</div>
+              <div style={{ display: "flex", gap: 4, marginTop: 6, flexWrap: "wrap" }}>
+                {wks.length ? wks.map(([w, n]) => (
+                  <span key={w} title={`${n.toLocaleString()} pots plant wk ${w}`}
+                    style={{ fontSize: 10, fontWeight: 800, background: "#eef6e8", border: `1px solid ${C.light}`, color: C.dark, borderRadius: 8, padding: "1px 7px" }}>wk {w}</span>
+                )) : <span style={{ fontSize: 10, color: C.muted, fontStyle: "italic" }}>nothing planted in this lens yet</span>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function SpaceMap({ plan: fixedPlan }) {
   const sb = getSupabase();
   const [plans, setPlans] = useState([]);
@@ -641,6 +739,7 @@ export default function SpaceMap({ plan: fixedPlan }) {
         <h2 style={{ fontFamily: "'DM Serif Display',Georgia,serif", color: C.dark, margin: 0 }}>🗺 Space</h2>
         <select value={houseKey} onChange={e => setHouseKey(e.target.value)}
           style={{ padding: "6px 10px", borderRadius: 8, border: `1.5px solid ${C.light}`, fontFamily: FONT, fontSize: 13, fontWeight: 800 }}>
+          <option value="ALL">🗺 All houses — open space</option>
           {HOUSES.map(h => <option key={h.key} value={h.key}>{h.label}</option>)}
         </select>
         {!fixedPlan && (
@@ -670,6 +769,9 @@ export default function SpaceMap({ plan: fixedPlan }) {
           style={{ background: "none", border: `1.5px solid ${C.border}`, borderRadius: 8, padding: "4px 10px", fontWeight: 800, fontSize: 11.5, color: C.muted, cursor: "pointer", fontFamily: FONT }}>↻</button>
       </div>
 
+      {houseKey === "ALL" ? (
+        <AllHousesOverview sb={sb} planId={planId} rules={rules} cls={cls} onPick={k => setHouseKey(k)} tick={tick} />
+      ) : (
       <div style={{ display: "grid", gridTemplateColumns: mode === "plan" ? "280px 1fr" : "1fr", gap: 14, alignItems: "start" }}>
         {mode === "plan" && (
           <div style={{ background: C.card, border: `1.5px solid ${placeItem ? C.light : C.border}`, borderRadius: 12, padding: "10px 12px", position: "sticky", top: 8, maxHeight: "82vh", overflowY: "auto" }}>
@@ -777,6 +879,7 @@ export default function SpaceMap({ plan: fixedPlan }) {
           )}
         </div>
       </div>
+      )}
       {drill && <DrillCard sb={sb} d={drill} mode={mode} onClose={() => setDrill(null)}
         onFamily={rid => { setDrill(null); setFamOpen(rid); }}
         onUnplace={async agg => { await unplace(agg); setDrill(null); }} />}
