@@ -890,9 +890,16 @@ function Overview({ houses, pads, locFilter }) {
       const { data: plans } = await sb.from("production_plans").select("id,name").neq("status", "archived").order("created_at", { ascending: false });
       const plan = (plans || []).find(p => /spring.*2027/i.test(p.name)) || (plans || [])[0];
       if (!plan) return;
-      const { data: benches } = await sb.from("benches").select("id,code,bench_type,cap_overrides").limit(2000);
+      // benches exceed PostgREST's 1,000-row cap — PAGE or most houses silently unmap
+      let benches = [], boff = 0;
+      for (;;) {
+        const { data: bp } = await sb.from("benches").select("id,code,bench_type,cap_overrides").range(boff, boff + 999);
+        benches = benches.concat(bp || []);
+        if (!bp || bp.length < 1000) break;
+        boff += 1000;
+      }
       const bkey = {}, bkind = {};
-      (benches || []).forEach(b => {
+      benches.forEach(b => {
         const k = houseKeyOfBench(b.code);
         if (!k || !(b.bench_type || b.cap_overrides)) return;
         bkey[b.id] = k;
