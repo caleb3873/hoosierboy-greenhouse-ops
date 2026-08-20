@@ -586,7 +586,7 @@ export default function SpaceMap({ plan: fixedPlan }) {
     const blank = !info;
     return (
       <div onClick={() => placeItem && !busy && allocate(placeItem, b)} {...dropProps(b)}
-        style={{ flex: "1 1 120px", minWidth: 110, maxWidth: 200, minHeight: 126, display: "flex", flexDirection: "column",
+        style={{ flex: b.bench_type === "shelf" ? "0 1 88px" : "1 1 120px", minWidth: b.bench_type === "shelf" ? 76 : 110, maxWidth: b.bench_type === "shelf" ? 110 : 200, minHeight: 126, display: "flex", flexDirection: "column",
           background: blank ? "#fbfdf8" : (pct >= 1 || (usedOther > 0 && used === 0)) ? "#fbe3e0" : "#fdf6e3", border: `1.5px solid ${(pct >= 1 || (usedOther > 0 && used === 0)) ? C.red : C.border}`,
           borderRadius: 10, padding: "8px 9px", cursor: placeItem && mode === "plan" ? "copy" : "default" }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 5 }}>
