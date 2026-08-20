@@ -955,7 +955,7 @@ function Overview({ houses, pads, locFilter }) {
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           <Pill label="🏠 Houses" value={filtH.length} color="#1e2d1a" />
           {(() => {
-            const keys = filtH.map(h => houseKeyOfName(h.name)).filter(Boolean);
+            const keys = [...new Set(filtH.map(h => houseKeyOfName(h.name)).filter(Boolean))];   // dup house records (e.g. 'Sprague West' + 'Sprague West Side') must not double-count
             const pots = keys.reduce((t, k) => t + (plan27.byHouse[k]?.pots || 0), 0);
             const planted = keys.filter(k => (plan27.byHouse[k]?.pots || 0) > 0).length;
             return <>
