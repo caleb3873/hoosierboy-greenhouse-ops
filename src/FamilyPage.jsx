@@ -1081,31 +1081,43 @@ Combine the groups?`)) return;
   // move a variety's rows in one group onto another group's week chain (or a new one)
   async function moveToGroup(vr, target) {
     setBusy(true);
-    const wrapW = wrapWk;
-    const sSpec = seriesOf(vr.variety) || {};
-    const rooted = /^(URC|CALL)/i.test(sSpec.form || "");
-    const pYr = target.plantYear ?? plan.year ?? 2027;
-    const sh = rooted && target.plant != null
-      ? wrapW(target.plant - Math.round(+(sSpec.rooting_weeks ?? 0)), pYr)
-      : { wk: target.plant, yr: pYr };
-    const patch = { plant_week: target.plant, plant_year: pYr,
-      ship_week: sh.wk, ship_year: sh.yr,
-      ready_week: target.ready ?? null, ready_year: target.readyYear ?? pYr };
-    const kidDeltas = plantDeltas(vr.rows, target.plant, pYr);
-    for (const r of vr.rows) await sb.from("scheduled_crops").update(patch).eq("id", r.id);
-    await shiftKidsWithParents(sb, kidDeltas);
-    const mvRes = await rippleTasks(sb, plan.id, [...new Set(vr.rows.map(r => r.item_name))],
-      { ship: sh.wk, shipYear: sh.yr, plant: target.plant, plantYear: pYr },
-      { wk: vr.rows[0]?.ship_week, yr: vr.rows[0]?.ship_year ?? vr.rows[0]?.plant_year }, displayName);
-    setRipple(mvRes.moved || mvRes.flags.length ? mvRes : null);
-    setFlashKey(`${target.plantYear ?? vr.rows[0]?.plant_year ?? "?"}|${target.plant}|${target.readyYear ?? "?"}|${target.ready ?? "?"}`);
     try {
-      await sb.from("item_change_log").insert({ plan_id: plan.id, item_name: vr.rows[0]?.item_name || vr.variety,
-        variety_key: vr.vkey || null, change_type: "group_move",
-        detail: { variety: vr.variety, rows: vr.rows.length, to: { plant: target.plant, ship: target.ship, ready: target.ready } },
-        changed_by: displayName || null, source: "family-page" });
-    } catch { /* audit must not block */ }
-    setBusy(false); setCtx(null); setTick(t => t + 1);
+      const wrapW = wrapWk;
+      const sSpec = seriesOf(vr.variety) || {};
+      const rooted = /^(URC|CALL)/i.test(sSpec.form || "");
+      const pYr = target.plantYear ?? plan.year ?? 2027;
+      // moving INTO an existing group adopts that group's dates VERBATIM — ship included
+      // (Caleb 8/20: "it should take on all the ship, plant and ready dates of the group
+      // i'm moving it to"); series rooting math only runs when the target has no ship
+      const sh = target.ship != null
+        ? { wk: target.ship, yr: target.shipYear ?? pYr }
+        : rooted && target.plant != null
+          ? wrapW(target.plant - Math.round(+(sSpec.rooting_weeks ?? 0)), pYr)
+          : { wk: target.plant, yr: pYr };
+      const patch = { plant_week: target.plant, plant_year: pYr,
+        ship_week: sh.wk, ship_year: sh.yr,
+        ready_week: target.ready ?? null, ready_year: target.readyYear ?? pYr };
+      const kidDeltas = plantDeltas(vr.rows, target.plant, pYr);
+      for (const r of vr.rows) await sb.from("scheduled_crops").update(patch).eq("id", r.id);
+      await shiftKidsWithParents(sb, kidDeltas);
+      const mvRes = await rippleTasks(sb, plan.id, [...new Set(vr.rows.map(r => r.item_name))],
+        { ship: sh.wk, shipYear: sh.yr, plant: target.plant, plantYear: pYr },
+        { wk: vr.rows[0]?.ship_week, yr: vr.rows[0]?.ship_year ?? vr.rows[0]?.plant_year }, displayName);
+      setRipple(mvRes.moved || mvRes.flags.length ? mvRes : null);
+      setFlashKey(`${target.plantYear ?? vr.rows[0]?.plant_year ?? "?"}|${target.plant}|${target.readyYear ?? "?"}|${target.ready ?? "?"}`);
+      try {
+        await sb.from("item_change_log").insert({ plan_id: plan.id, item_name: vr.rows[0]?.item_name || vr.variety,
+          variety_key: vr.vkey || null, change_type: "group_move",
+          detail: { variety: vr.variety, rows: vr.rows.length, to: { plant: target.plant, ship: sh.wk, ready: target.ready } },
+          changed_by: displayName || null, source: "family-page" });
+      } catch { /* audit must not block */ }
+    } catch (e) {
+      // a thrown move must NEVER wedge busy=true — that leaves every menu button
+      // silently disabled ("it wouldn't let me") with no path back but a reload
+      window.alert(`Move failed: ${e?.message || e}`);
+    } finally {
+      setBusy(false); setCtx(null); setTick(t => t + 1);
+    }
   }
 
   function moveToNewGroup(vr, raw) {   // inline input, no browser dialogs (they can wedge the page)
@@ -2268,7 +2280,11 @@ Combine the groups?`)) return;
                     const comboItem = [...vr.items].find(n => comboByItem[n]);
                     return (
                       <Fragment key={vr.variety}>
-                      <tr>
+                      {/* right-click works in the DEFAULT view too, not just Rounds (Caleb 8/20:
+                          "tried to move… and it wouldn't let me") — single-round colors exclude
+                          their own group from the menu; multi-round colors list every group */}
+                      <tr onContextMenu={e => { e.preventDefault(); setCtx({ x: Math.min(e.clientX, window.innerWidth - 240), y: e.clientY, vr,
+                        gKey: vr.rounds.length === 1 ? vr.rounds[0].key : null }); }}>
                         <td style={td}>
                           <input type="checkbox" checked={selVars.has(vr.variety)}
                             onChange={e => setSelVars(sv => { const n = new Set(sv); if (e.target.checked) n.add(vr.variety); else n.delete(vr.variety); return n; })} />
@@ -2669,7 +2685,8 @@ Combine the groups?`)) return;
               )}
               {displayGroups.filter(g => g.key !== ctx.gKey).map(g => (
                 <button key={g.key} disabled={busy}
-                  onClick={() => moveToGroup(ctx.vr, { plant: g.plant, plantYear: g.plantYear, ready: g.ready, readyYear: g.readyYear ?? g.plantYear })}
+                  onClick={() => moveToGroup(ctx.vr, { plant: g.plant, plantYear: g.plantYear, ship: g.shipMin, shipYear: g.shipMinYr,
+                    ready: g.ready, readyYear: g.readyYear ?? g.plantYear })}
                   style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 12px", background: "#fff",
                     border: "none", borderBottom: `1px solid ${C.border}`, cursor: "pointer", fontFamily: FONT, fontSize: 12.5 }}>
                   → Move to <b>Group {g.n}</b> <span style={{ color: C.muted, fontSize: 11 }}>plant {wkFmt(g.plantYear, g.plant)} · ready {wkFmt(g.plantYear, g.ready)}</span>
