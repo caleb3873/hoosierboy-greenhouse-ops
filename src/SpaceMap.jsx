@@ -11,7 +11,7 @@ const C = { dark: "#1e2d1a", light: "#7fb069", cream: "#c8e6b8", muted: "#7a8c74
 const FONT = "'DM Sans', sans-serif";
 
 const CLASSES = [
-  ["tray45", '4.5" trays'], ["qt", "1 QT (8s)"], ["fiber_lg", 'Fiber LG (12")'], ["fiber_sm", 'Fiber SM / 9"'],
+  ["tray45", '4.5" tight'], ["tray45sp", '4.5" spaced'], ["qt", "1 QT (8s)"], ["fiber_lg", 'Fiber LG (12")'], ["fiber_sm", 'Fiber SM / 9"'],
   ["pot11", '11"'], ["pot10", '10"'], ["canyon14", '14" canyon'], ["basket", "🧺 baskets"],
 ];
 // "qt" is a FILTER lens, not a capacity class: quarts share tray45 slots (8-packs in
@@ -24,6 +24,11 @@ const HOUSES = [
   ...QN.map(n => ({ key: `Q${n}`, label: `Quonset ${n}`, benchLike: `EQ${n}%`, banks: [["Benches — walk order", new RegExp(`^EQ${n}0[1-4]$`), false]], lineLike: [`EQH${n}%`, `EQL${n}%`] })),
 ];
 
+// 4.5" crops that ALWAYS get space (Caleb 8/20 — he may add more): they carry their
+// own class and place against the SPACED tray numbers; everything else 4.5" is tight.
+// The old house-wide tight/spaced toggle is gone — spacing is a property of the CROP.
+export const SPACED_45 = /SUNPATIENS|NEW GUINEA|\bN\/?G\b|I'?CONIA|RIEGER|REIGER|GERANIUM/i;
+
 export function classOfItem(name) {
   const n = String(name || "").toUpperCase();
   if (/^HB /.test(n)) return "basket";
@@ -32,7 +37,7 @@ export function classOfItem(name) {
   if (/CANYON/.test(n)) return "canyon14";
   if (/^POT 11|^11"/.test(n)) return "pot11";
   if (/^POT 10|^10"/.test(n)) return "pot10";
-  if (/^4\.5"|^1801|^FLAT/.test(n)) return "tray45";
+  if (/^4\.5"|^1801|^FLAT/.test(n)) return SPACED_45.test(n) ? "tray45sp" : "tray45";
   // perennial quarts (SP470DTS deep, 8-pack carriers) bench like 4.5 trays for now —
   // give them their own chart class if the carrier density proves different
   if (/^1 QT/.test(n)) return "tray45";
@@ -133,7 +138,6 @@ export default function SpaceMap({ plan: fixedPlan }) {
   const [planId, setPlanId] = useState(fixedPlan?.id || null);
   const [houseKey, setHouseKey] = useState("BWS");
   const [cls, setCls] = useState("tray45");
-  const [spacing, setSpacing] = useState("tight");
   const [mode, setMode] = useState("plan");          // plan (blank, place) | lastyear (reference)
   const [layers, setLayers] = useState({ benches: true, baskets: true, lows: true });
   const [benches, setBenches] = useState([]);
@@ -255,8 +259,8 @@ export default function SpaceMap({ plan: fixedPlan }) {
     const zone = rules[zoneOf(b.code)] || {};
     const rule = zone[b.bench_type] || {};
     const ov = b.cap_overrides || {};
-    if (k === "tray45") {
-      const sk = `tray45_${spacing}`;
+    if (k === "tray45" || k === "tray45sp") {
+      const sk = k === "tray45sp" ? "tray45_spaced" : "tray45_tight";
       return ov[sk] ?? ov.tray45 ?? rule[sk] ?? rule.tray45 ?? null;
     }
     return ov[k] ?? rule[k] ?? null;
@@ -264,7 +268,8 @@ export default function SpaceMap({ plan: fixedPlan }) {
   // tray45 capacity counts TRAY SLOTS: 4.5" flats hold 10 pots; the quart 8-pack
   // carriers occupy the SAME slot at 8 pots (Caleb 8/18)
   const potsPerSlot = name => /^1 QT/.test(String(name || "").toUpperCase()) ? 8 : 10;
-  const inUnits = (q, k, name) => k === "tray45" ? Math.ceil(q / potsPerSlot(name)) : q;
+  const isTray = k => k === "tray45" || k === "tray45sp";
+  const inUnits = (q, k, name) => isTray(k) ? Math.ceil(q / potsPerSlot(name)) : q;
 
   const placedRows = useMemo(() => rows.filter(r => r.placed_at), [rows]);
   const lastYearRows = useMemo(() => rows.filter(r => !r.placed_at), [rows]);
@@ -306,9 +311,9 @@ export default function SpaceMap({ plan: fixedPlan }) {
     if (otherUnits > 0) { window.alert(`${bench.code} is already holding a different container — one container per bench. Clear it (🧹) or pick another bench.`); return; }
     const free = cap - used;
     if (free <= 0) { window.alert(`${bench.code} is full for this container (${used}/${cap}).`); return; }
-    const freePots = k === "tray45" ? free * potsPerSlot(it.item) : free;
+    const freePots = isTray(k) ? free * potsPerSlot(it.item) : free;
     const suggested = Math.min(freePots, it.qty);
-    const raw = window.prompt(`Place how many of\n${itemName}\non ${bench.code}?\n(${free} ${k === "tray45" ? "tray" : "pot"} spots free · ${it.qty.toLocaleString()} unplaced)`, String(suggested));
+    const raw = window.prompt(`Place how many of\n${itemName}\non ${bench.code}?\n(${free} ${isTray(k) ? "tray" : "pot"} spots free · ${it.qty.toLocaleString()} unplaced)`, String(suggested));
     if (raw == null) return;
     let want = Math.max(0, Math.round(+raw || 0));
     if (!want) return;
@@ -500,7 +505,7 @@ export default function SpaceMap({ plan: fixedPlan }) {
                 {blank ? cap.toLocaleString() : `${used}/${cap}`}
               </div>
               <div style={{ fontSize: 8.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: C.muted }}>
-                {blank ? (k === "tray45" ? `${spacing} trays` : CLASSES.find(([x]) => x === k)?.[1]) : `${cap - used} open`}
+                {blank ? (k === "tray45" ? "tight trays" : k === "tray45sp" ? "spaced trays" : CLASSES.find(([x]) => x === k)?.[1]) : `${cap - used} open`}
               </div>
               {usedOther > 0 && <div style={{ fontSize: 8.5, fontWeight: 800, color: C.amber }}>⚠ mixed containers</div>}
             </>
@@ -559,7 +564,7 @@ export default function SpaceMap({ plan: fixedPlan }) {
                 {blank ? cap.toLocaleString() : `${used}/${cap}`}
               </span>
               <div style={{ fontSize: 8, fontWeight: 800, textTransform: "uppercase", color: C.muted }}>
-                {blank ? (k === "tray45" ? `${spacing}` : "cap") : `${cap - used} open`}{usedOther > 0 ? " · ⚠ mixed" : ""}
+                {blank ? (k === "tray45" ? "tight" : k === "tray45sp" ? "spaced" : "cap") : `${cap - used} open`}{usedOther > 0 ? " · ⚠ mixed" : ""}
               </div>
             </>
           ) : <span style={{ fontSize: 9.5, color: C.muted }}>no cap</span>}
@@ -651,15 +656,6 @@ export default function SpaceMap({ plan: fixedPlan }) {
                 border: `1.5px solid ${cls === k ? C.light : C.border}`, background: cls === k ? "#eef6e8" : "#fff", color: cls === k ? C.dark : C.muted }}>{label}</button>
           ))}
         </span>
-        {cls === "tray45" && houseKey !== "BWS" && (
-          <span style={{ display: "inline-flex", gap: 4 }}>
-            {["tight", "spaced"].map(m => (
-              <button key={m} onClick={() => setSpacing(m)}
-                style={{ padding: "4px 10px", borderRadius: 8, fontWeight: 800, fontSize: 11, cursor: "pointer", fontFamily: FONT,
-                  border: `1.5px solid ${spacing === m ? C.amber : C.border}`, background: spacing === m ? "#fdf3e0" : "#fff", color: spacing === m ? C.dark : C.muted }}>{m}</button>
-            ))}
-          </span>
-        )}
         <span style={{ display: "inline-flex", gap: 10, marginLeft: 4 }}>
           <Toggle k="baskets" label="🧺 baskets" /><Toggle k="benches" label="benches" /><Toggle k="lows" label="low lines" />
         </span>
