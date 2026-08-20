@@ -600,3 +600,95 @@ export async function lockBrokerOrders(sb, planId, specs) {
   }
   return { orders: results, skipped };
 }
+
+
+// ── ORDER AMENDMENTS (Caleb 8/20: "if i'm going to trim something that has already
+// been ordered… generate a new version of the order… with the confirmation number
+// attached, all the other plants on order, and clearly show which item changed and
+// by how much"). Called after a trim; asks per order before touching anything.
+export async function amendOrdersForTrim(sb, planId, itemNames) {
+  const out = [];
+  const round100 = (n, form) => /URC|CALL/i.test(form || "") ? Math.max(0, Math.ceil(n / 100) * 100) : Math.max(0, Math.ceil(n));
+  const items = [...new Set(itemNames)];
+  const vids = new Set();
+  for (const item of items) {
+    const { data: rows } = await sb.from("scheduled_crops").select("variety_id")
+      .eq("plan_id", planId).eq("item_name", item).not("is_combo_component", "is", true);
+    (rows || []).forEach(r => r.variety_id && vids.add(r.variety_id));
+  }
+  if (!vids.size) return out;
+  // plan-wide remaining need per variety (parents + combo components)
+  const needOf = async vid => {
+    const { data: par } = await sb.from("scheduled_crops").select("qty_pots,ppp")
+      .eq("plan_id", planId).eq("variety_id", vid).not("is_combo_component", "is", true).gt("qty_pots", 0);
+    let n = (par || []).reduce((a, r) => a + (+r.qty_pots || 0) * Math.max(1, Math.round(+r.ppp || 1)), 0);
+    const { data: kids } = await sb.from("scheduled_crops").select("ppp,combo_parent_id")
+      .eq("plan_id", planId).eq("variety_id", vid).is("is_combo_component", true);
+    for (const k of (kids || [])) {
+      const { data: pr } = await sb.from("scheduled_crops").select("qty_pots").eq("id", k.combo_parent_id).maybeSingle();
+      n += (+(pr?.qty_pots) || 0) * Math.max(1, Math.round(+k.ppp || 1));
+    }
+    return n;
+  };
+  const { data: lines } = await sb.from("purchase_order_lines").select("*")
+    .in("variety_id", [...vids]).eq("status", "active");
+  if (!lines?.length) return out;
+  const { data: pos } = await sb.from("purchase_orders").select("*")
+    .in("id", [...new Set(lines.map(l => l.purchase_order_id))]);
+  const placed = (pos || []).filter(o => !["draft", "cancelled"].includes(o.status));
+  // per variety: surplus vs remaining need, taken off the LATEST ship week first
+  const cuts = {};   // lineId -> newQty
+  for (const vid of vids) {
+    const vLines = lines.filter(l => l.variety_id === vid && placed.some(o => o.id === l.purchase_order_id));
+    if (!vLines.length) continue;
+    const need = await needOf(vid);
+    let surplus = vLines.reduce((a, l) => a + (+l.qty_ordered || 0), 0) - need;
+    if (surplus <= 0) continue;
+    const ordered = vLines.slice().sort((a, b) => {
+      const oa = placed.find(o => o.id === a.purchase_order_id), ob = placed.find(o => o.id === b.purchase_order_id);
+      return ((ob.ship_year ?? 0) * 100 + ob.ship_week) - ((oa.ship_year ?? 0) * 100 + oa.ship_week);
+    });
+    for (const l of ordered) {
+      if (surplus <= 0) break;
+      const cut = Math.min(surplus, +l.qty_ordered || 0);
+      const newQty = round100((+l.qty_ordered || 0) - cut, l.form);
+      if (newQty !== +l.qty_ordered) { cuts[l.id] = newQty; surplus -= (+l.qty_ordered - newQty); }
+    }
+  }
+  for (const po of placed) {
+    const changed = lines.filter(l => l.purchase_order_id === po.id && cuts[l.id] != null);
+    if (!changed.length) continue;
+    const desc = changed.map(l => `${l.variety_name}: ${(+l.qty_ordered).toLocaleString()} → ${cuts[l.id].toLocaleString()} (${(cuts[l.id] - l.qty_ordered).toLocaleString()})`).join(" · ");
+    if (!window.confirm(`⚠ This material is on order ${po.order_number} (${po.status.toUpperCase()}) with ${po.broker}.\n\nAre you sure you want to adjust an already-placed order?\n\n${desc}\n\nOK = draft an AMENDED order on the Orders page (all lines restated, changes marked) to send ${po.broker}.`)) continue;
+    const n = (+po.amendment_count || 0) + 1;
+    const amdNum = `${po.order_number}-A${n}`;
+    const { data: amd, error } = await sb.from("purchase_orders").insert({
+      plan_id: planId, order_number: amdNum, broker: po.broker, supplier: po.supplier, farm: po.farm,
+      ship_week: po.ship_week, ship_year: po.ship_year, ship_date: po.ship_date, status: "draft",
+      total_qty: 0, total_cost: 0,
+      notes: `AMENDED ORDER — updates confirmation ${po.order_number}. ${desc}. All other lines unchanged.`,
+    }).select("id").single();
+    if (error) { out.push(`⚠ ${po.order_number}: amendment failed — ${error.message}`); continue; }
+    const all = lines.filter(l => l.purchase_order_id === po.id);
+    let no = 1, totQ = 0, totC = 0;
+    for (const l of all) {
+      const qty = cuts[l.id] != null ? cuts[l.id] : +l.qty_ordered;
+      const ext = l.unit_price != null ? +(qty * +l.unit_price).toFixed(2) : null;
+      await sb.from("purchase_order_lines").insert({
+        purchase_order_id: amd.id, line_no: no++, variety_name: l.variety_name, variety_id: l.variety_id,
+        recipe_id: l.recipe_id, qty_ordered: qty, qty_needed: l.qty_needed, unit_price: l.unit_price,
+        ext_price: ext, material: l.material, form: l.form, status: "active",
+        notes: cuts[l.id] != null ? `CHANGED: was ${(+l.qty_ordered).toLocaleString()} → ${qty.toLocaleString()} (${(qty - l.qty_ordered).toLocaleString()})` : (l.notes || null),
+      });
+      totQ += qty; totC += ext || 0;
+    }
+    await sb.from("purchase_orders").update({ total_qty: totQ, total_cost: +totC.toFixed(2) }).eq("id", amd.id);
+    const hist = Array.isArray(po.amendment_history) ? po.amendment_history : [];
+    await sb.from("purchase_orders").update({
+      amendment_count: n,
+      amendment_history: [...hist, { date: new Date().toISOString().slice(0, 10), summary: `${amdNum} drafted: ${desc}` }],
+    }).eq("id", po.id);
+    out.push(`📝 ${amdNum} drafted (${po.broker}, wk${po.ship_week}) — Orders page → ⬇ XLSX → send as the updated order.`);
+  }
+  return out;
+}

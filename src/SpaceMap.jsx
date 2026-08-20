@@ -5,6 +5,7 @@
 // tab as reference and never count as fill. ✂ Trim cuts unplaced remainder.
 import { useEffect, useMemo, useState } from "react";
 import { getSupabase } from "./supabase";
+import { amendOrdersForTrim } from "./shared";
 import FamilyPage from "./FamilyPage";
 
 const C = { dark: "#1e2d1a", light: "#7fb069", cream: "#c8e6b8", muted: "#7a8c74", red: "#d94f3d", amber: "#e89a3a", border: "#dfe7d8", chip: "#eef3e8", card: "#fff" };
@@ -436,6 +437,11 @@ export default function SpaceMap({ plan: fixedPlan }) {
             changed_by: "space-trim", source: "space-map" });
         } catch { /* audit must not block */ }
       }
+      // ordered already? offer an amended order so the broker cuts the extras (8/20)
+      try {
+        const msgs = await amendOrdersForTrim(sb, planId, names);
+        if (msgs.length) window.alert(msgs.join("\n"));
+      } catch (e) { window.alert("Order-amendment check failed (the trim itself saved): " + e.message); }
       setTick(t => t + 1); setPlaceItem("");
     } catch (e) { window.alert("Trim failed: " + e.message); }
     setBusy(false);
