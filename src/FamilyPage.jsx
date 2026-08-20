@@ -304,7 +304,7 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
         } else setPoInfo({ orders: [], lines: 0 });
       }
       if (vids.length) {
-        const { data: vs } = await sb.from("variety_library").select("id,variety,variety_key,match_aliases").in("id", vids);
+        const { data: vs } = await sb.from("variety_library").select("id,crop_name,variety,variety_key,match_aliases").in("id", vids);
         setVmap(Object.fromEntries((vs || []).map(v => [v.id, v])));
       }
       const trayIds = [...new Set((ser || []).map(s => s.prop_tray_id).filter(Boolean))];
@@ -1658,7 +1658,11 @@ Combine the groups?`)) return;
         ? cands.slice().sort((a, b) => Math.abs(+a.landed - l.price) - Math.abs(+b.landed - l.price))[0]
         : cands[0]) || qs[0];
       const supplier = l.supplier || q?.supplier || null;
+      const vrec = vmap[l.varietyId];
+      const fullName = vrec?.crop_name && !String(l.varietyName).toLowerCase().startsWith(String(vrec.crop_name).toLowerCase())
+        ? `${vrec.crop_name} ${l.varietyName}` : l.varietyName;
       return { ...l,
+        varietyName: fullName,
         broker: l.broker || q?.broker || null,
         supplier,
         farm: farmOf(supplier, recipe?.crop_name, recipe?.plant_class === "perennial", q?.origin),
