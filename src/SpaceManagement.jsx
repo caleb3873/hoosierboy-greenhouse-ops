@@ -890,9 +890,14 @@ function Overview({ houses, pads, locFilter }) {
       const { data: plans } = await sb.from("production_plans").select("id,name").neq("status", "archived").order("created_at", { ascending: false });
       const plan = (plans || []).find(p => /spring.*2027/i.test(p.name)) || (plans || [])[0];
       if (!plan) return;
-      const { data: benches } = await sb.from("benches").select("id,code").limit(2000);
-      const bkey = {};
-      (benches || []).forEach(b => { const k = houseKeyOfBench(b.code); if (k) bkey[b.id] = k; });
+      const { data: benches } = await sb.from("benches").select("id,code,bench_type,cap_overrides").limit(2000);
+      const bkey = {}, bkind = {};
+      (benches || []).forEach(b => {
+        const k = houseKeyOfBench(b.code);
+        if (!k || !(b.bench_type || b.cap_overrides)) return;
+        bkey[b.id] = k;
+        bkind[b.id] = ["basket_line", "low_line"].includes(b.bench_type) ? "line" : "bench";
+      });
       let rows = [], off = 0;
       for (;;) {
         const { data } = await sb.from("scheduled_crops").select("bench_id,item_name,qty_pots")
@@ -903,14 +908,20 @@ function Overview({ houses, pads, locFilter }) {
         off += 1000;
       }
       const byHouse = {};
+      Object.entries(bkey).forEach(([bid, k]) => {
+        const h = byHouse[k] || (byHouse[k] = { pots: 0, crops: {}, benchTot: 0, lineTot: 0, benchUsed: new Set(), lineUsed: new Set() });
+        h[bkind[bid] === "line" ? "lineTot" : "benchTot"]++;
+      });
       rows.forEach(r => {
         const k = bkey[r.bench_id];
         if (!k) return;
-        const h = byHouse[k] || (byHouse[k] = { pots: 0, crops: {} });
+        const h = byHouse[k];
         h.pots += r.qty_pots;
+        h[bkind[r.bench_id] === "line" ? "lineUsed" : "benchUsed"].add(r.bench_id);
         const crop = String(r.item_name || "").replace(SIZE_PREFIX, "").split(" ").slice(0, 2).join(" ");
         h.crops[crop] = (h.crops[crop] || 0) + r.qty_pots;
       });
+      Object.values(byHouse).forEach(h => { h.benchUsed = h.benchUsed.size; h.lineUsed = h.lineUsed.size; });
       setPlan27({ name: plan.name, byHouse });
     })();
   }, []);
@@ -936,8 +947,15 @@ function Overview({ houses, pads, locFilter }) {
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           <Pill label="🏠 Houses" value={filtH.length} color="#1e2d1a" />
-          <Pill label="Benches" value={`${totOccupied}/${totBenches.length}`} color="#7fb069" />
-          <Pill label="Available" value={totBenches.length - totOccupied} color={totBenches.length - totOccupied > 0 ? "#7fb069" : "#e07b39"} />
+          {(() => {
+            const keys = filtH.map(h => houseKeyOfName(h.name)).filter(Boolean);
+            const pots = keys.reduce((t, k) => t + (plan27.byHouse[k]?.pots || 0), 0);
+            const planted = keys.filter(k => (plan27.byHouse[k]?.pots || 0) > 0).length;
+            return <>
+              <Pill label={`🌱 ${plan27.name || "2027"} placed`} value={pots.toLocaleString() + " pots"} color="#7fb069" />
+              <Pill label="Houses planted" value={`${planted}/${keys.length}`} color={planted ? "#7fb069" : "#e07b39"} />
+            </>;
+          })()}
           {totSqFt > 0 && <Pill label="Indoor Sq Ft" value={totSqFt.toLocaleString()} color="#7fb069" />}
           <Pill label="🌤 Pads" value={filtP.length} color="#c8791a" />
           {totPadSqFt > 0 && <Pill label="Outdoor Sq Ft" value={totPadSqFt.toLocaleString()} color="#c8791a" />}
@@ -973,14 +991,19 @@ function Overview({ houses, pads, locFilter }) {
                         </div>
                       </div>
                       {hasIssue && <div style={{ background: "#fff3cc", border: "1px solid #f0c060", borderRadius: 7, padding: "6px 10px", fontSize: 11, color: "#7a5010", marginBottom: 8, fontWeight: 500, lineHeight: 1.4, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{house.details.activeIssues}</div>}
-                      {st.benches > 0 && (<>
-                        <FillBar pct={pct} label={`${st.occupied}/${st.benches} benches occupied`} sublabel={`${st.available} free`} />
-                        {st.sqFt > 0 && <div style={{ fontSize: 11, color: "#7a8c74", marginTop: 4 }}>{st.sqFt.toLocaleString()} sq ft bench space</div>}
-                      </>)}
-                      {st.benches === 0 && <div style={{ fontSize: 11, color: "#aabba0", fontStyle: "italic" }}>No benches configured</div>}
                       {(() => {
                         const p27 = plan27.byHouse[houseKeyOfName(house.name)];
-                        if (!p27) return null;
+                        if (!p27 || !p27.pots) return <div style={{ fontSize: 11, color: "#aabba0", fontStyle: "italic" }}>nothing placed for 2027 yet</div>;
+                        const denom = p27.benchTot || 1;
+                        return (<>
+                          <FillBar pct={Math.round(p27.benchUsed / denom * 100)}
+                            label={`${p27.benchUsed}/${p27.benchTot} benches planted`}
+                            sublabel={p27.lineTot ? `${p27.lineUsed}/${p27.lineTot} lines` : ""} />
+                        </>);
+                      })()}
+                      {(() => {
+                        const p27 = plan27.byHouse[houseKeyOfName(house.name)];
+                        if (!p27 || !p27.pots) return null;
                         const tops = Object.entries(p27.crops).sort((a, b) => b[1] - a[1]).slice(0, 3);
                         return (
                           <div style={{ marginTop: 8, background: "#f0f8eb", border: "1px solid #cfe3c2", borderRadius: 8, padding: "6px 9px" }}>
