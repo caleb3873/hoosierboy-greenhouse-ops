@@ -21,7 +21,7 @@ const QN = ["02","03","04","05","06","07","08","09","10","11","12","13","14","15
 const HOUSES = [
   { key: "BWS", label: "West Side", benchLike: "BWS%", vertical: true, banks: [["South row", /^BWSS/, true], ["North row (09–16 ⅓)", /^BWSN/, true]], lineLike: ["BWSH%"] },
   { key: "DBM", label: "Bluff Main", benchLike: "DBM%", vertical: true, banks: [["West range", /^DBMW/, false], ["East range", /^DBME/, false]], lineLike: ["DBMH%", "DBML%"] },
-  ...QN.map(n => ({ key: `Q${n}`, label: `Quonset ${n}`, benchLike: `EQ${n}%`, banks: [["Benches — walk order", new RegExp(`^EQ${n}0[1-4]$`), false]], lineLike: [`EQH${n}%`, `EQL${n}%`] })),
+  ...QN.map(n => ({ key: `Q${n}`, label: `Quonset ${n}`, benchLike: `EQ${n}%`, banks: [["Benches — walk order", new RegExp(`^EQ${n}(SH)?0[1-4]$`), false]], lineLike: [`EQH${n}%`, `EQL${n}%`] })),
 ];
 
 // 4.5" crops that ALWAYS get space (Caleb 8/20 — he may add more): they carry their
@@ -43,7 +43,7 @@ export function classOfItem(name) {
   if (/^1 QT/.test(n)) return "tray45";
   return null;
 }
-const TYPE_LABEL = { full8: "8'", full6: "6'", full4: "4'", third8: "⅓·8'", third4: "⅓·4'", wall4: "4' wall", mid8: "8' mid", basket_line: "line", low_line: "low" };
+const TYPE_LABEL = { full8: "8'", full6: "6'", full4: "4'", third8: "⅓·8'", third4: "⅓·4'", wall4: "4' wall", mid8: "8' mid", basket_line: "line", low_line: "low", shelf: "shelf·tight" };
 
 function zoneOf(code) {
   if (code.startsWith("BWS")) return "BWS";
@@ -461,7 +461,8 @@ export default function SpaceMap({ plan: fixedPlan }) {
     setBusy(false); setTick(t => t + 1);
   }
 
-  const benchOf = re => benches.filter(b => re.test(b.code) && !["basket_line", "low_line"].includes(b.bench_type) && (b.bench_type || b.cap_overrides)).sort((a, b) => a.code.localeCompare(b.code));
+  const shelfSort = c => c.replace(/SH01$/, "00").replace(/SH02$/, "05");   // shelves flank the walls in walk order
+  const benchOf = re => benches.filter(b => re.test(b.code) && !["basket_line", "low_line"].includes(b.bench_type) && (b.bench_type || b.cap_overrides)).sort((a, b) => shelfSort(a.code).localeCompare(shelfSort(b.code)));
   const basketLines = benches.filter(b => b.bench_type === "basket_line").sort((a, b) => a.code.localeCompare(b.code));
   const lowLines = benches.filter(b => b.bench_type === "low_line").sort((a, b) => a.code.localeCompare(b.code));
 
