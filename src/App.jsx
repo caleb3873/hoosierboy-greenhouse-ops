@@ -41,6 +41,7 @@ import Orders               from "./Orders";
 import CatalogHotLists      from "./CatalogHotLists";
 import FundraiserPlanner    from "./FundraiserPlanner";
 import PlanTotals           from "./PlanTotals";
+import PlantedInventory     from "./PlantedInventory";
 import ShippingDrivers      from "./shipping/ShippingDrivers";
 import ShippingTrucks       from "./shipping/ShippingTrucks";
 import ShipperTasksView     from "./shipping/ShipperTasksView";
@@ -83,6 +84,7 @@ const NAV_GROUPS = [
       { id: "inventory-value", label: "📊 Inventory Value" },
       { id: "tags", label: "🏷 Tag Manager" },
       { id: "plan-totals", label: "Σ Plan Totals" },
+      { id: "planted-inventory", label: "📋 Planted Counts" },
     ],
   },
   {
@@ -303,6 +305,7 @@ function PlannerShell() {
         {page === "cat-hotlists"       && <CatalogHotLists />}
         {page === "fundraiser"         && <FundraiserPlanner />}
         {page === "plan-totals"        && <PlanTotals embedded />}
+        {page === "planted-inventory"  && <PlantedInventory />}
         {page === "ship-command"   && <ShippingCommand />}
         {page === "ship-routes"    && <ShippingRoutes />}
         {page === "ship-dashboard" && <ShippingDashboard />}
