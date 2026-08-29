@@ -345,7 +345,14 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
       {setup && (
         <div style={{ position: "fixed", inset: 0, zIndex: 100, background: "#141a12ee", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
           <div style={{ background: "#1f2a1a", border: "1px solid #3a4a34", borderRadius: 16, padding: 22, maxWidth: 420, width: "100%" }}>
-            <div style={{ fontFamily: SERIF, fontSize: 22, marginBottom: 4 }}>🏈 Welcome to the '26 draft</div>
+            <div style={{ fontFamily: SERIF, fontSize: 22, marginBottom: 4 }}>
+              🏈 Welcome{(() => {   // greet by name: saved identity first, else the personal link's owner
+                const NAMES = { caleb: "Caleb", kacie: "Kacie", mikeb: "Mike B.", daniel: "Daniel", alex: "Alex", dave: "Dave", michael: "Michael", peter: "Peter", martin: "Martin", paul: "Paul" };
+                const raw = me?.name || NAMES[rankList.split("-")[0]] || "";
+                const nice = raw && (NAMES[String(raw).toLowerCase()] || String(raw).toLowerCase().replace(/(^|\s)\S/g, c => c.toUpperCase()));
+                return nice ? `, ${nice}` : " to the '26 draft";
+              })()}!
+            </div>
             <div style={{ fontSize: 12, color: "#a9bda0", marginBottom: 14 }}>Snake draft — enter your team name and grab your draft slot.</div>
             <input value={setupName} onChange={e => setSetupName(e.target.value)} placeholder="team / your name"
               style={{ width: "100%", boxSizing: "border-box", padding: "12px 12px", borderRadius: 10, border: "1.5px solid #3a4a34", background: "#141a12", color: "#e8eee4", fontFamily: FONT, fontSize: 16, fontWeight: 700, marginBottom: 12 }} />
