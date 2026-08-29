@@ -279,15 +279,17 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
   }
 
   const teams = useMemo(() => [...new Set(players.map(p => p.team).filter(Boolean))].sort(), [players]);
+  // BEST AVAILABLE ONLY — drafted players drop off the list, ranks stay (Caleb 8/29)
   const visible = useMemo(() => {
     let v = players.filter(p =>
+      !pickedNames.has(p.player) &&
       (posF === "ALL" || p.pos === posF) &&
       !hiddenTeams.has(p.team) &&
       (!q || `${p.player} ${p.team} ${p.pos}`.toLowerCase().includes(q.toLowerCase())));
     if (sortBy === "pos") v = [...v].sort((a, b) => String(a.pos).localeCompare(String(b.pos)) || a.rk - b.rk);
     if (sortBy === "team") v = [...v].sort((a, b) => String(a.team).localeCompare(String(b.team)) || a.rk - b.rk);
     return v;
-  }, [players, posF, hiddenTeams, q, sortBy]);
+  }, [players, pickedNames, posF, hiddenTeams, q, sortBy]);
   const bestAvail = players.find(p => !pickedNames.has(p.player) && !hiddenTeams.has(p.team));
   const personal = rankList !== "master";
   const mySlot = inMock ? mockSlot : me?.slot;
@@ -408,15 +410,13 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
             return (
               <div key={pos} style={{ background: "#1c241a", border: "1px solid #2c3828", borderRadius: 10, padding: 8 }}>
                 <div style={{ fontWeight: 800, fontSize: 12, color: POS_COLOR[pos] || "#fff", borderBottom: `2px solid ${POS_COLOR[pos] || "#3a4a34"}`, paddingBottom: 4, marginBottom: 5 }}>{pos}</div>
-                {col.slice(0, pos === "K" || pos === "D/ST" ? 12 : 40).map((p, i) => {
-                  const gone = pickedNames.has(p.player);
+                {col.filter(p => !pickedNames.has(p.player)).slice(0, pos === "K" || pos === "D/ST" ? 12 : 40).map((p, i) => {
                   const m = metrics[p.player];
                   return (
-                    <div key={p.id} onClick={() => !gone && next && setPending(p)}
-                      style={{ display: "flex", alignItems: "baseline", gap: 6, padding: "3px 4px", borderRadius: 5, cursor: gone ? "default" : "pointer",
-                        opacity: gone ? .4 : 1, fontSize: 12 }}>
+                    <div key={p.id} onClick={() => next && setPending(p)}
+                      style={{ display: "flex", alignItems: "baseline", gap: 6, padding: "4px 4px", borderRadius: 5, cursor: "pointer", fontSize: 12 }}>
                       <span style={{ width: 22, textAlign: "right", fontSize: 10, color: "#7a8c74", fontVariantNumeric: "tabular-nums" }}>{i + 1}</span>
-                      <span style={{ flex: 1, fontWeight: 700, textDecoration: gone ? "line-through" : "none", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      <span style={{ flex: 1, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                         {p.player}{personal && m?.colts ? " 🏠" : ""}
                       </span>
                       {personal && m?.label && <span style={{ fontSize: 7.5, fontWeight: 800, color: LABEL_COLOR[m.label] || "#a9bda0" }}>{m.label}</span>}
@@ -430,7 +430,6 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
         </div>
       )}
       {!posView && visible.slice(0, 150).map((p, i) => {
-        const gone = pickedNames.has(p.player);
         const m = metrics[p.player];
         const newTier = sortBy === "rank" && (i === 0 || visible[i - 1].tier !== p.tier);
         const newGroup = sortBy !== "rank" && (i === 0 || visible[i - 1][sortBy === "pos" ? "pos" : "team"] !== p[sortBy === "pos" ? "pos" : "team"]);
@@ -438,24 +437,24 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
           <div key={p.id}>
             {newTier && posF === "ALL" && !q && <div style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", margin: "10px 0 3px", letterSpacing: 1 }}>TIER {p.tier}</div>}
             {newGroup && <div style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", margin: "10px 0 3px", letterSpacing: 1 }}>{sortBy === "pos" ? p.pos : p.team}</div>}
-            <div onClick={() => !gone && next && setPending(p)}
-              style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 8, marginBottom: 2, cursor: gone ? "default" : "pointer",
-                background: gone ? "#181f16" : "#212b1d", opacity: gone ? .45 : 1, border: "1px solid #2c3828" }}>
+            <div onClick={() => next && setPending(p)}
+              style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 8, marginBottom: 2, cursor: "pointer",
+                background: "#212b1d", border: "1px solid #2c3828" }}>
               <span style={{ width: 28, textAlign: "right", fontSize: 11, color: "#7a8c74", fontVariantNumeric: "tabular-nums" }}>{p.rk}</span>
               <span style={{ width: 40, fontWeight: 800, fontSize: 11, color: POS_COLOR[p.pos] || "#fff" }}>{p.pos_rank}</span>
               <span style={{ flex: 1, minWidth: 0 }}>
-                <span style={{ fontWeight: 700, fontSize: 13.5, textDecoration: gone ? "line-through" : "none" }}>
+                <span style={{ fontWeight: 700, fontSize: 13.5 }}>
                   {p.player}{personal && m?.colts ? " 🏠" : ""}
                 </span>
                 {personal && m?.label &&
                   <span style={{ marginLeft: 6, fontSize: 8.5, fontWeight: 800, padding: "1px 6px", borderRadius: 5, background: (LABEL_COLOR[m.label] || "#3a4a34") + "33", color: LABEL_COLOR[m.label] || "#a9bda0" }}>{m.label}</span>}
-                {personal && m?.adp != null && +m.adp - p.rk >= 8 && !gone &&
+                {personal && m?.adp != null && +m.adp - p.rk >= 8 &&
                   <span style={{ marginLeft: 5, fontSize: 8.5, color: "#1fa8a0", fontWeight: 800 }}>▼{Math.round(+m.adp - p.rk)} vs ADP</span>}
-                {personal && m?.note && !gone &&
+                {personal && m?.note &&
                   <div style={{ fontSize: 9.5, color: "#8ba183", lineHeight: 1.3, marginTop: 1 }}>{m.note}</div>}
               </span>
               <span style={{ fontSize: 10.5, color: "#a9bda0", whiteSpace: "nowrap" }}>{p.team} · bye {p.bye}</span>
-              {personal && !gone && (
+              {personal && (
                 <span style={{ display: "flex", gap: 4 }} onClick={e => e.stopPropagation()}>
                   <button onClick={() => nudge(p, -1)} disabled={busy} style={{ ...btn("#3a4a34"), padding: "6px 10px", fontSize: 13 }}>▲</button>
                   <button onClick={() => nudge(p, 1)} disabled={busy} style={{ ...btn("#3a4a34"), padding: "6px 10px", fontSize: 13 }}>▼</button>
@@ -608,24 +607,25 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
         </div>
       )}
       <style>{`@keyframes draftpulse { 0%,100% { filter: brightness(1); } 50% { filter: brightness(1.18); } }`}</style>
-      {/* bottom drafting sheet — always under your thumb, wherever you tapped the player */}
+      {/* draft confirm popup — dead center, yes or no, nothing to scroll */}
       {pending && next && (
-        <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 60, background: "#1f2a1a", borderTop: "2px solid #7fb069",
-          padding: "14px 16px calc(14px + env(safe-area-inset-bottom))", boxShadow: "0 -8px 30px rgba(0,0,0,.5)" }}>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
-            <b style={{ fontSize: 17 }}>{pending.player}</b>
-            <span style={{ color: POS_COLOR[pending.pos], fontWeight: 800 }}>{pending.pos_rank}</span>
-            <span style={{ color: "#a9bda0", fontSize: 12 }}>{pending.team} · bye {pending.bye}</span>
-            <span style={{ marginLeft: "auto", fontSize: 12.5, fontWeight: 800, color: next.slot === mySlot ? "#7fb069" : "#e89a3a" }}>
-              {next.slot === mySlot ? "→ YOUR pick" : `→ drafts for ${onClock}`} · Rd {next.round}
-            </span>
-          </div>
-          <div style={{ display: "flex", gap: 10 }}>
-            <button onClick={() => draftPlayer(pending)} disabled={busy}
-              style={{ ...btn("#7fb069", "#141a12"), flex: 1, padding: "14px", fontSize: 16 }}>
-              ✓ DRAFT {pending.player.split(" ").slice(-1)[0].toUpperCase()}
-            </button>
-            <button onClick={() => setPending(null)} style={{ ...btn("#3a4a34"), padding: "14px 18px", fontSize: 14 }}>Cancel</button>
+        <div onClick={() => setPending(null)} style={{ position: "fixed", inset: 0, zIndex: 90, background: "#141a12dd", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: "#1f2a1a", border: "2px solid #7fb069", borderRadius: 16, padding: 22, maxWidth: 360, width: "100%", textAlign: "center", boxShadow: "0 20px 60px rgba(0,0,0,.6)" }}>
+            <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: 1, color: next.slot === mySlot ? "#7fb069" : "#e89a3a", marginBottom: 8 }}>
+              {next.slot === mySlot ? "YOUR PICK" : `DRAFTING FOR ${String(onClock).toUpperCase()}`} · RD {next.round}
+            </div>
+            <div style={{ fontFamily: SERIF, fontSize: 24, marginBottom: 2 }}>{pending.player}</div>
+            <div style={{ fontSize: 13, color: "#a9bda0", marginBottom: 4 }}>
+              <b style={{ color: POS_COLOR[pending.pos] || "#fff" }}>{pending.pos_rank}</b> · {pending.team} · bye {pending.bye}
+            </div>
+            {personal && metrics[pending.player]?.note &&
+              <div style={{ fontSize: 10.5, color: "#8ba183", lineHeight: 1.35, marginBottom: 6 }}>{metrics[pending.player].note}</div>}
+            <div style={{ fontSize: 15, fontWeight: 700, margin: "10px 0 14px" }}>Draft this player?</div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => draftPlayer(pending)} disabled={busy}
+                style={{ ...btn("#7fb069", "#141a12"), flex: 1, padding: "15px", fontSize: 16 }}>✓ Yes, draft</button>
+              <button onClick={() => setPending(null)} style={{ ...btn("#3a4a34"), flex: 1, padding: "15px", fontSize: 16 }}>✕ No</button>
+            </div>
           </div>
         </div>
       )}
