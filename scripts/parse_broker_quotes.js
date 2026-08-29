@@ -95,7 +95,7 @@ function breederFromName(fn) {
   if (/foremost/.test(f)) return 'Foremost';
   if (/dickman/.test(f)) return 'Dickman';
   if (/pell/.test(f)) return 'Pell';
-  if (/pacific|pp&l|ppl\b/.test(f)) return 'Pacific Plug & Liner';
+  if (/pacific|pp&l|ppl\b|pac1/.test(f)) return 'Pacific Plug & Liner';   // PAC1 = Ball's supplier code for PP&L
   if (/walters/.test(f)) return 'Walters';
   if (/creek hill/.test(f)) return 'Creek Hill';
   if (/emerald/.test(f)) return 'Emerald Coast';
@@ -225,6 +225,17 @@ function parseFile(broker, file) {
       const r = rows[i]; if (!r) continue;
       const variety = S(r[cVar]);
       if (!variety || /^(crop|variety|description|total|subtotal|grand|product)/i.test(variety)) continue;
+      // 🚫 Bloomin' Easy opt-out (Caleb 8/29: "we don't want to be a part of this bloomin
+      // easy program" — branded pot + tag + fee are mandatory on BE items, no generic
+      // option). On Ball/PP&L quotes the branded liners carry a B-prefixed size code
+      // (BCustLN 72 / BCstLN72TX); the Feathered Friends ajugas are BE-branded too but
+      // ship under a plain size code, and the "Bloomin' Easy" 1-gal line is the branded
+      // pot itself. None of these may enter broker_prices — they must never surface as
+      // an orderable source.
+      if (broker === 'Ball') {
+        const sizeV = cForm >= 0 ? S(r[cForm]).replace(/\s+/g, '') : '';
+        if (/^BC(u?st)?LN/i.test(sizeV) || /FthrdFrnds|Feathered\s*Friends/i.test(variety) || /bloomin'?\s*easy/i.test(variety)) continue;
+      }
       const botanical = cBot >= 0 ? S(r[cBot]) : '';
       const cropV = cCrop >= 0 && !/^\d+$/.test(S(r[cCrop])) ? S(r[cCrop]) : '';
       const roy = cRoy >= 0 ? num(r[cRoy]) : null;
@@ -313,7 +324,13 @@ function parseFile(broker, file) {
         listPrice: +(+listPrice).toFixed(5),
         landed: +(+landed).toFixed(5),
         royalty: roy, freight: frt,
-        exclusivity: cExcl >= 0 ? S(r[cExcl]) : '',
+        // Tag-mandate brand programs that stay orderable (PAC1 terms: Royal Hawaiian
+        // colocasia + Meerlo/Exceptional/Phenomenal lavender need the brand TAG, not
+        // the pot program) — flag so sourcing shows the obligation instead of hiding it.
+        exclusivity: cExcl >= 0 ? S(r[cExcl])
+          : (broker === 'Ball' && (/RylHwn|Royal\s*Hawaiian/i.test(variety)
+              || (/lavandula|lavender/i.test(cropV + ' ' + variety) && /\b(Meerlo|Exceptional|Phenomenal)\b/i.test(variety))))
+            ? 'MANDATORY TAG' : '',
         itemMin: cMin >= 0 ? (parseInt(String(r[cMin]).replace(/[^\d]/g, ''), 10) || null) : null,
         key: vkey,
         // supplier -> form -> variety: the match grain for cross-broker comparison
