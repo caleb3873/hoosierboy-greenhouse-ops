@@ -22,7 +22,9 @@ const GENUS_SYN = { mentha: 'mint', thymus: 'thyme', salvia: 'sage', laurus: 'ba
   lavender: 'lavandula' };
 // Series/word abbreviations & typos brokers use → expand so the abbreviated listing matches the
 // full one. cas=Cascadias, com=Compact, bic=Bicolor, bestie=Besties (plural).
-const WORD_SYN = { cas: 'cascadias', com: 'compact', bic: 'bicolor', bestie: 'besties', swt: 'sweet', hrt: 'heart' };
+const WORD_SYN = { cas: 'cascadias', com: 'compact', bic: 'bicolor', bestie: 'besties', swt: 'sweet', hrt: 'heart',
+  // PAC1 2027 abbreviations (8/29: "Ltl Rckstr Pink" hid the Little Rockstars buddleia from every key join)
+  ltl: 'little', rckstr: 'rockstar', rockstars: 'rockstar' };
 function tidy(s) {
   s = ' ' + String(s).toLowerCase() + ' ';
   // transliterate accents so "Café" == "Cafe" (one broker uses é, another writes "Cafe'")
