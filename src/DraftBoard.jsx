@@ -23,6 +23,7 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
   const [q, setQ] = useState("");
   const [posF, setPosF] = useState("ALL");
   const [sortBy, setSortBy] = useState("rank");           // rank | pos | team
+  const [posView, setPosView] = useState(false);          // positional cheat-sheet columns
   const [hiddenTeams, setHiddenTeams] = useState(() => {
     try { return new Set(JSON.parse(localStorage.getItem("draft-hidden-teams") || "[]")); } catch { return new Set(); }
   });
@@ -225,6 +226,9 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
         <button onClick={() => setShowTeamBar(v => !v)} style={btn(showTeamBar || hiddenTeams.size ? "#7fb069" : "#3a4a34", showTeamBar || hiddenTeams.size ? "#141a12" : "#e8eee4")}>
           ✕ teams{hiddenTeams.size ? ` (${hiddenTeams.size})` : ""}
         </button>
+        <button onClick={() => setPosView(v => !v)} style={btn(posView ? "#7fb069" : "#3a4a34", posView ? "#141a12" : "#e8eee4")}>
+          ⊞ by position
+        </button>
       </div>
       <div style={{ display: "flex", gap: 5, marginBottom: 8, flexWrap: "wrap" }}>
         {["ALL", "WR", "RB", "QB", "TE", "K", "D/ST"].map(p => (
@@ -244,7 +248,37 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
             style={{ ...btn("#3a4a34"), fontSize: 10 }}>reset</button>}
         </div>
       )}
-      {visible.slice(0, 150).map((p, i) => {
+      {posView && (
+        <div style={{ display: "grid", gridTemplateColumns: wide ? "1fr 1fr" : "repeat(auto-fit, minmax(240px, 1fr))", gap: 10 }}>
+          {["WR", "RB", "TE", "QB", "K", "D/ST"].map(pos => {
+            const col = players.filter(p => p.pos === pos && !hiddenTeams.has(p.team)
+              && (!q || `${p.player} ${p.team}`.toLowerCase().includes(q.toLowerCase())));
+            if (!col.length) return null;
+            return (
+              <div key={pos} style={{ background: "#1c241a", border: "1px solid #2c3828", borderRadius: 10, padding: 8 }}>
+                <div style={{ fontWeight: 800, fontSize: 12, color: POS_COLOR[pos] || "#fff", borderBottom: `2px solid ${POS_COLOR[pos] || "#3a4a34"}`, paddingBottom: 4, marginBottom: 5 }}>{pos}</div>
+                {col.slice(0, pos === "K" || pos === "D/ST" ? 12 : 40).map((p, i) => {
+                  const gone = pickedNames.has(p.player);
+                  const m = metrics[p.player];
+                  return (
+                    <div key={p.id} onClick={() => !gone && next && setPending(p)}
+                      style={{ display: "flex", alignItems: "baseline", gap: 6, padding: "3px 4px", borderRadius: 5, cursor: gone ? "default" : "pointer",
+                        opacity: gone ? .4 : 1, fontSize: 12 }}>
+                      <span style={{ width: 22, textAlign: "right", fontSize: 10, color: "#7a8c74", fontVariantNumeric: "tabular-nums" }}>{i + 1}</span>
+                      <span style={{ flex: 1, fontWeight: 700, textDecoration: gone ? "line-through" : "none", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {p.player}{personal && m?.colts ? " 🏠" : ""}
+                      </span>
+                      {personal && m?.label && <span style={{ fontSize: 7.5, fontWeight: 800, color: LABEL_COLOR[m.label] || "#a9bda0" }}>{m.label}</span>}
+                      <span style={{ fontSize: 9.5, color: "#7a8c74" }}>{p.team}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {!posView && visible.slice(0, 150).map((p, i) => {
         const gone = pickedNames.has(p.player);
         const m = metrics[p.player];
         const newTier = sortBy === "rank" && (i === 0 || visible[i - 1].tier !== p.tier);
@@ -280,7 +314,7 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
           </div>
         );
       })}
-      {visible.length > 150 && <div style={{ color: "#7a8c74", fontSize: 11, padding: 8 }}>…{visible.length - 150} more — search or filter</div>}
+      {!posView && visible.length > 150 && <div style={{ color: "#7a8c74", fontSize: 11, padding: 8 }}>…{visible.length - 150} more — search or filter</div>}
     </div>
   );
 
