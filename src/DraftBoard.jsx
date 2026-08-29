@@ -33,16 +33,20 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
   const [undoArm, setUndoArm] = useState(false);
   const [busy, setBusy] = useState(false);
   const [wide, setWide] = useState(typeof window !== "undefined" && window.innerWidth > 1080);
+  // commish links (Caleb + Kacie) skip the welcome gate — research/board-editing mode;
+  // they can still join via ⚙. Everyone else gets prompted to claim a slot.
+  const commishEarly = ["caleb-4qx", "kacie-7mv"].includes(rankList);
   // who am I at this draft? claimed on first open (team name + snake slot), kept per device
   const meKey = `draft-${board}-me`;
   const [me, setMe] = useState(() => { try { return JSON.parse(localStorage.getItem(meKey) || "null"); } catch { return null; } });
-  const [setup, setSetup] = useState(!me);
+  const [setup, setSetup] = useState(!me && !commishEarly);
   const [setupName, setSetupName] = useState(me?.name || (rankList !== "master" ? rankList.split("-")[0].toUpperCase() : ""));
   const [setupSlot, setSetupSlot] = useState(me?.slot || null);
   // commissioner controls live only on Caleb's + Kacie's links — fix slot claims etc.
-  const isCommish = ["caleb-4qx", "kacie-7mv"].includes(rankList);
+  const isCommish = commishEarly;
   const [commishOpen, setCommishOpen] = useState(false);
   const [slotEdits, setSlotEdits] = useState({});
+  const [copied, setCopied] = useState("");
   const pollRef = useRef(null);
 
   useEffect(() => {
@@ -432,7 +436,24 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
             <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
               <button onClick={saveSlotEdits} disabled={busy || !Object.keys(slotEdits).length}
                 style={{ ...btn(Object.keys(slotEdits).length ? "#7fb069" : "#3a4a34", Object.keys(slotEdits).length ? "#141a12" : "#7a8c74"), flex: 1, padding: "11px" }}>✓ Save</button>
-              <button onClick={() => { setSlotEdits({}); setCommishOpen(false); }} style={{ ...btn("#3a4a34"), padding: "11px" }}>Cancel</button>
+              <button onClick={() => { setSlotEdits({}); setCommishOpen(false); }} style={{ ...btn("#3a4a34"), padding: "11px" }}>Close</button>
+            </div>
+            <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1, color: "#7a8c74", margin: "16px 0 6px" }}>SHARE LINKS</div>
+            <div style={{ maxHeight: 220, overflowY: "auto" }}>
+              {[["League board (view + draft)", `/?draft=${board}`],
+                ["Mike B.", `/?draft=${board}&rank=mikeb-2rf`], ["Caleb", `/?draft=${board}&rank=caleb-4qx`],
+                ["Daniel", `/?draft=${board}&rank=daniel-8kt`], ["Kacie", `/?draft=${board}&rank=kacie-7mv`],
+                ["Alex", `/?draft=${board}&rank=alex-5wj`], ["Dave", `/?draft=${board}&rank=dave-9hn`],
+                ["Michael", `/?draft=${board}&rank=michael-3vp`], ["Peter", `/?draft=${board}&rank=peter-6qd`],
+                ["Martin", `/?draft=${board}&rank=martin-1zs`], ["Paul", `/?draft=${board}&rank=paul-7gx`]].map(([who, path]) => (
+                <div key={who} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", fontSize: 12 }}>
+                  <span style={{ flex: 1, fontWeight: 700 }}>{who}</span>
+                  <button onClick={() => { navigator.clipboard.writeText(window.location.origin + path); setCopied(who); setTimeout(() => setCopied(""), 1500); }}
+                    style={{ ...btn(copied === who ? "#7fb069" : "#3a4a34", copied === who ? "#141a12" : "#e8eee4"), fontSize: 10.5, padding: "4px 10px" }}>
+                    {copied === who ? "✓ copied" : "📋 copy link"}
+                  </button>
+                </div>
+              ))}
             </div>
           </div>
         </div>
