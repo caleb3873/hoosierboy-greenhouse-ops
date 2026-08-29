@@ -29,7 +29,9 @@ const stripSize = n => String(n || "").replace(/^\s*(HB\s*\d+(?:\.\d+)?"?|\d+(?:
 const FORM_RANK = { urc: 0, callused: 1, urc_autostix: 2, rooted: 3, liner: 4, plug: 5 };
 // Force a genus to a preferred supplier when that supplier carries the variety. ipomoea → Pell.
 // (pansy/viola handled separately below — Bob's plug at a specific tray size.)
-const GENUS_SUPPLIER = { ipomoea: 'Pell' };
+// Early spring program defaults to Bob's (Caleb 8/29: "i doubt express beats ten cents…
+// just default to bobs" — pansy/viola have their own hard default below; these ride along)
+const GENUS_SUPPLIER = { ipomoea: 'Pell', alyssum: 'Bobs' };
 // Pansies/violas: 288 plug by default; Cool Wave & Top Wave run in 144s.
 const trayFor = name => /cool wave|top wave/i.test(String(name || '')) ? '144' : '288';
 // Vegetative begonias come from Lucas as ROOTED LINERS (too finicky to propagate) — NOT a URC quote.
