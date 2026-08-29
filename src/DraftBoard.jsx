@@ -130,9 +130,11 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
   }
   async function draftPlayer(pl) {
     if (!next || busy) return;
+    const wasMine = next.slot === (inMock ? mockSlot : me?.slot);
     setBusy(true);
     await insertPick(pl, next);
     setPending(null); setQ(""); setBusy(false);
+    if (wasMine && !wide) setTab("board");   // show your pick landing on the board
   }
   async function undoLast() {
     if (!picks.length || busy) return;
@@ -596,12 +598,35 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
             : <button onClick={() => setUndoArm(true)} style={btn("#3a4a34")}>↩ Undo</button>)}
         </span>
       </div>
+      {/* YOUR TURN banner — the "what do I do now" signal */}
+      {mySlot && next && next.slot === mySlot && !pending && (
+        <div style={{ background: "#7fb069", color: "#141a12", padding: "10px 14px", display: "flex", alignItems: "center", gap: 10, fontWeight: 800, animation: "draftpulse 1.6s ease-in-out infinite" }}>
+          <span style={{ fontSize: 15 }}>🟢 YOU'RE ON THE CLOCK — Pick {pickNo}, Rd {next.round}</span>
+          {!wide && tab === "board" && (
+            <button onClick={() => setTab("ranks")} style={{ ...btn("#141a12", "#c8e6b8"), marginLeft: "auto", padding: "8px 14px", fontSize: 13 }}>Pick a player →</button>
+          )}
+        </div>
+      )}
+      <style>{`@keyframes draftpulse { 0%,100% { filter: brightness(1); } 50% { filter: brightness(1.18); } }`}</style>
+      {/* bottom drafting sheet — always under your thumb, wherever you tapped the player */}
       {pending && next && (
-        <div style={{ position: "sticky", top: 52, zIndex: 30, margin: "8px 14px", background: "#1f2a1a", border: "2px solid #7fb069", borderRadius: 12, padding: "10px 14px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <b>{pending.player}</b> <span style={{ color: POS_COLOR[pending.pos], fontWeight: 800 }}>{pending.pos_rank}</span>
-          <span style={{ color: "#a9bda0", fontSize: 12 }}>→ {onClock} · Rd {next.round}</span>
-          <button onClick={() => draftPlayer(pending)} disabled={busy} style={btn("#7fb069", "#141a12")}>✓ Draft</button>
-          <button onClick={() => setPending(null)} style={btn("#3a4a34")}>Cancel</button>
+        <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 60, background: "#1f2a1a", borderTop: "2px solid #7fb069",
+          padding: "14px 16px calc(14px + env(safe-area-inset-bottom))", boxShadow: "0 -8px 30px rgba(0,0,0,.5)" }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+            <b style={{ fontSize: 17 }}>{pending.player}</b>
+            <span style={{ color: POS_COLOR[pending.pos], fontWeight: 800 }}>{pending.pos_rank}</span>
+            <span style={{ color: "#a9bda0", fontSize: 12 }}>{pending.team} · bye {pending.bye}</span>
+            <span style={{ marginLeft: "auto", fontSize: 12.5, fontWeight: 800, color: next.slot === mySlot ? "#7fb069" : "#e89a3a" }}>
+              {next.slot === mySlot ? "→ YOUR pick" : `→ drafts for ${onClock}`} · Rd {next.round}
+            </span>
+          </div>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={() => draftPlayer(pending)} disabled={busy}
+              style={{ ...btn("#7fb069", "#141a12"), flex: 1, padding: "14px", fontSize: 16 }}>
+              ✓ DRAFT {pending.player.split(" ").slice(-1)[0].toUpperCase()}
+            </button>
+            <button onClick={() => setPending(null)} style={{ ...btn("#3a4a34"), padding: "14px 18px", fontSize: 14 }}>Cancel</button>
+          </div>
         </div>
       )}
       {wide ? (
