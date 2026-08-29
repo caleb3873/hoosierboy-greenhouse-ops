@@ -1,9 +1,11 @@
-// 🏈 LIVE FANTASY DRAFT BOARD (Caleb 8/29): one link the whole league opens at the
-// draft — picks sync live; every member gets a private ?rank= link with their own
-// reorderable rankings. Caleb's link additionally carries the custom-strategy layer
-// (draft_metrics + scripts/draft_score.js): labels, "why" notes, ADP-value flags,
-// Colts-reach flags, and a snake-pick planner. Desktop: board + available-players
-// sidebar (sort by rank/pos/team, X-out teams). Realtime + polling fallback.
+// 🏈 LIVE FANTASY DRAFT BOARD (Caleb 8/29): one league link, picks sync live; every
+// member has a private ?rank= link with reorderable rankings. Caleb + Kacie carry the
+// strategy layer (labels/notes/value flags via draft_metrics + scripts/draft_score.js)
+// and commissioner powers: fix slots, share links, per-slot 🤖 autodraft, and 🎮 MOCK
+// DRAFT mode — practice snake drafts vs CPU opponents on a throwaway board. A 60-second
+// pick clock runs on the real draft; expiry auto-picks best available (enforced by
+// whichever commish device is open — phones at the table race safely, the unique
+// (board,round,slot) constraint dedupes).
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getSupabase } from "./supabase";
 
@@ -12,18 +14,27 @@ const SERIF = "'DM Serif Display', serif";
 const POS_COLOR = { WR: "#2d7dd2", RB: "#2e9e4f", QB: "#d94f3d", TE: "#e89a3a", K: "#8e5cd9", "D/ST": "#6b7280" };
 const LABEL_COLOR = { CORE: "#2e9e4f", VALUE: "#1fa8a0", FLIP: "#e89a3a", LOTTERY: "#8e5cd9", FADE: "#d94f3d" };
 const ROUNDS = 15;
+const CLOCK_SECS = 60;
 const btn = (bg, color = "#e8eee4") => ({ background: bg, color, border: "none", borderRadius: 8, padding: "6px 12px", fontWeight: 800, fontSize: 12, cursor: "pointer", fontFamily: FONT });
 
 export default function DraftBoard({ board = "hb26", rankList = "master" }) {
   const sb = getSupabase();
+  const isCommish = ["caleb-4qx", "kacie-7mv"].includes(rankList);
+  const [activeBoard, setActiveBoard] = useState(() => {
+    try { return localStorage.getItem(`draft-${board}-mock-${rankList}`) || board; } catch { return board; }
+  });
+  const inMock = activeBoard !== board;
+  const [mockSlot, setMockSlot] = useState(() => { try { return +localStorage.getItem(`draft-${board}-mockslot-${rankList}`) || null; } catch { return null; } });
+  const [mockSetup, setMockSetup] = useState(false);
+
   const [slots, setSlots] = useState([]);
   const [picks, setPicks] = useState([]);
   const [players, setPlayers] = useState([]);
   const [metrics, setMetrics] = useState({});
   const [q, setQ] = useState("");
   const [posF, setPosF] = useState("ALL");
-  const [sortBy, setSortBy] = useState("rank");           // rank | pos | team
-  const [posView, setPosView] = useState(false);          // positional cheat-sheet columns
+  const [sortBy, setSortBy] = useState("rank");
+  const [posView, setPosView] = useState(false);
   const [hiddenTeams, setHiddenTeams] = useState(() => {
     try { return new Set(JSON.parse(localStorage.getItem("draft-hidden-teams") || "[]")); } catch { return new Set(); }
   });
@@ -33,31 +44,32 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
   const [undoArm, setUndoArm] = useState(false);
   const [busy, setBusy] = useState(false);
   const [wide, setWide] = useState(typeof window !== "undefined" && window.innerWidth > 1080);
-  // commish links (Caleb + Kacie) skip the welcome gate — research/board-editing mode;
-  // they can still join via ⚙. Everyone else gets prompted to claim a slot.
-  const commishEarly = ["caleb-4qx", "kacie-7mv"].includes(rankList);
-  // who am I at this draft? claimed on first open (team name + snake slot), kept per device
-  const meKey = `draft-${board}-me`;
-  const [me, setMe] = useState(() => { try { return JSON.parse(localStorage.getItem(meKey) || "null"); } catch { return null; } });
-  const [setup, setSetup] = useState(!me && !commishEarly);
-  const [setupName, setSetupName] = useState(me?.name || (rankList !== "master" ? rankList.split("-")[0].toUpperCase() : ""));
-  const [setupSlot, setSetupSlot] = useState(me?.slot || null);
-  // commissioner controls live only on Caleb's + Kacie's links — fix slot claims etc.
-  const isCommish = commishEarly;
   const [commishOpen, setCommishOpen] = useState(false);
   const [slotEdits, setSlotEdits] = useState({});
   const [copied, setCopied] = useState("");
+  const [nowT, setNowT] = useState(Date.now());
+  const meKey = `draft-${board}-me`;
+  const [me, setMe] = useState(() => { try { return JSON.parse(localStorage.getItem(meKey) || "null"); } catch { return null; } });
+  const [setup, setSetup] = useState(!me && !isCommish);
+  const [setupName, setSetupName] = useState(me?.name || (rankList !== "master" ? rankList.split("-")[0].toUpperCase() : ""));
+  const [setupSlot, setSetupSlot] = useState(me?.slot || null);
   const pollRef = useRef(null);
+  const autoRef = useRef(false);   // re-entrancy guard for autodraft
 
   useEffect(() => {
     const onR = () => setWide(window.innerWidth > 1080);
     window.addEventListener("resize", onR);
-    return () => window.removeEventListener("resize", onR);
+    const t = setInterval(() => setNowT(Date.now()), 1000);
+    return () => { window.removeEventListener("resize", onR); clearInterval(t); };
   }, []);
 
   const loadPicks = async () => {
-    const { data } = await sb.from("draft_picks").select("*").eq("board", board);
+    const { data } = await sb.from("draft_picks").select("*").eq("board", activeBoard);
     setPicks(data || []);
+  };
+  const loadSlots = async () => {
+    const { data } = await sb.from("draft_slots").select("*").eq("board", activeBoard).order("slot");
+    setSlots(data || []);
   };
   const loadPlayers = async () => {
     let all = [], off = 0;
@@ -72,8 +84,7 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
   useEffect(() => {
     if (!sb) return;
     (async () => {
-      const { data: s } = await sb.from("draft_slots").select("*").eq("board", board).order("slot");
-      setSlots(s || []);
+      await loadSlots();
       await loadPlayers();
       if (rankList !== "master") {
         let mm = [], moff = 0;
@@ -87,12 +98,12 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
       }
       loadPicks();
     })();
-    const ch = sb.channel(`draft-${board}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "draft_picks", filter: `board=eq.${board}` }, loadPicks)
+    const ch = sb.channel(`draft-${activeBoard}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "draft_picks", filter: `board=eq.${activeBoard}` }, loadPicks)
       .subscribe();
-    pollRef.current = setInterval(loadPicks, 15000);
+    pollRef.current = setInterval(() => { loadPicks(); loadSlots(); }, 15000);
     return () => { sb.removeChannel(ch); clearInterval(pollRef.current); };
-  }, [sb, board, rankList]);
+  }, [sb, activeBoard, rankList]);
 
   const pickedNames = useMemo(() => new Set(picks.map(p => p.player)), [picks]);
   const grid = useMemo(() => { const g = {}; picks.forEach(p => { g[`${p.round}|${p.slot}`] = p; }); return g; }, [picks]);
@@ -104,15 +115,23 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
     }
     return null;
   }, [grid, slots]);
-  const onClock = next ? (slots.find(s => s.slot === next.slot)?.member || `Slot ${next.slot}`) : null;
+  const onClockSlot = next ? slots.find(s => s.slot === next.slot) : null;
+  const onClock = onClockSlot?.member || (next ? `Slot ${next.slot}` : null);
   const pickNo = next ? (next.round - 1) * (slots.length || 10) + (next.round % 2 === 1 ? next.slot : (slots.length || 10) - next.slot + 1) : null;
 
+  // ── pick clock: 60s from the previous pick ────────────────────────────────
+  const lastPickAt = useMemo(() => picks.length ? Math.max(...picks.map(p => +new Date(p.created_at))) : null, [picks]);
+  const clockLeft = next && lastPickAt ? Math.max(0, CLOCK_SECS - Math.floor((nowT - lastPickAt) / 1000)) : null;
+
+  async function insertPick(pl, target) {
+    const { error } = await sb.from("draft_picks").insert({ board: activeBoard, round: target.round, slot: target.slot, player: pl.player, team: pl.team, pos: pl.pos });
+    if (error && !/duplicate/i.test(error.message || "")) console.warn("pick failed", error.message);
+    await loadPicks();
+  }
   async function draftPlayer(pl) {
     if (!next || busy) return;
     setBusy(true);
-    const { error } = await sb.from("draft_picks").insert({ board, round: next.round, slot: next.slot, player: pl.player, team: pl.team, pos: pl.pos });
-    if (error && !/duplicate/i.test(error.message || "")) alert(`Pick failed: ${error.message}`);
-    await loadPicks();
+    await insertPick(pl, next);
     setPending(null); setQ(""); setBusy(false);
   }
   async function undoLast() {
@@ -123,32 +142,81 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
     await loadPicks();
     setUndoArm(false); setBusy(false);
   }
-  async function nudge(pl, dir) {
-    if (rankList === "master" || busy) return;
-    const idx = players.findIndex(p => p.id === pl.id);
-    const other = players[idx + dir];
-    if (!other) return;
-    setBusy(true);
-    await sb.from("draft_players").update({ rk: other.rk }).eq("id", pl.id);
-    await sb.from("draft_players").update({ rk: pl.rk }).eq("id", other.id);
-    await loadPlayers();
-    setBusy(false);
+
+  // ── autodraft brain: best available by market cost, light positional sense ──
+  function autoChoice(slot) {
+    const roster = picks.filter(p => p.slot === slot);
+    const count = pos => roster.filter(p => p.pos === pos).length;
+    const round = next?.round || 1;
+    const elig = players.filter(p => {
+      if (pickedNames.has(p.player)) return false;
+      if ((p.pos === "K" || p.pos === "D/ST") && round < 13) return false;
+      if (p.pos === "K" && count("K") >= 1) return false;
+      if (p.pos === "D/ST" && count("D/ST") >= 1) return false;
+      if (p.pos === "QB" && count("QB") >= 1 && round < 12) return false;
+      if (p.pos === "TE" && count("TE") >= 1 && round < 12) return false;
+      return true;
+    }).sort((a, b) => (+(metrics[a.player]?.adp ?? a.rk)) - (+(metrics[b.player]?.adp ?? b.rk)));
+    // K/DST backfill in the last rounds if still missing
+    if (round >= 14) {
+      if (count("K") === 0 && elig.some(p => p.pos === "K")) return elig.find(p => p.pos === "K");
+      if (count("D/ST") === 0 && elig.some(p => p.pos === "D/ST")) return elig.find(p => p.pos === "D/ST");
+    }
+    const top = elig.slice(0, 3);
+    return top[Math.floor(Math.random() * top.length)] || elig[0];
   }
+  // drives: mock CPUs (fast), real-board 🤖 slots (5s), and clock expiry (commish devices)
+  useEffect(() => {
+    const driver = inMock || isCommish;
+    if (!driver || !next || !players.length || autoRef.current) return;
+    const slotCfg = slots.find(s => s.slot === next.slot);
+    const isCpu = inMock ? (next.slot !== mockSlot) : !!slotCfg?.auto;
+    const expired = !inMock && clockLeft === 0 && picks.length > 0;
+    if (!isCpu && !expired) return;
+    const delay = inMock ? 1400 : isCpu ? 5000 : 800;
+    const t = setTimeout(async () => {
+      if (autoRef.current) return;
+      autoRef.current = true;
+      const choice = autoChoice(next.slot);
+      if (choice) await insertPick(choice, next);
+      autoRef.current = false;
+    }, delay);
+    return () => clearTimeout(t);
+  }, [next, slots, players, inMock, isCommish, mockSlot, clockLeft, picks.length]);
+
+  // ── mock draft lifecycle ────────────────────────────────────────────────────
+  async function startMock(slot) {
+    setBusy(true);
+    const id = `mock-${rankList}-${Date.now().toString(36)}`;
+    const rows = [...Array(10)].map((_, i) => ({ board: id, slot: i + 1, member: i + 1 === slot ? "⭐ YOU" : `CPU ${i + 1}`, auto: i + 1 !== slot }));
+    await sb.from("draft_slots").insert(rows);
+    localStorage.setItem(`draft-${board}-mock-${rankList}`, id);
+    localStorage.setItem(`draft-${board}-mockslot-${rankList}`, String(slot));
+    setMockSlot(slot); setMockSetup(false); setActiveBoard(id); setPicks([]); setBusy(false);
+  }
+  function exitMock() {
+    localStorage.removeItem(`draft-${board}-mock-${rankList}`);
+    localStorage.removeItem(`draft-${board}-mockslot-${rankList}`);
+    setActiveBoard(board); setMockSlot(null); setPicks([]);
+  }
+
   async function saveSlotEdits() {
     setBusy(true);
     for (const [slot, name] of Object.entries(slotEdits)) {
       const clean = String(name).trim().toUpperCase().slice(0, 14);
-      if (clean) await sb.from("draft_slots").update({ member: clean }).eq("board", board).eq("slot", +slot);
+      if (clean) await sb.from("draft_slots").update({ member: clean }).eq("board", activeBoard).eq("slot", +slot);
     }
-    const { data: s } = await sb.from("draft_slots").select("*").eq("board", board).order("slot");
-    setSlots(s || []); setSlotEdits({}); setCommishOpen(false); setBusy(false);
+    await loadSlots(); setSlotEdits({}); setBusy(false);
+  }
+  async function toggleAuto(s) {
+    await sb.from("draft_slots").update({ auto: !s.auto }).eq("id", s.id);
+    await loadSlots();
   }
   async function saveSetup() {
     if (!setupName.trim() || !setupSlot) return;
     const name = setupName.trim().toUpperCase().slice(0, 14);
     await sb.from("draft_slots").update({ member: name }).eq("board", board).eq("slot", setupSlot);
-    const { data: s } = await sb.from("draft_slots").select("*").eq("board", board).order("slot");
-    setSlots(s || []);
+    await loadSlots();
     const m = { name, slot: setupSlot };
     setMe(m); localStorage.setItem(meKey, JSON.stringify(m));
     setSetup(false);
@@ -166,6 +234,17 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
     localStorage.setItem("draft-hidden-teams", JSON.stringify([...n]));
     return n;
   });
+  async function nudge(pl, dir) {
+    if (rankList === "master" || busy) return;
+    const idx = players.findIndex(p => p.id === pl.id);
+    const other = players[idx + dir];
+    if (!other) return;
+    setBusy(true);
+    await sb.from("draft_players").update({ rk: other.rk }).eq("id", pl.id);
+    await sb.from("draft_players").update({ rk: pl.rk }).eq("id", other.id);
+    await loadPlayers();
+    setBusy(false);
+  }
 
   const teams = useMemo(() => [...new Set(players.map(p => p.team).filter(Boolean))].sort(), [players]);
   const visible = useMemo(() => {
@@ -179,16 +258,17 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
   }, [players, posF, hiddenTeams, q, sortBy]);
   const bestAvail = players.find(p => !pickedNames.has(p.player) && !hiddenTeams.has(p.team));
   const personal = rankList !== "master";
+  const mySlot = inMock ? mockSlot : me?.slot;
 
   const myPicks = useMemo(() => {
-    if (!me?.slot || !slots.length) return [];
+    if (!mySlot || !slots.length) return [];
     const n = slots.length, out = [];
     for (let r = 1; r <= ROUNDS; r++) {
-      const no = (r - 1) * n + (r % 2 === 1 ? me.slot : n - me.slot + 1);
-      if (!grid[`${r}|${me.slot}`]) out.push({ round: r, no });
+      const no = (r - 1) * n + (r % 2 === 1 ? mySlot : n - mySlot + 1);
+      if (!grid[`${r}|${mySlot}`]) out.push({ round: r, no });
     }
     return out.slice(0, 3);
-  }, [me, slots, grid]);
+  }, [mySlot, slots, grid]);
   const availAt = target => players.filter(p => !pickedNames.has(p.player) &&
     (metrics[p.player]?.adp == null || +metrics[p.player].adp >= target - 4)).slice(0, 4);
   const availTag = (p, target) => {
@@ -202,7 +282,8 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
         <thead><tr>
           <th style={{ width: 26, position: "sticky", left: 0, background: "#141a12", zIndex: 5 }} />
           {slots.map(s => <th key={s.slot} style={{ minWidth: wide ? 104 : 88, fontSize: wide ? 11.5 : 10, fontWeight: 800, padding: "4px 2px",
-            color: me?.slot === s.slot ? "#141a12" : "#c8e6b8", background: me?.slot === s.slot ? "#7fb069" : "transparent", borderRadius: 6 }}>{s.member}</th>)}
+            color: mySlot === s.slot ? "#141a12" : "#c8e6b8", background: mySlot === s.slot ? "#7fb069" : "transparent", borderRadius: 6 }}>
+            {s.member}{s.auto && !inMock ? " 🤖" : ""}</th>)}
         </tr></thead>
         <tbody>
           {[...Array(ROUNDS)].map((_, ri) => {
@@ -359,11 +440,11 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
   return (
     <div style={{ fontFamily: FONT, background: "#141a12", color: "#e8eee4", minHeight: "100vh" }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700;800&family=DM+Serif+Display&display=swap" rel="stylesheet" />
-      {setup && (
+      {setup && !inMock && (
         <div style={{ position: "fixed", inset: 0, zIndex: 100, background: "#141a12ee", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
           <div style={{ background: "#1f2a1a", border: "1px solid #3a4a34", borderRadius: 16, padding: 22, maxWidth: 420, width: "100%" }}>
             <div style={{ fontFamily: SERIF, fontSize: 22, marginBottom: 4 }}>
-              🏈 Welcome{(() => {   // greet by name: saved identity first, else the personal link's owner
+              🏈 Welcome{(() => {
                 const NAMES = { caleb: "Caleb", kacie: "Kacie", mikeb: "Mike B.", daniel: "Daniel", alex: "Alex", dave: "Dave", michael: "Michael", peter: "Peter", martin: "Martin", paul: "Paul" };
                 const raw = me?.name || NAMES[rankList.split("-")[0]] || "";
                 const nice = raw && (NAMES[String(raw).toLowerCase()] || String(raw).toLowerCase().replace(/(^|\s)\S/g, c => c.toUpperCase()));
@@ -399,47 +480,42 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
           </div>
         </div>
       )}
-      <div style={{ padding: "10px 14px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", borderBottom: "1px solid #2c3828", position: "sticky", top: 0, background: "#141a12", zIndex: 20 }}>
-        <span style={{ fontFamily: SERIF, fontSize: wide ? 20 : 16 }}>🏈 Draft '26</span>
-        {next ? (
-          <span style={{ background: "#7fb069", color: "#141a12", borderRadius: 9, padding: "4px 12px", fontWeight: 800, fontSize: 13 }}>
-            Pick {pickNo} · Rd {next.round} — {onClock} on the clock
-          </span>
-        ) : <span style={{ background: "#e89a3a", color: "#141a12", borderRadius: 9, padding: "4px 12px", fontWeight: 800 }}>DRAFT COMPLETE 🎉</span>}
-        {personal && <span style={{ fontSize: 11, color: "#a9bda0", fontWeight: 700 }}>🔒 {rankList.split("-")[0].toUpperCase()}'s board</span>}
-        {bestAvail && <span style={{ fontSize: 11, color: "#a9bda0" }}>best avail: <b style={{ color: POS_COLOR[bestAvail.pos] || "#fff" }}>{bestAvail.player}</b></span>}
-        <span style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
-          <button onClick={() => setSetup(true)} style={btn("#3a4a34")} title="change my name / slot">
-            {me ? `⚙ ${me.name} · ${me.slot}` : "⚙ join"}
-          </button>
-          {isCommish && <button onClick={() => setCommishOpen(true)} style={btn("#3a4a34")} title="fix slot names">🛡</button>}
-          {picks.length > 0 && (undoArm
-            ? <>
-                <button onClick={undoLast} disabled={busy} style={btn("#d94f3d")}>Confirm undo</button>
-                <button onClick={() => setUndoArm(false)} style={btn("#3a4a34")}>✕</button>
-              </>
-            : <button onClick={() => setUndoArm(true)} style={btn("#3a4a34")}>↩ Undo last</button>)}
-        </span>
-      </div>
+      {mockSetup && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 100, background: "#141a12ee", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div style={{ background: "#1f2a1a", border: "1px solid #3a4a34", borderRadius: 16, padding: 22, maxWidth: 420, width: "100%" }}>
+            <div style={{ fontFamily: SERIF, fontSize: 22, marginBottom: 4 }}>🎮 Mock draft</div>
+            <div style={{ fontSize: 12, color: "#a9bda0", marginBottom: 14 }}>Pick your draft position — the other 9 slots autodraft so you can practice the real flow. Nothing touches the league board.</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 6, marginBottom: 12 }}>
+              {[...Array(10)].map((_, i) => (
+                <button key={i} onClick={() => startMock(i + 1)} disabled={busy}
+                  style={{ ...btn("#141a12"), border: "1px solid #3a4a34", padding: "14px 4px", fontSize: 15 }}>{i + 1}</button>
+              ))}
+            </div>
+            <button onClick={() => setMockSetup(false)} style={{ ...btn("#3a4a34"), width: "100%", padding: "10px" }}>Cancel</button>
+          </div>
+        </div>
+      )}
       {commishOpen && (
         <div style={{ position: "fixed", inset: 0, zIndex: 100, background: "#141a12ee", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-          <div style={{ background: "#1f2a1a", border: "1px solid #3a4a34", borderRadius: 16, padding: 22, maxWidth: 380, width: "100%" }}>
+          <div style={{ background: "#1f2a1a", border: "1px solid #3a4a34", borderRadius: 16, padding: 22, maxWidth: 420, width: "100%", maxHeight: "90vh", overflowY: "auto" }}>
             <div style={{ fontFamily: SERIF, fontSize: 20, marginBottom: 4 }}>🛡 Commissioner</div>
-            <div style={{ fontSize: 11.5, color: "#a9bda0", marginBottom: 12 }}>Fix any slot's team name — wrong claims, typos, order swaps.</div>
+            <div style={{ fontSize: 11.5, color: "#a9bda0", marginBottom: 12 }}>Fix slot names, or flip 🤖 autodraft on for anyone who can't make it.</div>
             {slots.map(s => (
               <div key={s.slot} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
                 <span style={{ width: 22, textAlign: "right", fontWeight: 800, fontSize: 12, color: "#7a8c74" }}>{s.slot}</span>
                 <input value={slotEdits[s.slot] ?? s.member} onChange={e => setSlotEdits(o => ({ ...o, [s.slot]: e.target.value }))}
-                  style={{ flex: 1, padding: "8px 10px", borderRadius: 8, border: `1.5px solid ${slotEdits[s.slot] != null && slotEdits[s.slot] !== s.member ? "#7fb069" : "#3a4a34"}`, background: "#141a12", color: "#e8eee4", fontFamily: FONT, fontSize: 16, fontWeight: 700 }} />
+                  style={{ flex: 1, minWidth: 0, padding: "8px 10px", borderRadius: 8, border: `1.5px solid ${slotEdits[s.slot] != null && slotEdits[s.slot] !== s.member ? "#7fb069" : "#3a4a34"}`, background: "#141a12", color: "#e8eee4", fontFamily: FONT, fontSize: 16, fontWeight: 700 }} />
+                <button onClick={() => toggleAuto(s)} title={s.auto ? "autodraft ON — tap to hand control back" : "autodraft OFF — tap to draft for them"}
+                  style={{ ...btn(s.auto ? "#7fb069" : "#3a4a34", s.auto ? "#141a12" : "#e8eee4"), padding: "8px 10px" }}>🤖</button>
               </div>
             ))}
             <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
               <button onClick={saveSlotEdits} disabled={busy || !Object.keys(slotEdits).length}
-                style={{ ...btn(Object.keys(slotEdits).length ? "#7fb069" : "#3a4a34", Object.keys(slotEdits).length ? "#141a12" : "#7a8c74"), flex: 1, padding: "11px" }}>✓ Save</button>
+                style={{ ...btn(Object.keys(slotEdits).length ? "#7fb069" : "#3a4a34", Object.keys(slotEdits).length ? "#141a12" : "#7a8c74"), flex: 1, padding: "11px" }}>✓ Save names</button>
               <button onClick={() => { setSlotEdits({}); setCommishOpen(false); }} style={{ ...btn("#3a4a34"), padding: "11px" }}>Close</button>
             </div>
             <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1, color: "#7a8c74", margin: "16px 0 6px" }}>SHARE LINKS</div>
-            <div style={{ maxHeight: 220, overflowY: "auto" }}>
+            <div style={{ maxHeight: 200, overflowY: "auto" }}>
               {[["League board (view + draft)", `/?draft=${board}`],
                 ["Mike B.", `/?draft=${board}&rank=mikeb-2rf`], ["Caleb", `/?draft=${board}&rank=caleb-4qx`],
                 ["Daniel", `/?draft=${board}&rank=daniel-8kt`], ["Kacie", `/?draft=${board}&rank=kacie-7mv`],
@@ -458,6 +534,38 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
           </div>
         </div>
       )}
+      <div style={{ padding: "10px 14px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", borderBottom: "1px solid #2c3828", position: "sticky", top: 0, background: "#141a12", zIndex: 20 }}>
+        <span style={{ fontFamily: SERIF, fontSize: wide ? 20 : 16 }}>{inMock ? "🎮 Mock" : "🏈 Draft '26"}</span>
+        {next ? (
+          <span style={{ background: "#7fb069", color: "#141a12", borderRadius: 9, padding: "4px 12px", fontWeight: 800, fontSize: 13 }}>
+            Pick {pickNo} · Rd {next.round} — {onClock}
+          </span>
+        ) : <span style={{ background: "#e89a3a", color: "#141a12", borderRadius: 9, padding: "4px 12px", fontWeight: 800 }}>DRAFT COMPLETE 🎉</span>}
+        {!inMock && clockLeft != null && next && (
+          <span style={{ background: clockLeft <= 15 ? "#d94f3d" : "#1c241a", border: "1px solid #3a4a34", color: clockLeft <= 15 ? "#fff" : "#c8e6b8",
+            borderRadius: 9, padding: "4px 10px", fontWeight: 800, fontSize: 13, fontVariantNumeric: "tabular-nums" }}>
+            ⏱ 0:{String(clockLeft).padStart(2, "0")}
+          </span>
+        )}
+        {personal && !inMock && <span style={{ fontSize: 11, color: "#a9bda0", fontWeight: 700 }}>🔒 {rankList.split("-")[0].toUpperCase()}</span>}
+        <span style={{ marginLeft: "auto", display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {isCommish && !inMock && <button onClick={() => setMockSetup(true)} style={btn("#3a4a34")}>🎮 Mock</button>}
+          {inMock && <>
+            <button onClick={() => setMockSetup(true)} style={btn("#3a4a34")}>↻ New mock</button>
+            <button onClick={exitMock} style={btn("#e89a3a", "#141a12")}>⏹ Exit mock</button>
+          </>}
+          {!inMock && <button onClick={() => setSetup(true)} style={btn("#3a4a34")} title="change my name / slot">
+            {me ? `⚙ ${me.name} · ${me.slot}` : "⚙ join"}
+          </button>}
+          {isCommish && !inMock && <button onClick={() => setCommishOpen(true)} style={btn("#3a4a34")} title="commissioner">🛡</button>}
+          {picks.length > 0 && (undoArm
+            ? <>
+                <button onClick={undoLast} disabled={busy} style={btn("#d94f3d")}>Confirm undo</button>
+                <button onClick={() => setUndoArm(false)} style={btn("#3a4a34")}>✕</button>
+              </>
+            : <button onClick={() => setUndoArm(true)} style={btn("#3a4a34")}>↩ Undo</button>)}
+        </span>
+      </div>
       {pending && next && (
         <div style={{ position: "sticky", top: 52, zIndex: 30, margin: "8px 14px", background: "#1f2a1a", border: "2px solid #7fb069", borderRadius: 12, padding: "10px 14px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <b>{pending.player}</b> <span style={{ color: POS_COLOR[pending.pos], fontWeight: 800 }}>{pending.pos_rank}</span>
