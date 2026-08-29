@@ -33,6 +33,12 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
   const [undoArm, setUndoArm] = useState(false);
   const [busy, setBusy] = useState(false);
   const [wide, setWide] = useState(typeof window !== "undefined" && window.innerWidth > 1080);
+  // who am I at this draft? claimed on first open (team name + snake slot), kept per device
+  const meKey = `draft-${board}-me`;
+  const [me, setMe] = useState(() => { try { return JSON.parse(localStorage.getItem(meKey) || "null"); } catch { return null; } });
+  const [setup, setSetup] = useState(!me);
+  const [setupName, setSetupName] = useState(me?.name || (rankList !== "master" ? rankList.split("-")[0].toUpperCase() : ""));
+  const [setupSlot, setSetupSlot] = useState(me?.slot || null);
   const pollRef = useRef(null);
 
   useEffect(() => {
@@ -120,6 +126,23 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
     await loadPlayers();
     setBusy(false);
   }
+  async function saveSetup() {
+    if (!setupName.trim() || !setupSlot) return;
+    const name = setupName.trim().toUpperCase().slice(0, 14);
+    await sb.from("draft_slots").update({ member: name }).eq("board", board).eq("slot", setupSlot);
+    const { data: s } = await sb.from("draft_slots").select("*").eq("board", board).order("slot");
+    setSlots(s || []);
+    const m = { name, slot: setupSlot };
+    setMe(m); localStorage.setItem(meKey, JSON.stringify(m));
+    setSetup(false);
+  }
+  const snakePicksFor = slot => {
+    const n = slots.length || 10;
+    return [...Array(ROUNDS)].map((_, ri) => {
+      const r = ri + 1;
+      return (r - 1) * n + (r % 2 === 1 ? slot : n - slot + 1);
+    });
+  };
   const toggleTeam = t => setHiddenTeams(prev => {
     const n = new Set(prev);
     n.has(t) ? n.delete(t) : n.add(t);
@@ -141,17 +164,14 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
   const personal = rankList !== "master";
 
   const myPicks = useMemo(() => {
-    if (!personal || !slots.length) return [];
-    const token = rankList.split("-")[0].replace(/[^a-z]/g, "").toUpperCase();
-    const mine = slots.find(s => s.member.replace(/[^A-Z]/g, "").startsWith(token));
-    if (!mine) return [];
+    if (!me?.slot || !slots.length) return [];
     const n = slots.length, out = [];
     for (let r = 1; r <= ROUNDS; r++) {
-      const no = (r - 1) * n + (r % 2 === 1 ? mine.slot : n - mine.slot + 1);
-      if (!grid[`${r}|${mine.slot}`]) out.push({ round: r, no });
+      const no = (r - 1) * n + (r % 2 === 1 ? me.slot : n - me.slot + 1);
+      if (!grid[`${r}|${me.slot}`]) out.push({ round: r, no });
     }
     return out.slice(0, 3);
-  }, [personal, rankList, slots, grid]);
+  }, [me, slots, grid]);
   const availAt = target => players.filter(p => !pickedNames.has(p.player) &&
     (metrics[p.player]?.adp == null || +metrics[p.player].adp >= target - 4)).slice(0, 4);
   const availTag = (p, target) => {
@@ -163,21 +183,22 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
     <div style={{ overflowX: "auto", padding: 14, flex: 1, minWidth: 0 }}>
       <table style={{ borderCollapse: "separate", borderSpacing: 3 }}>
         <thead><tr>
-          <th style={{ width: 30 }} />
-          {slots.map(s => <th key={s.slot} style={{ minWidth: 104, fontSize: 11.5, fontWeight: 800, color: "#c8e6b8", padding: "4px 2px" }}>{s.member}</th>)}
+          <th style={{ width: 26, position: "sticky", left: 0, background: "#141a12", zIndex: 5 }} />
+          {slots.map(s => <th key={s.slot} style={{ minWidth: wide ? 104 : 88, fontSize: wide ? 11.5 : 10, fontWeight: 800, padding: "4px 2px",
+            color: me?.slot === s.slot ? "#141a12" : "#c8e6b8", background: me?.slot === s.slot ? "#7fb069" : "transparent", borderRadius: 6 }}>{s.member}</th>)}
         </tr></thead>
         <tbody>
           {[...Array(ROUNDS)].map((_, ri) => {
             const r = ri + 1;
             return (
               <tr key={r}>
-                <td style={{ fontSize: 10, color: "#7a8c74", fontWeight: 800, textAlign: "center" }}>{r}</td>
+                <td style={{ fontSize: 10, color: "#7a8c74", fontWeight: 800, textAlign: "center", position: "sticky", left: 0, background: "#141a12", zIndex: 5 }}>{r}</td>
                 {slots.map(s => {
                   const p = grid[`${r}|${s.slot}`];
                   const isNext = next && next.round === r && next.slot === s.slot;
                   return (
                     <td key={s.slot} style={{
-                      minWidth: 104, height: 40, borderRadius: 7, padding: "2px 6px", fontSize: 10.5, verticalAlign: "middle",
+                      minWidth: wide ? 104 : 88, height: 40, borderRadius: 7, padding: "2px 6px", fontSize: wide ? 10.5 : 9.5, verticalAlign: "middle",
                       background: p ? (POS_COLOR[p.pos] || "#3a4a34") : isNext ? "#7fb06933" : "#1c241a",
                       border: isNext ? "2px solid #7fb069" : "1px solid #2c3828",
                       color: p ? "#fff" : "#5a6a54", fontWeight: p ? 700 : 400,
@@ -216,7 +237,7 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
       )}
       <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
         <input value={q} onChange={e => setQ(e.target.value)} placeholder="search player…"
-          style={{ flex: 1, minWidth: 130, padding: "8px 10px", borderRadius: 9, border: "1px solid #3a4a34", background: "#1c241a", color: "#e8eee4", fontFamily: FONT, fontSize: 14 }} />
+          style={{ flex: 1, minWidth: 130, padding: "9px 10px", borderRadius: 9, border: "1px solid #3a4a34", background: "#1c241a", color: "#e8eee4", fontFamily: FONT, fontSize: 16 }} />
         <select value={sortBy} onChange={e => setSortBy(e.target.value)}
           style={{ padding: "6px 8px", borderRadius: 9, border: "1px solid #3a4a34", background: "#1c241a", color: "#e8eee4", fontFamily: FONT, fontSize: 12, fontWeight: 700 }}>
           <option value="rank">sort: ranking</option>
@@ -305,9 +326,9 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
               </span>
               <span style={{ fontSize: 10.5, color: "#a9bda0", whiteSpace: "nowrap" }}>{p.team} · bye {p.bye}</span>
               {personal && !gone && (
-                <span style={{ display: "flex", gap: 3 }} onClick={e => e.stopPropagation()}>
-                  <button onClick={() => nudge(p, -1)} disabled={busy} style={{ ...btn("#3a4a34"), padding: "1px 7px" }}>▲</button>
-                  <button onClick={() => nudge(p, 1)} disabled={busy} style={{ ...btn("#3a4a34"), padding: "1px 7px" }}>▼</button>
+                <span style={{ display: "flex", gap: 4 }} onClick={e => e.stopPropagation()}>
+                  <button onClick={() => nudge(p, -1)} disabled={busy} style={{ ...btn("#3a4a34"), padding: "6px 10px", fontSize: 13 }}>▲</button>
+                  <button onClick={() => nudge(p, 1)} disabled={busy} style={{ ...btn("#3a4a34"), padding: "6px 10px", fontSize: 13 }}>▼</button>
                 </span>
               )}
             </div>
@@ -321,8 +342,41 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
   return (
     <div style={{ fontFamily: FONT, background: "#141a12", color: "#e8eee4", minHeight: "100vh" }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700;800&family=DM+Serif+Display&display=swap" rel="stylesheet" />
+      {setup && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 100, background: "#141a12ee", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div style={{ background: "#1f2a1a", border: "1px solid #3a4a34", borderRadius: 16, padding: 22, maxWidth: 420, width: "100%" }}>
+            <div style={{ fontFamily: SERIF, fontSize: 22, marginBottom: 4 }}>🏈 Welcome to the '26 draft</div>
+            <div style={{ fontSize: 12, color: "#a9bda0", marginBottom: 14 }}>Snake draft — enter your team name and grab your draft slot.</div>
+            <input value={setupName} onChange={e => setSetupName(e.target.value)} placeholder="team / your name"
+              style={{ width: "100%", boxSizing: "border-box", padding: "12px 12px", borderRadius: 10, border: "1.5px solid #3a4a34", background: "#141a12", color: "#e8eee4", fontFamily: FONT, fontSize: 16, fontWeight: 700, marginBottom: 12 }} />
+            <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1, color: "#7a8c74", marginBottom: 6 }}>YOUR PICK SLOT</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 6, marginBottom: 10 }}>
+              {slots.map(s => (
+                <button key={s.slot} onClick={() => setSetupSlot(s.slot)}
+                  style={{ ...btn(setupSlot === s.slot ? "#7fb069" : "#141a12", setupSlot === s.slot ? "#141a12" : "#e8eee4"),
+                    border: "1px solid #3a4a34", padding: "10px 4px", display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+                  <span style={{ fontSize: 15 }}>{s.slot}</span>
+                  <span style={{ fontSize: 8, fontWeight: 700, opacity: .8, maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis" }}>{s.member}</span>
+                </button>
+              ))}
+            </div>
+            {setupSlot && (
+              <div style={{ fontSize: 11, color: "#a9bda0", marginBottom: 12 }}>
+                Slot {setupSlot} picks: {snakePicksFor(setupSlot).slice(0, 6).join(", ")}…
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={saveSetup} disabled={!setupName.trim() || !setupSlot}
+                style={{ ...btn(setupName.trim() && setupSlot ? "#7fb069" : "#3a4a34", setupName.trim() && setupSlot ? "#141a12" : "#7a8c74"), flex: 1, padding: "12px", fontSize: 14 }}>
+                ✓ I'm in
+              </button>
+              <button onClick={() => setSetup(false)} style={{ ...btn("#3a4a34"), padding: "12px" }}>Just watching</button>
+            </div>
+          </div>
+        </div>
+      )}
       <div style={{ padding: "10px 14px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", borderBottom: "1px solid #2c3828", position: "sticky", top: 0, background: "#141a12", zIndex: 20 }}>
-        <span style={{ fontFamily: SERIF, fontSize: 20 }}>🏈 Draft Board '26</span>
+        <span style={{ fontFamily: SERIF, fontSize: wide ? 20 : 16 }}>🏈 Draft '26</span>
         {next ? (
           <span style={{ background: "#7fb069", color: "#141a12", borderRadius: 9, padding: "4px 12px", fontWeight: 800, fontSize: 13 }}>
             Pick {pickNo} · Rd {next.round} — {onClock} on the clock
@@ -331,6 +385,9 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
         {personal && <span style={{ fontSize: 11, color: "#a9bda0", fontWeight: 700 }}>🔒 {rankList.split("-")[0].toUpperCase()}'s board</span>}
         {bestAvail && <span style={{ fontSize: 11, color: "#a9bda0" }}>best avail: <b style={{ color: POS_COLOR[bestAvail.pos] || "#fff" }}>{bestAvail.player}</b></span>}
         <span style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+          <button onClick={() => setSetup(true)} style={btn("#3a4a34")} title="change my name / slot">
+            {me ? `⚙ ${me.name} · ${me.slot}` : "⚙ join"}
+          </button>
           {picks.length > 0 && (undoArm
             ? <>
                 <button onClick={undoLast} disabled={busy} style={btn("#d94f3d")}>Confirm undo</button>
