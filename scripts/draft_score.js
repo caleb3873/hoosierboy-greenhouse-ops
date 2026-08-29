@@ -46,10 +46,15 @@ const DEFAULT_POS_FACTOR = { QB: 0.80, K: 0.35, 'D/ST': 0.40, TE: 0.95 };  // 10
     console.log(`${String(i + 1).padStart(3)} ${p.player.padEnd(26)} ${String(p.pos).padEnd(5)} ${String(p.score).padStart(5)}  adp ${String(p.m.adp ?? '-').padStart(3)}  ${p.m.label || ''}${p.m.colts ? ' 🏠' : ''}`));
 
   if (process.argv.includes('--dry')) { console.log('\n(dry run — no writes)'); return; }
-  let n = 0;
+  // tiers from score gaps: a drop of 3+ points starts a new tier (cap 16) — so the
+  // tier headers follow THIS order, not the source sheet's (Caleb 8/29)
+  let tier = 1, n = 0;
   for (let i = 0; i < scored.length; i++) {
+    if (i > 0 && scored[i - 1].score - scored[i].score >= 3 && tier < 16) tier++;
     const want = i + 1;
-    if (scored[i].rk !== want) { await sb.from('draft_players').update({ rk: want }).eq('id', scored[i].id); n++; }
+    if (scored[i].rk !== want || scored[i].tier !== tier) {
+      await sb.from('draft_players').update({ rk: want, tier }).eq('id', scored[i].id); n++;
+    }
   }
-  console.log(`\nrewrote ${n} ranks on ${LIST}`);
+  console.log(`\nrewrote ${n} ranks/tiers on ${LIST}`);
 })();

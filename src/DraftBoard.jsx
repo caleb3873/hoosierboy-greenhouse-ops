@@ -15,6 +15,8 @@ const POS_COLOR = { WR: "#2d7dd2", RB: "#2e9e4f", QB: "#d94f3d", TE: "#e89a3a", 
 const LABEL_COLOR = { CORE: "#2e9e4f", VALUE: "#1fa8a0", FLIP: "#e89a3a", LOTTERY: "#8e5cd9", FADE: "#d94f3d" };
 const ROUNDS = 15;
 const CLOCK_SECS = 60;
+const RISK_CHIP = m => m?.injury_risk === "out" ? " 🚑" : m?.injury_risk === "risk" ? " 🩹" : "";
+const OLD_CHIP = (m, pos) => (m?.age >= 30 && ["RB", "WR", "TE"].includes(pos)) ? " 👴" : "";
 const btn = (bg, color = "#e8eee4") => ({ background: bg, color, border: "none", borderRadius: 8, padding: "6px 12px", fontWeight: 800, fontSize: 12, cursor: "pointer", fontFamily: FONT });
 
 export default function DraftBoard({ board = "hb26", rankList = "master" }) {
@@ -379,7 +381,7 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
         <button onClick={() => setShowTeamBar(v => !v)} style={btn(showTeamBar || hiddenTeams.size ? "#7fb069" : "#3a4a34", showTeamBar || hiddenTeams.size ? "#141a12" : "#e8eee4")}>
           ✕ teams{hiddenTeams.size ? ` (${hiddenTeams.size})` : ""}
         </button>
-        <button onClick={() => setPosView(v => !v)} style={btn(posView ? "#7fb069" : "#3a4a34", posView ? "#141a12" : "#e8eee4")}>
+        <button onClick={() => setPosView(v => { localStorage.setItem("draft-posview", v ? "0" : "1"); return !v; })} style={btn(posView ? "#7fb069" : "#3a4a34", posView ? "#141a12" : "#e8eee4")}>
           ⊞ by position
         </button>
       </div>
@@ -417,7 +419,7 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
                       style={{ display: "flex", alignItems: "baseline", gap: 6, padding: "4px 4px", borderRadius: 5, cursor: "pointer", fontSize: 12 }}>
                       <span style={{ width: 22, textAlign: "right", fontSize: 10, color: "#7a8c74", fontVariantNumeric: "tabular-nums" }}>{i + 1}</span>
                       <span style={{ flex: 1, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                        {p.player}{personal && m?.colts ? " 🏠" : ""}
+                        {p.player}{personal && m?.colts ? " 🏠" : ""}{personal ? RISK_CHIP(m) : ""}{personal ? OLD_CHIP(m, p.pos) : ""}
                       </span>
                       {personal && m?.label && <span style={{ fontSize: 7.5, fontWeight: 800, color: LABEL_COLOR[m.label] || "#a9bda0" }}>{m.label}</span>}
                       <span style={{ fontSize: 9.5, color: "#7a8c74" }}>{p.team}</span>
@@ -444,7 +446,7 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
               <span style={{ width: 40, fontWeight: 800, fontSize: 11, color: POS_COLOR[p.pos] || "#fff" }}>{p.pos_rank}</span>
               <span style={{ flex: 1, minWidth: 0 }}>
                 <span style={{ fontWeight: 700, fontSize: 13.5 }}>
-                  {p.player}{personal && m?.colts ? " 🏠" : ""}
+                  {p.player}{personal && m?.colts ? " 🏠" : ""}{personal ? RISK_CHIP(m) : ""}{personal ? OLD_CHIP(m, p.pos) : ""}
                 </span>
                 {personal && m?.label &&
                   <span style={{ marginLeft: 6, fontSize: 8.5, fontWeight: 800, padding: "1px 6px", borderRadius: 5, background: (LABEL_COLOR[m.label] || "#3a4a34") + "33", color: LABEL_COLOR[m.label] || "#a9bda0" }}>{m.label}</span>}
@@ -453,7 +455,7 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
                 {personal && m?.note &&
                   <div style={{ fontSize: 9.5, color: "#8ba183", lineHeight: 1.3, marginTop: 1 }}>{m.note}</div>}
               </span>
-              <span style={{ fontSize: 10.5, color: "#a9bda0", whiteSpace: "nowrap" }}>{p.team} · bye {p.bye}</span>
+              <span style={{ fontSize: 10.5, color: "#a9bda0", whiteSpace: "nowrap" }}>{p.team} · bye {p.bye}{personal && m?.age ? ` · ${m.age}y` : ""}</span>
               {personal && (
                 <span style={{ display: "flex", gap: 4 }} onClick={e => e.stopPropagation()}>
                   <button onClick={() => nudge(p, -1)} disabled={busy} style={{ ...btn("#3a4a34"), padding: "6px 10px", fontSize: 13 }}>▲</button>
@@ -616,7 +618,7 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
             </div>
             <div style={{ fontFamily: SERIF, fontSize: 24, marginBottom: 2 }}>{pending.player}</div>
             <div style={{ fontSize: 13, color: "#a9bda0", marginBottom: 4 }}>
-              <b style={{ color: POS_COLOR[pending.pos] || "#fff" }}>{pending.pos_rank}</b> · {pending.team} · bye {pending.bye}
+              <b style={{ color: POS_COLOR[pending.pos] || "#fff" }}>{pending.pos_rank}</b> · {pending.team} · bye {pending.bye}{personal && metrics[pending.player]?.age ? ` · ${metrics[pending.player].age}y` : ""}{personal ? RISK_CHIP(metrics[pending.player]) : ""}{personal ? OLD_CHIP(metrics[pending.player], pending.pos) : ""}
             </div>
             {personal && metrics[pending.player]?.note &&
               <div style={{ fontSize: 10.5, color: "#8ba183", lineHeight: 1.35, marginBottom: 6 }}>{metrics[pending.player].note}</div>}
