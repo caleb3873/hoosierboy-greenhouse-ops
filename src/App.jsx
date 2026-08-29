@@ -42,6 +42,7 @@ import CatalogHotLists      from "./CatalogHotLists";
 import FundraiserPlanner    from "./FundraiserPlanner";
 import PlanTotals           from "./PlanTotals";
 import PlantedInventory     from "./PlantedInventory";
+import DraftBoard           from "./DraftBoard";
 import ShippingDrivers      from "./shipping/ShippingDrivers";
 import ShippingTrucks       from "./shipping/ShippingTrucks";
 import ShipperTasksView     from "./shipping/ShipperTasksView";
@@ -480,6 +481,10 @@ export default function App() {
   // Public plan totals (?totals=1) — size × color production totals, self-serve for Mario
   const totalsFlag = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("totals") : null;
   if (totalsFlag) return <PlanTotals />;
+  // Public live fantasy draft board (?draft=<board>&rank=<list>) — league opens the base
+  // link; Caleb/Kacie's links add their private rankings list
+  const draftSlug = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("draft") : null;
+  if (draftSlug) return <DraftBoard board={draftSlug} rankList={new URLSearchParams(window.location.search).get("rank") || "master"} />;
   // Public mum truck builder (?mums=<store>) — Sullivan store managers build their own trucks
   const mumSlug = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("mums") : null;
   if (mumSlug) return <MumTruckBuilder slug={mumSlug} />;
