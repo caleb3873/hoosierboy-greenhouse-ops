@@ -2348,6 +2348,9 @@ Combine the groups?`)) return;
                             <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 800, color: orderQty !== plants ? C.amber : C.dark }}
                               title={`what lock-in will order${/^(URC|CALL)/i.test(effForm) ? " — URC/CALL round up to 100s (min 100)" : ""}${mult > 1 ? ` · sold in ${mult}s` : ""}${orderQty !== plants ? ` · +${(orderQty - plants).toLocaleString()} extra` : ""}`}>
                               {orderQty > 0 ? orderQty.toLocaleString() : "—"}
+                              {/* tray-sold series answer "how many trays is that?" right on the row (Caleb 8/29) */}
+                              {orderQty > 0 && mult >= 20 && orderQty % mult === 0 &&
+                                <span style={{ fontSize: 9.5, fontWeight: 700, color: C.muted }}> · {orderQty / mult} tray{orderQty / mult > 1 ? "s" : ""}</span>}
                             </td>
                           </>);
                         })()}
