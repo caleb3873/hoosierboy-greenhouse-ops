@@ -39,6 +39,10 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
   const [setup, setSetup] = useState(!me);
   const [setupName, setSetupName] = useState(me?.name || (rankList !== "master" ? rankList.split("-")[0].toUpperCase() : ""));
   const [setupSlot, setSetupSlot] = useState(me?.slot || null);
+  // commissioner controls live only on Caleb's + Kacie's links — fix slot claims etc.
+  const isCommish = ["caleb-4qx", "kacie-7mv"].includes(rankList);
+  const [commishOpen, setCommishOpen] = useState(false);
+  const [slotEdits, setSlotEdits] = useState({});
   const pollRef = useRef(null);
 
   useEffect(() => {
@@ -125,6 +129,15 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
     await sb.from("draft_players").update({ rk: pl.rk }).eq("id", other.id);
     await loadPlayers();
     setBusy(false);
+  }
+  async function saveSlotEdits() {
+    setBusy(true);
+    for (const [slot, name] of Object.entries(slotEdits)) {
+      const clean = String(name).trim().toUpperCase().slice(0, 14);
+      if (clean) await sb.from("draft_slots").update({ member: clean }).eq("board", board).eq("slot", +slot);
+    }
+    const { data: s } = await sb.from("draft_slots").select("*").eq("board", board).order("slot");
+    setSlots(s || []); setSlotEdits({}); setCommishOpen(false); setBusy(false);
   }
   async function saveSetup() {
     if (!setupName.trim() || !setupSlot) return;
@@ -395,6 +408,7 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
           <button onClick={() => setSetup(true)} style={btn("#3a4a34")} title="change my name / slot">
             {me ? `⚙ ${me.name} · ${me.slot}` : "⚙ join"}
           </button>
+          {isCommish && <button onClick={() => setCommishOpen(true)} style={btn("#3a4a34")} title="fix slot names">🛡</button>}
           {picks.length > 0 && (undoArm
             ? <>
                 <button onClick={undoLast} disabled={busy} style={btn("#d94f3d")}>Confirm undo</button>
@@ -403,6 +417,26 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
             : <button onClick={() => setUndoArm(true)} style={btn("#3a4a34")}>↩ Undo last</button>)}
         </span>
       </div>
+      {commishOpen && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 100, background: "#141a12ee", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div style={{ background: "#1f2a1a", border: "1px solid #3a4a34", borderRadius: 16, padding: 22, maxWidth: 380, width: "100%" }}>
+            <div style={{ fontFamily: SERIF, fontSize: 20, marginBottom: 4 }}>🛡 Commissioner</div>
+            <div style={{ fontSize: 11.5, color: "#a9bda0", marginBottom: 12 }}>Fix any slot's team name — wrong claims, typos, order swaps.</div>
+            {slots.map(s => (
+              <div key={s.slot} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                <span style={{ width: 22, textAlign: "right", fontWeight: 800, fontSize: 12, color: "#7a8c74" }}>{s.slot}</span>
+                <input value={slotEdits[s.slot] ?? s.member} onChange={e => setSlotEdits(o => ({ ...o, [s.slot]: e.target.value }))}
+                  style={{ flex: 1, padding: "8px 10px", borderRadius: 8, border: `1.5px solid ${slotEdits[s.slot] != null && slotEdits[s.slot] !== s.member ? "#7fb069" : "#3a4a34"}`, background: "#141a12", color: "#e8eee4", fontFamily: FONT, fontSize: 16, fontWeight: 700 }} />
+              </div>
+            ))}
+            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+              <button onClick={saveSlotEdits} disabled={busy || !Object.keys(slotEdits).length}
+                style={{ ...btn(Object.keys(slotEdits).length ? "#7fb069" : "#3a4a34", Object.keys(slotEdits).length ? "#141a12" : "#7a8c74"), flex: 1, padding: "11px" }}>✓ Save</button>
+              <button onClick={() => { setSlotEdits({}); setCommishOpen(false); }} style={{ ...btn("#3a4a34"), padding: "11px" }}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
       {pending && next && (
         <div style={{ position: "sticky", top: 52, zIndex: 30, margin: "8px 14px", background: "#1f2a1a", border: "2px solid #7fb069", borderRadius: 12, padding: "10px 14px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <b>{pending.player}</b> <span style={{ color: POS_COLOR[pending.pos], fontWeight: 800 }}>{pending.pos_rank}</span>
