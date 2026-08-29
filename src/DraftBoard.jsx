@@ -143,21 +143,24 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
     setUndoArm(false); setBusy(false);
   }
 
-  // ── autodraft brain: best available by market cost, light positional sense ──
-  function autoChoice(slot) {
-    const roster = picks.filter(p => p.slot === slot);
+  // ── autodraft brain: best available by market cost + team-need sense.
+  // Pure over a supplied pick set so the mock can simulate whole runs locally.
+  function choiceFor(slot, round, simPicks) {
+    const taken = new Set(simPicks.map(p => p.player));
+    const roster = simPicks.filter(p => p.slot === slot);
     const count = pos => roster.filter(p => p.pos === pos).length;
-    const round = next?.round || 1;
     const elig = players.filter(p => {
-      if (pickedNames.has(p.player)) return false;
+      if (taken.has(p.player)) return false;
       if ((p.pos === "K" || p.pos === "D/ST") && round < 13) return false;
       if (p.pos === "K" && count("K") >= 1) return false;
       if (p.pos === "D/ST" && count("D/ST") >= 1) return false;
       if (p.pos === "QB" && count("QB") >= 1 && round < 12) return false;
       if (p.pos === "TE" && count("TE") >= 1 && round < 12) return false;
+      // team needs: make sure QB/TE get filled before the end game
       return true;
     }).sort((a, b) => (+(metrics[a.player]?.adp ?? a.rk)) - (+(metrics[b.player]?.adp ?? b.rk)));
-    // K/DST backfill in the last rounds if still missing
+    if (round >= 10 && count("QB") === 0 && elig.some(p => p.pos === "QB")) return elig.find(p => p.pos === "QB");
+    if (round >= 11 && count("TE") === 0 && elig.some(p => p.pos === "TE")) return elig.find(p => p.pos === "TE");
     if (round >= 14) {
       if (count("K") === 0 && elig.some(p => p.pos === "K")) return elig.find(p => p.pos === "K");
       if (count("D/ST") === 0 && elig.some(p => p.pos === "D/ST")) return elig.find(p => p.pos === "D/ST");
@@ -165,24 +168,51 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
     const top = elig.slice(0, 3);
     return top[Math.floor(Math.random() * top.length)] || elig[0];
   }
-  // drives: mock CPUs (fast), real-board 🤖 slots (5s), and clock expiry (commish devices)
+  const nextOpen = simPicks => {
+    const n = slots.length || 10;
+    for (let r = 1; r <= ROUNDS; r++) {
+      const order = r % 2 === 1 ? [...Array(n)].map((_, i) => i + 1) : [...Array(n)].map((_, i) => n - i);
+      for (const s of order) if (!simPicks.some(p => p.round === r && p.slot === s)) return { round: r, slot: s };
+    }
+    return null;
+  };
+  // MOCK: burst every CPU pick instantly until it's YOUR turn — no clock, no delays
   useEffect(() => {
-    const driver = inMock || isCommish;
-    if (!driver || !next || !players.length || autoRef.current) return;
+    if (!inMock || !next || !players.length || !slots.length || autoRef.current) return;
+    if (next.slot === mockSlot) return;
+    autoRef.current = true;
+    (async () => {
+      let sim = picks.map(p => ({ round: p.round, slot: p.slot, player: p.player, team: p.team, pos: p.pos }));
+      const rows = [];
+      let cur = { ...next };
+      while (cur && cur.slot !== mockSlot && rows.length < 160) {
+        const c = choiceFor(cur.slot, cur.round, sim);
+        if (!c) break;
+        const row = { board: activeBoard, round: cur.round, slot: cur.slot, player: c.player, team: c.team, pos: c.pos };
+        sim.push(row); rows.push(row);
+        cur = nextOpen(sim);
+      }
+      if (rows.length) await sb.from("draft_picks").insert(rows);
+      await loadPicks();
+      autoRef.current = false;
+    })();
+  }, [inMock, next, players, slots, mockSlot]);
+  // REAL BOARD: 🤖 slots (5s) + clock expiry, driven by open commish devices
+  useEffect(() => {
+    if (inMock || !isCommish || !next || !players.length || autoRef.current) return;
     const slotCfg = slots.find(s => s.slot === next.slot);
-    const isCpu = inMock ? (next.slot !== mockSlot) : !!slotCfg?.auto;
-    const expired = !inMock && clockLeft === 0 && picks.length > 0;
+    const isCpu = !!slotCfg?.auto;
+    const expired = clockLeft === 0 && picks.length > 0;
     if (!isCpu && !expired) return;
-    const delay = inMock ? 1400 : isCpu ? 5000 : 800;
     const t = setTimeout(async () => {
       if (autoRef.current) return;
       autoRef.current = true;
-      const choice = autoChoice(next.slot);
+      const choice = choiceFor(next.slot, next.round, picks);
       if (choice) await insertPick(choice, next);
       autoRef.current = false;
-    }, delay);
+    }, isCpu ? 5000 : 800);
     return () => clearTimeout(t);
-  }, [next, slots, players, inMock, isCommish, mockSlot, clockLeft, picks.length]);
+  }, [next, slots, players, inMock, isCommish, clockLeft, picks.length]);
 
   // ── mock draft lifecycle ────────────────────────────────────────────────────
   async function startMock(slot) {
