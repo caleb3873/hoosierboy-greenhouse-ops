@@ -15,7 +15,8 @@ const POS_COLOR = { WR: "#2d7dd2", RB: "#2e9e4f", QB: "#d94f3d", TE: "#e89a3a", 
 const LABEL_COLOR = { CORE: "#2e9e4f", VALUE: "#1fa8a0", FLIP: "#e89a3a", LOTTERY: "#8e5cd9", FADE: "#d94f3d" };
 const ROUNDS = 15;
 const DEFAULT_CLOCK_SECS = 60;
-const NEED_TARGETS = { QB: 1, RB: 2, WR: 2, TE: 1, K: 1, "D/ST": 1 };  // + 1 FLEX (RB/WR/TE)
+const NEED_TARGETS = { QB: 1, RB: 2, WR: 2, TE: 1, K: 1, "D/ST": 1 };  // starting slots + 1 FLEX (RB/WR/TE)
+const POS_MAX = { QB: 2, RB: 5, WR: 5, TE: 2, K: 2, "D/ST": 2 };           // hard caps from the sheet's ROSTER RULES
 const GRADES = ["A+", "A", "A-", "B+", "B", "B-", "C+", "C", "C-", "D", "F"];
 const GRADE_PTS = Object.fromEntries(GRADES.map((g, i) => [g, GRADES.length - i]));
 const avgGrade = gs => { if (!gs.length) return null; const a = gs.reduce((t, g) => t + (GRADE_PTS[g.grade] || 0), 0) / gs.length; return GRADES.reduce((best, g) => Math.abs(GRADE_PTS[g] - a) < Math.abs(GRADE_PTS[best] - a) ? g : best, "C"); };
@@ -185,6 +186,8 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
     await loadClock();
   }
 
+  const posCountFor = (slot, pos) => picks.filter(p => p.slot === slot && p.pos === pos).length;
+  const posMaxed = (slot, pos) => posCountFor(slot, pos) >= (POS_MAX[pos] ?? 99);
   async function insertPick(pl, target) {
     const { error } = await sb.from("draft_picks").insert({ board: activeBoard, round: target.round, slot: target.slot, player: pl.player, team: pl.team, pos: pl.pos });
     if (error && !/duplicate/i.test(error.message || "")) console.warn("pick failed", error.message);
@@ -192,6 +195,7 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
   }
   async function draftPlayer(pl) {
     if (!next || busy || !draftStarted) return;
+    if (posMaxed(next.slot, pl.pos)) return;   // roster rule: position at max
     const wasMine = next.slot === (inMock ? mockSlot : me?.slot);
     setBusy(true);
     await insertPick(pl, next);
@@ -215,12 +219,12 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
     const count = pos => roster.filter(p => p.pos === pos).length;
     const elig = players.filter(p => {
       if (taken.has(p.player)) return false;
+      if (count(p.pos) >= (POS_MAX[p.pos] ?? 99)) return false;           // hard roster max
       if ((p.pos === "K" || p.pos === "D/ST") && round < 13) return false;
       if (p.pos === "K" && count("K") >= 1) return false;
       if (p.pos === "D/ST" && count("D/ST") >= 1) return false;
       if (p.pos === "QB" && count("QB") >= 1 && round < 12) return false;
       if (p.pos === "TE" && count("TE") >= 1 && round < 12) return false;
-      // team needs: make sure QB/TE get filled before the end game
       return true;
     }).sort((a, b) => (+(metrics[a.player]?.adp ?? a.rk)) - (+(metrics[b.player]?.adp ?? b.rk)));
     if (round >= 10 && count("QB") === 0 && elig.some(p => p.pos === "QB")) return elig.find(p => p.pos === "QB");
@@ -448,7 +452,7 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
     const startersTotal = Object.values(NEED_TARGETS).reduce((a, b) => a + b, 0) + 1;
     const filledRatio = (startersTotal - unfilled) / startersTotal;
     const remaining = ROUNDS - roster.length;
-    return { base, flexUsed, unfilled, filledRatio, remaining, roster };
+    return { base, flexUsed, unfilled, filledRatio, remaining, roster, totals: counts };
   };
   const needsBar = slot => {
     const n = rosterNeeds(slot);
@@ -465,7 +469,7 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
           color: urgent || neglect ? "#141a12" : done ? "#7fb069" : "#a9bda0",
           border: done ? "1px solid #2e9e4f55" : "1px solid #2c3828",
           animation: urgent ? "draftpulse 1.2s ease-in-out infinite" : "none" }}>
-          {label} {have}/{want}{done ? " ✓" : ""}
+          {label} {have}/{want}{done ? " ✓" : ""}{done && n.totals && (n.totals[label] || 0) > have ? ` · ${n.totals[label]}/${POS_MAX[label] ?? "-"}` : ""}
         </span>
       );
     };
@@ -478,7 +482,7 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
           {Object.keys(NEED_TARGETS).map(pos => chip(pos, n.base[pos], NEED_TARGETS[pos]))}
           {chip("FLEX", n.flexUsed, 1)}
           <span style={{ padding: "3px 8px", borderRadius: 7, fontSize: 11, fontWeight: 700, color: "#7a8c74", border: "1px solid #2c3828" }}>
-            bench {Math.max(0, n.roster.length - (9 - n.unfilled))}
+            bench {Math.max(0, n.roster.length - (9 - n.unfilled))}/6
           </span>
         </div>
       </div>
@@ -890,10 +894,15 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
             </div>
             {isCommish && metrics[pending.player]?.note &&
               <div style={{ fontSize: 10.5, color: "#8ba183", lineHeight: 1.35, marginBottom: 6 }}>{metrics[pending.player].note}</div>}
+            {posMaxed(next.slot, pending.pos) && (
+              <div style={{ background: "#d94f3d", color: "#fff", borderRadius: 9, padding: "8px 10px", fontSize: 12.5, fontWeight: 800, marginBottom: 10 }}>
+                ⛔ {onClock} already has {posCountFor(next.slot, pending.pos)} {pending.pos}s — league max is {POS_MAX[pending.pos]}
+              </div>
+            )}
             <div style={{ fontSize: 15, fontWeight: 700, margin: "10px 0 14px" }}>Draft this player?</div>
             <div style={{ display: "flex", gap: 10 }}>
-              <button onClick={() => draftPlayer(pending)} disabled={busy}
-                style={{ ...btn("#7fb069", "#141a12"), flex: 1, padding: "15px", fontSize: 16 }}>✓ Yes, draft</button>
+              <button onClick={() => draftPlayer(pending)} disabled={busy || posMaxed(next.slot, pending.pos)}
+                style={{ ...btn(posMaxed(next.slot, pending.pos) ? "#3a4a34" : "#7fb069", posMaxed(next.slot, pending.pos) ? "#7a8c74" : "#141a12"), flex: 1, padding: "15px", fontSize: 16 }}>✓ Yes, draft</button>
               <button onClick={() => setPending(null)} style={{ ...btn("#3a4a34"), flex: 1, padding: "15px", fontSize: 16 }}>✕ No</button>
             </div>
           </div>
