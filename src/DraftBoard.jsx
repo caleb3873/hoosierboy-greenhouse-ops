@@ -51,6 +51,9 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
   const [slotEdits, setSlotEdits] = useState({});
   const [copied, setCopied] = useState("");
   const [nowT, setNowT] = useState(Date.now());
+  const [toast, setToast] = useState(null);          // last pick announcement
+  const [recentIds, setRecentIds] = useState(new Set());
+  const seenIdsRef = useRef(null);                   // null = before first load
   const [clockCfg, setClockCfg] = useState(null);   // shared pause/reset state (draft_clock)
   const meKey = `draft-${board}-me`;
   const [me, setMe] = useState(() => { try { return JSON.parse(localStorage.getItem(meKey) || "null"); } catch { return null; } });
@@ -122,6 +125,19 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
     const moved = slots.find(s => s.member === me.name);
     if (moved) { const m2 = { ...me, slot: moved.slot }; setMe(m2); localStorage.setItem(meKey, JSON.stringify(m2)); }
   }, [slots, me, inMock]);
+  useEffect(() => {
+    const ids = new Set(picks.map(p => p.id));
+    if (seenIdsRef.current === null) { seenIdsRef.current = ids; return; }   // initial load: no fanfare
+    const fresh = picks.filter(p => !seenIdsRef.current.has(p.id));
+    seenIdsRef.current = ids;
+    if (!fresh.length) return;
+    const newest = fresh.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
+    const member = slots.find(s => s.slot === newest.slot)?.member || `Slot ${newest.slot}`;
+    setToast({ ...newest, member });
+    setRecentIds(prev => { const n = new Set(prev); fresh.forEach(f => n.add(`${f.round}|${f.slot}`)); return n; });
+    setTimeout(() => setToast(t => (t?.id === newest.id ? null : t)), 4000);
+    setTimeout(() => setRecentIds(prev => { const n = new Set(prev); fresh.forEach(f => n.delete(`${f.round}|${f.slot}`)); return n; }), 6000);
+  }, [picks, slots]);
   const pickedNames = useMemo(() => new Set(picks.map(p => p.player)), [picks]);
   const grid = useMemo(() => { const g = {}; picks.forEach(p => { g[`${p.round}|${p.slot}`] = p; }); return g; }, [picks]);
   const next = useMemo(() => {
@@ -351,6 +367,19 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
     return adp - target >= 6 ? ["safe", "#2e9e4f"] : adp - target >= 0 ? ["likely", "#e89a3a"] : ["risky", "#d94f3d"];
   };
 
+  const upNext = useMemo(() => {
+    if (!next || !slots.length) return [];
+    const n = slots.length, out = [];
+    const sim = picks.map(p => ({ round: p.round, slot: p.slot }));
+    let cur = { ...next };
+    while (cur && out.length < 6) {
+      const no = (cur.round - 1) * n + (cur.round % 2 === 1 ? cur.slot : n - cur.slot + 1);
+      out.push({ ...cur, no, member: slots.find(s => s.slot === cur.slot)?.member || `Slot ${cur.slot}` });
+      sim.push({ round: cur.round, slot: cur.slot });
+      cur = nextOpen(sim);
+    }
+    return out;
+  }, [next, slots, picks]);
   const rosterNeeds = slot => {
     if (!slot) return null;
     const roster = picks.filter(p => p.slot === slot);
@@ -426,6 +455,8 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
                       background: p ? (POS_COLOR[p.pos] || "#3a4a34") : isNext ? "#7fb06933" : "#1c241a",
                       border: isNext ? "2px solid #7fb069" : "1px solid #2c3828",
                       color: p ? "#fff" : "#5a6a54", fontWeight: p ? 700 : 400,
+                      animation: p && recentIds.has(`${r}|${s.slot}`) ? "cellpop .5s ease-out" : "none",
+                      boxShadow: p && recentIds.has(`${r}|${s.slot}`) ? "0 0 14px #7fb069aa" : "none",
                     }}>
                       {p ? <>{p.player}<div style={{ fontSize: 8.5, opacity: .85 }}>{p.pos} · {p.team}</div></> : isNext ? "⏱ on the clock" : ""}
                     </td>
@@ -736,7 +767,31 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
           )}
         </div>
       )}
-      <style>{`@keyframes draftpulse { 0%,100% { filter: brightness(1); } 50% { filter: brightness(1.18); } }`}</style>
+      <style>{`@keyframes draftpulse { 0%,100% { filter: brightness(1); } 50% { filter: brightness(1.18); } } @keyframes cellpop { 0% { transform: scale(.4); opacity: 0; } 70% { transform: scale(1.08); } 100% { transform: scale(1); opacity: 1; } } @keyframes toastin { from { transform: translateY(-16px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }`}</style>
+      {toast && (
+        <div style={{ position: "fixed", top: 58, left: "50%", transform: "translateX(-50%)", zIndex: 80, animation: "toastin .3s ease-out",
+          background: POS_COLOR[toast.pos] || "#7fb069", color: "#fff", borderRadius: 12, padding: "10px 18px",
+          boxShadow: "0 10px 30px rgba(0,0,0,.55)", display: "flex", alignItems: "center", gap: 10, maxWidth: "92vw" }}>
+          <span style={{ fontSize: 18 }}>🏈</span>
+          <span style={{ fontWeight: 800, fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {toast.member} drafts {toast.player}
+            <span style={{ opacity: .85, fontWeight: 700, fontSize: 12 }}> · {toast.pos} {toast.team} · Rd {toast.round}</span>
+          </span>
+        </div>
+      )}
+      {next && upNext.length > 0 && draftStarted && (
+        <div style={{ display: "flex", gap: 6, alignItems: "center", padding: "7px 14px", borderBottom: "1px solid #2c3828", overflowX: "auto", whiteSpace: "nowrap" }}>
+          <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1, color: "#7a8c74" }}>UP NEXT</span>
+          {upNext.map((u, i) => (
+            <span key={u.no} style={{ fontSize: 11.5, fontWeight: i === 0 ? 800 : 600, borderRadius: 7, padding: "3px 9px",
+              background: i === 0 ? "#7fb069" : u.slot === mySlot ? "#1fa8a033" : "#1c241a",
+              color: i === 0 ? "#141a12" : u.slot === mySlot ? "#1fa8a0" : "#a9bda0",
+              border: i === 0 ? "none" : "1px solid #2c3828" }}>
+              {u.no}. {u.member}
+            </span>
+          ))}
+        </div>
+      )}
       {/* draft confirm popup — dead center, yes or no, nothing to scroll */}
       {pending && next && (
         <div onClick={() => setPending(null)} style={{ position: "fixed", inset: 0, zIndex: 90, background: "#141a12dd", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
