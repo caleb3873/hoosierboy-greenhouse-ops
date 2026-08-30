@@ -14,7 +14,8 @@ const SERIF = "'DM Serif Display', serif";
 const POS_COLOR = { WR: "#2d7dd2", RB: "#2e9e4f", QB: "#d94f3d", TE: "#e89a3a", K: "#8e5cd9", "D/ST": "#6b7280" };
 const LABEL_COLOR = { CORE: "#2e9e4f", VALUE: "#1fa8a0", FLIP: "#e89a3a", LOTTERY: "#8e5cd9", FADE: "#d94f3d" };
 const ROUNDS = 15;
-const CLOCK_SECS = 60;
+const DEFAULT_CLOCK_SECS = 60;
+const NEED_TARGETS = { QB: 1, RB: 2, WR: 2, TE: 1, K: 1, "D/ST": 1 };  // + 1 FLEX (RB/WR/TE)
 const RISK_CHIP = m => m?.injury_risk === "out" ? " 🚑" : m?.injury_risk === "risk" ? " 🩹" : "";
 const OLD_CHIP = (m, pos) => (m?.age >= 30 && ["RB", "WR", "TE"].includes(pos)) ? " 👴" : "";
 const btn = (bg, color = "#e8eee4") => ({ background: bg, color, border: "none", borderRadius: 8, padding: "6px 12px", fontWeight: 800, fontSize: 12, cursor: "pointer", fontFamily: FONT });
@@ -137,6 +138,8 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
 
   // ── pick clock: 60s from the previous pick ────────────────────────────────
   const lastPickAt = useMemo(() => picks.length ? Math.max(...picks.map(p => +new Date(p.created_at))) : null, [picks]);
+  const CLOCK_SECS = clockCfg?.clock_secs || DEFAULT_CLOCK_SECS;
+  const singleMode = !inMock && !!clockCfg?.single_mode;
   const clockAnchor = Math.max(lastPickAt || 0, clockCfg?.anchor ? +new Date(clockCfg.anchor) : 0) || null;
   const clockPaused = !!clockCfg?.paused;
   const clockLeft = next && clockAnchor
@@ -144,6 +147,8 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
     : null;
   async function clockAction(kind) {   // commish: pause / resume / reset — synced to every phone
     if (kind === "pause") await sb.from("draft_clock").upsert({ board: activeBoard, paused: true, paused_left: clockLeft ?? CLOCK_SECS });
+    if (kind === "single") await sb.from("draft_clock").upsert({ board: activeBoard, single_mode: !clockCfg?.single_mode });
+    if (typeof kind === "number") await sb.from("draft_clock").upsert({ board: activeBoard, clock_secs: Math.max(15, Math.min(300, kind)) });
     if (kind === "resume") await sb.from("draft_clock").upsert({ board: activeBoard, paused: false, anchor: new Date(Date.now() - (CLOCK_SECS - (clockCfg?.paused_left ?? CLOCK_SECS)) * 1000).toISOString(), paused_left: null });
     if (kind === "reset") await sb.from("draft_clock").upsert({ board: activeBoard, paused: false, anchor: new Date().toISOString(), paused_left: null });
     await loadClock();
@@ -344,6 +349,57 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
     return adp - target >= 6 ? ["safe", "#2e9e4f"] : adp - target >= 0 ? ["likely", "#e89a3a"] : ["risky", "#d94f3d"];
   };
 
+  const rosterNeeds = slot => {
+    if (!slot) return null;
+    const roster = picks.filter(p => p.slot === slot);
+    const counts = {};
+    roster.forEach(p => { counts[p.pos] = (counts[p.pos] || 0) + 1; });
+    const base = {}, extra = {};
+    Object.keys(NEED_TARGETS).forEach(pos => {
+      base[pos] = Math.min(counts[pos] || 0, NEED_TARGETS[pos]);
+      extra[pos] = Math.max(0, (counts[pos] || 0) - NEED_TARGETS[pos]);
+    });
+    const flexUsed = Math.min(1, (extra.RB || 0) + (extra.WR || 0) + (extra.TE || 0));
+    const unfilled = Object.keys(NEED_TARGETS).reduce((a, pos) => a + (NEED_TARGETS[pos] - base[pos]), 0) + (1 - flexUsed);
+    const startersTotal = Object.values(NEED_TARGETS).reduce((a, b) => a + b, 0) + 1;
+    const filledRatio = (startersTotal - unfilled) / startersTotal;
+    const remaining = ROUNDS - roster.length;
+    return { base, flexUsed, unfilled, filledRatio, remaining, roster };
+  };
+  const needsBar = slot => {
+    const n = rosterNeeds(slot);
+    if (!n) return null;
+    const member = slots.find(s => s.slot === slot)?.member || `Slot ${slot}`;
+    const chip = (label, have, want) => {
+      const missing = want - have;
+      const urgent = missing > 0 && n.remaining <= n.unfilled;            // must fill NOW
+      const neglect = missing > 0 && n.filledRatio >= 0.6;               // everything else is filling up
+      const done = missing <= 0;
+      return (
+        <span key={label} style={{ padding: "3px 8px", borderRadius: 7, fontSize: 11, fontWeight: 800,
+          background: urgent ? "#d94f3d" : neglect ? "#e89a3a" : done ? "#2e9e4f33" : "#1c241a",
+          color: urgent || neglect ? "#141a12" : done ? "#7fb069" : "#a9bda0",
+          border: done ? "1px solid #2e9e4f55" : "1px solid #2c3828",
+          animation: urgent ? "draftpulse 1.2s ease-in-out infinite" : "none" }}>
+          {label} {have}/{want}{done ? " ✓" : ""}
+        </span>
+      );
+    };
+    return (
+      <div style={{ background: "#1f2a1a", border: "1px solid #3a4a34", borderRadius: 12, padding: "8px 12px", marginBottom: 10 }}>
+        <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1, color: "#7a8c74", marginBottom: 5 }}>
+          {singleMode ? `TEAM NEEDS — ${member}` : "MY ROSTER"} · {n.remaining} picks left
+        </div>
+        <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+          {Object.keys(NEED_TARGETS).map(pos => chip(pos, n.base[pos], NEED_TARGETS[pos]))}
+          {chip("FLEX", n.flexUsed, 1)}
+          <span style={{ padding: "3px 8px", borderRadius: 7, fontSize: 11, fontWeight: 700, color: "#7a8c74", border: "1px solid #2c3828" }}>
+            bench {Math.max(0, n.roster.length - (9 - n.unfilled))}
+          </span>
+        </div>
+      </div>
+    );
+  };
   const boardPanel = (
     <div style={{ overflowX: "auto", padding: 14, flex: 1, minWidth: 0 }}>
       <table style={{ borderCollapse: "separate", borderSpacing: 3 }}>
@@ -383,7 +439,8 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
 
   const ranksPanel = (
     <div style={{ padding: 14, maxWidth: wide ? undefined : 640 }}>
-      {myPicks.length > 0 && (
+      {(singleMode ? next?.slot : mySlot) ? needsBar(singleMode ? next.slot : mySlot) : null}
+      {!singleMode && myPicks.length > 0 && (
         <div style={{ background: "#1f2a1a", border: "1px solid #3a4a34", borderRadius: 12, padding: "10px 12px", marginBottom: 12 }}>
           <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1, color: "#7a8c74", marginBottom: 6 }}>MY NEXT PICKS</div>
           {myPicks.map(mp => (
@@ -583,6 +640,21 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
                 style={{ ...btn(Object.keys(slotEdits).length ? "#7fb069" : "#3a4a34", Object.keys(slotEdits).length ? "#141a12" : "#7a8c74"), flex: 1, padding: "11px" }}>✓ Save names</button>
               <button onClick={() => { setSlotEdits({}); setCommishOpen(false); }} style={{ ...btn("#3a4a34"), padding: "11px" }}>Close</button>
             </div>
+            <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1, color: "#7a8c74", margin: "16px 0 6px" }}>DRAFT SETTINGS</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+              <span style={{ flex: 1, fontSize: 12.5, fontWeight: 700 }}>💻 Single-computer mode</span>
+              <button onClick={() => clockAction("single")}
+                style={{ ...btn(clockCfg?.single_mode ? "#7fb069" : "#3a4a34", clockCfg?.single_mode ? "#141a12" : "#e8eee4"), padding: "8px 14px" }}>
+                {clockCfg?.single_mode ? "ON" : "OFF"}
+              </button>
+            </div>
+            <div style={{ fontSize: 10, color: "#7a8c74", marginBottom: 8, lineHeight: 1.4 }}>One machine runs the whole draft: needs bar follows the on-clock team, every pick confirms as that team, no per-phone identity.</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+              <span style={{ flex: 1, fontSize: 12.5, fontWeight: 700 }}>⏱ Pick clock</span>
+              <button onClick={() => clockAction((clockCfg?.clock_secs || 60) - 15)} style={{ ...btn("#3a4a34"), padding: "8px 12px" }}>−15s</button>
+              <span style={{ fontWeight: 800, fontSize: 14, minWidth: 44, textAlign: "center" }}>{clockCfg?.clock_secs || 60}s</span>
+              <button onClick={() => clockAction((clockCfg?.clock_secs || 60) + 15)} style={{ ...btn("#3a4a34"), padding: "8px 12px" }}>+15s</button>
+            </div>
             <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1, color: "#7a8c74", margin: "16px 0 6px" }}>SHARE LINKS</div>
             <div style={{ maxHeight: 200, overflowY: "auto" }}>
               {[["League board (view + draft)", `/?draft=${board}`],
@@ -645,7 +717,7 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
         </span>
       </div>
       {/* YOUR TURN banner — the "what do I do now" signal */}
-      {mySlot && next && next.slot === mySlot && !pending && (
+      {!singleMode && mySlot && next && next.slot === mySlot && !pending && (
         <div style={{ background: "#7fb069", color: "#141a12", padding: "10px 14px", display: "flex", alignItems: "center", gap: 10, fontWeight: 800, animation: "draftpulse 1.6s ease-in-out infinite" }}>
           <span style={{ fontSize: 15 }}>🟢 YOU'RE ON THE CLOCK — Pick {pickNo}, Rd {next.round}</span>
           {!wide && tab === "board" && (
@@ -658,7 +730,7 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
       {pending && next && (
         <div onClick={() => setPending(null)} style={{ position: "fixed", inset: 0, zIndex: 90, background: "#141a12dd", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
           <div onClick={e => e.stopPropagation()} style={{ background: "#1f2a1a", border: "2px solid #7fb069", borderRadius: 16, padding: 22, maxWidth: 360, width: "100%", textAlign: "center", boxShadow: "0 20px 60px rgba(0,0,0,.6)" }}>
-            <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: 1, color: next.slot === mySlot ? "#7fb069" : "#e89a3a", marginBottom: 8 }}>
+            <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: 1, color: (singleMode || next.slot === mySlot) ? "#7fb069" : "#e89a3a", marginBottom: 8 }}>
               {next.slot === mySlot ? "YOUR PICK" : `DRAFTING FOR ${String(onClock).toUpperCase()}`} · RD {next.round}
             </div>
             <div style={{ fontFamily: SERIF, fontSize: 24, marginBottom: 2 }}>{pending.player}</div>
