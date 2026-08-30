@@ -174,7 +174,7 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
   useEffect(() => {   // personal links: identity follows the token's slot automatically
     if (!mySlotRow || inMock) return;
     if (!me || me.slot !== mySlotRow.slot) {
-      const m2 = { name: me?.name || mySlotRow.member, slot: mySlotRow.slot };
+      const m2 = { name: mySlotRow.member, slot: mySlotRow.slot };   // adopt the slot's own team name
       setMe(m2); localStorage.setItem(meKey, JSON.stringify(m2));
       if (setupSlot !== mySlotRow.slot) setSetupSlot(mySlotRow.slot);
     }
