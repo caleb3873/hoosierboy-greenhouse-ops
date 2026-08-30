@@ -140,7 +140,7 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
   const lastPickAt = useMemo(() => picks.length ? Math.max(...picks.map(p => +new Date(p.created_at))) : null, [picks]);
   const CLOCK_SECS = clockCfg?.clock_secs || DEFAULT_CLOCK_SECS;
   const draftStarted = inMock || !!clockCfg?.started;   // mocks are always live
-  const singleMode = !inMock && !!clockCfg?.single_mode;
+  const singleMode = !inMock && !!clockCfg?.single_mode && isCommish;
   const clockAnchor = Math.max(lastPickAt || 0, clockCfg?.anchor ? +new Date(clockCfg.anchor) : 0) || null;
   const clockPaused = !!clockCfg?.paused;
   const clockLeft = next && draftStarted && clockAnchor
