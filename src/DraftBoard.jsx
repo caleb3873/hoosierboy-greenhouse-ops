@@ -494,7 +494,8 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
           color: urgent || neglect ? "#141a12" : done ? "#7fb069" : "#a9bda0",
           border: done ? "1px solid #2e9e4f55" : "1px solid #2c3828",
           animation: urgent ? "draftpulse 1.2s ease-in-out infinite" : "none" }}>
-          {label} {have}/{want}{done ? " ✓" : ""}{done && n.totals && (n.totals[label] || 0) > have ? ` · ${n.totals[label]}/${POS_MAX[label] ?? "-"}` : ""}
+          {label} {have}/{want}{done ? "✓" : ""}
+          <span style={{ opacity: .75, fontWeight: 700 }}> · {(n.totals && n.totals[label]) || 0}/{POS_MAX[label] ?? "-"}</span>
         </span>
       );
     };
