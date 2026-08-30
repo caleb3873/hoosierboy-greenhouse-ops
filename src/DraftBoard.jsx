@@ -50,6 +50,7 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
   const [slotEdits, setSlotEdits] = useState({});
   const [copied, setCopied] = useState("");
   const [nowT, setNowT] = useState(Date.now());
+  const [clockCfg, setClockCfg] = useState(null);   // shared pause/reset state (draft_clock)
   const meKey = `draft-${board}-me`;
   const [me, setMe] = useState(() => { try { return JSON.parse(localStorage.getItem(meKey) || "null"); } catch { return null; } });
   const [setup, setSetup] = useState(!me && !isCommish);
@@ -72,6 +73,10 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
   const loadSlots = async () => {
     const { data } = await sb.from("draft_slots").select("*").eq("board", activeBoard).order("slot");
     setSlots(data || []);
+  };
+  const loadClock = async () => {
+    const { data } = await sb.from("draft_clock").select("*").eq("board", activeBoard).maybeSingle();
+    setClockCfg(data || null);
   };
   const loadPlayers = async () => {
     let all = [], off = 0;
@@ -102,11 +107,20 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
     })();
     const ch = sb.channel(`draft-${activeBoard}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "draft_picks", filter: `board=eq.${activeBoard}` }, loadPicks)
+      .on("postgres_changes", { event: "*", schema: "public", table: "draft_clock", filter: `board=eq.${activeBoard}` }, loadClock)
       .subscribe();
-    pollRef.current = setInterval(() => { loadPicks(); loadSlots(); }, 15000);
+    loadClock();
+    pollRef.current = setInterval(() => { loadPicks(); loadSlots(); loadClock(); }, 15000);
     return () => { sb.removeChannel(ch); clearInterval(pollRef.current); };
   }, [sb, activeBoard, rankList]);
 
+  useEffect(() => {   // commish moved teams around → follow my name to its new slot
+    if (!me || !slots.length || inMock) return;
+    const atMine = slots.find(s => s.slot === me.slot);
+    if (atMine && atMine.member === me.name) return;
+    const moved = slots.find(s => s.member === me.name);
+    if (moved) { const m2 = { ...me, slot: moved.slot }; setMe(m2); localStorage.setItem(meKey, JSON.stringify(m2)); }
+  }, [slots, me, inMock]);
   const pickedNames = useMemo(() => new Set(picks.map(p => p.player)), [picks]);
   const grid = useMemo(() => { const g = {}; picks.forEach(p => { g[`${p.round}|${p.slot}`] = p; }); return g; }, [picks]);
   const next = useMemo(() => {
@@ -123,7 +137,17 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
 
   // ── pick clock: 60s from the previous pick ────────────────────────────────
   const lastPickAt = useMemo(() => picks.length ? Math.max(...picks.map(p => +new Date(p.created_at))) : null, [picks]);
-  const clockLeft = next && lastPickAt ? Math.max(0, CLOCK_SECS - Math.floor((nowT - lastPickAt) / 1000)) : null;
+  const clockAnchor = Math.max(lastPickAt || 0, clockCfg?.anchor ? +new Date(clockCfg.anchor) : 0) || null;
+  const clockPaused = !!clockCfg?.paused;
+  const clockLeft = next && clockAnchor
+    ? (clockPaused ? (clockCfg?.paused_left ?? CLOCK_SECS) : Math.max(0, CLOCK_SECS - Math.floor((nowT - clockAnchor) / 1000)))
+    : null;
+  async function clockAction(kind) {   // commish: pause / resume / reset — synced to every phone
+    if (kind === "pause") await sb.from("draft_clock").upsert({ board: activeBoard, paused: true, paused_left: clockLeft ?? CLOCK_SECS });
+    if (kind === "resume") await sb.from("draft_clock").upsert({ board: activeBoard, paused: false, anchor: new Date(Date.now() - (CLOCK_SECS - (clockCfg?.paused_left ?? CLOCK_SECS)) * 1000).toISOString(), paused_left: null });
+    if (kind === "reset") await sb.from("draft_clock").upsert({ board: activeBoard, paused: false, anchor: new Date().toISOString(), paused_left: null });
+    await loadClock();
+  }
 
   async function insertPick(pl, target) {
     const { error } = await sb.from("draft_picks").insert({ board: activeBoard, round: target.round, slot: target.slot, player: pl.player, team: pl.team, pos: pl.pos });
@@ -206,7 +230,7 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
     if (inMock || !isCommish || !next || !players.length || autoRef.current) return;
     const slotCfg = slots.find(s => s.slot === next.slot);
     const isCpu = !!slotCfg?.auto;
-    const expired = clockLeft === 0 && picks.length > 0;
+    const expired = clockLeft === 0 && picks.length > 0 && !clockPaused;
     if (!isCpu && !expired) return;
     const t = setTimeout(async () => {
       if (autoRef.current) return;
@@ -241,6 +265,14 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
       if (clean) await sb.from("draft_slots").update({ member: clean }).eq("board", activeBoard).eq("slot", +slot);
     }
     await loadSlots(); setSlotEdits({}); setBusy(false);
+  }
+  async function swapSlots(a, b) {   // move a TEAM between draft slots (pre-draft only)
+    const sa = slots.find(s => s.slot === a), sbx = slots.find(s => s.slot === b);
+    if (!sa || !sbx || busy) return;
+    setBusy(true);
+    await sb.from("draft_slots").update({ member: sbx.member, auto: sbx.auto }).eq("id", sa.id);
+    await sb.from("draft_slots").update({ member: sa.member, auto: sa.auto }).eq("id", sbx.id);
+    await loadSlots(); setBusy(false);
   }
   async function toggleAuto(s) {
     await sb.from("draft_slots").update({ auto: !s.auto }).eq("id", s.id);
@@ -532,7 +564,7 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
         <div style={{ position: "fixed", inset: 0, zIndex: 100, background: "#141a12ee", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
           <div style={{ background: "#1f2a1a", border: "1px solid #3a4a34", borderRadius: 16, padding: 22, maxWidth: 420, width: "100%", maxHeight: "90vh", overflowY: "auto" }}>
             <div style={{ fontFamily: SERIF, fontSize: 20, marginBottom: 4 }}>🛡 Commissioner</div>
-            <div style={{ fontSize: 11.5, color: "#a9bda0", marginBottom: 12 }}>Fix slot names, or flip 🤖 autodraft on for anyone who can't make it.</div>
+            <div style={{ fontSize: 11.5, color: "#a9bda0", marginBottom: 12 }}>Fix names, 🤖 autodraft absentees, ▲▼ set the draft order (locked once picking starts). Anyone whose slot moves should re-tap ⚙ on their phone.</div>
             {slots.map(s => (
               <div key={s.slot} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
                 <span style={{ width: 22, textAlign: "right", fontWeight: 800, fontSize: 12, color: "#7a8c74" }}>{s.slot}</span>
@@ -540,6 +572,10 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
                   style={{ flex: 1, minWidth: 0, padding: "8px 10px", borderRadius: 8, border: `1.5px solid ${slotEdits[s.slot] != null && slotEdits[s.slot] !== s.member ? "#7fb069" : "#3a4a34"}`, background: "#141a12", color: "#e8eee4", fontFamily: FONT, fontSize: 16, fontWeight: 700 }} />
                 <button onClick={() => toggleAuto(s)} title={s.auto ? "autodraft ON — tap to hand control back" : "autodraft OFF — tap to draft for them"}
                   style={{ ...btn(s.auto ? "#7fb069" : "#3a4a34", s.auto ? "#141a12" : "#e8eee4"), padding: "8px 10px" }}>🤖</button>
+                {picks.length === 0 && <>
+                  <button onClick={() => swapSlots(s.slot, s.slot - 1)} disabled={busy || s.slot === 1} style={{ ...btn("#3a4a34"), padding: "8px 8px", opacity: s.slot === 1 ? .3 : 1 }}>▲</button>
+                  <button onClick={() => swapSlots(s.slot, s.slot + 1)} disabled={busy || s.slot === slots.length} style={{ ...btn("#3a4a34"), padding: "8px 8px", opacity: s.slot === slots.length ? .3 : 1 }}>▼</button>
+                </>}
               </div>
             ))}
             <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
@@ -575,9 +611,18 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
           </span>
         ) : <span style={{ background: "#e89a3a", color: "#141a12", borderRadius: 9, padding: "4px 12px", fontWeight: 800 }}>DRAFT COMPLETE 🎉</span>}
         {!inMock && clockLeft != null && next && (
-          <span style={{ background: clockLeft <= 15 ? "#d94f3d" : "#1c241a", border: "1px solid #3a4a34", color: clockLeft <= 15 ? "#fff" : "#c8e6b8",
+          <span style={{ background: clockPaused ? "#e89a3a" : clockLeft <= 15 ? "#d94f3d" : "#1c241a", border: "1px solid #3a4a34",
+            color: clockPaused ? "#141a12" : clockLeft <= 15 ? "#fff" : "#c8e6b8",
             borderRadius: 9, padding: "4px 10px", fontWeight: 800, fontSize: 13, fontVariantNumeric: "tabular-nums" }}>
-            ⏱ 0:{String(clockLeft).padStart(2, "0")}
+            {clockPaused ? "⏸" : "⏱"} 0:{String(clockLeft).padStart(2, "0")}{clockPaused ? " paused" : ""}
+          </span>
+        )}
+        {!inMock && isCommish && next && (
+          <span style={{ display: "flex", gap: 4 }}>
+            {clockPaused
+              ? <button onClick={() => clockAction("resume")} style={btn("#7fb069", "#141a12")}>▶ resume</button>
+              : <button onClick={() => clockAction("pause")} style={btn("#3a4a34")}>⏸</button>}
+            <button onClick={() => clockAction("reset")} style={btn("#3a4a34")} title="restart the 60s clock">↺</button>
           </span>
         )}
         {personal && !inMock && <span style={{ fontSize: 11, color: "#a9bda0", fontWeight: 700 }}>🔒 {rankList.split("-")[0].toUpperCase()}</span>}
