@@ -139,15 +139,17 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
   // ── pick clock: 60s from the previous pick ────────────────────────────────
   const lastPickAt = useMemo(() => picks.length ? Math.max(...picks.map(p => +new Date(p.created_at))) : null, [picks]);
   const CLOCK_SECS = clockCfg?.clock_secs || DEFAULT_CLOCK_SECS;
+  const draftStarted = inMock || !!clockCfg?.started;   // mocks are always live
   const singleMode = !inMock && !!clockCfg?.single_mode;
   const clockAnchor = Math.max(lastPickAt || 0, clockCfg?.anchor ? +new Date(clockCfg.anchor) : 0) || null;
   const clockPaused = !!clockCfg?.paused;
-  const clockLeft = next && clockAnchor
+  const clockLeft = next && draftStarted && clockAnchor
     ? (clockPaused ? (clockCfg?.paused_left ?? CLOCK_SECS) : Math.max(0, CLOCK_SECS - Math.floor((nowT - clockAnchor) / 1000)))
     : null;
   async function clockAction(kind) {   // commish: pause / resume / reset — synced to every phone
     if (kind === "pause") await sb.from("draft_clock").upsert({ board: activeBoard, paused: true, paused_left: clockLeft ?? CLOCK_SECS });
     if (kind === "single") await sb.from("draft_clock").upsert({ board: activeBoard, single_mode: !clockCfg?.single_mode });
+    if (kind === "start") await sb.from("draft_clock").upsert({ board: activeBoard, started: true, paused: false, anchor: new Date().toISOString(), paused_left: null });
     if (typeof kind === "number") await sb.from("draft_clock").upsert({ board: activeBoard, clock_secs: Math.max(15, Math.min(300, kind)) });
     if (kind === "resume") await sb.from("draft_clock").upsert({ board: activeBoard, paused: false, anchor: new Date(Date.now() - (CLOCK_SECS - (clockCfg?.paused_left ?? CLOCK_SECS)) * 1000).toISOString(), paused_left: null });
     if (kind === "reset") await sb.from("draft_clock").upsert({ board: activeBoard, paused: false, anchor: new Date().toISOString(), paused_left: null });
@@ -160,7 +162,7 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
     await loadPicks();
   }
   async function draftPlayer(pl) {
-    if (!next || busy) return;
+    if (!next || busy || !draftStarted) return;
     const wasMine = next.slot === (inMock ? mockSlot : me?.slot);
     setBusy(true);
     await insertPick(pl, next);
@@ -232,10 +234,10 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
   }, [inMock, next, players, slots, mockSlot]);
   // REAL BOARD: 🤖 slots (5s) + clock expiry, driven by open commish devices
   useEffect(() => {
-    if (inMock || !isCommish || !next || !players.length || autoRef.current) return;
+    if (inMock || !isCommish || !draftStarted || !next || !players.length || autoRef.current) return;
     const slotCfg = slots.find(s => s.slot === next.slot);
     const isCpu = !!slotCfg?.auto;
-    const expired = clockLeft === 0 && picks.length > 0 && !clockPaused;
+    const expired = clockLeft === 0 && draftStarted && !clockPaused;
     if (!isCpu && !expired) return;
     const t = setTimeout(async () => {
       if (autoRef.current) return;
@@ -504,7 +506,7 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
                 {col.filter(p => !pickedNames.has(p.player)).slice(0, pos === "K" || pos === "D/ST" ? 12 : 40).map((p, i) => {
                   const m = metrics[p.player];
                   return (
-                    <div key={p.id} onClick={() => next && setPending(p)}
+                    <div key={p.id} onClick={() => next && draftStarted && setPending(p)}
                       style={{ display: "flex", alignItems: "baseline", gap: 6, padding: "4px 4px", borderRadius: 5, cursor: "pointer", fontSize: 12 }}>
                       <span style={{ width: 22, textAlign: "right", fontSize: 10, color: "#7a8c74", fontVariantNumeric: "tabular-nums" }}>{i + 1}</span>
                       <span style={{ flex: 1, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
@@ -528,7 +530,7 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
           <div key={p.id}>
             {newTier && posF === "ALL" && !q && <div style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", margin: "10px 0 3px", letterSpacing: 1 }}>TIER {p.tier}</div>}
             {newGroup && <div style={{ fontSize: 10, fontWeight: 800, color: "#7a8c74", margin: "10px 0 3px", letterSpacing: 1 }}>{sortBy === "pos" ? p.pos : p.team}</div>}
-            <div onClick={() => next && setPending(p)}
+            <div onClick={() => next && draftStarted && setPending(p)}
               style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 8, marginBottom: 2, cursor: "pointer",
                 background: "#212b1d", border: "1px solid #2c3828" }}>
               <span style={{ width: 28, textAlign: "right", fontSize: 11, color: "#7a8c74", fontVariantNumeric: "tabular-nums" }}>{p.rk}</span>
@@ -677,11 +679,20 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
       )}
       <div style={{ padding: "10px 14px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", borderBottom: "1px solid #2c3828", position: "sticky", top: 0, background: "#141a12", zIndex: 20 }}>
         <span style={{ fontFamily: SERIF, fontSize: wide ? 20 : 16 }}>{inMock ? "🎮 Mock" : "🏈 Draft '26"}</span>
-        {next ? (
+        {!draftStarted && next ? (
+          <span style={{ background: "#1c241a", border: "1px solid #3a4a34", color: "#a9bda0", borderRadius: 9, padding: "4px 12px", fontWeight: 800, fontSize: 13 }}>
+            ⏳ Draft not started
+          </span>
+        ) : next ? (
           <span style={{ background: "#7fb069", color: "#141a12", borderRadius: 9, padding: "4px 12px", fontWeight: 800, fontSize: 13 }}>
             Pick {pickNo} · Rd {next.round} — {onClock}
           </span>
         ) : <span style={{ background: "#e89a3a", color: "#141a12", borderRadius: 9, padding: "4px 12px", fontWeight: 800 }}>DRAFT COMPLETE 🎉</span>}
+        {!draftStarted && isCommish && !inMock && next && (
+          <button onClick={() => clockAction("start")} style={{ ...btn("#7fb069", "#141a12"), padding: "8px 18px", fontSize: 14, animation: "draftpulse 1.6s ease-in-out infinite" }}>
+            ▶ START DRAFT
+          </button>
+        )}
         {!inMock && clockLeft != null && next && (
           <span style={{ background: clockPaused ? "#e89a3a" : clockLeft <= 15 ? "#d94f3d" : "#1c241a", border: "1px solid #3a4a34",
             color: clockPaused ? "#141a12" : clockLeft <= 15 ? "#fff" : "#c8e6b8",
@@ -689,7 +700,7 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
             {clockPaused ? "⏸" : "⏱"} 0:{String(clockLeft).padStart(2, "0")}{clockPaused ? " paused" : ""}
           </span>
         )}
-        {!inMock && isCommish && next && (
+        {!inMock && isCommish && draftStarted && next && (
           <span style={{ display: "flex", gap: 4 }}>
             {clockPaused
               ? <button onClick={() => clockAction("resume")} style={btn("#7fb069", "#141a12")}>▶ resume</button>
