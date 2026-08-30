@@ -58,6 +58,9 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
   const [nowT, setNowT] = useState(Date.now());
   const [toast, setToast] = useState(null);          // last pick announcement
   const [teamsOpen, setTeamsOpen] = useState(false);
+  const [editPick, setEditPick] = useState(null);    // commish: fix a placed pick {pick}
+  const [editQ, setEditQ] = useState("");
+  const [restartArm, setRestartArm] = useState(false);
   const gradeMode = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("view") === "grades";
   const [grades, setGrades] = useState([]);
   const [graderName, setGraderName] = useState(() => { try { return localStorage.getItem("draft-grader") || ""; } catch { return ""; } });
@@ -298,6 +301,28 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
     setActiveBoard(board); setMockSlot(null); setPicks([]);
   }
 
+  async function restartDraft() {
+    setBusy(true);
+    await sb.from("draft_picks").delete().eq("board", activeBoard);
+    await sb.from("draft_clock").upsert({ board: activeBoard, started: false, paused: false, anchor: null, paused_left: null });
+    await loadPicks(); await loadClock();
+    setRestartArm(false); setCommishOpen(false); setBusy(false);
+  }
+  async function replacePick(pl) {
+    if (!editPick || busy) return;
+    // roster-max check excluding the pick being replaced
+    const cnt = picks.filter(x => x.slot === editPick.slot && x.pos === pl.pos && x.id !== editPick.id).length;
+    if (cnt >= (POS_MAX[pl.pos] ?? 99)) return;
+    setBusy(true);
+    await sb.from("draft_picks").update({ player: pl.player, team: pl.team, pos: pl.pos }).eq("id", editPick.id);
+    await loadPicks(); setEditPick(null); setEditQ(""); setBusy(false);
+  }
+  async function removePick() {
+    if (!editPick || busy) return;
+    setBusy(true);
+    await sb.from("draft_picks").delete().eq("id", editPick.id);
+    await loadPicks(); setEditPick(null); setEditQ(""); setBusy(false);
+  }
   async function saveSlotEdits() {
     setBusy(true);
     for (const [slot, name] of Object.entries(slotEdits)) {
@@ -514,7 +539,8 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
                       color: p ? "#fff" : "#5a6a54", fontWeight: p ? 700 : 400,
                       animation: p && recentIds.has(`${r}|${s.slot}`) ? "cellpop .5s ease-out" : "none",
                       boxShadow: p && recentIds.has(`${r}|${s.slot}`) ? "0 0 14px #7fb069aa" : "none",
-                    }}>
+                    }} onClick={() => { if (p && isCommish && !inMock) { setEditPick(p); setEditQ(""); } }}
+                    title={p && isCommish && !inMock ? "commissioner: tap to fix this pick" : undefined}>
                       {p ? <>{p.player}<div style={{ fontSize: 8.5, opacity: .85 }}>{p.pos} · {p.team}</div></> : isNext ? "⏱ on the clock" : ""}
                     </td>
                   );
@@ -721,6 +747,38 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
           </div>
         </div>
       )}
+      {editPick && (
+        <div onClick={() => setEditPick(null)} style={{ position: "fixed", inset: 0, zIndex: 95, background: "#141a12dd", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: "#1f2a1a", border: "2px solid #e89a3a", borderRadius: 16, padding: 20, maxWidth: 400, width: "100%" }}>
+            <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: 1, color: "#e89a3a", marginBottom: 6 }}>
+              🛡 FIX PICK — Rd {editPick.round} · {slots.find(s => s.slot === editPick.slot)?.member}
+            </div>
+            <div style={{ fontFamily: SERIF, fontSize: 20, marginBottom: 10 }}>{editPick.player} <span style={{ fontSize: 13, color: POS_COLOR[editPick.pos] }}>{editPick.pos}</span></div>
+            <input value={editQ} onChange={e => setEditQ(e.target.value)} placeholder="search replacement…" autoFocus
+              style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 9, border: "1px solid #3a4a34", background: "#141a12", color: "#e8eee4", fontFamily: FONT, fontSize: 16, marginBottom: 8 }} />
+            {editQ.trim() && (
+              <div style={{ maxHeight: 200, overflowY: "auto", marginBottom: 10 }}>
+                {players.filter(pl => !pickedNames.has(pl.player) && pl.player.toLowerCase().includes(editQ.trim().toLowerCase())).slice(0, 8).map(pl => {
+                  const cnt = picks.filter(x => x.slot === editPick.slot && x.pos === pl.pos && x.id !== editPick.id).length;
+                  const blocked = cnt >= (POS_MAX[pl.pos] ?? 99);
+                  return (
+                    <div key={pl.id} onClick={() => !blocked && replacePick(pl)}
+                      style={{ display: "flex", gap: 8, padding: "7px 8px", borderRadius: 8, cursor: blocked ? "default" : "pointer", opacity: blocked ? .4 : 1, background: "#212b1d", marginBottom: 3 }}>
+                      <b style={{ color: POS_COLOR[pl.pos] || "#fff", width: 38, fontSize: 11 }}>{pl.pos_rank}</b>
+                      <span style={{ flex: 1, fontWeight: 700, fontSize: 13 }}>{pl.player}</span>
+                      <span style={{ fontSize: 10.5, color: "#7a8c74" }}>{blocked ? "pos max" : pl.team}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={removePick} disabled={busy} style={{ ...btn("#d94f3d"), flex: 1, padding: "11px" }}>🗑 Remove pick (cell re-opens)</button>
+              <button onClick={() => setEditPick(null)} style={{ ...btn("#3a4a34"), padding: "11px 16px" }}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
       {teamsOpen && (
         <div style={{ padding: 14 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
@@ -776,6 +834,16 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
               <span style={{ fontWeight: 800, fontSize: 14, minWidth: 44, textAlign: "center" }}>{clockCfg?.clock_secs || 60}s</span>
               <button onClick={() => clockAction((clockCfg?.clock_secs || 60) + 15)} style={{ ...btn("#3a4a34"), padding: "8px 12px" }}>+15s</button>
             </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+              <span style={{ flex: 1, fontSize: 12.5, fontWeight: 700 }}>♻️ Restart draft</span>
+              {restartArm
+                ? <>
+                    <button onClick={restartDraft} disabled={busy} style={btn("#d94f3d")}>Wipe {picks.length} picks — confirm</button>
+                    <button onClick={() => setRestartArm(false)} style={btn("#3a4a34")}>✕</button>
+                  </>
+                : <button onClick={() => setRestartArm(true)} style={{ ...btn("#3a4a34"), padding: "8px 14px" }}>RESTART…</button>}
+            </div>
+            <div style={{ fontSize: 10, color: "#7a8c74", marginBottom: 8, lineHeight: 1.4 }}>Deletes every pick and returns to "not started". Slots, order, and settings stay.</div>
             <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1, color: "#7a8c74", margin: "16px 0 6px" }}>SHARE LINKS</div>
             <div style={{ maxHeight: 200, overflowY: "auto" }}>
               {[["League board (view + draft)", `/?draft=${board}`],
