@@ -17,6 +17,16 @@ const ROUNDS = 15;
 const DEFAULT_CLOCK_SECS = 60;
 const NEED_TARGETS = { QB: 1, RB: 2, WR: 2, TE: 1, K: 1, "D/ST": 1 };  // starting slots + 1 FLEX (RB/WR/TE)
 const POS_MAX = { QB: 2, RB: 5, WR: 5, TE: 2, K: 2, "D/ST": 2 };           // hard caps from the sheet's ROSTER RULES
+const TOUR = [
+  ["👋 This laptop runs the draft", "Kacie — you're the draft machine. Every pick made here (or on anyone's phone) saves instantly and shows up on every screen within a second. Nothing needs refreshing, ever."],
+  ["▶ Starting", "Nothing can happen until you press the green START DRAFT button in the header. Before that: set the real draft order in 🛡 with the ▲▼ arrows (it locks once picking starts), and set the pick clock length in 🛡 → Draft Settings."],
+  ["🏈 Making picks", "The right panel is always the best-available list — drafted players disappear automatically. Tap a player → a popup asks Draft this player? → Yes. The popup names the team you're picking for, and the TEAM NEEDS bar above the list shows that team's roster: green ✓ = filled, amber = neglected, pulsing red = must fill now. The league's position limits are enforced — the app won't let anyone overdraft."],
+  ["⏱ The clock", "Starts on every pick. At 0:00 the on-clock team automatically gets the best available player. ⏸ pauses everything (no auto-picks while paused), ▶ resumes, ↺ gives a fresh clock."],
+  ["🛠 Fixing a wrong pick", "Press ⏸ pause, then tap the wrong pick's cell on the board. Search the player they actually wanted, tap to swap it in, resume. The draft order never reopens — corrections only work while paused."],
+  ["📱 Remote & absent people", "Daniel and Mike B. can draft from anywhere — their links are in 🛡 → Share Links (tap 📋 to copy and text them). Their phones tell them when they're on the clock. If someone's unreachable, flip their 🤖 in 🛡 and the app drafts sensibly for them."],
+  ["🏆 After the draft", "The trophy button shows every roster anytime. When it's done, copy the grading link from the 🏆 view and send it to everyone — people grade each team A+ to F and the averages show live."],
+  ["🚨 If something goes wrong", "↩ Undo removes the last pick. ♻️ Restart draft (in 🛡, double-confirm) wipes everything but keeps the order and settings. Caleb's phone has all these same powers as backup. You've got this. 🌼"],
+];
 const GRADES = ["A+", "A", "A-", "B+", "B", "B-", "C+", "C", "C-", "D", "F"];
 const GRADE_PTS = Object.fromEntries(GRADES.map((g, i) => [g, GRADES.length - i]));
 const avgGrade = gs => { if (!gs.length) return null; const a = gs.reduce((t, g) => t + (GRADE_PTS[g.grade] || 0), 0) / gs.length; return GRADES.reduce((best, g) => Math.abs(GRADE_PTS[g] - a) < Math.abs(GRADE_PTS[best] - a) ? g : best, "C"); };
@@ -58,6 +68,10 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
   const [nowT, setNowT] = useState(Date.now());
   const [toast, setToast] = useState(null);          // last pick announcement
   const [teamsOpen, setTeamsOpen] = useState(false);
+  const [tourStep, setTourStep] = useState(() => {
+    try { return rankList === "kacie-7mv" && !localStorage.getItem("draft-tour-done") ? 0 : null; } catch { return null; }
+  });
+  const endTour = () => { localStorage.setItem("draft-tour-done", "1"); setTourStep(null); };
   const [editPick, setEditPick] = useState(null);    // commish: fix a placed pick {pick}
   const [editQ, setEditQ] = useState("");
   const [restartArm, setRestartArm] = useState(false);
@@ -767,6 +781,22 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
           </div>
         </div>
       )}
+      {tourStep !== null && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 120, background: "#141a12ee", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div style={{ background: "#1f2a1a", border: "1px solid #7fb069", borderRadius: 16, padding: 24, maxWidth: 460, width: "100%" }}>
+            <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1, color: "#7a8c74", marginBottom: 8 }}>HOW THE DRAFT WORKS · {tourStep + 1} / {TOUR.length}</div>
+            <div style={{ fontFamily: SERIF, fontSize: 21, marginBottom: 8 }}>{TOUR[tourStep][0]}</div>
+            <div style={{ fontSize: 13.5, color: "#c9d6c0", lineHeight: 1.55, marginBottom: 18 }}>{TOUR[tourStep][1]}</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              {tourStep > 0 && <button onClick={() => setTourStep(s => s - 1)} style={{ ...btn("#3a4a34"), padding: "11px 16px" }}>← Back</button>}
+              {tourStep < TOUR.length - 1
+                ? <button onClick={() => setTourStep(s => s + 1)} style={{ ...btn("#7fb069", "#141a12"), flex: 1, padding: "11px" }}>Next →</button>
+                : <button onClick={endTour} style={{ ...btn("#7fb069", "#141a12"), flex: 1, padding: "11px" }}>✓ Got it — let's draft</button>}
+              <button onClick={endTour} style={{ ...btn("#3a4a34"), padding: "11px 14px" }}>Skip</button>
+            </div>
+          </div>
+        </div>
+      )}
       {editPick && (
         <div onClick={() => setEditPick(null)} style={{ position: "fixed", inset: 0, zIndex: 95, background: "#141a12dd", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
           <div onClick={e => e.stopPropagation()} style={{ background: "#1f2a1a", border: "2px solid #e89a3a", borderRadius: 16, padding: 20, maxWidth: 400, width: "100%" }}>
@@ -927,6 +957,7 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
           </button>}
           {!inMock && <button onClick={() => { setTeamsOpen(v => !v); loadGrades(); }} style={btn(teamsOpen ? "#7fb069" : "#3a4a34", teamsOpen ? "#141a12" : "#e8eee4")} title="all rosters">🏆</button>}
           {isCommish && !inMock && <button onClick={() => setCommishOpen(true)} style={btn("#3a4a34")} title="commissioner">🛡</button>}
+          {isCommish && !inMock && <button onClick={() => setTourStep(0)} style={btn("#3a4a34")} title="how it all works">❓</button>}
           {picks.length > 0 && (undoArm
             ? <>
                 <button onClick={undoLast} disabled={busy} style={btn("#d94f3d")}>Confirm undo</button>
