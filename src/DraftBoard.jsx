@@ -283,7 +283,8 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
       autoRef.current = false;
     }, isCpu ? 5000 : 800);
     return () => clearTimeout(t);
-  }, [next, slots, players, inMock, isCommish, clockLeft, picks.length]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [next, slots, players, inMock, isCommish, clockLeft === 0, picks.length]);
 
   // ── mock draft lifecycle ────────────────────────────────────────────────────
   async function startMock(slot) {
