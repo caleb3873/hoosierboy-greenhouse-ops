@@ -421,7 +421,7 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
                       <span style={{ flex: 1, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                         {p.player}{personal && m?.colts ? " 🏠" : ""}{personal ? RISK_CHIP(m) : ""}{personal ? OLD_CHIP(m, p.pos) : ""}
                       </span>
-                      {personal && m?.label && <span style={{ fontSize: 7.5, fontWeight: 800, color: LABEL_COLOR[m.label] || "#a9bda0" }}>{m.label}</span>}
+                      {isCommish && m?.label && <span style={{ fontSize: 7.5, fontWeight: 800, color: LABEL_COLOR[m.label] || "#a9bda0" }}>{m.label}</span>}
                       <span style={{ fontSize: 9.5, color: "#7a8c74" }}>{p.team}</span>
                     </div>
                   );
@@ -448,11 +448,11 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
                 <span style={{ fontWeight: 700, fontSize: 13.5 }}>
                   {p.player}{personal && m?.colts ? " 🏠" : ""}{personal ? RISK_CHIP(m) : ""}{personal ? OLD_CHIP(m, p.pos) : ""}
                 </span>
-                {personal && m?.label &&
+                {isCommish && m?.label &&
                   <span style={{ marginLeft: 6, fontSize: 8.5, fontWeight: 800, padding: "1px 6px", borderRadius: 5, background: (LABEL_COLOR[m.label] || "#3a4a34") + "33", color: LABEL_COLOR[m.label] || "#a9bda0" }}>{m.label}</span>}
-                {personal && m?.adp != null && +m.adp - p.rk >= 8 &&
+                {isCommish && m?.adp != null && +m.adp - p.rk >= 8 &&
                   <span style={{ marginLeft: 5, fontSize: 8.5, color: "#1fa8a0", fontWeight: 800 }}>▼{Math.round(+m.adp - p.rk)} vs ADP</span>}
-                {personal && m?.note &&
+                {isCommish && m?.note &&
                   <div style={{ fontSize: 9.5, color: "#8ba183", lineHeight: 1.3, marginTop: 1 }}>{m.note}</div>}
               </span>
               <span style={{ fontSize: 10.5, color: "#a9bda0", whiteSpace: "nowrap" }}>{p.team} · bye {p.bye}{personal && m?.age ? ` · ${m.age}y` : ""}</span>
@@ -620,7 +620,7 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
             <div style={{ fontSize: 13, color: "#a9bda0", marginBottom: 4 }}>
               <b style={{ color: POS_COLOR[pending.pos] || "#fff" }}>{pending.pos_rank}</b> · {pending.team} · bye {pending.bye}{personal && metrics[pending.player]?.age ? ` · ${metrics[pending.player].age}y` : ""}{personal ? RISK_CHIP(metrics[pending.player]) : ""}{personal ? OLD_CHIP(metrics[pending.player], pending.pos) : ""}
             </div>
-            {personal && metrics[pending.player]?.note &&
+            {isCommish && metrics[pending.player]?.note &&
               <div style={{ fontSize: 10.5, color: "#8ba183", lineHeight: 1.35, marginBottom: 6 }}>{metrics[pending.player].note}</div>}
             <div style={{ fontSize: 15, fontWeight: 700, margin: "10px 0 14px" }}>Draft this player?</div>
             <div style={{ display: "flex", gap: 10 }}>
