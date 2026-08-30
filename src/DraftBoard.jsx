@@ -155,6 +155,16 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
     setTimeout(() => setToast(t => (t?.id === newest.id ? null : t)), 4000);
     setTimeout(() => setRecentIds(prev => { const n = new Set(prev); fresh.forEach(f => n.delete(`${f.round}|${f.slot}`)); return n; }), 6000);
   }, [picks, slots]);
+  const tokenPrefix = rankList !== "master" ? rankList.split("-")[0] : null;
+  const mySlotRow = useMemo(() => tokenPrefix ? slots.find(s => s.token === tokenPrefix) : null, [slots, tokenPrefix]);
+  useEffect(() => {   // personal links: identity follows the token's slot automatically
+    if (!mySlotRow || inMock) return;
+    if (!me || me.slot !== mySlotRow.slot) {
+      const m2 = { name: me?.name || mySlotRow.member, slot: mySlotRow.slot };
+      setMe(m2); localStorage.setItem(meKey, JSON.stringify(m2));
+      if (setupSlot !== mySlotRow.slot) setSetupSlot(mySlotRow.slot);
+    }
+  }, [mySlotRow, inMock]);
   const pickedNames = useMemo(() => new Set(picks.map(p => p.player)), [picks]);
   const grid = useMemo(() => { const g = {}; picks.forEach(p => { g[`${p.round}|${p.slot}`] = p; }); return g; }, [picks]);
   const next = useMemo(() => {
@@ -173,7 +183,8 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
   const lastPickAt = useMemo(() => picks.length ? Math.max(...picks.map(p => +new Date(p.created_at))) : null, [picks]);
   const CLOCK_SECS = clockCfg?.clock_secs || DEFAULT_CLOCK_SECS;
   const draftStarted = inMock || !!clockCfg?.started;   // mocks are always live
-  const singleMode = !inMock && !!clockCfg?.single_mode && isCommish;
+  // Kacie's link is THE operator machine (Caleb 8/30: "we will draft using kacies link")
+  const singleMode = !inMock && !!clockCfg?.single_mode && rankList === "kacie-7mv";
   const clockAnchor = Math.max(lastPickAt || 0, clockCfg?.anchor ? +new Date(clockCfg.anchor) : 0) || null;
   const clockPaused = !!clockCfg?.paused;
   const clockLeft = next && draftStarted && clockAnchor
@@ -335,8 +346,8 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
     const sa = slots.find(s => s.slot === a), sbx = slots.find(s => s.slot === b);
     if (!sa || !sbx || busy) return;
     setBusy(true);
-    await sb.from("draft_slots").update({ member: sbx.member, auto: sbx.auto }).eq("id", sa.id);
-    await sb.from("draft_slots").update({ member: sa.member, auto: sa.auto }).eq("id", sbx.id);
+    await sb.from("draft_slots").update({ member: sbx.member, auto: sbx.auto, token: sbx.token }).eq("id", sa.id);
+    await sb.from("draft_slots").update({ member: sa.member, auto: sa.auto, token: sa.token }).eq("id", sbx.id);
     await loadSlots(); setBusy(false);
   }
   async function toggleAuto(s) {
@@ -344,11 +355,12 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
     await loadSlots();
   }
   async function saveSetup() {
-    if (!setupName.trim() || !setupSlot) return;
+    const slotToUse = mySlotRow ? mySlotRow.slot : setupSlot;
+    if (!setupName.trim() || !slotToUse) return;
     const name = setupName.trim().toUpperCase().slice(0, 14);
-    await sb.from("draft_slots").update({ member: name }).eq("board", board).eq("slot", setupSlot);
+    await sb.from("draft_slots").update({ member: name }).eq("board", board).eq("slot", slotToUse);
     await loadSlots();
-    const m = { name, slot: setupSlot };
+    const m = { name, slot: slotToUse };
     setMe(m); localStorage.setItem(meKey, JSON.stringify(m));
     setSetup(false);
   }
@@ -540,8 +552,8 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
                       color: p ? "#fff" : "#5a6a54", fontWeight: p ? 700 : 400,
                       animation: p && recentIds.has(`${r}|${s.slot}`) ? "cellpop .5s ease-out" : "none",
                       boxShadow: p && recentIds.has(`${r}|${s.slot}`) ? "0 0 14px #7fb069aa" : "none",
-                    }} onClick={() => { if (p && isCommish && !inMock) { setEditPick(p); setEditQ(""); } }}
-                    title={p && isCommish && !inMock ? "commissioner: tap to fix this pick" : undefined}>
+                    }} onClick={() => { if (p && isCommish && !inMock && clockPaused) { setEditPick(p); setEditQ(""); } }}
+                    title={p && isCommish && !inMock ? (clockPaused ? "commissioner: tap to change this pick" : "pause the clock to change picks") : undefined}>
                       {p ? <>{p.player}<div style={{ fontSize: 8.5, opacity: .85 }}>{p.pos} · {p.team}</div></> : isNext ? "⏱ on the clock" : ""}
                     </td>
                   );
@@ -707,25 +719,32 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
             <div style={{ fontSize: 12, color: "#a9bda0", marginBottom: 14 }}>Snake draft — enter your team name and grab your draft slot.</div>
             <input value={setupName} onChange={e => setSetupName(e.target.value)} placeholder="team / your name"
               style={{ width: "100%", boxSizing: "border-box", padding: "12px 12px", borderRadius: 10, border: "1.5px solid #3a4a34", background: "#141a12", color: "#e8eee4", fontFamily: FONT, fontSize: 16, fontWeight: 700, marginBottom: 12 }} />
-            <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1, color: "#7a8c74", marginBottom: 6 }}>YOUR PICK SLOT</div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 6, marginBottom: 10 }}>
-              {slots.map(s => (
-                <button key={s.slot} onClick={() => setSetupSlot(s.slot)}
-                  style={{ ...btn(setupSlot === s.slot ? "#7fb069" : "#141a12", setupSlot === s.slot ? "#141a12" : "#e8eee4"),
-                    border: "1px solid #3a4a34", padding: "10px 4px", display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
-                  <span style={{ fontSize: 15 }}>{s.slot}</span>
-                  <span style={{ fontSize: 8, fontWeight: 700, opacity: .8, maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis" }}>{s.member}</span>
-                </button>
-              ))}
-            </div>
-            {setupSlot && (
-              <div style={{ fontSize: 11, color: "#a9bda0", marginBottom: 12 }}>
-                Slot {setupSlot} picks: {snakePicksFor(setupSlot).slice(0, 6).join(", ")}…
+            {mySlotRow ? (
+              <div style={{ background: "#141a12", border: "1px solid #3a4a34", borderRadius: 10, padding: "10px 12px", marginBottom: 12 }}>
+                <div style={{ fontWeight: 800, fontSize: 14, color: "#7fb069" }}>You draft from slot {mySlotRow.slot}</div>
+                <div style={{ fontSize: 11, color: "#a9bda0", marginTop: 2 }}>Your picks: {snakePicksFor(mySlotRow.slot).slice(0, 6).join(", ")}…</div>
               </div>
-            )}
+            ) : (<>
+              <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1, color: "#7a8c74", marginBottom: 6 }}>YOUR PICK SLOT</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 6, marginBottom: 10 }}>
+                {slots.map(s => (
+                  <button key={s.slot} onClick={() => setSetupSlot(s.slot)}
+                    style={{ ...btn(setupSlot === s.slot ? "#7fb069" : "#141a12", setupSlot === s.slot ? "#141a12" : "#e8eee4"),
+                      border: "1px solid #3a4a34", padding: "10px 4px", display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+                    <span style={{ fontSize: 15 }}>{s.slot}</span>
+                    <span style={{ fontSize: 8, fontWeight: 700, opacity: .8, maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis" }}>{s.member}</span>
+                  </button>
+                ))}
+              </div>
+              {setupSlot && (
+                <div style={{ fontSize: 11, color: "#a9bda0", marginBottom: 12 }}>
+                  Slot {setupSlot} picks: {snakePicksFor(setupSlot).slice(0, 6).join(", ")}…
+                </div>
+              )}
+            </>)}
             <div style={{ display: "flex", gap: 8 }}>
-              <button onClick={saveSetup} disabled={!setupName.trim() || !setupSlot}
-                style={{ ...btn(setupName.trim() && setupSlot ? "#7fb069" : "#3a4a34", setupName.trim() && setupSlot ? "#141a12" : "#7a8c74"), flex: 1, padding: "12px", fontSize: 14 }}>
+              <button onClick={saveSetup} disabled={!setupName.trim() || (!setupSlot && !mySlotRow)}
+                style={{ ...btn(setupName.trim() && (setupSlot || mySlotRow) ? "#7fb069" : "#3a4a34", setupName.trim() && (setupSlot || mySlotRow) ? "#141a12" : "#7a8c74"), flex: 1, padding: "12px", fontSize: 14 }}>
                 ✓ I'm in
               </button>
               <button onClick={() => setSetup(false)} style={{ ...btn("#3a4a34"), padding: "12px" }}>Just watching</button>
@@ -773,9 +792,9 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
                 })}
               </div>
             )}
+            <div style={{ fontSize: 10.5, color: "#a9bda0", marginBottom: 8 }}>Clock is paused — search the player they actually wanted, tap to swap it in, then resume. The draft order never moves.</div>
             <div style={{ display: "flex", gap: 8 }}>
-              <button onClick={removePick} disabled={busy} style={{ ...btn("#d94f3d"), flex: 1, padding: "11px" }}>🗑 Remove pick (cell re-opens)</button>
-              <button onClick={() => setEditPick(null)} style={{ ...btn("#3a4a34"), padding: "11px 16px" }}>Cancel</button>
+              <button onClick={() => setEditPick(null)} style={{ ...btn("#3a4a34"), flex: 1, padding: "11px" }}>Cancel</button>
             </div>
           </div>
         </div>
