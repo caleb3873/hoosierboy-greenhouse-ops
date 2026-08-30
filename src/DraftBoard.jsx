@@ -16,6 +16,10 @@ const LABEL_COLOR = { CORE: "#2e9e4f", VALUE: "#1fa8a0", FLIP: "#e89a3a", LOTTER
 const ROUNDS = 15;
 const DEFAULT_CLOCK_SECS = 60;
 const NEED_TARGETS = { QB: 1, RB: 2, WR: 2, TE: 1, K: 1, "D/ST": 1 };  // + 1 FLEX (RB/WR/TE)
+const GRADES = ["A+", "A", "A-", "B+", "B", "B-", "C+", "C", "C-", "D", "F"];
+const GRADE_PTS = Object.fromEntries(GRADES.map((g, i) => [g, GRADES.length - i]));
+const avgGrade = gs => { if (!gs.length) return null; const a = gs.reduce((t, g) => t + (GRADE_PTS[g.grade] || 0), 0) / gs.length; return GRADES.reduce((best, g) => Math.abs(GRADE_PTS[g] - a) < Math.abs(GRADE_PTS[best] - a) ? g : best, "C"); };
+const POS_ORDER = ["QB", "RB", "WR", "TE", "K", "D/ST"];
 const RISK_CHIP = m => m?.injury_risk === "out" ? " 🚑" : m?.injury_risk === "risk" ? " 🩹" : "";
 const OLD_CHIP = (m, pos) => (m?.age >= 30 && ["RB", "WR", "TE"].includes(pos)) ? " 👴" : "";
 const btn = (bg, color = "#e8eee4") => ({ background: bg, color, border: "none", borderRadius: 8, padding: "6px 12px", fontWeight: 800, fontSize: 12, cursor: "pointer", fontFamily: FONT });
@@ -52,6 +56,10 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
   const [copied, setCopied] = useState("");
   const [nowT, setNowT] = useState(Date.now());
   const [toast, setToast] = useState(null);          // last pick announcement
+  const [teamsOpen, setTeamsOpen] = useState(false);
+  const gradeMode = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("view") === "grades";
+  const [grades, setGrades] = useState([]);
+  const [graderName, setGraderName] = useState(() => { try { return localStorage.getItem("draft-grader") || ""; } catch { return ""; } });
   const [recentIds, setRecentIds] = useState(new Set());
   const seenIdsRef = useRef(null);                   // null = before first load
   const [clockCfg, setClockCfg] = useState(null);   // shared pause/reset state (draft_clock)
@@ -77,6 +85,10 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
   const loadSlots = async () => {
     const { data } = await sb.from("draft_slots").select("*").eq("board", activeBoard).order("slot");
     setSlots(data || []);
+  };
+  const loadGrades = async () => {
+    const { data } = await sb.from("draft_grades").select("*").eq("board", board);
+    setGrades(data || []);
   };
   const loadClock = async () => {
     const { data } = await sb.from("draft_clock").select("*").eq("board", activeBoard).maybeSingle();
@@ -114,6 +126,7 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
       .on("postgres_changes", { event: "*", schema: "public", table: "draft_clock", filter: `board=eq.${activeBoard}` }, loadClock)
       .subscribe();
     loadClock();
+    if (gradeMode) loadGrades();
     pollRef.current = setInterval(() => { loadPicks(); loadSlots(); loadClock(); }, 15000);
     return () => { sb.removeChannel(ch); clearInterval(pollRef.current); };
   }, [sb, activeBoard, rankList]);
@@ -380,6 +393,46 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
     }
     return out;
   }, [next, slots, picks]);
+  async function submitGrade(slot, grade) {
+    const name = graderName.trim().slice(0, 20);
+    if (!name) return;
+    localStorage.setItem("draft-grader", name);
+    await sb.from("draft_grades").upsert({ board, slot, grader: name, grade }, { onConflict: "board,slot,grader" });
+    await loadGrades();
+  }
+  const rosterCard = (s, withGrading) => {
+    const roster = picks.filter(p => p.slot === s.slot)
+      .sort((a, b) => POS_ORDER.indexOf(a.pos) - POS_ORDER.indexOf(b.pos) || a.round - b.round);
+    const teamGrades = grades.filter(g => g.slot === s.slot);
+    const mine = teamGrades.find(g => g.grader === graderName.trim());
+    const avg = avgGrade(teamGrades);
+    return (
+      <div key={s.slot} style={{ background: "#1c241a", border: "1px solid #2c3828", borderRadius: 12, padding: 12 }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8, borderBottom: "2px solid #3a4a34", paddingBottom: 5, marginBottom: 6 }}>
+          <b style={{ fontSize: 14, color: "#c8e6b8" }}>{s.member}</b>
+          <span style={{ fontSize: 10, color: "#7a8c74" }}>slot {s.slot}</span>
+          {avg && <span style={{ marginLeft: "auto", fontWeight: 800, fontSize: 16, color: "#7fb069" }}>{avg}<span style={{ fontSize: 9, color: "#7a8c74" }}> ({teamGrades.length})</span></span>}
+        </div>
+        {roster.map(p => (
+          <div key={p.id} style={{ display: "flex", gap: 6, fontSize: 11.5, padding: "2px 0" }}>
+            <span style={{ width: 34, fontWeight: 800, color: POS_COLOR[p.pos] || "#fff" }}>{p.pos}</span>
+            <span style={{ flex: 1, fontWeight: 600 }}>{p.player}</span>
+            <span style={{ color: "#7a8c74", fontSize: 10 }}>Rd {p.round}</span>
+          </div>
+        ))}
+        {!roster.length && <div style={{ color: "#5a6a54", fontSize: 11 }}>no picks yet</div>}
+        {withGrading && roster.length > 0 && (
+          <div style={{ display: "flex", gap: 3, flexWrap: "wrap", marginTop: 8 }}>
+            {GRADES.map(g => (
+              <button key={g} onClick={() => submitGrade(s.slot, g)} disabled={!graderName.trim()}
+                style={{ ...btn(mine?.grade === g ? "#7fb069" : "#141a12", mine?.grade === g ? "#141a12" : "#a9bda0"),
+                  border: "1px solid #2c3828", padding: "5px 8px", fontSize: 11, opacity: graderName.trim() ? 1 : .4 }}>{g}</button>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
   const rosterNeeds = slot => {
     if (!slot) return null;
     const roster = picks.filter(p => p.slot === slot);
@@ -592,6 +645,20 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
     </div>
   );
 
+  if (gradeMode) return (
+    <div style={{ fontFamily: FONT, background: "#141a12", color: "#e8eee4", minHeight: "100vh", padding: 16 }}>
+      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700;800&family=DM+Serif+Display&display=swap" rel="stylesheet" />
+      <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+        <div style={{ fontFamily: SERIF, fontSize: 26, marginBottom: 2 }}>🏆 Draft '26 — grade the teams</div>
+        <div style={{ fontSize: 12.5, color: "#a9bda0", marginBottom: 12 }}>Put your name in, then hand out grades. One grade per team per person — tap again to change it.</div>
+        <input value={graderName} onChange={e => setGraderName(e.target.value)} placeholder="your name"
+          style={{ padding: "10px 12px", borderRadius: 10, border: "1.5px solid #3a4a34", background: "#1c241a", color: "#e8eee4", fontFamily: FONT, fontSize: 16, fontWeight: 700, marginBottom: 14, width: 240 }} />
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12 }}>
+          {slots.map(s => rosterCard(s, true))}
+        </div>
+      </div>
+    </div>
+  );
   return (
     <div style={{ fontFamily: FONT, background: "#141a12", color: "#e8eee4", minHeight: "100vh" }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700;800&family=DM+Serif+Display&display=swap" rel="stylesheet" />
@@ -650,7 +717,24 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
           </div>
         </div>
       )}
-      {commishOpen && (
+      {teamsOpen && (
+        <div style={{ padding: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+            <span style={{ fontFamily: SERIF, fontSize: 20 }}>🏆 Teams</span>
+            {isCommish && (
+              <button onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/?draft=${board}&view=grades`); setCopied("grades"); setTimeout(() => setCopied(""), 1500); }}
+                style={btn(copied === "grades" ? "#7fb069" : "#3a4a34", copied === "grades" ? "#141a12" : "#e8eee4")}>
+                {copied === "grades" ? "✓ copied" : "📋 copy grading link"}
+              </button>
+            )}
+            <button onClick={() => setTeamsOpen(false)} style={{ ...btn("#3a4a34"), marginLeft: "auto" }}>✕ close</button>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12 }}>
+            {slots.map(s => rosterCard(s, false))}
+          </div>
+        </div>
+      )}
+      {!teamsOpen && commishOpen && (
         <div style={{ position: "fixed", inset: 0, zIndex: 100, background: "#141a12ee", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
           <div style={{ background: "#1f2a1a", border: "1px solid #3a4a34", borderRadius: 16, padding: 22, maxWidth: 420, width: "100%", maxHeight: "90vh", overflowY: "auto" }}>
             <div style={{ fontFamily: SERIF, fontSize: 20, marginBottom: 4 }}>🛡 Commissioner</div>
@@ -749,6 +833,7 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
           {!inMock && <button onClick={() => setSetup(true)} style={btn("#3a4a34")} title="change my name / slot">
             {me ? `⚙ ${me.name} · ${me.slot}` : "⚙ join"}
           </button>}
+          {!inMock && <button onClick={() => { setTeamsOpen(v => !v); loadGrades(); }} style={btn(teamsOpen ? "#7fb069" : "#3a4a34", teamsOpen ? "#141a12" : "#e8eee4")} title="all rosters">🏆</button>}
           {isCommish && !inMock && <button onClick={() => setCommishOpen(true)} style={btn("#3a4a34")} title="commissioner">🛡</button>}
           {picks.length > 0 && (undoArm
             ? <>
