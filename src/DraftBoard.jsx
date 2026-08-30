@@ -8,6 +8,7 @@
 // (board,round,slot) constraint dedupes).
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getSupabase } from "./supabase";
+import DraftWarRoom from "./DraftWarRoom";
 
 const FONT = "'DM Sans', sans-serif";
 const SERIF = "'DM Serif Display', serif";
@@ -68,6 +69,7 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
   const [nowT, setNowT] = useState(Date.now());
   const [toast, setToast] = useState(null);          // last pick announcement
   const [teamsOpen, setTeamsOpen] = useState(false);
+  const [warOpen, setWarOpen] = useState(false);
   const [tourStep, setTourStep] = useState(() => {
     try { return rankList === "kacie-7mv" && !localStorage.getItem("draft-tour-done") ? 0 : null; } catch { return null; }
   });
@@ -955,6 +957,7 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
           {!inMock && <button onClick={() => setSetup(true)} style={btn("#3a4a34")} title="change my name / slot">
             {me ? `⚙ ${me.name} · ${me.slot}` : "⚙ join"}
           </button>}
+          {isCommish && <button onClick={() => setWarOpen(true)} style={btn("#3a4a34")} title="war room — table, queue, recommendations">⚡</button>}
           {!inMock && <button onClick={() => { setTeamsOpen(v => !v); loadGrades(); }} style={btn(teamsOpen ? "#7fb069" : "#3a4a34", teamsOpen ? "#141a12" : "#e8eee4")} title="all rosters">🏆</button>}
           {isCommish && !inMock && <button onClick={() => setCommishOpen(true)} style={btn("#3a4a34")} title="commissioner">🛡</button>}
           {isCommish && !inMock && <button onClick={() => setTourStep(0)} style={btn("#3a4a34")} title="how it all works">❓</button>}
@@ -1027,7 +1030,19 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
           </div>
         </div>
       )}
-      {wide ? (
+      {warOpen ? (
+        <DraftWarRoom players={players} metrics={metrics} picks={picks} slots={slots} mySlot={mySlot}
+          next={next} pickNo={pickNo} onClock={onClock} myPicks={(() => {
+            if (!mySlot || !slots.length) return [];
+            const n = slots.length, out = [];
+            for (let r = 1; r <= ROUNDS; r++) {
+              const no = (r - 1) * n + (r % 2 === 1 ? mySlot : n - mySlot + 1);
+              if (!grid[`${r}|${mySlot}`]) out.push({ round: r, no });
+            }
+            return out;
+          })()} pickedNames={pickedNames} roundsTotal={ROUNDS}
+          onSelect={p => { if (next && draftStarted) setPending(p); }} onClose={() => setWarOpen(false)} />
+      ) : wide ? (
         <div style={{ display: "flex", alignItems: "flex-start" }}>
           {boardPanel}
           <div style={{ width: 400, flexShrink: 0, borderLeft: "1px solid #2c3828", maxHeight: "calc(100vh - 54px)", overflowY: "auto", position: "sticky", top: 54 }}>
