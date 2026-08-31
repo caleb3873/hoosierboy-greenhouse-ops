@@ -848,7 +848,29 @@ export default function SpaceMap({ plan: fixedPlan }) {
               <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>{basketLines.map(b => <LineStrip key={b.id} b={b} />)}</div>
             </div>
           )}
-          {layers.benches && (house?.vertical ? (
+          {layers.benches && (house?.key === "BWS" ? (() => {
+            // West Side as physically built: SN16–08 across from SS20–12, then the unmarked
+            // pad (grow space, no bench code) across from SS11–08, so SN07–01 line up with SS07–01.
+            const lbl = { fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".5px", color: C.muted, marginBottom: 4 };
+            const south = benchOf(/^BWSS/).slice().reverse();
+            const north = benchOf(/^BWSN/).slice().reverse();
+            const hi = north.filter(b => +b.code.slice(4) >= 8);
+            const lo = north.filter(b => +b.code.slice(4) < 8);
+            return (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "5px 12px", marginBottom: 12 }}>
+                <div style={{ ...lbl, gridColumn: 1, gridRow: 1 }}>South row — walk ↓</div>
+                <div style={{ ...lbl, gridColumn: 2, gridRow: 1 }}>North row (09–16 ⅓) — walk ↓</div>
+                {south.map((b, i) => <div key={b.id} style={{ gridColumn: 1, gridRow: i + 2 }}><BenchWide b={b} /></div>)}
+                {hi.map((b, i) => <div key={b.id} style={{ gridColumn: 2, gridRow: i + 2 }}><BenchWide b={b} /></div>)}
+                <div style={{ gridColumn: 2, gridRow: `${hi.length + 2} / span 4`, border: `1.5px dashed ${C.border}`, borderRadius: 9,
+                  display: "flex", alignItems: "center", justifyContent: "center", color: C.muted, fontSize: 10.5, fontWeight: 800,
+                  textTransform: "uppercase", letterSpacing: ".5px", background: "#fbfdf8" }}>
+                  pad — unmarked grow space
+                </div>
+                {lo.map((b, i) => <div key={b.id} style={{ gridColumn: 2, gridRow: hi.length + 6 + i }}><BenchWide b={b} /></div>)}
+              </div>
+            );
+          })() : house?.vertical ? (
             <div style={{ display: "grid", gridTemplateColumns: `repeat(${house.banks.length}, 1fr)`, gap: 12, marginBottom: 12 }}>
               {house.banks.map(([label, re, rev]) => {
                 let bs = benchOf(re);
