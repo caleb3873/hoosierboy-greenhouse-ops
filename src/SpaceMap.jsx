@@ -849,13 +849,13 @@ export default function SpaceMap({ plan: fixedPlan }) {
             </div>
           )}
           {layers.benches && (house?.key === "BWS" ? (() => {
-            // West Side as physically built: SN16–08 across from SS20–12, then the unmarked
-            // pad (grow space, no bench code) across from SS11–08, so SN07–01 line up with SS07–01.
+            // West Side as physically built: SN16–09 across from SS20–13, then the unmarked
+            // pad (grow space, no bench code) across from SS12–09, so SN08–01 line up with SS08–01.
             const lbl = { fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".5px", color: C.muted, marginBottom: 4 };
             const south = benchOf(/^BWSS/).slice().reverse();
             const north = benchOf(/^BWSN/).slice().reverse();
-            const hi = north.filter(b => +b.code.slice(4) >= 8);
-            const lo = north.filter(b => +b.code.slice(4) < 8);
+            const hi = north.filter(b => +b.code.slice(4) >= 9);
+            const lo = north.filter(b => +b.code.slice(4) < 9);
             return (
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "5px 12px", marginBottom: 12 }}>
                 <div style={{ ...lbl, gridColumn: 1, gridRow: 1 }}>South row — walk ↓</div>
