@@ -31,6 +31,14 @@ const TOUR = [
 const GRADES = ["A+", "A", "A-", "B+", "B", "B-", "C+", "C", "C-", "D", "F"];
 const GRADE_PTS = Object.fromEntries(GRADES.map((g, i) => [g, GRADES.length - i]));
 const avgGrade = gs => { if (!gs.length) return null; const a = gs.reduce((t, g) => t + (GRADE_PTS[g.grade] || 0), 0) / gs.length; return GRADES.reduce((best, g) => Math.abs(GRADE_PTS[g] - a) < Math.abs(GRADE_PTS[best] - a) ? g : best, "C"); };
+const gradeStats = gs => {
+  if (!gs.length) return null;
+  const pts = gs.reduce((t, g) => t + (GRADE_PTS[g.grade] || 0), 0) / gs.length;
+  const sorted = [...gs].sort((a, b) => (GRADE_PTS[b.grade] || 0) - (GRADE_PTS[a.grade] || 0));
+  const hi = sorted[0], lo = sorted[sorted.length - 1];
+  const names = g => { const ns = gs.filter(x => x.grade === g.grade).map(x => x.grader); return ns[0] + (ns.length > 1 ? ` +${ns.length - 1}` : ""); };
+  return { pts, letter: avgGrade(gs), n: gs.length, hi, lo, hiWho: names(hi), loWho: names(lo) };
+};
 const POS_ORDER = ["QB", "RB", "WR", "TE", "K", "D/ST"];
 const RISK_CHIP = m => m?.injury_risk === "out" ? " 🚑" : m?.injury_risk === "risk" ? " 🩹" : "";
 const OLD_CHIP = (m, pos) => (m?.age >= 30 && ["RB", "WR", "TE"].includes(pos)) ? " 👴" : "";
@@ -147,7 +155,7 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
       .subscribe();
     loadClock();
     if (gradeMode) loadGrades();
-    pollRef.current = setInterval(() => { loadPicks(); loadSlots(); loadClock(); }, 15000);
+    pollRef.current = setInterval(() => { loadPicks(); loadSlots(); loadClock(); if (gradeMode) loadGrades(); }, 15000);
     return () => { sb.removeChannel(ch); clearInterval(pollRef.current); };
   }, [sb, activeBoard, rankList]);
 
@@ -470,6 +478,24 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
           <span style={{ fontSize: 10, color: "#7a8c74" }}>slot {s.slot}</span>
           {avg && <span style={{ marginLeft: "auto", fontWeight: 800, fontSize: 16, color: "#7fb069" }}>{avg}<span style={{ fontSize: 9, color: "#7a8c74" }}> ({teamGrades.length})</span></span>}
         </div>
+        {teamGrades.length > 0 && (() => {
+          const st = gradeStats(teamGrades);
+          const split = st.hi.grade !== st.lo.grade;   // only color hi/lo when opinions actually differ
+          return (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 8 }}>
+              {[...teamGrades].sort((a, b) => (GRADE_PTS[b.grade] || 0) - (GRADE_PTS[a.grade] || 0)).map(g => {
+                const isHi = split && g.grade === st.hi.grade, isLo = split && g.grade === st.lo.grade;
+                return (
+                  <span key={g.grader} style={{ fontSize: 10.5, padding: "2px 7px", borderRadius: 20, background: "#141a12",
+                    border: `1px solid ${isHi ? "#7fb069" : isLo ? "#d94f3d" : "#2c3828"}`,
+                    color: isHi ? "#c8e6b8" : isLo ? "#e8a89d" : "#a9bda0" }}>
+                    {g.grader} <b style={{ color: isHi ? "#7fb069" : isLo ? "#d94f3d" : "#e8eee4" }}>{g.grade}</b>
+                  </span>
+                );
+              })}
+            </div>
+          );
+        })()}
         {roster.map(p => (
           <div key={p.id} style={{ display: "flex", gap: 6, fontSize: 11.5, padding: "2px 0" }}>
             <span style={{ width: 34, fontWeight: 800, color: POS_COLOR[p.pos] || "#fff" }}>{p.pos}</span>
@@ -487,6 +513,41 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
             ))}
           </div>
         )}
+      </div>
+    );
+  };
+  const leaderboard = () => {
+    const ranked = slots.map(s => ({ s, st: gradeStats(grades.filter(g => g.slot === s.slot)) }))
+      .filter(r => r.st).sort((a, b) => b.st.pts - a.st.pts || b.st.n - a.st.n);
+    if (!ranked.length) return null;
+    return (
+      <div style={{ background: "#1c241a", border: "1px solid #3a4a34", borderRadius: 14, padding: "14px 16px", marginBottom: 14 }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 10 }}>
+          <span style={{ fontFamily: SERIF, fontSize: 19 }}>📊 Consensus board</span>
+          <span style={{ fontSize: 10.5, color: "#7a8c74" }}>ranked by average grade — updates as votes come in</span>
+        </div>
+        {ranked.map((r, i) => (
+          <div key={r.s.slot} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderTop: i ? "1px solid #232d1f" : "none" }}>
+            <span style={{ width: 28, textAlign: "center", fontSize: i < 3 ? 17 : 12, fontWeight: 800, color: "#7a8c74", flexShrink: 0 }}>{["🥇", "🥈", "🥉"][i] || i + 1}</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                <b style={{ fontSize: 13.5, color: i === 0 ? "#e8c547" : "#c8e6b8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.s.member}</b>
+                <span style={{ marginLeft: "auto", fontWeight: 800, fontSize: 17, color: i === 0 ? "#e8c547" : ranked.length > 1 && i === ranked.length - 1 ? "#d94f3d" : "#7fb069", flexShrink: 0 }}>
+                  {r.st.letter}<span style={{ fontSize: 9.5, fontWeight: 600, color: "#7a8c74" }}> ({r.st.n})</span>
+                </span>
+              </div>
+              <div style={{ height: 7, background: "#141a12", borderRadius: 4, overflow: "hidden", margin: "4px 0 3px" }}>
+                <div style={{ width: `${Math.round((r.st.pts / GRADES.length) * 100)}%`, height: "100%", borderRadius: 4,
+                  background: i === 0 ? "#e8c547" : ranked.length > 1 && i === ranked.length - 1 ? "#d94f3d" : "#7fb069" }} />
+              </div>
+              <div style={{ fontSize: 10.5, color: "#a9bda0" }}>
+                {r.st.hi.grade === r.st.lo.grade
+                  ? <span>everyone says <b style={{ color: "#e8eee4" }}>{r.st.hi.grade}</b></span>
+                  : <span>high <b style={{ color: "#7fb069" }}>{r.st.hi.grade}</b> — {r.st.hiWho} &nbsp;·&nbsp; low <b style={{ color: "#d94f3d" }}>{r.st.lo.grade}</b> — {r.st.loWho}</span>}
+              </div>
+            </div>
+          </div>
+        ))}
       </div>
     );
   };
@@ -709,9 +770,10 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700;800&family=DM+Serif+Display&display=swap" rel="stylesheet" />
       <div style={{ maxWidth: 1100, margin: "0 auto" }}>
         <div style={{ fontFamily: SERIF, fontSize: 26, marginBottom: 2 }}>🏆 Draft '26 — grade the teams</div>
-        <div style={{ fontSize: 12.5, color: "#a9bda0", marginBottom: 12 }}>Put your name in, then hand out grades. One grade per team per person — tap again to change it.</div>
+        <div style={{ fontSize: 12.5, color: "#a9bda0", marginBottom: 12 }}>Put your name in, then hand out grades. One grade per team per person — tap again to change it. Your name shows next to your grade, so own it.</div>
         <input value={graderName} onChange={e => setGraderName(e.target.value)} placeholder="your name"
           style={{ padding: "10px 12px", borderRadius: 10, border: "1.5px solid #3a4a34", background: "#1c241a", color: "#e8eee4", fontFamily: FONT, fontSize: 16, fontWeight: 700, marginBottom: 14, width: 240 }} />
+        {leaderboard()}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12 }}>
           {slots.map(s => rosterCard(s, true))}
         </div>
@@ -843,6 +905,7 @@ export default function DraftBoard({ board = "hb26", rankList = "master" }) {
             )}
             <button onClick={() => setTeamsOpen(false)} style={{ ...btn("#3a4a34"), marginLeft: "auto" }}>✕ close</button>
           </div>
+          {leaderboard()}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12 }}>
             {slots.map(s => rosterCard(s, false))}
           </div>
