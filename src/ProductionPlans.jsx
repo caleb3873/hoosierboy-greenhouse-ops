@@ -2080,7 +2080,8 @@ function scorecardFrom(rows, targets, dismissed, missing) {
   for (const r of core) {
     totalRev += r.rev;
     const t = targets[r.item];
-    const dec = isDecided(t);
+    // map mode: placed on the Space map IS the decision (Caleb 9/1/2026)
+    const dec = r.placed != null ? r.placed : isDecided(t);
     if (dec) { decidedRev += r.rev; decidedCount++; } else undecided.push(r);
     if (r.soldOut) {
       lostTotal += r.lostEst;
@@ -2482,14 +2483,14 @@ function ProjectionScorecard({ sc, compact, plan, projRev, onGoal, onFilter, bur
       <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
         <span style={{ fontSize: 13, fontWeight: 900, color: COLORS.dark, textTransform: "uppercase", letterSpacing: 0.5 }}>Projection progress</span>
         <span style={{ fontSize: 22, fontWeight: 900, color: pct >= 100 ? "#2e7d32" : COLORS.dark }}>{pct}%</span>
-        <span style={{ fontSize: 12.5, color: COLORS.muted }}>of 2026 revenue decided · <b style={{ color: COLORS.dark }}>{sc.decidedCount}/{sc.coreCount}</b> items · <b style={{ color: sc.undecidedRev ? COLORS.amber : "#2e7d32" }}>{fmtMoney(sc.undecidedRev)}</b> still open</span>
+        <span style={{ fontSize: 12.5, color: COLORS.muted }}>of 2026 revenue placed on the map · <b style={{ color: COLORS.dark }}>{sc.decidedCount}/{sc.coreCount}</b> items · <b style={{ color: sc.undecidedRev ? COLORS.amber : "#2e7d32" }}>{fmtMoney(sc.undecidedRev)}</b> still to place</span>
       </div>
       <div style={{ height: 16, borderRadius: 9, background: "#e6ede1", overflow: "hidden", position: "relative" }}>
         <div style={{ height: "100%", width: `${Math.min(100, pct)}%`, background: pct >= 100 ? "#2e7d32" : COLORS.light, transition: "width .3s", borderRadius: 9 }} />
       </div>
       {!compact && (
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <Counter label="Undecided revenue · worklist" val={sc.undecidedRev} open={sc.undecidedRev > 0} onClick={onFilter ? () => onFilter("todo") : null} />
+          <Counter label={`Still to place · ${sc.undecided.length} items`} val={sc.undecidedRev} open={sc.undecidedRev > 0} onClick={onFilter ? () => onFilter("todo") : null} />
           <Counter label={`Lost sales unaddressed · ${sc.lostOpen} sold out`} val={sc.lostUnaddr} open={sc.lostUnaddr > 0} onClick={onFilter ? () => onFilter("soldout") : null} />
           <Counter label={`Sold '26, not planned · ${sc.missOpen.length}`} val={sc.missOpenRev} open={sc.missOpenRev > 0} onClick={onFilter ? () => onFilter("missing") : null} />
           {goal != null ? (
@@ -2837,7 +2838,7 @@ function SalesVsPlanTab({ plan }) {
         srcPageAll(sb, "sales_sku_map", "sku,plan_item_name"),
         srcPageAll(sb, "sales_totals", "sku,description,units,revenue,avg_price"),
         srcPageAll(sb, "sales_weekly", "sku,wk,units,revenue"),
-        srcPageAll(sb, "scheduled_crops", "id,item_name,notes,broker,supplier,bench_id,qty_pots,ppp,plants_per_unit,ship_week,ready_week,combo_parent_id,is_combo_component", q => q.eq("plan_id", plan.id)),
+        srcPageAll(sb, "scheduled_crops", "id,item_name,notes,broker,supplier,bench_id,qty_pots,ppp,plants_per_unit,ship_week,ready_week,combo_parent_id,is_combo_component,placed_at", q => q.eq("plan_id", plan.id)),
         sb.from("plan_targets").select("*").eq("plan_id", plan.id),
         srcPageAll(sb, "benches", "id,zone_label,spring_footprint"),
         sb.from("plan_gap_decisions").select("gap_key").eq("plan_id", plan.id),
@@ -2861,12 +2862,27 @@ function SalesVsPlanTab({ plan }) {
       // they stay out of the totals — but they're carried through as dualUse so
       // they're visible for target-setting instead of silently disappearing.
       const dualUse = {};
+      // PROJECTION = THE MAP (Caleb 9/1/2026): once anything in this plan has been
+      // placed on the Space map, the placed rows ARE the plan. An item with placed
+      // rows counts only those; an item with none is "to place" — its replay rows
+      // are shown as a reference quantity, never as planned. This tab is the
+      // progress tracker: what's placed, what still needs placing.
+      const placedSet = new Set(sc.filter(r => r.placed_at && !r.is_combo_component).map(r => r.item_name));
+      const planMode = placedSet.size > 0;
+      const replayByItem = {};
       for (const r of sc) {
         // zero-qty rows stay in the table build: a write-through DROP zeroes the rows
         // and the item must stay reviewable under ✕ Dropped (not vanish into gaps)
         if (r.is_combo_component) continue;
         if (COMPONENT.test(r.item_name)) { if (+r.qty_pots > 0) dualUse[r.item_name] = (dualUse[r.item_name] || 0) + +r.qty_pots; continue; }
         if (itemsWithParents.has(r.item_name) && !parentIds.has(r.id)) continue; // drop phantom duplicate basket rows
+        if (planMode && !placedSet.has(r.item_name)) {
+          replayByItem[r.item_name] = (replayByItem[r.item_name] || 0) + +r.qty_pots;
+          pppByItem[r.item_name] = Math.max(pppByItem[r.item_name] || 0, +r.ppp || 1);
+          ppuByItem[r.item_name] = Math.max(ppuByItem[r.item_name] || 0, +r.plants_per_unit || 1);
+          continue;
+        }
+        if (planMode && !r.placed_at) continue; // unplaced replay row of a placed item — dead
         planByItem[r.item_name] = (planByItem[r.item_name] || 0) + +r.qty_pots;
         pppByItem[r.item_name] = Math.max(pppByItem[r.item_name] || 0, +r.ppp || 1);
         ppuByItem[r.item_name] = Math.max(ppuByItem[r.item_name] || 0, +r.plants_per_unit || 1);
@@ -2901,7 +2917,21 @@ function SalesVsPlanTab({ plan }) {
         // % and $ are invariant — sell-through = s/pItems either way, over/lost use the
         // per-case math above. pack varies (4.5"=10, HB=1, Salvia stub=1) but pots reconcile.
         const pack = Math.max(1, Math.round(+ppuByItem[it] || 1));
-        out.push({ item: it, isNew: newItems.has(it), needsSourcing: needsSrc.has(it), size: sizeTokenForItem(it), converted: pItems !== planned, pack, planRaw: planned, planned: pItems * pack, sold: s * pack, st: pItems ? s / pItems : 0, over, lostEst, soldOut, cutoff, lastWk, firstWk, price: s > 0 ? (rev[it] || 0) / (s * pack) : (price ? price / pack : null), rev: Math.round(rev[it] || 0), wk: wkA, peak, ship: readyByItem[it] ?? shipByItem[it] ?? null, status: soldOut ? "SOLDOUT" : s >= pItems ? "HIT" : (s === 0 ? "NOSALE" : "SHORT") });
+        out.push({ item: it, placed: planMode ? true : undefined, isNew: newItems.has(it), needsSourcing: needsSrc.has(it), size: sizeTokenForItem(it), converted: pItems !== planned, pack, planRaw: planned, planned: pItems * pack, sold: s * pack, st: pItems ? s / pItems : 0, over, lostEst, soldOut, cutoff, lastWk, firstWk, price: s > 0 ? (rev[it] || 0) / (s * pack) : (price ? price / pack : null), rev: Math.round(rev[it] || 0), wk: wkA, peak, ship: readyByItem[it] ?? shipByItem[it] ?? null, status: soldOut ? "SOLDOUT" : s >= pItems ? "HIT" : (s === 0 ? "NOSALE" : "SHORT") });
+      }
+      // Still to place: replay-only items. Planned = 0 (nothing decided). Their 2026
+      // sales ride along so the worklist sorts by what mattered last year.
+      for (const it of Object.keys(replayByItem)) {
+        const s = sold[it] || 0, price = prn[it] ? prc[it] / prn[it] : 0;
+        const wkA = wkly[it] || Array(weeks.length).fill(0);
+        const peak = wkA.some(x => x > 0) ? weeks[wkA.indexOf(Math.max(...wkA))] : null;
+        const dIdx = wkA.map((u, i) => u > 0 ? i : -1).filter(i => i >= 0);
+        const pack = Math.max(1, Math.round(+ppuByItem[it] || 1));
+        const replayItems = plannedItems(replayByItem[it], pppByItem[it], ppuByItem[it]);
+        out.push({ item: it, placed: false, replay: replayItems * pack, isNew: newItems.has(it), needsSourcing: false, size: sizeTokenForItem(it), converted: false, pack,
+          planRaw: 0, planned: 0, sold: s * pack, st: null, over: 0, lostEst: 0, soldOut: false, cutoff: null, lastWk: null,
+          firstWk: dIdx.length ? weeks[dIdx[0]] : null, price: s > 0 ? (rev[it] || 0) / (s * pack) : (price ? price / pack : null),
+          rev: Math.round(rev[it] || 0), wk: wkA, peak, ship: null, status: "TOPLACE" });
       }
       // Dual-use rows: real retail sales, but planned volume mostly feeds combos,
       // so sell-through / over / lost are meaningless and deliberately left null.
@@ -2938,6 +2968,7 @@ function SalesVsPlanTab({ plan }) {
       const occ = [];
       for (const r of sc) {
         if (r.is_combo_component || !(+r.qty_pots > 0) || !r.bench_id) continue;
+        if (planMode && !r.placed_at) continue; // the map is the plan
         if (COMPONENT.test(r.item_name)) continue;
         occ.push({ bench_id: r.bench_id, zone: zoneOf[r.bench_id] || "Unassigned", item: r.item_name, qty: +r.qty_pots });
       }
@@ -3233,8 +3264,8 @@ function SalesVsPlanTab({ plan }) {
       : filt === "all" ? true
       : filt === "over" ? r.status === "SHORT"
       : filt === "soldout" ? r.soldOut
-      : filt === "todo" ? targetOf(r) == null
-      : filt === "done" ? targetOf(r) != null
+      : filt === "todo" ? (r.placed != null ? !r.placed : targetOf(r) == null)
+      : filt === "done" ? (r.placed != null ? r.placed : targetOf(r) != null)
       : filt === "dropped" ? (targets[r.item]?.decision === "drop" || targets[r.item]?.target_units === 0)
       : r.status === "HIT")
       && (sizeFilt === "all" || r.size === sizeFilt)
@@ -3526,7 +3557,7 @@ function SalesVsPlanTab({ plan }) {
         </select>
         <button onClick={() => setPerOnly(!perOnly)} title="Only families tagged perennial — tag on the family page, or when adding a family"
           style={{ padding: "6px 12px", borderRadius: 16, fontWeight: 700, cursor: "pointer", border: `1px solid ${perOnly ? COLORS.light : COLORS.border}`, background: perOnly ? COLORS.light : "#fff", color: perOnly ? "#fff" : COLORS.text }}>🌲 Perennials</button>
-        {[["all", "All"], ["over", "🟠 Overplanned"], ["soldout", "🔴 Sold out early"], ["hit", "🟢 Hit"], ["todo", "◻ Undecided"], ["done", "✓ Decided"], ["dropped", "✕ Dropped"], ["retired", "📦 Retired"]].map(([f, l]) => <button key={f} onClick={() => setFilt(f)} style={{ padding: "6px 12px", borderRadius: 16, fontWeight: 700, cursor: "pointer", border: `1px solid ${filt === f ? COLORS.light : COLORS.border}`, background: filt === f ? COLORS.light : "#fff", color: filt === f ? "#fff" : COLORS.text }}>{l}</button>)}
+        {[["all", "All"], ["over", "🟠 Overplanned"], ["soldout", "🔴 Sold out early"], ["hit", "🟢 Hit"], ["todo", "◻ To place"], ["done", "📍 Placed"], ["dropped", "✕ Dropped"], ["retired", "📦 Retired"]].map(([f, l]) => <button key={f} onClick={() => setFilt(f)} style={{ padding: "6px 12px", borderRadius: 16, fontWeight: 700, cursor: "pointer", border: `1px solid ${filt === f ? COLORS.light : COLORS.border}`, background: filt === f ? COLORS.light : "#fff", color: filt === f ? "#fff" : COLORS.text }}>{l}</button>)}
         <button onClick={() => setSelSet(new Set(shown.map(r => r.item)))} title="Select every item currently shown"
           style={{ padding: "6px 12px", borderRadius: 16, fontWeight: 700, cursor: "pointer", border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.text }}>☑ Select all{shown.length !== rows.length ? " shown" : ""}</button>
         {selSet.size > 0 && <button onClick={() => setSelSet(new Set())} style={{ padding: "6px 12px", borderRadius: 16, fontWeight: 700, cursor: "pointer", border: `1px solid ${COLORS.border}`, background: "#fff", color: COLORS.muted }}>clear ({selSet.size})</button>}
@@ -3797,7 +3828,7 @@ function SalesVsPlanTab({ plan }) {
           </tr></thead>
           <tbody>
             {shown.slice(0, 500).map((r, i) => {
-              const badge = r.status === "SOLDOUT" ? { bg: COLORS.red, t: "SOLD OUT" } : r.status === "HIT" ? { bg: "#5e9c4a", t: "HIT" } : r.status === "NOSALE" ? { bg: "#c8d0c0", t: "NOSALE" } : r.status === "DUAL" ? { bg: "#4a7ba8", t: "DUAL USE" } : { bg: COLORS.amber, t: "OVER" };
+              const badge = r.status === "TOPLACE" ? { bg: "#b8a56a", t: "TO PLACE" } : r.status === "SOLDOUT" ? { bg: COLORS.red, t: "SOLD OUT" } : r.status === "HIT" ? { bg: "#5e9c4a", t: "HIT" } : r.status === "NOSALE" ? { bg: "#c8d0c0", t: "NOSALE" } : r.status === "DUAL" ? { bg: "#4a7ba8", t: "DUAL USE" } : { bg: COLORS.amber, t: "OVER" };
               return (
                 <tr key={i} title="right-click for actions (retire, drop, open family…)"
                   onContextMenu={e => { e.preventDefault(); setRowCtx({ x: Math.min(e.clientX, window.innerWidth - 250), y: Math.min(e.clientY, window.innerHeight - 230), r }); }}
@@ -3815,7 +3846,13 @@ function SalesVsPlanTab({ plan }) {
                     {r.needsSourcing && <span title="material is a placeholder — no broker quote attached yet. Open the item and click the plant to source it." style={{ marginLeft: 6, fontSize: 9.5, fontWeight: 900, padding: "1px 6px", borderRadius: 8, color: "#fff", background: "#c98a2e", letterSpacing: 0.5 }}>SOURCE</span>}
                     {r.converted && <span title="entered in individual pots — shown in the sold pack (flat/case) to match sales" style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: COLORS.muted }}>⤵</span>}
                   </td>
-                  <td style={{ ...td, textAlign: "right" }}>{dPlanned(r).toLocaleString()}</td>
+                  <td style={{ ...td, textAlign: "right" }}>
+                    {r.status === "TOPLACE"
+                      ? <span title={`not on the map yet — 2026 replay carried ${(r.replay || 0).toLocaleString()} pots${targets[r.item]?.projection_units != null ? `, walkthrough projection ${(+targets[r.item].projection_units).toLocaleString()}` : ""}`} style={{ color: "#b8a56a", fontWeight: 700 }}>—</span>
+                      : dPlanned(r).toLocaleString()}
+                    {r.placed && targets[r.item]?.projection_units != null && +targets[r.item].projection_units !== r.planned && (
+                      <div title="the original walkthrough projection (kept for reference)" style={{ fontSize: 9.5, color: COLORS.muted, lineHeight: 1.1 }}>proj. {(+targets[r.item].projection_units).toLocaleString()}</div>)}
+                  </td>
                   <td style={{ ...td, textAlign: "right" }}>{dSold(r).toLocaleString()}</td>
                   <td style={{ ...td, textAlign: "right", fontWeight: 700, color: r.st == null ? COLORS.muted : r.st >= 1 ? "#2e7d32" : r.st < 0.6 ? COLORS.red : COLORS.text }} title={r.st == null ? "Most of the planned volume goes into combos — a retail sell-through % would be misleading" : ""}>{r.st == null ? "—" : Math.round(r.st * 100) + "%"}</td>
                   <td style={td}><span title={r.status === "SOLDOUT" ? `sold out wk${r.lastWk} (before wk${r.cutoff} cutoff) — grow more` : ""} style={{ fontSize: 10, fontWeight: 800, padding: "1px 6px", borderRadius: 8, color: "#fff", background: badge.bg }}>{badge.t}</span></td>
@@ -3825,9 +3862,14 @@ function SalesVsPlanTab({ plan }) {
                   <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{r.price != null && r.price > 0 ? "$" + (+r.price).toFixed(2) : "—"}</td>
                   <td style={{ ...td, textAlign: "right" }} title={r.peak ? `first sale — demand peaked wk${r.peak}` : ""}>{r.firstWk != null ? wkStartLabel(r.firstWk) : <span style={{ color: "#c8d0c0" }}>—</span>}</td>
                   <TimingCell r={r} tgt={targets[r.item]} />
-                  <TargetCell r={r} tgt={targets[r.item]} draft={draft[r.item]} saving={savingT[r.item]}
+                  {r.status === "TOPLACE"
+                    ? <td style={{ ...td, textAlign: "right", position: "sticky", right: 0, background: "#fbf9f2", borderLeft: `2px solid ${COLORS.light}` }}>
+                        <button onClick={() => itemRecipe[r.item] ? setShowFamily(itemRecipe[r.item]) : setDrill(r)} title="Not placed yet — open the family page and put it on a bench. Placing it is the decision."
+                          style={{ padding: "4px 10px", borderRadius: 12, border: `1px solid #b8a56a`, background: "#fff", color: "#7a6a2e", fontWeight: 800, fontSize: 11, cursor: "pointer" }}>🌿 place</button>
+                      </td>
+                    : <TargetCell r={r} tgt={targets[r.item]} draft={draft[r.item]} saving={savingT[r.item]}
                     onDraft={v => setDraft(d => ({ ...d, [r.item]: v }))}
-                    onSave={patch => saveTarget(r, patch)} />
+                    onSave={patch => saveTarget(r, patch)} />}
                 </tr>
               );
             })}

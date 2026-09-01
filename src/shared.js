@@ -381,6 +381,9 @@ export async function pushTargetToRows(sb, planId, itemName, pots) {
   const { data: kidRefs } = await sb.from("scheduled_crops").select("combo_parent_id").in("combo_parent_id", rows0.map(r => r.id));
   const parentIds = new Set((kidRefs || []).map(k => k.combo_parent_id));
   if (parentIds.size && parentIds.size < rows0.length) rows0 = rows0.filter(r => parentIds.has(r.id));
+  // PROJECTION = THE MAP (Caleb 9/1): once an item has placed rows, only those rows
+  // are the plan. Unplaced replay rows are dead weight — never scaled, never counted.
+  if (rows0.some(r => r.placed_at)) rows0 = rows0.filter(r => r.placed_at);
   const pf = r => { const ppu = Math.max(1, +r.plants_per_unit || +r.pack_size || 1); const ppp = +r.ppp || 1; return (ppp >= ppu && ppu > 1) ? ppu : 1; };
   const factors = rows0.map(pf);
   const oldQty = rows0.map(r => +r.qty_pots || 0);
