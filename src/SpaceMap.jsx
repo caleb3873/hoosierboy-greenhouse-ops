@@ -883,6 +883,25 @@ export default function SpaceMap({ plan: fixedPlan }) {
                 {lo.map((b, i) => <div key={b.id} style={{ gridColumn: 2, gridRow: hi.length + 6 + i }}><BenchWide b={b} /></div>)}
               </div>
             );
+          })() : house?.key === "ASM" ? (() => {
+            // East and West must line up bench-for-bench BY NUMBER, not by list position:
+            // ASME26/29 have no west twin and ASMW00 has no east twin, so rendering the two
+            // ranges as independent lists put every bench below 26 across from the wrong one
+            // (Caleb 9/1). One grid, one row per position, a gap where a side has no bench.
+            const lbl = { fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".5px", color: C.muted, marginBottom: 4 };
+            const byPos = re => new Map(benchOf(re).map(b => [b.code.slice(4), b]));
+            const W = byPos(/^ASMW/), E = byPos(/^ASME/);
+            const rows = [...new Set([...W.keys(), ...E.keys()])].sort().reverse();   // 29 → 10 → 00
+            return (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "5px 12px", marginBottom: 12 }}>
+                <div style={{ ...lbl, gridColumn: 1, gridRow: 1 }}>West range — walk ↓</div>
+                <div style={{ ...lbl, gridColumn: 2, gridRow: 1 }}>East range — walk ↓</div>
+                {rows.flatMap((pos, i) => [
+                  W.get(pos) && <div key={"w" + pos} style={{ gridColumn: 1, gridRow: i + 2 }}><BenchWide b={W.get(pos)} /></div>,
+                  E.get(pos) && <div key={"e" + pos} style={{ gridColumn: 2, gridRow: i + 2 }}><BenchWide b={E.get(pos)} /></div>,
+                ].filter(Boolean))}
+              </div>
+            );
           })() : house?.vertical ? (
             <div style={{ display: "grid", gridTemplateColumns: `repeat(${house.banks.length}, 1fr)`, gap: 12, marginBottom: 12 }}>
               {house.banks.map(([label, re, rev]) => {
