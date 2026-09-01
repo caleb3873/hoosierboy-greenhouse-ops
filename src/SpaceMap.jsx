@@ -3,7 +3,7 @@
 // The 2027 canvas starts BLANK — capacity only. Placing (drag or tap) stamps
 // placed_at; the replay's inherited bench assignments live on the "last year"
 // tab as reference and never count as fill. ✂ Trim cuts unplaced remainder.
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { getSupabase } from "./supabase";
 import { amendOrdersForTrim } from "./shared";
 import FamilyPage from "./FamilyPage";
@@ -261,6 +261,12 @@ export default function SpaceMap({ plan: fixedPlan }) {
   });
   useEffect(() => { try { localStorage.setItem("space.houseKey", houseKey); } catch { /* ignore */ } }, [houseKey]);
   const [cls, setCls] = useState("tray45");
+  // Excel-style sweep: press on a bench or line, drag across others, read the running
+  // total in the status bar. Only a multi-bench drag registers, so a plain click still
+  // places (Caleb 9/1).
+  const [sel, setSel] = useState([]);
+  const sweepRef = useRef(null);
+  const sweptRef = useRef(false);
   const [mode, setMode] = useState("plan");          // plan (blank, place) | lastyear (reference)
   const [layers, setLayers] = useState({ benches: true, baskets: true, lows: true });
   const [benches, setBenches] = useState([]);
@@ -586,10 +592,43 @@ export default function SpaceMap({ plan: fixedPlan }) {
     setBusy(false); setTick(t => t + 1);
   }
 
+  useEffect(() => {
+    const up = () => {
+      const sw = sweepRef.current;
+      if (sw && sw.ids.size > 1) sweptRef.current = true;   // swallow the click that ends a sweep
+      sweepRef.current = null;
+    };
+    window.addEventListener("pointerup", up);
+    return () => window.removeEventListener("pointerup", up);
+  }, []);
+  const isLineBench = b => ["basket_line", "low_line"].includes(b.bench_type);
+  const selClassOf = b => (isLineBench(b) ? "basket" : capClassOf(cls));
+  const selected = id => sel.includes(id);
+  // spread onto every bench/line card
+  const sweepProps = b => ({
+    onPointerDown: e => { if (e.button === 0) { sweepRef.current = { ids: new Set([b.id]) }; setSel(x => (x.length ? [] : x)); } },
+    onPointerEnter: () => {
+      const sw = sweepRef.current;
+      if (sw && !sw.ids.has(b.id)) { sw.ids.add(b.id); setSel([...sw.ids]); }
+    },
+  });
+  const swallowClick = () => { if (sweptRef.current) { sweptRef.current = false; return true; } return false; };
+
   const shelfSort = c => c.replace(/SH01$/, "00").replace(/SH02$/, "05");   // shelves flank the walls in walk order
   const benchOf = re => benches.filter(b => re.test(b.code) && !["basket_line", "low_line"].includes(b.bench_type) && (b.bench_type || b.cap_overrides)).sort((a, b) => shelfSort(a.code).localeCompare(shelfSort(b.code)));
-  const basketLines = benches.filter(b => b.bench_type === "basket_line").sort((a, b) => a.code.localeCompare(b.code));
-  const lowLines = benches.filter(b => b.bench_type === "low_line").sort((a, b) => a.code.localeCompare(b.code));
+  // Lines sort NUMERICALLY, not as strings — "ASMH100" was landing next to "ASMH00"
+  // instead of at the head. Group by prefix first so DBMH and DBML don't interleave.
+  // Sprague Main lines walk 100 → 33 → 00, matching its ranges running high-to-low (Caleb 9/1).
+  const linePrefix = c => c.replace(/\d+$/, "");
+  const lineNum = c => { const m = c.match(/(\d+)$/); return m ? +m[1] : 0; };
+  const lineSort = (a, b) => {
+    const pa = linePrefix(a.code), pb = linePrefix(b.code);
+    if (pa !== pb) return pa.localeCompare(pb);
+    const d = lineNum(a.code) - lineNum(b.code);
+    return pa === "ASMH" ? -d : d;
+  };
+  const basketLines = benches.filter(b => b.bench_type === "basket_line").sort(lineSort);
+  const lowLines = benches.filter(b => b.bench_type === "low_line").sort(lineSort);
 
   const dropProps = b => ({
     onDragOver: e => e.preventDefault(),
@@ -606,8 +645,9 @@ export default function SpaceMap({ plan: fixedPlan }) {
     const pct = cap ? Math.min(1, used / cap) : 0;
     const blank = !info;
     return (
-      <div onClick={() => placeItem && !busy && allocate(placeItem, b)} {...dropProps(b)}
-        style={{ flex: b.bench_type === "shelf" ? "0 1 88px" : "1 1 120px", minWidth: b.bench_type === "shelf" ? 76 : 110, maxWidth: b.bench_type === "shelf" ? 110 : 200, minHeight: 126, display: "flex", flexDirection: "column",
+      <div onClick={() => { if (swallowClick()) return; placeItem && !busy && allocate(placeItem, b); }} {...dropProps(b)} {...sweepProps(b)}
+        style={{ outline: selected(b.id) ? `2px solid ${C.dark}` : "none", outlineOffset: 1,
+          flex: b.bench_type === "shelf" ? "0 1 88px" : "1 1 120px", minWidth: b.bench_type === "shelf" ? 76 : 110, maxWidth: b.bench_type === "shelf" ? 110 : 200, minHeight: 126, display: "flex", flexDirection: "column",
           background: blank ? "#fbfdf8" : (pct >= 1 || (usedOther > 0 && used === 0)) ? "#fbe3e0" : "#fdf6e3", border: `1.5px solid ${(pct >= 1 || (usedOther > 0 && used === 0)) ? C.red : C.border}`,
           borderRadius: 10, padding: "8px 9px", cursor: placeItem && mode === "plan" ? "copy" : "default" }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 5 }}>
@@ -665,8 +705,9 @@ export default function SpaceMap({ plan: fixedPlan }) {
     const pct = cap ? Math.min(1, used / cap) : 0;
     const blank = !info;
     return (
-      <div onClick={() => placeItem && !busy && allocate(placeItem, b)} {...dropProps(b)}
-        style={{ display: "flex", alignItems: "center", gap: 10, background: blank ? "#fbfdf8" : (pct >= 1 || (usedOther > 0 && used === 0)) ? "#fbe3e0" : "#fdf6e3",
+      <div onClick={() => { if (swallowClick()) return; placeItem && !busy && allocate(placeItem, b); }} {...dropProps(b)} {...sweepProps(b)}
+        style={{ outline: selected(b.id) ? `2px solid ${C.dark}` : "none", outlineOffset: 1,
+          display: "flex", alignItems: "center", gap: 10, background: blank ? "#fbfdf8" : (pct >= 1 || (usedOther > 0 && used === 0)) ? "#fbe3e0" : "#fdf6e3",
           border: `1.5px solid ${(pct >= 1 || (usedOther > 0 && used === 0)) ? C.red : C.border}`, borderRadius: 9, padding: "7px 10px", cursor: placeItem && mode === "plan" ? "copy" : "default" }}>
         <div style={{ width: 74 }}>
           <b style={{ fontFamily: "ui-monospace,Menlo,monospace", fontSize: 11.5 }}>{b.code}</b>
@@ -723,9 +764,10 @@ export default function SpaceMap({ plan: fixedPlan }) {
     const blank = !info;
     const short = b.code.replace(/^(EQH|EQL)\d\d/, "").replace(/^(BWSH|DBMH|DBML|ASMH)/, "");
     return (
-      <div onClick={() => { if (placeItem && !busy) allocate(placeItem, b); else if (info?.items?.length) setDrill({ bench: b, items: info.items }); }} {...dropProps(b)}
+      <div onClick={() => { if (swallowClick()) return; if (placeItem && !busy) allocate(placeItem, b); else if (info?.items?.length) setDrill({ bench: b, items: info.items }); }} {...dropProps(b)} {...sweepProps(b)}
         title={`${b.code} · ${used}/${cap ?? "?"}${info ? " — " + info.items.map(a => `${a.qty} ${a.name}`).join(", ") : " — empty"}${info ? " · click for details" : ""}`}
-        style={{ width: 46, flex: "0 0 46px", textAlign: "center", background: blank ? "#fbfdf8" : pct >= 1 ? "#fbe3e0" : "#fdf6e3",
+        style={{ outline: selected(b.id) ? `2px solid ${C.dark}` : "none", outlineOffset: 1,
+          width: 46, flex: "0 0 46px", textAlign: "center", background: blank ? "#fbfdf8" : pct >= 1 ? "#fbe3e0" : "#fdf6e3",
           border: `1.5px solid ${pct >= 1 ? C.red : C.border}`, borderRadius: 7, padding: "5px 2px", cursor: placeItem && mode === "plan" ? "copy" : "default" }}>
         <div style={{ fontFamily: "ui-monospace,Menlo,monospace", fontSize: 9, color: C.muted }}>
           {short}
@@ -740,6 +782,24 @@ export default function SpaceMap({ plan: fixedPlan }) {
       </div>
     );
   };
+
+  // running total for the swept selection — baskets and bench containers are different
+  // units, so they are totalled in separate buckets rather than added together
+  const selSummary = useMemo(() => {
+    if (sel.length < 2) return null;
+    const byId = new Map(benches.map(b => [b.id, b]));
+    const buckets = {};
+    sel.forEach(id => {
+      const b = byId.get(id); if (!b) return;
+      const k = selClassOf(b);
+      const c = capOf(b, k);
+      const bk = buckets[k] || (buckets[k] = { k, n: 0, cap: 0, used: 0, noCap: 0 });
+      bk.n++; bk.used += byBench[b.id]?.byClass[k] || 0;
+      if (c == null) bk.noCap++; else bk.cap += c;
+    });
+    return { n: sel.length, buckets: Object.values(buckets) };
+  }, [sel, benches, byBench, cls, rules]); // eslint-disable-line
+  const unitOf = k => (k === "basket" ? "baskets" : k === "tray45" || k === "tray45sp" ? "trays" : "pots");
 
   const poolList = Object.entries(unplaced)
     .filter(([, o]) => (cls === "qt"
@@ -756,6 +816,29 @@ export default function SpaceMap({ plan: fixedPlan }) {
 
   return (
     <div style={{ fontFamily: FONT }}>
+      {selSummary && (
+        <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 60, background: C.dark, color: "#fff",
+          padding: "9px 14px", display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap",
+          fontSize: 12.5, fontWeight: 700, boxShadow: "0 -2px 10px rgba(0,0,0,.18)" }}>
+          <span style={{ fontWeight: 800 }}>{selSummary.n} selected</span>
+          {selSummary.buckets.map(bk => (
+            <span key={bk.k} style={{ display: "inline-flex", alignItems: "baseline", gap: 6 }}>
+              <span style={{ opacity: .7, fontSize: 10, textTransform: "uppercase", letterSpacing: ".5px" }}>
+                {CLASSES.find(([x]) => x === bk.k)?.[1] || bk.k}
+              </span>
+              <b style={{ fontSize: 16, fontVariantNumeric: "tabular-nums" }}>
+                {bk.used.toLocaleString()}/{bk.cap.toLocaleString()}
+              </b>
+              <span style={{ opacity: .85 }}>{Math.max(0, bk.cap - bk.used).toLocaleString()} open {unitOf(bk.k)}</span>
+              {bk.noCap > 0 && <span style={{ color: C.amber }}>· {bk.noCap} no cap</span>}
+            </span>
+          ))}
+          <span style={{ flex: 1 }} />
+          <button onClick={() => setSel([])}
+            style={{ background: "transparent", color: "#fff", border: "1px solid rgba(255,255,255,.45)", borderRadius: 7,
+              padding: "3px 10px", fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>clear</button>
+        </div>
+      )}
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
         <h2 style={{ fontFamily: "'DM Serif Display',Georgia,serif", color: C.dark, margin: 0 }}>🗺 Space</h2>
         <select value={houseKey} onChange={e => setHouseKey(e.target.value)}
