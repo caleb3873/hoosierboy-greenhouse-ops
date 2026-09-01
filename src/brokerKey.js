@@ -26,7 +26,13 @@ const WORD_SYN = { cas: 'cascadias', com: 'compact', bic: 'bicolor', bestie: 'be
   // PAC1 2027 abbreviations (8/29: "Ltl Rckstr Pink" hid the Little Rockstars buddleia from every key join)
   ltl: 'little', rckstr: 'rockstar', rockstars: 'rockstar',
   // Ball/Selecta abbreviate MiniFamous as "Minfams" (8/31: hid every MiniFamous calibrachoa quote)
-  minfam: 'minifamous', minfams: 'minifamous' };
+  minfam: 'minifamous', minfams: 'minifamous',
+  // Ball's 2027 angelonia block abbreviates the habit (8/31: "Anglmst Pur Dark Sprd" hid every
+  // Angelmist/Angelflare quote); "sprd" appears nowhere else in the quote set. The series and
+  // colour halves of that same pattern are expanded in tidy() — see the note there.
+  sprd: 'spreading',
+  // Ball truncates Sunrise as "Sunrs", which the plural fold then clips to "sunr"
+  sunr: 'sunrise' };
 function tidy(s) {
   s = ' ' + String(s).toLowerCase() + ' ';
   // transliterate accents so "Café" == "Cafe" (one broker uses é, another writes "Cafe'")
@@ -47,6 +53,13 @@ function tidy(s) {
   s = s.replace(/\bn\/?g\b/g, ' ').replace(/\bnew guinea\b/g, ' ');
   s = s.replace(/\bmain street\b/g, 'mainstreet');          // Dümmen Coleus series: EHR "Main Street" == Express "Mainstreet"
   s = s.replace(/\bflame ?throwe?r\b/g, 'flamethrower');    // Ball "Flm Throwr" (expanded) == Express "FlameThrower"
+  // Ball's angelonia block: "Anglmst"/"Anglflr" series, "Rubysngra" squashed to one token, and
+  // "Pur" for Purple. "Pur" is expanded ONLY next to an angelonia series because everywhere else
+  // it abbreviates the SPECIES purpurea (Echinacea Pur Magnus, Digitalis Pur Lucas) — expanding it
+  // globally corrupted ~90 perennial keys when first tried.
+  s = s.replace(/\banglmst\b/g, 'angelmist').replace(/\banglflr\b/g, 'angelflare');
+  if (/\bangel(mist|flare)\b/.test(s)) s = s.replace(/\bpur\b/g, 'purple');
+  s = s.replace(/\brubysngra\b/g, 'ruby sangria');         // Ball squashes Archangel "Ruby Sangria" into one token
   s = s.replace(/\bimproved\b/g, ' ').replace(/\bimp\b/g, ' ');
   // catalog filler words, never part of the cultivar ("Caramia Series", "Other Cultivars Caradonna")
   s = s.replace(/\bother cultivars?\b/g, ' ').replace(/\bseries\b/g, ' ').replace(/\bcultivars?\b/g, ' ');
