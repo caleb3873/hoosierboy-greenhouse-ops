@@ -251,7 +251,15 @@ export default function SpaceMap({ plan: fixedPlan }) {
   const sb = getSupabase();
   const [plans, setPlans] = useState([]);
   const [planId, setPlanId] = useState(fixedPlan?.id || null);
-  const [houseKey, setHouseKey] = useState("BWS");
+  // a refresh used to dump you back on West Side; stay on the space you were looking at
+  const [houseKey, setHouseKey] = useState(() => {
+    try {
+      const saved = localStorage.getItem("space.houseKey");
+      if (saved && (saved === "ALL" || HOUSES.some(h => h.key === saved))) return saved;
+    } catch { /* private mode / storage blocked */ }
+    return "BWS";
+  });
+  useEffect(() => { try { localStorage.setItem("space.houseKey", houseKey); } catch { /* ignore */ } }, [houseKey]);
   const [cls, setCls] = useState("tray45");
   const [mode, setMode] = useState("plan");          // plan (blank, place) | lastyear (reference)
   const [layers, setLayers] = useState({ benches: true, baskets: true, lows: true });
@@ -884,14 +892,15 @@ export default function SpaceMap({ plan: fixedPlan }) {
               </div>
             );
           })() : house?.key === "ASM" ? (() => {
-            // East and West must line up bench-for-bench BY NUMBER, not by list position:
-            // ASME26/29 have no west twin and ASMW00 has no east twin, so rendering the two
-            // ranges as independent lists put every bench below 26 across from the wrong one
-            // (Caleb 9/1). One grid, one row per position, a gap where a side has no bench.
+            // East and West line up bench-for-bench BY NUMBER, walking 29 down to 10 — an
+            // uneven row count would otherwise put every bench across from the wrong twin.
+            // ASMW00 is not a west-range bench: it is a shelf along the back wall serving
+            // BOTH ranges, so it spans the full width at the foot of the map (Caleb 9/1).
             const lbl = { fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".5px", color: C.muted, marginBottom: 4 };
             const byPos = re => new Map(benchOf(re).map(b => [b.code.slice(4), b]));
             const W = byPos(/^ASMW/), E = byPos(/^ASME/);
-            const rows = [...new Set([...W.keys(), ...E.keys()])].sort().reverse();   // 29 → 10 → 00
+            const backWall = W.get("00");
+            const rows = [...new Set([...W.keys(), ...E.keys()])].filter(p => p !== "00").sort().reverse();
             return (
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "5px 12px", marginBottom: 12 }}>
                 <div style={{ ...lbl, gridColumn: 1, gridRow: 1 }}>West range — walk ↓</div>
@@ -900,6 +909,12 @@ export default function SpaceMap({ plan: fixedPlan }) {
                   W.get(pos) && <div key={"w" + pos} style={{ gridColumn: 1, gridRow: i + 2 }}><BenchWide b={W.get(pos)} /></div>,
                   E.get(pos) && <div key={"e" + pos} style={{ gridColumn: 2, gridRow: i + 2 }}><BenchWide b={E.get(pos)} /></div>,
                 ].filter(Boolean))}
+                {backWall && (
+                  <div style={{ gridColumn: "1 / span 2", gridRow: rows.length + 2, marginTop: 3 }}>
+                    <div style={{ ...lbl, marginBottom: 3 }}>Back wall — shelf across both ranges</div>
+                    <BenchWide b={backWall} />
+                  </div>
+                )}
               </div>
             );
           })() : house?.vertical ? (
