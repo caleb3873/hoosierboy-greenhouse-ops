@@ -194,13 +194,13 @@ function AllHousesOverview({ sb, planId, rules, cls, onPick, tick }) {
     });
     return { key: h.key, label: h.label, cap, used, open: Math.max(0, cap - used), capBenches, weeks };
   }).filter(c => c.capBenches > 0);
-  cards.sort((a, b) => b.open - a.open);
+  // property walk order (HOUSES definition order) — most-open sorting scrambled the map (Caleb 8/31)
   const totOpen = cards.reduce((t, c) => t + c.open, 0);
   const unit = k === "basket" ? "baskets" : (k === "tray45" || k === "tray45sp") ? "trays" : "pots";
   return (
     <div>
       <div style={{ fontSize: 12.5, color: C.muted, margin: "2px 0 10px" }}>
-        <b style={{ color: C.dark }}>{totOpen.toLocaleString()} {unit} open</b> across the property in this lens — sorted most-open first · click a house to work it · week chips = what already PLANTS there (match a week to co-plant efficiently)
+        <b style={{ color: C.dark }}>{totOpen.toLocaleString()} {unit} open</b> across the property in this lens — property walk order · click a house to work it · week chips = what already PLANTS there (match a week to co-plant efficiently)
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: 10 }}>
         {cards.map(c => {
