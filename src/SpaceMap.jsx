@@ -61,6 +61,9 @@ export const potsPerSlot = name => {
 const TYPE_LABEL = { full8: "8'", full6: "6'", full4: "4'", third8: "⅓·8'", third4: "⅓·4'", wall4: "4' wall", mid8: "8' mid", basket_line: "line", low_line: "low", shelf: "shelf·tight" };
 
 function zoneOf(code) {
+  // Sprague Main benches are sized by width — full4 / full6 — and carry their own
+  // capacity rules, so every 4' and 6' bench shows every container class (Caleb 9/1)
+  if (code.startsWith("ASM")) return "ASM";
   if (code.startsWith("BWS")) return "BWS";
   if (code.startsWith("DBM")) return "DBM";
   const m = code.match(/^EQ[HL]?(\d\d)/);
