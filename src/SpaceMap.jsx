@@ -43,12 +43,21 @@ export function classOfItem(name) {
   if (/CANYON/.test(n)) return "canyon14";
   if (/^POT 11|^11"/.test(n)) return "pot11";
   if (/^POT 10|^10"/.test(n)) return "pot10";
-  if (/^4\.5"|^1801|^FLAT/.test(n)) return SPACED_45.test(n) ? "tray45sp" : "tray45";
+  // 6.5" azaleas sit in the SP 650 heavy-duty 6-pack flat filler, which takes the same
+  // bench room as a 4.5" flat — same tight/spaced numbers, just 6 pots to the slot (Caleb 9/1)
+  if (/^4\.5"|^6\.5"|^1801|^FLAT/.test(n)) return SPACED_45.test(n) ? "tray45sp" : "tray45";
   // perennial quarts (SP470DTS deep, 8-pack carriers) bench like 4.5 trays for now —
   // give them their own chart class if the carrier density proves different
   if (/^1 QT/.test(n)) return "tray45";
   return null;
 }
+// tray45 capacity counts TRAY SLOTS. A flat slot holds ten 4.5" pots, eight of the
+// 1 QT 8-pack carriers (Caleb 8/18), or six 6.5" azaleas in the SP 650 heavy-duty
+// flat filler (Caleb 9/1). One definition — it used to be copied into two scopes.
+export const potsPerSlot = name => {
+  const n = String(name || "").toUpperCase();
+  return /^1 QT/.test(n) ? 8 : /^6\.5"/.test(n) ? 6 : 10;
+};
 const TYPE_LABEL = { full8: "8'", full6: "6'", full4: "4'", third8: "⅓·8'", third4: "⅓·4'", wall4: "4' wall", mid8: "8' mid", basket_line: "line", low_line: "low", shelf: "shelf·tight" };
 
 function zoneOf(code) {
@@ -179,7 +188,6 @@ function AllHousesOverview({ sb, planId, rules, cls, onPick, tick }) {
     if (k === "basket") return ov.basket ?? null;
     return ov[k] ?? rule[k] ?? null;
   };
-  const perSlot = name => /^1 QT/.test(String(name || "").toUpperCase()) ? 8 : 10;
   const cards = HOUSES.map(h => {
     const pats = [h.benchLike.replace("%", ""), ...(h.lineLike || []).map(x => x.replace("%", ""))];
     const hb = data.benches.filter(b => pats.some(p => b.code.startsWith(p)));
@@ -193,7 +201,7 @@ function AllHousesOverview({ sb, planId, rules, cls, onPick, tick }) {
       if (!ids.has(r.bench_id)) return;
       const rc = classOfItem(r.item_name);
       if ((k === "tray45" || k === "tray45sp") ? (rc !== "tray45" && rc !== "tray45sp") : k === "basket" ? rc !== "basket" : rc !== k) return;
-      used += k === "basket" ? r.qty_pots : (k === "tray45" || k === "tray45sp") ? Math.ceil(r.qty_pots / perSlot(r.item_name)) : r.qty_pots;
+      used += k === "basket" ? r.qty_pots : (k === "tray45" || k === "tray45sp") ? Math.ceil(r.qty_pots / potsPerSlot(r.item_name)) : r.qty_pots;
       if (r.plant_week != null) weeks[r.plant_week] = (weeks[r.plant_week] || 0) + r.qty_pots;
     });
     return { key: h.key, label: h.label, cap, used, open: Math.max(0, cap - used), capBenches, weeks };
@@ -369,9 +377,6 @@ export default function SpaceMap({ plan: fixedPlan }) {
     }
     return ov[k] ?? rule[k] ?? null;
   }
-  // tray45 capacity counts TRAY SLOTS: 4.5" flats hold 10 pots; the quart 8-pack
-  // carriers occupy the SAME slot at 8 pots (Caleb 8/18)
-  const potsPerSlot = name => /^1 QT/.test(String(name || "").toUpperCase()) ? 8 : 10;
   const isTray = k => k === "tray45" || k === "tray45sp";
   const inUnits = (q, k, name) => isTray(k) ? Math.ceil(q / potsPerSlot(name)) : q;
 
