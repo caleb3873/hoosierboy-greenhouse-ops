@@ -605,8 +605,19 @@ export default function SpaceMap({ plan: fixedPlan }) {
   const selClassOf = b => (isLineBench(b) ? "basket" : capClassOf(cls));
   const selected = id => sel.includes(id);
   // spread onto every bench/line card
+  // ⌘/Ctrl-click toggles one bench in or out of the selection — dragging works but is
+  // fiddly on a long range, so this is the primary way to pick spots (Caleb 9/1)
+  const modSelect = (e, b) => {
+    if (!(e.metaKey || e.ctrlKey)) return false;
+    e.preventDefault(); e.stopPropagation();
+    setSel(x => (x.includes(b.id) ? x.filter(id => id !== b.id) : [...x, b.id]));
+    return true;
+  };
   const sweepProps = b => ({
-    onPointerDown: e => { if (e.button === 0) { sweepRef.current = { ids: new Set([b.id]) }; setSel(x => (x.length ? [] : x)); } },
+    onPointerDown: e => {
+      if (e.metaKey || e.ctrlKey) return;               // modifier-click builds a selection, never a sweep
+      if (e.button === 0) { sweepRef.current = { ids: new Set([b.id]) }; setSel(x => (x.length ? [] : x)); }
+    },
     onPointerEnter: () => {
       const sw = sweepRef.current;
       if (sw && !sw.ids.has(b.id)) { sw.ids.add(b.id); setSel([...sw.ids]); }
@@ -645,7 +656,7 @@ export default function SpaceMap({ plan: fixedPlan }) {
     const pct = cap ? Math.min(1, used / cap) : 0;
     const blank = !info;
     return (
-      <div onClick={() => { if (swallowClick()) return; placeItem && !busy && allocate(placeItem, b); }} {...dropProps(b)} {...sweepProps(b)}
+      <div onClick={e => { if (modSelect(e, b) || swallowClick()) return; placeItem && !busy && allocate(placeItem, b); }} {...dropProps(b)} {...sweepProps(b)}
         style={{ outline: selected(b.id) ? `2px solid ${C.dark}` : "none", outlineOffset: 1,
           flex: b.bench_type === "shelf" ? "0 1 88px" : "1 1 120px", minWidth: b.bench_type === "shelf" ? 76 : 110, maxWidth: b.bench_type === "shelf" ? 110 : 200, minHeight: 126, display: "flex", flexDirection: "column",
           background: blank ? "#fbfdf8" : (pct >= 1 || (usedOther > 0 && used === 0)) ? "#fbe3e0" : "#fdf6e3", border: `1.5px solid ${(pct >= 1 || (usedOther > 0 && used === 0)) ? C.red : C.border}`,
@@ -705,7 +716,7 @@ export default function SpaceMap({ plan: fixedPlan }) {
     const pct = cap ? Math.min(1, used / cap) : 0;
     const blank = !info;
     return (
-      <div onClick={() => { if (swallowClick()) return; placeItem && !busy && allocate(placeItem, b); }} {...dropProps(b)} {...sweepProps(b)}
+      <div onClick={e => { if (modSelect(e, b) || swallowClick()) return; placeItem && !busy && allocate(placeItem, b); }} {...dropProps(b)} {...sweepProps(b)}
         style={{ outline: selected(b.id) ? `2px solid ${C.dark}` : "none", outlineOffset: 1,
           display: "flex", alignItems: "center", gap: 10, background: blank ? "#fbfdf8" : (pct >= 1 || (usedOther > 0 && used === 0)) ? "#fbe3e0" : "#fdf6e3",
           border: `1.5px solid ${(pct >= 1 || (usedOther > 0 && used === 0)) ? C.red : C.border}`, borderRadius: 9, padding: "7px 10px", cursor: placeItem && mode === "plan" ? "copy" : "default" }}>
@@ -764,7 +775,7 @@ export default function SpaceMap({ plan: fixedPlan }) {
     const blank = !info;
     const short = b.code.replace(/^(EQH|EQL)\d\d/, "").replace(/^(BWSH|DBMH|DBML|ASMH)/, "");
     return (
-      <div onClick={() => { if (swallowClick()) return; if (placeItem && !busy) allocate(placeItem, b); else if (info?.items?.length) setDrill({ bench: b, items: info.items }); }} {...dropProps(b)} {...sweepProps(b)}
+      <div onClick={e => { if (modSelect(e, b) || swallowClick()) return; if (placeItem && !busy) allocate(placeItem, b); else if (info?.items?.length) setDrill({ bench: b, items: info.items }); }} {...dropProps(b)} {...sweepProps(b)}
         title={`${b.code} · ${used}/${cap ?? "?"}${info ? " — " + info.items.map(a => `${a.qty} ${a.name}`).join(", ") : " — empty"}${info ? " · click for details" : ""}`}
         style={{ outline: selected(b.id) ? `2px solid ${C.dark}` : "none", outlineOffset: 1,
           width: 46, flex: "0 0 46px", textAlign: "center", background: blank ? "#fbfdf8" : pct >= 1 ? "#fbe3e0" : "#fdf6e3",
@@ -786,7 +797,7 @@ export default function SpaceMap({ plan: fixedPlan }) {
   // running total for the swept selection — baskets and bench containers are different
   // units, so they are totalled in separate buckets rather than added together
   const selSummary = useMemo(() => {
-    if (sel.length < 2) return null;
+    if (!sel.length) return null;
     const byId = new Map(benches.map(b => [b.id, b]));
     const buckets = {};
     sel.forEach(id => {
@@ -833,6 +844,7 @@ export default function SpaceMap({ plan: fixedPlan }) {
               {bk.noCap > 0 && <span style={{ color: C.amber }}>· {bk.noCap} no cap</span>}
             </span>
           ))}
+          <span style={{ opacity: .6, fontSize: 10.5, fontWeight: 600 }}>⌘/Ctrl-click to add or drop a spot</span>
           <span style={{ flex: 1 }} />
           <button onClick={() => setSel([])}
             style={{ background: "transparent", color: "#fff", border: "1px solid rgba(255,255,255,.45)", borderRadius: 7,
