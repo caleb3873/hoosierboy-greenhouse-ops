@@ -20,7 +20,8 @@ const CLASSES = [
 const capClassOf = k => (k === "qt" ? "tray45" : k);
 const QN = ["02","03","04","05","06","07","08","09","10","11","12","13","14","15","16","17","18","19","20","21","22","23","25"];
 const HOUSES = [
-  { key: "ASM", label: "Sprague Main", benchLike: "ASM%", vertical: true, banks: [["West range", /^ASMW/, false], ["East range", /^ASME/, false]], lineLike: ["ASMH%"] },
+  // Sprague Main walks from the high numbers down — ASMW25/ASME25 head the ranges (Caleb 9/1)
+  { key: "ASM", label: "Sprague Main", benchLike: "ASM%", vertical: true, banks: [["West range", /^ASMW/, true], ["East range", /^ASME/, true]], lineLike: ["ASMH%"] },
   { key: "BWS", label: "West Side", benchLike: "BWS%", vertical: true, banks: [["South row", /^BWSS/, true], ["North row (09–16 ⅓)", /^BWSN/, true]], lineLike: ["BWSH%"] },
   { key: "DBM", label: "Bluff Main", benchLike: "DBM%", vertical: true, banks: [["West range", /^DBMW/, false], ["East range", /^DBME/, false]], lineLike: ["DBMH%", "DBML%"] },
   ...QN.map(n => ({ key: `Q${n}`, label: `Quonset ${n}`, benchLike: `EQ${n}%`, banks: [["Benches — walk order", new RegExp(`^EQ${n}(SH)?0[1-4]$`), false]], lineLike: [`EQH${n}%`, `EQL${n}%`] })),
