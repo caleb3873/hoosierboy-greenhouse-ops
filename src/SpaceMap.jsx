@@ -34,8 +34,11 @@ export const SPACED_45 = /SUNPATIENS|NEW GUINEA|\bN\/?G\b|I'?CONIA|RIEGER|REIGER
 export function classOfItem(name) {
   const n = String(name || "").toUpperCase();
   if (/^HB /.test(n)) return "basket";
-  if (/FIBER LG/.test(n)) return "fiber_lg";
-  if (/FIBER SM|9" FIBER|FIBER 9/.test(n)) return "fiber_sm";
+  // 13" Fancy Boy (13X10.5 Baby Bell planter) spaces exactly like an 11"/12" fiber -
+  // same footprint, so it shares the fiber_lg number instead of earning its own class
+  // (Caleb 9/1). "POT 13\" GERANIUM" is the same 13" footprint and rides along.
+  if (/FIBER LG|^POT 13|^13"/.test(n)) return "fiber_lg";
+  if (/FIBER SM|9" FIBER|FIBER 9|^POT 8|^8"/.test(n)) return "fiber_sm";
   if (/CANYON/.test(n)) return "canyon14";
   if (/^POT 11|^11"/.test(n)) return "pot11";
   if (/^POT 10|^10"/.test(n)) return "pot10";
