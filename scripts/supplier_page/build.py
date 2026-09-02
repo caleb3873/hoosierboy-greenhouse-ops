@@ -34,7 +34,7 @@ e=html.escape
 urc_row=lambda d:f'<tr><td>{e(d["var"])}</td><td class="mut">{e(d["sup"])}</td><td class="mut">{d["size"]}</td><td class="num mut">wk {d["ship"]}</td><td class="num">{d["plants"]:,}</td></tr>'
 plug_row=lambda d:f'<tr><td>{e(d["var"])}</td><td class="mut">{e(d["sup"])}</td><td class="mut">{d["size"]}</td><td class="num mut">{(str(d["tray"])+"-cell") if d["tray"] else "—"}</td><td class="num mut">{d["pots"]:,}</td><td class="num">{d["plants"]:,}</td></tr>'
 br_row=lambda d:f'<tr><td>{e(d["var"])}</td><td class="mut">{e(d["sup"])}</td><td class="mut">{d["size"]}</td><td class="num mut">wk {d["ship"]}</td><td class="num">{d["plants"]:,}</td></tr>'
-# 11" deco perennial combos (parents + components), optional
+# 12" deco perennial combos (parents + components), optional
 combos=[]
 try:
     ct=open(f'{S}/combos.json').read(); combos=json.loads(ct[ct.index('{'):])['rows']
@@ -44,7 +44,7 @@ def combo_section(rows):
     SUPN={'Dummen':'Dümmen Orange','Innovaplant/Kientzler':'Kientzler'}
     bycombo={}
     for x in rows: bycombo.setdefault(x['combo'],[]).append(x)
-    out=['<section><h2>11" deco perennial combos</h2><p class="lede">Fancy Boy 11" patio pots on the House 13 low lines. Six plants per pot, two of each component. Cuttings for the combos arrive week 49 with the rest; liners arrive week 2, and the pot is planted week 2.</p>']
+    out=['<section><h2>12" deco perennial combos</h2><p class="lede">Fancy Boy combos in 12" Cassie round pots on the House 13 low lines. Six plants per pot, two of each component. Cuttings for the combos arrive week 49 with the rest; liners arrive week 2, and the pot is planted week 2.</p>']
     tot_pots=0
     for name,comps in bycombo.items():
         pots=int(comps[0]['pots']); tot_pots+=pots; per=sum(int(c['ppp']) for c in comps)
@@ -109,7 +109,7 @@ page=f'''<title>Hoosier Boy Perennial Program</title>
     <p>Quantities are planning figures as of September 2026 and will be confirmed on purchase orders.</p>
   </div>
 
-  <footer><span class="brand">Hoosier Boy</span><span>Spring 2027 · House 13 perennials · quarts and 9" baskets</span></footer>
+  <footer><span class="brand">Hoosier Boy</span><span>Spring 2027 · House 13 perennials · quarts, 9" baskets and 12" combos</span></footer>
 </div>
 '''
 open(f'{S}/perennial-program.html','w').write(page); print(U,P,B,POTS,ugen,pgen)
