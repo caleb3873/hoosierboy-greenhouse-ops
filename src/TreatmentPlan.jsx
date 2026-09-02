@@ -804,6 +804,15 @@ function DetailModal({ sb, rec, thisYear, defaultDate, varTasks = [], displayNam
   // Poinsettias chart by the week (Reese 8A): a typed height lands in
   // variety_reference.heights at this ISO week → the 📈 Growth chart picks it up
   const [htFlash, setHtFlash] = useState("");
+  // Variety names must match the 📈 chart's reference varieties ('24/'25) exactly, so
+  // the line input offers them as a pick-list and snaps a close typed name to the
+  // reference spelling on blur (Caleb 9/2).
+  const knownVars = [...new Set(refs.filter(r => r.crop === rec.crop).map(r => r.variety).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const normVar = x => String(x || "").toLowerCase().replace(/^\s*\d+(\.\d+)?\s*("|”|in\.?|inch)?\s*/, "").replace(/[^a-z0-9]+/g, " ").trim();
+  const snapVar = typed => {
+    const w = normVar(typed); if (!w) return typed;
+    return knownVars.find(v => v === typed) || knownVars.find(v => normVar(v) === w) || knownVars.find(v => normVar(v).includes(w) || w.includes(normVar(v))) || typed;
+  };
   async function saveHeight(key, val) {
     const n = parseFloat(val);
     if (!key || isNaN(n)) return;
@@ -954,7 +963,10 @@ function DetailModal({ sb, rec, thisYear, defaultDate, varTasks = [], displayNam
                       title={key && vd[key] ? `done ${String(vd[key].at || "").slice(0, 10)}${vd[key].by ? " · " + vd[key].by : ""} — uncheck to undo` : "check when this variety is treated"}
                       onChange={e => saveVar("variety_done", key, e.target.checked ? { at: new Date().toISOString(), by: displayName || null } : null)}
                       style={{ width: 20, height: 20, accentColor: "#3a7d2c", flexShrink: 0 }} />
-                    <input value={v} onChange={e => setLine(i, e.target.value)} onBlur={() => saveMeta()} placeholder={'Variety (e.g. 9" Nicki)'} style={{ ...inp, flex: 1, ...(key && vd[key] ? { background: "#f1f8ec" } : {}) }} />
+                    <input value={v} onChange={e => setLine(i, e.target.value)} list={knownVars.length ? "vr-varieties-" + rec.id : undefined}
+                      onBlur={e => { const snapped = snapVar(e.target.value); if (snapped !== e.target.value) { const next = lines.map((x, j) => j === i ? snapped : x); setLines(next); saveMeta(next); } else saveMeta(); }}
+                      placeholder={knownVars.length ? "Pick a variety…" : 'Variety (e.g. 9" Nicki)'} style={{ ...inp, flex: 1, ...(key && vd[key] ? { background: "#f1f8ec" } : {}) }} />
+                    {i === 0 && knownVars.length > 0 && <datalist id={"vr-varieties-" + rec.id}>{knownVars.map(v => <option key={v} value={v} />)}</datalist>}
                     {rec.crop === "Poinsettia" && (
                       <input type="number" step="0.25" disabled={!key} placeholder={'ht"'}
                         title="type this variety's height (inches) — charts by week on 📈 Growth"
