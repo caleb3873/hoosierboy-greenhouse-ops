@@ -52,7 +52,7 @@ for r in rows:
     v = clean(tc(body))
     is_lav = genus == "Lavandula"
     typ = "English" if "(A)" in n else ("Spanish" if "(S)" in n else "")
-    items.append(dict(genus="Lavender" if is_lav else genus, size=size, name=v, typ=typ, pots=r["pots"], ready=r["ready_wk"]))
+    items.append(dict(genus="Lavender" if is_lav else genus, size=size, name=v, typ=typ, pots=r["pots"], ready=r["ready_wk"], price=r.get("price")))
 by = {}
 for it in items: by.setdefault(it["genus"], []).append(it)
 order = sorted(by, key=lambda g: g.lower())
@@ -67,7 +67,7 @@ GENUS_NOTE = {
     "Dianthus": "Pinks · full sun · fragrant, reblooming",
     "Gaillardia": "Blanket flower · full sun · heat and drought tough",
     "Gaura": "Wand flower · full sun · airy, blooms to frost",
-    "Heuchera": "Coral bells · part shade · foliage colour all season",
+    "Heuchera": "Coral bells · part shade · foliage colour all season. Fyre Wing is Terra Nova's new premium series",
     "Lamium": "Dead nettle · shade · silver-leaf groundcover",
     "Lavender": "Full sun · fragrant · English types are hardiest; Spanish bloom earliest",
     "Leucanthemum": "Shasta daisy · full sun · classic white cut flower",
@@ -91,7 +91,8 @@ def card(g, its):
         sw = swatch(nm); dot = f'<i class="dot" style="background:{sw}"></i>' if sw else '<i class="dot none"></i>'
         typ = f'<span class="typ">{i["typ"]}</span>' if i["typ"] else ""
         sz = "" if i["size"] == "Quart" else f'<span class="typ">{i["size"]}</span>'
-        rows_html.append(f'<li>{dot}<span class="nm">{html.escape(nm)}</span>{typ}{sz}<span class="qty">{i["pots"]:,}</span></li>')
+        pr = f'<span class="price">${float(i["price"]):.2f}</span>' if i.get("price") else ""
+        rows_html.append(f'<li>{dot}<span class="nm">{html.escape(nm)}</span>{typ}{sz}{pr}<span class="qty">{i["pots"]:,}</span></li>')
     note = GENUS_NOTE.get(g, "")
     return f'''<article class="card">
   <header><h3>{html.escape(g)}</h3><span class="ready">Ready {wk_label(ready)}</span></header>
@@ -152,6 +153,7 @@ section{{margin:0 0 48px}}
 .nm{{flex:1}}
 .typ{{font-size:11px;color:var(--stone);background:var(--tint);border-radius:4px;padding:1px 6px}}
 .qty{{font-variant-numeric:tabular-nums;color:var(--stone);font-size:13px;min-width:44px;text-align:right}}
+.price{{font-variant-numeric:tabular-nums;font-weight:600;color:var(--forest);font-size:13px;min-width:48px;text-align:right}}
 .card footer{{margin-top:10px;padding-top:8px;border-top:1px solid var(--rule);font-size:12px;color:var(--stone)}}
 .combo{{background:var(--tint)}}
 .how{{border-top:1px solid var(--rule);padding-top:20px;display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:20px}}
@@ -164,7 +166,7 @@ footer.pg .brand{{font-family:'Playfair Display',Georgia,serif;font-size:16px;co
   <div class="eyebrow">Hoosier Boy · Indianapolis · Spring 2027</div>
   <h1>Perennials, grown here, ready for spring.</h1>
   <p class="lead">A new quart perennial program for 2027: {n_var} varieties across {len(order)} genera, plus fragrant lavender baskets and perennial patio combos. Potted in January, finished under cover outdoors so they arrive hardened off and ready to sell.</p>
-  <div class="chips"><span class="chip"><b>{TOT_Q:,}</b> quarts</span><span class="chip"><b>{TOT_B:,}</b> 9" lavender baskets</span><span class="chip"><b>{TOT_C:,}</b> 11" perennial combos</span><span class="chip">Ready late March to mid-April</span><span class="chip">Quarts ship 8 to a carrier</span></div>
+  <div class="chips"><span class="chip"><b>{TOT_Q:,}</b> quarts</span><span class="chip"><b>{TOT_B:,}</b> 9" lavender baskets</span><span class="chip"><b>{TOT_C:,}</b> 11" perennial combos</span><span class="chip">Ready late March to mid-April</span><span class="chip">Quarts ship 8 to a carrier</span><span class="chip"><b>$5.99</b> quarts · <b>$9.99</b> Fyre Wing heuchera</span></div>
 
   <section>
     <h2>Quart perennials</h2>
@@ -181,7 +183,7 @@ footer.pg .brand{{font-family:'Playfair Display',Georgia,serif;font-size:16px;co
   <div class="how">
     <div><h4>Availability</h4><p>First quarts are ready the week of {wk_label(12)}; the full program is ready by {wk_label(15)} and sells through spring.</p></div>
     <div><h4>Ordering</h4><p>Reserve through your Hoosier Boy sales rep. Quantities shown are the season total, first come first served.</p></div>
-    <div><h4>Pricing</h4><p>Pricing is on your price list or from your sales rep. Volume pricing available on full carriers.</p></div>
+    <div><h4>Pricing</h4><p>Quarts are $5.99 each. Terra Nova Fyre Wing heuchera are $9.99. Basket and combo pricing from your sales rep.</p></div>
   </div>
 
   <footer class="pg"><span class="brand">Hoosier Boy</span><span>Spring 2027 perennials · quarts, baskets and combos</span></footer>
