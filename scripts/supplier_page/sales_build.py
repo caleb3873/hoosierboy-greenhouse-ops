@@ -113,7 +113,7 @@ for name, comps in bycombo.items():
     parts = "".join(f'<li>{"<i class=\"dot\" style=\"background:%s\"></i>" % swatch(c["variety"]) if swatch(c["variety"]) else "<i class=\"dot none\"></i>"}<span class="nm">{html.escape(c["crop_name"].title()+" "+c["variety"])}</span><span class="qty">×{c["ppp"]}</span></li>' for c in sorted(comps, key=lambda c: c["crop_name"].lower()))
     combo_cards.append(f'''<article class="card combo">
   <header><h3>{html.escape(pretty)}</h3><span class="ready">Ready {wk_label(int(comps[0]["ready_wk"]))}</span></header>
-  <p class="note">11" deco patio pot · {per} plants · perennial combination</p>
+  <p class="note">11" deco patio pot · {per} plants · perennial combination{(" · $%.2f" % float(comps[0]["price"])) if comps[0].get("price") else ""}</p>
   <ul>{parts}</ul>
   <footer>{pots} available</footer>
 </article>''')
@@ -166,7 +166,7 @@ footer.pg .brand{{font-family:'Playfair Display',Georgia,serif;font-size:16px;co
   <div class="eyebrow">Hoosier Boy · Indianapolis · Spring 2027</div>
   <h1>Perennials, grown here, ready for spring.</h1>
   <p class="lead">A new quart perennial program for 2027: {n_var} varieties across {len(order)} genera, plus fragrant lavender baskets and perennial patio combos. Potted in January, finished under cover outdoors so they arrive hardened off and ready to sell.</p>
-  <div class="chips"><span class="chip"><b>{TOT_Q:,}</b> quarts</span><span class="chip"><b>{TOT_B:,}</b> 9" lavender baskets</span><span class="chip"><b>{TOT_C:,}</b> 11" perennial combos</span><span class="chip">Ready late March to mid-April</span><span class="chip">Quarts ship 8 to a carrier</span><span class="chip"><b>$5.99</b> quarts · <b>$9.99</b> Fyre Wing heuchera</span></div>
+  <div class="chips"><span class="chip"><b>{TOT_Q:,}</b> quarts</span><span class="chip"><b>{TOT_B:,}</b> 9" lavender baskets</span><span class="chip"><b>{TOT_C:,}</b> 11" perennial combos</span><span class="chip">Ready late March to mid-April</span><span class="chip">Quarts ship 8 to a carrier</span><span class="chip"><b>$5.99</b> quarts · <b>$9.99</b> Fyre Wing heuchera · <b>$12</b> lavender baskets · <b>$24</b> combos</span></div>
 
   <section>
     <h2>Quart perennials</h2>
@@ -183,7 +183,7 @@ footer.pg .brand{{font-family:'Playfair Display',Georgia,serif;font-size:16px;co
   <div class="how">
     <div><h4>Availability</h4><p>First quarts are ready the week of {wk_label(12)}; the full program is ready by {wk_label(15)} and sells through spring.</p></div>
     <div><h4>Ordering</h4><p>Reserve through your Hoosier Boy sales rep. Quantities shown are the season total, first come first served.</p></div>
-    <div><h4>Pricing</h4><p>Quarts are $5.99 each. Terra Nova Fyre Wing heuchera are $9.99. Basket and combo pricing from your sales rep.</p></div>
+    <div><h4>Pricing</h4><p>Quarts $5.99. Fyre Wing heuchera $9.99. 9" lavender baskets $12.00. 11" perennial combos $24.00.</p></div>
   </div>
 
   <footer class="pg"><span class="brand">Hoosier Boy</span><span>Spring 2027 perennials · quarts, baskets and combos</span></footer>
