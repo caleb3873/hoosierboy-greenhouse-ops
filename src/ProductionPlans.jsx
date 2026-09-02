@@ -592,7 +592,7 @@ async function createManagerTask(sb, { title, description, items, planId, houseI
 function Modal({ onClose, children }) {
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "flex-start", justifyContent: "center", zIndex: 1000, padding: "5vh 16px", overflowY: "auto" }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 12, maxWidth: 640, width: "100%", boxShadow: "0 12px 48px rgba(0,0,0,0.35)" }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 12, maxWidth: 640, width: "100%", maxHeight: "90vh", overflow: "auto", boxShadow: "0 12px 48px rgba(0,0,0,0.35)" }}>
         {children}
       </div>
     </div>
@@ -3406,7 +3406,7 @@ function SalesVsPlanTab({ plan }) {
         </div>
         <div style={{ display: "flex", gap: 4, marginTop: 3 }}>
           {season.weeks.map(w => (
-            <div key={w} style={{ flex: 1, fontSize: wkAsDate ? 8 : 9, color: COLORS.muted, textAlign: "center", whiteSpace: "nowrap" }}>
+            <div key={w} title={`wk${w} · ${wkDateLabel(w)}`} style={{ flex: 1, minWidth: 0, overflow: "hidden", fontSize: wkAsDate ? 8 : 9, color: COLORS.muted, textAlign: "center", whiteSpace: "nowrap" }}>
               {wkAsDate ? wkDateLabel(w) : w}
               {w === mothersWk && <div title={`Mother's Day week — ends Sun ${wkDateLabel(w, 6)}`} style={{ fontSize: 10, lineHeight: "10px", color: COLORS.amber }}>★</div>}
             </div>
@@ -3503,7 +3503,7 @@ function SalesVsPlanTab({ plan }) {
             </div>
             <div style={{ display: "flex", gap: 3, marginTop: 3 }}>
               {season.weeks.map(w => (
-                <div key={w} style={{ flex: 1, fontSize: wkAsDate ? 8 : 9, color: COLORS.muted, textAlign: "center", whiteSpace: "nowrap" }}>
+                <div key={w} title={`wk${w} · ${wkDateLabel(w)}`} style={{ flex: 1, minWidth: 0, overflow: "hidden", fontSize: wkAsDate ? 8 : 9, color: COLORS.muted, textAlign: "center", whiteSpace: "nowrap" }}>
                   {wkAsDate ? wkDateLabel(w) : w}
                   {w === mothersWk && <div style={{ fontSize: 10, lineHeight: "10px", color: COLORS.amber }}>★</div>}
                 </div>
@@ -4267,7 +4267,7 @@ function PropagationTab({ plan }) {
             const h = Math.max(2, (val / loadMax) * 150);
             const col = capacity > 0 ? (w.over ? COLORS.red : COLORS.light) : COLORS.light;
             return (
-              <div key={w.wk} style={{ flex: 1, minWidth: 18, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end" }} title={`${w.wk}\n${w.plants.toLocaleString()} cuttings · ${w.trays} trays · ${w.vars} varieties${w.people != null ? `\n≈ ${w.people} people` : ""}`}>
+              <div key={w.wk} style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end" }} title={`${w.wk}\n${w.plants.toLocaleString()} cuttings · ${w.trays} trays · ${w.vars} varieties${w.people != null ? `\n≈ ${w.people} people` : ""}`}>
                 {w.people != null ? <div style={{ fontSize: 9, fontWeight: 700, color: COLORS.muted }}>{w.people}</div> : null}
                 <div style={{ width: "76%", height: h, background: col, borderRadius: "3px 3px 0 0" }} />
               </div>
@@ -4275,7 +4275,7 @@ function PropagationTab({ plan }) {
           })}
         </div>
         <div style={{ display: "flex", gap: 3, marginTop: 3 }}>
-          {weekLoad.map(w => <div key={w.wk} style={{ flex: 1, minWidth: 18, fontSize: 9, color: COLORS.muted, textAlign: "center", whiteSpace: "nowrap", overflow: "hidden" }}>{w.wk.replace(/^\d+·wk/, "w").replace("—", "?")}</div>)}
+          {weekLoad.map(w => <div key={w.wk} title={w.wk} style={{ flex: 1, minWidth: 0, fontSize: 9, color: COLORS.muted, textAlign: "center", whiteSpace: "nowrap", overflow: "hidden" }}>{w.wk.replace(/^\d+·wk/, "w").replace("—", "?")}</div>)}
         </div>
         <div style={{ fontSize: 11, color: COLORS.muted, marginTop: 8 }}>Bars = cuttings/seeds stuck per week. Add <strong>sticks/hr</strong> + <strong>crew</strong> and each bar shows <strong>people needed</strong>, a capacity line appears, and the first over-capacity week is flagged as your staff-up point. "Weight by difficulty" scales each crop by its 1–3 rank.</div>
       </div>

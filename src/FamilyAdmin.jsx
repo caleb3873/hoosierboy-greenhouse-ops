@@ -316,7 +316,7 @@ export default function FamilyAdmin({ plan, onClose, onChanged }) {
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(20,30,16,.55)", zIndex: 9200,
       display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "4vh 14px", overflow: "auto" }}>
       <div onClick={e => e.stopPropagation()} style={{ background: "#fbfdf8", borderRadius: 16, maxWidth: 780, width: "100%",
-        padding: 18, boxShadow: "0 22px 60px rgba(0,0,0,.4)", fontFamily: FONT, marginBottom: 40 }}>
+        padding: 18, boxShadow: "0 22px 60px rgba(0,0,0,.4)", fontFamily: FONT, marginBottom: 40, maxHeight: "92vh", overflow: "auto" }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
           <div style={{ fontSize: 19, fontWeight: 800, color: C.dark, fontFamily: "'DM Serif Display',Georgia,serif" }}>⚙ Manage families</div>
           <div style={{ fontSize: 11.5, color: C.muted }}>{plan.name}</div>

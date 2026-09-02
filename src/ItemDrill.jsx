@@ -785,7 +785,7 @@ export default function ItemDrill({ plan, row, tgt, weeks, onSaveTarget, onClose
             </div>
             <div style={{ display: "flex", gap: 3, marginTop: 2 }}>
               {weeks.map(w => (
-                <div key={w} style={{ flex: 1, fontSize: wkAsDate ? 7.5 : 8.5, color: w === effReady ? C.dark : C.muted, fontWeight: w === effReady ? 800 : 400, textAlign: "center", whiteSpace: "nowrap" }}>
+                <div key={w} title={`wk${w} · ${wkDateLabel(w)}`} style={{ flex: 1, minWidth: 0, overflow: "hidden", fontSize: wkAsDate ? 7.5 : 8.5, color: w === effReady ? C.dark : C.muted, fontWeight: w === effReady ? 800 : 400, textAlign: "center", whiteSpace: "nowrap" }}>
                   {wkAsDate ? wkDateLabel(w) : w}
                   {w === mothersWk && <div title={`Mother's Day week — ends Sun ${wkDateLabel(w, 6)}`} style={{ fontSize: 9, lineHeight: "9px", color: C.amber }}>★</div>}
                 </div>
