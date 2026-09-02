@@ -194,7 +194,8 @@ function AllHousesOverview({ sb, planId, rules, cls, onPick, tick }) {
   const cards = HOUSES.map(h => {
     const pats = [h.benchLike.replace("%", ""), ...(h.lineLike || []).map(x => x.replace("%", ""))];
     const hb = data.benches.filter(b => pats.some(p => b.code.startsWith(p)));
-    const isLine = b => ["basket_line", "low_line"].includes(b.bench_type);
+    const isLine = b => !!b && ["basket_line", "low_line"].includes(b.bench_type);
+    const benchById = Object.fromEntries(data.benches.map(b => [b.id, b]));
     const domain = hb.filter(b => (k === "basket" ? isLine(b) : !isLine(b)) && (b.bench_type || b.cap_overrides));
     const ids = new Set(domain.map(b => b.id));
     let cap = 0, capBenches = 0;
@@ -202,7 +203,7 @@ function AllHousesOverview({ sb, planId, rules, cls, onPick, tick }) {
     let used = 0; const weeks = {};
     data.rows.forEach(r => {
       if (!ids.has(r.bench_id)) return;
-      const rc = classOfItem(r.item_name);
+      const rc = isLine(benchById[r.bench_id]) ? "basket" : classOfItem(r.item_name);
       if ((k === "tray45" || k === "tray45sp") ? (rc !== "tray45" && rc !== "tray45sp") : k === "basket" ? rc !== "basket" : rc !== k) return;
       used += k === "basket" ? r.qty_pots : (k === "tray45" || k === "tray45sp") ? Math.ceil(r.qty_pots / potsPerSlot(r.item_name)) : r.qty_pots;
       if (r.plant_week != null) weeks[r.plant_week] = (weeks[r.plant_week] || 0) + r.qty_pots;
@@ -401,32 +402,36 @@ export default function SpaceMap({ plan: fixedPlan }) {
   const lastYearRows = useMemo(() => rows.filter(r => !r.placed_at), [rows]);
   const byBench = useMemo(() => {
     const src = mode === "lastyear" ? lastYearRows : placedRows;
+    const lineIds = new Set(benches.filter(b => ["basket_line", "low_line"].includes(b.bench_type)).map(b => b.id));
     const m = {};
     src.forEach(r => {
       const o = m[r.bench_id] || (m[r.bench_id] = { agg: {}, byClass: {} });
       const a = o.agg[r.item_name] || (o.agg[r.item_name] = { name: r.item_name, qty: 0, ids: [], firstId: r.id, wk: r.plant_week, rid: r.recipe_id || null });
       a.qty += +r.qty_pots || 0; a.ids.push(r.id);
       if (r.recipe_id && !a.rid) a.rid = r.recipe_id;
-      const k = classOfItem(r.item_name) || "other";
+      // whatever hangs on a line takes a basket slot — an 11" Fancy Boy on a low line
+      // was classed as pot11 and the line read 0/30 with 30 on it (Caleb 9/2)
+      const k = lineIds.has(r.bench_id) ? "basket" : (classOfItem(r.item_name) || "other");
       o.byClass[k] = (o.byClass[k] || 0) + inUnits(+r.qty_pots || 0, k, r.item_name);
     });
     Object.values(m).forEach(o => { o.items = Object.values(o.agg).sort((a, b) => a.name.localeCompare(b.name)); });
     return m;
-  }, [placedRows, lastYearRows, mode]); // eslint-disable-line
+  }, [placedRows, lastYearRows, mode, benches]); // eslint-disable-line
 
   async function allocate(itemKey, bench) {
     if (mode === "lastyear") return;
     const it = unplaced[itemKey];
     if (!it) return;
     const itemName = `${it.item} (wk ${it.wk ?? "?"})`;
-    const k = it.cls || capClassOf(cls);
+    const onLine = ["basket_line", "low_line"].includes(bench.bench_type);
+    const k = onLine ? "basket" : (it.cls || capClassOf(cls));
     const cap = capOf(bench, k);
     if (cap == null) { window.alert(`No ${k} capacity number for ${bench.code} — add it to the chart first.`); return; }
     // basket lines are FIXED spacing (Caleb 8/13): a 10" line is always a 10" line —
     // the basket's size must match the line's size, no exceptions
     if (k === "basket" && ["basket_line", "low_line"].includes(bench.bench_type)) {
       const lineSize = String(bench.cap_overrides?.hb_size || "10");
-      const itemSize = (String(it.item).toUpperCase().match(/^HB (\d+)/) || [])[1] || "10";
+      const itemSize = (String(it.item).toUpperCase().match(/^HB (\d+)|^(\d+)"/) || []).slice(1).find(Boolean) || "10";
       if (lineSize !== itemSize) {
         window.alert(`${bench.code} is a fixed ${lineSize}" line — ${it.item} is a ${itemSize}" basket. Lines don't change spacing; pick a ${itemSize}" line.`);
         return;
