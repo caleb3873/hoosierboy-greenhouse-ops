@@ -61,7 +61,7 @@ def lanes_from_rows(rows, move_out_wk=12, prop_wks_note="5 wks"):
                  note="Covered, ventilated outdoor space. No temperature control, light supplemental heat only."),
             dict(kind="bar", label="Outdoor finish", wk=move_out_wk, yr=2027, to=r_hi, toyr=2027, loc="outdoor",
                  note="Finishes under cover outdoors."),
-            dict(kind="bar", label=f"Ready wk {r_lo}" + (f"–{r_hi}" if r_hi!=r_lo else "") + " · sells through Jun 1", wk=r_lo, yr=2027, to=SELL_THROUGH_WK + 1, toyr=2027, loc="ready",
+            dict(kind="bar", label=f"Ready wk {r_lo}" + (f"–{r_hi}" if r_hi!=r_lo else "") + " → Jun 1", wk=r_lo, yr=2027, to=SELL_THROUGH_WK + 1, toyr=2027, loc="ready",
                  note="Ready to sell / ship. " + ("Earliest crops are ready as they go out." if r_lo == move_out_wk else "")),
         ]
         lanes.append(dict(
