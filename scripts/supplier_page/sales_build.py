@@ -78,6 +78,7 @@ GENUS_NOTE = {
     "Scabiosa": "Pincushion flower · full sun · blooms spring to fall",
     "Stachys": "Lamb's ear · full sun · soft silver foliage",
     "Veronica": "Speedwell · full sun · upright spikes, reblooms",
+    "Thymus": "Creeping thyme · full sun · red-flowered groundcover, steps and walls",
 }
 
 def card(g, its):
