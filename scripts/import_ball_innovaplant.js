@@ -71,7 +71,9 @@ function canonical(desc) {
     if (!CROP[t0] && t0 !== "FO" && /[A-Z]{2}/.test(t0.slice(1)) && t0.length <= 6) unmapped[t0] = (unmapped[t0] || 0) + 1;
     const royalty = num(r.Royalty);
     const origin = IS_KZ ? (/Guatemala/i.test(r["Supplier Name"]) ? "GT" : "CR") : null;
-    const fc = /callus/i.test(r.Size || "") ? "callused" : /liner|strip|cell/i.test(r.Size || "") ? "liner" : "urc";
+    // "Split 72" = Terra Nova's 72-cell split liner tray (9/2/2026) — a liner, not a cutting
+    const fc = /callus/i.test(r.Size || "") ? "callused" : /liner|strip|cell|split/i.test(r.Size || "") ? "liner" : "urc";
+    const cellsFromSize = fc === "liner" ? (+(String(r.Size || "").match(/(\d{2,3})/) || [])[1] || null) : null;
     const key = makeKey("", "", name);
     const seenKey = key + "|" + fc;
     if (seen.has(seenKey)) {
@@ -85,7 +87,7 @@ function canonical(desc) {
     out.push({
       broker: "Ball", supplier: SUPPLIER, origin,
       crop: name.split(" ")[0], variety: name, variety_key: key, match_key: key,
-      form_class: fc, form_raw: `${r.Size} (Ball WebTrack${origin ? ` ${origin}` : ""}${FREIGHT ? "" : "; freight n/i"})`,
+      form_class: fc, cells: cellsFromSize, form_raw: `${r.Size} (Ball WebTrack${origin ? ` ${origin}` : ""}${FREIGHT ? "" : "; freight n/i"})`,
       material: String(r.Material || "").trim() || null,   // Ball's order/material number — needed at order time
       list_price: +(price / 100).toFixed(4), royalty: +(royalty / 100).toFixed(4),
       freight: FREIGHT || null,
