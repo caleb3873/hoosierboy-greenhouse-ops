@@ -34,8 +34,32 @@ e=html.escape
 urc_row=lambda d:f'<tr><td>{e(d["var"])}</td><td class="mut">{e(d["sup"])}</td><td class="mut">{d["size"]}</td><td class="num mut">wk {d["ship"]}</td><td class="num">{d["plants"]:,}</td></tr>'
 plug_row=lambda d:f'<tr><td>{e(d["var"])}</td><td class="mut">{e(d["sup"])}</td><td class="mut">{d["size"]}</td><td class="num mut">{(str(d["tray"])+"-cell") if d["tray"] else "—"}</td><td class="num mut">{d["pots"]:,}</td><td class="num">{d["plants"]:,}</td></tr>'
 br_row=lambda d:f'<tr><td>{e(d["var"])}</td><td class="mut">{e(d["sup"])}</td><td class="mut">{d["size"]}</td><td class="num mut">wk {d["ship"]}</td><td class="num">{d["plants"]:,}</td></tr>'
+# 11" deco perennial combos (parents + components), optional
+combos=[]
+try:
+    ct=open(f'{S}/combos.json').read(); combos=json.loads(ct[ct.index('{'):])['rows']
+except Exception: pass
+def combo_section(rows):
+    if not rows: return ''
+    SUPN={'Dummen':'Dümmen Orange','Innovaplant/Kientzler':'Kientzler'}
+    bycombo={}
+    for x in rows: bycombo.setdefault(x['combo'],[]).append(x)
+    out=['<section><h2>11" deco perennial combos</h2><p class="lede">Fancy Boy 11" patio pots on the House 13 low lines. Six plants per pot, two of each component. Cuttings for the combos arrive week 49 with the rest; liners arrive week 2, and the pot is planted week 2.</p>']
+    tot_pots=0
+    for name,comps in bycombo.items():
+        pots=int(comps[0]['pots']); tot_pots+=pots; per=sum(int(c['ppp']) for c in comps)
+        pretty=tc(name.replace('11" ','')).replace('Fancy Boy','Fancy Boy')
+        out.append(f'<h3 style="font-family:\'Playfair Display\',Georgia,serif;font-weight:500;font-size:19px;margin:18px 0 6px;color:var(--pine)">{html.escape(pretty)} <span class="gmeta">{pots} pots · {per} plants per pot</span></h3>')
+        out.append('<div class="tblwrap"><table><thead><tr><th>Component</th><th>Genetics / propagator</th><th>Form</th><th class="num">Per pot</th><th class="num">Arrive</th><th class="num">Plants</th></tr></thead><tbody>')
+        for c in sorted(comps,key=lambda c:c['crop_name'].lower()):
+            crop=c['crop_name'].title(); form={'URC':'Unrooted cutting','PLUG':f"{c['tray']}-cell liner" if c['tray'] else 'Liner'}.get(c['form'],c['form'] or '')
+            out.append(f'<tr><td>{html.escape(crop+" "+c["variety"])}</td><td class="mut">{html.escape(SUPN.get(c["supplier"],c["supplier"]) or "")}</td><td class="mut">{form}</td><td class="num mut">{c["ppp"]}</td><td class="num mut">wk {c["ship_wk"]}</td><td class="num">{int(c["plants"]):,}</td></tr>')
+        out.append('</tbody></table></div>')
+    out.append(f'<div class="total"><span>Combo pots <b>{tot_pots:,}</b></span></div></section>')
+    return '\n'.join(out), tot_pots
+combo_html, COMBO_POTS = combo_section(combos) if combos else ('', 0)
 U=sum(d['plants'] for d in sec['URC']); P=sum(d['plants'] for d in sec['PLUG']); B=sum(d['plants'] for d in sec['BAREROOT'])
-POTS=sum(d['pots'] for k in sec for d in sec[k]); ugen=len({d['genus'] for d in sec['URC']}); pgen=len({d['genus'] for d in sec['PLUG']})
+POTS=sum(d['pots'] for k in sec for d in sec[k])+COMBO_POTS; ugen=len({d['genus'] for d in sec['URC']}); pgen=len({d['genus'] for d in sec['PLUG']})
 css=open(f'{S}/style.css').read()+timeline.CSS
 lanes=timeline.lanes_from_rows(rows, move_out_wk=12)
 tl_html=timeline.render(lanes)
@@ -45,7 +69,7 @@ page=f'''<title>Hoosier Boy Perennial Program</title>
 <div class="page">
   <div class="eyebrow">Hoosier Boy · Indianapolis</div>
   <h1>Spring 2027 Perennial Program</h1>
-  <p class="sub">House 13 · quart and 9" basket perennials · prepared September 2026</p>
+  <p class="sub">House 13 · quarts, 9" baskets and 11" deco combos · prepared September 2026</p>
   <p class="intro">This is what we plan to bring in for our House 13 perennial crop. Everything is planted the same week and finished the same way: potted in early January in a climate-controlled 3,000 sq. ft. range, then moved to a covered, ventilated outdoor space in late March with no temperature control beyond a little supplemental heat on cold nights. Cuttings arrive week 49 so they are rooted for the week 2 plant; plugs, liners and bare root arrive the week we pot.</p>
 
   {tl_html}
@@ -54,7 +78,7 @@ page=f'''<title>Hoosier Boy Perennial Program</title>
     <div class="fig"><b>{U:,}</b><span>unrooted cuttings · {ugen} genera</span></div>
     <div class="fig"><b>{P:,}</b><span>plugs &amp; liners · {pgen} genera</span></div>
     <div class="fig"><b>{B:,}</b><span>bare root crowns</span></div>
-    <div class="fig"><b>{POTS:,}</b><span>finished pots &amp; baskets</span></div>
+    <div class="fig"><b>{POTS:,}</b><span>finished pots, baskets &amp; combos</span></div>
   </div>
 
   <section>
@@ -77,6 +101,8 @@ page=f'''<title>Hoosier Boy Perennial Program</title>
     {table(sec['BAREROOT'],['Variety','Source','Size','Arrive','Crowns'],br_row)}
     <div class="total"><span>Crowns <b>{B:,}</b></span></div>
   </section>
+
+  {combo_html}
 
   <div class="notes">
     <p>Lavender is listed by type: (English) is Lavandula angustifolia, (Spanish) is Lavandula stoechas.</p>
