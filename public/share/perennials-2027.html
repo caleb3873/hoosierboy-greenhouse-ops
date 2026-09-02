@@ -1,0 +1,348 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><link rel="icon" href="/favicon.ico"><title>Hoosier Boy Perennial Program</title></head><body>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400&family=Geist:wght@300;400;500;600&display=swap">
+<style>
+:root{--paper:#faf8f5;--ink:#22302a;--stone:#6b7570;--border:#e8e2da;--pine:#16403A;--forest:#1a4731;--terra:#c2703e;--tint:#eef3ee;--rule:#d9d2c8}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--paper:#121d19;--ink:#e6e2da;--stone:#9aa69f;--border:#2b3c35;--pine:#9fcdb4;--forest:#b9dcc7;--terra:#d68a58;--tint:#1c2f28;--rule:#33473f}}
+:root[data-theme="dark"]{--paper:#121d19;--ink:#e6e2da;--stone:#9aa69f;--border:#2b3c35;--pine:#9fcdb4;--forest:#b9dcc7;--terra:#d68a58;--tint:#1c2f28;--rule:#33473f}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:'Geist','Inter','Segoe UI',system-ui,sans-serif;font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}
+.page{max-width:900px;margin:0 auto;padding:44px 28px 72px}
+.eyebrow{text-transform:uppercase;letter-spacing:.18em;font-size:11.5px;font-weight:600;color:var(--terra)}
+h1{font-family:'Playfair Display',Georgia,serif;font-weight:500;font-size:clamp(30px,4.6vw,42px);line-height:1.1;margin:10px 0 8px;color:var(--pine);text-wrap:balance}
+.sub{color:var(--stone);font-size:15px;margin:0 0 30px;max-width:62ch}
+.intro{max-width:66ch;font-size:16px;margin:0 0 28px}
+.strip{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid var(--rule);border-bottom:1px solid var(--rule);margin:0 0 32px}
+.step{padding:16px 16px 18px;border-right:1px solid var(--rule)}
+.step:last-child{border-right:0}
+.wk{font-family:'Playfair Display',Georgia,serif;font-size:26px;color:var(--pine);line-height:1;font-variant-numeric:tabular-nums}
+.wk small{font-family:'Geist',sans-serif;font-size:11px;text-transform:uppercase;letter-spacing:.14em;color:var(--stone);display:block;margin-bottom:6px}
+.step p{margin:8px 0 0;font-size:13.5px;line-height:1.45}
+.figs{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:0 0 44px}
+.fig{background:var(--tint);border-radius:6px;padding:16px 18px}
+.fig b{display:block;font-family:'Playfair Display',Georgia,serif;font-weight:500;font-size:30px;color:var(--pine);font-variant-numeric:tabular-nums;line-height:1.05}
+.fig span{font-size:12px;color:var(--stone);text-transform:uppercase;letter-spacing:.1em}
+h2{font-family:'Playfair Display',Georgia,serif;font-weight:500;font-size:26px;margin:0 0 4px;color:var(--pine)}
+.lede{color:var(--stone);margin:0 0 16px;max-width:66ch}
+section{margin:0 0 48px}
+.tblwrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--stone);font-weight:600;padding:8px 10px;border-bottom:1.5px solid var(--pine)}
+td{padding:7px 10px;border-bottom:1px solid var(--border);vertical-align:baseline}
+.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.mut{color:var(--stone)}
+tr.genus td{background:var(--tint);font-weight:600;color:var(--forest);padding-top:10px;padding-bottom:8px}
+.gmeta{font-weight:400;color:var(--stone);font-size:12.5px;margin-left:8px}
+.total{display:flex;justify-content:flex-end;gap:28px;padding:12px 10px 0;font-size:14px;color:var(--stone)}
+.total b{color:var(--ink);font-variant-numeric:tabular-nums}
+.notes{border-top:1px solid var(--rule);padding-top:18px;color:var(--stone);font-size:13.5px;max-width:70ch}
+.notes p{margin:0 0 8px}
+footer{margin-top:40px;display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;color:var(--stone);font-size:12.5px;border-top:1px solid var(--rule);padding-top:14px}
+footer .brand{font-family:'Playfair Display',Georgia,serif;font-size:16px;color:var(--pine)}
+@media (max-width:640px){.strip{grid-template-columns:1fr 1fr}.step:nth-child(2){border-right:0}.step:nth-child(-n+2){border-bottom:1px solid var(--rule)}.figs{grid-template-columns:1fr 1fr}}
+
+.tl{--prop:#e9e3f4;--prop-ink:#4b3a7a;--main:#e3efe4;--main-ink:#1f4a2c;--out:#f2e8d8;--out-ink:#6b4a1c;--ready:#f6dcc9;--ready-ink:#8a3d12;
+  margin:0 0 40px;border-top:1px solid var(--rule);padding-top:18px}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .tl{--prop:#2b2540;--prop-ink:#c9b8f0;--main:#1d3326;--main-ink:#b9dcc7;--out:#3a2f1f;--out-ink:#e5c99a;--ready:#4a2a18;--ready-ink:#f0b48c}}
+:root[data-theme="dark"] .tl{--prop:#2b2540;--prop-ink:#c9b8f0;--main:#1d3326;--main-ink:#b9dcc7;--out:#3a2f1f;--out-ink:#e5c99a;--ready:#4a2a18;--ready-ink:#f0b48c}
+.tl-head{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:6px}
+.tl-head h2{margin:0}
+.tl-head .lede{margin:0;flex:1 1 320px}
+.tl-ctl{display:flex;gap:6px;align-items:center;font-size:12px;color:var(--stone)}
+.tl-ctl button{font:inherit;font-size:12px;padding:5px 10px;border:1px solid var(--rule);background:transparent;color:var(--ink);border-radius:4px;cursor:pointer}
+.tl-ctl button[aria-pressed="true"]{background:var(--pine);border-color:var(--pine);color:var(--paper)}
+.tl-ctl button:focus-visible{outline:2px solid var(--terra);outline-offset:2px}
+.tl-scroll{overflow-x:auto;padding-bottom:6px}
+.tl-grid{display:grid;grid-template-columns:150px 1fr;min-width:880px;position:relative}
+.tl-cal{grid-column:2;position:relative;height:68px;border-bottom:1px solid var(--rule)}
+.tl-cal .mo{position:absolute;top:24px;height:22px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--stone);border-left:1px solid var(--rule);padding-left:6px;white-space:nowrap}
+.tl-cal .wk{position:absolute;top:48px;font-size:10px;color:var(--stone);font-variant-numeric:tabular-nums;transform:translateX(-50%);white-space:nowrap}
+.tl-cal .wk.today{color:var(--ink)}
+.tl-lane{display:contents}
+.tl-name{grid-column:1;padding:16px 12px 12px 0;border-bottom:1px solid var(--border);cursor:pointer;position:sticky;left:0;z-index:3;background:var(--paper)}
+.tl-name b{display:block;font-family:'Playfair Display',Georgia,serif;font-weight:500;font-size:19px;color:var(--pine)}
+.tl-name small{display:block;font-size:11.5px;color:var(--stone);line-height:1.35;margin-top:3px}
+.tl-name .cnt{display:block;font-size:11px;color:var(--stone);margin-top:6px;font-variant-numeric:tabular-nums}
+.tl-track{grid-column:2;position:relative;border-bottom:1px solid var(--border);min-height:132px}
+.tl-bar{position:absolute;top:56px;height:34px;border-radius:5px;display:flex;align-items:center;padding:0 10px;font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:default;box-sizing:border-box}
+.tl-bar.prop{background:var(--prop);color:var(--prop-ink);background-image:repeating-linear-gradient(135deg,transparent 0 6px,rgba(0,0,0,.05) 6px 8px)}
+.tl-bar.main{background:var(--main);color:var(--main-ink)}
+.tl-bar.outdoor{background:var(--out);color:var(--out-ink);background-image:repeating-linear-gradient(90deg,transparent 0 10px,rgba(0,0,0,.05) 10px 12px)}
+.tl-bar.ready{background:var(--ready);color:var(--ready-ink);border:1.5px dashed var(--ready-ink);top:96px;height:22px;font-size:11px}
+.tl-bar.narrow{overflow:visible}.tl-bar.narrow .lab{position:absolute;left:100%;margin-left:6px;color:var(--ink);white-space:nowrap}
+.tl-bar .dur{font-weight:400;opacity:.8;margin-left:6px;font-variant-numeric:tabular-nums}
+.tl-bar:focus-visible{outline:2px solid var(--terra);outline-offset:2px}
+.tl-pt{position:absolute;top:8px;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:2px;font-size:11px;color:var(--ink);white-space:nowrap;cursor:default}
+.tl-pt i{width:9px;height:9px;border-radius:50%;background:var(--pine);border:2px solid var(--paper);box-shadow:0 0 0 1px var(--pine)}
+.tl-pt b{font-weight:600}
+.tl-pt small{color:var(--stone);font-variant-numeric:tabular-nums}
+.tl-pt.edge-l{transform:none;align-items:flex-start}.tl-pt.edge-l i{margin-left:-4px}
+.tl-pt.milestone{transform:none;align-items:flex-start;padding-left:8px}.tl-pt.milestone i{margin-left:-12px}
+.tl-pt.milestone i{background:var(--terra);box-shadow:0 0 0 1px var(--terra)}
+.tl-move{position:absolute;top:0;bottom:0;width:0;border-left:2px solid var(--terra);z-index:2;pointer-events:none}
+.tl-move span{position:absolute;top:0;left:8px;background:var(--terra);color:#fff;font-size:10.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding:2px 7px;border-radius:3px;white-space:nowrap}
+.tl-grid.focus .tl-lane:not(.on) .tl-track,.tl-grid.focus .tl-lane:not(.on) .tl-name{opacity:.28}
+.tl-legend{display:flex;gap:18px;flex-wrap:wrap;margin-top:12px;font-size:12px;color:var(--stone)}
+.tl-legend span{display:inline-flex;align-items:center;gap:6px}
+.tl-legend i{width:16px;height:12px;border-radius:3px;display:inline-block}
+.tl-legend i.prop{background:var(--prop);background-image:repeating-linear-gradient(135deg,transparent 0 4px,rgba(0,0,0,.08) 4px 6px)}
+.tl-legend i.main{background:var(--main)}
+.tl-legend i.outdoor{background:var(--out);background-image:repeating-linear-gradient(90deg,transparent 0 6px,rgba(0,0,0,.08) 6px 8px)}
+.tl-legend i.ready{background:var(--ready);border:1.5px dashed var(--ready-ink);box-sizing:border-box}
+.tl-legend i.move{width:0;height:14px;border-left:2px solid var(--terra);border-radius:0}
+.tl-detail{grid-column:2;font-size:12px;color:var(--stone);padding:8px 0 14px;border-bottom:1px solid var(--border);display:none;line-height:1.5}
+.tl-grid.detailed .tl-detail{display:block}
+.tl-grid.detailed .tl-name{border-bottom:0}.tl-grid.detailed .tl-track{border-bottom:0}
+.tl-detail b{color:var(--ink);font-weight:600}
+.tl-tip{position:fixed;z-index:20;max-width:280px;background:var(--paper);color:var(--ink);border:1px solid var(--rule);border-radius:6px;padding:10px 12px;font-size:12.5px;line-height:1.45;box-shadow:0 6px 24px rgba(0,0,0,.14);pointer-events:none;display:none}
+.tl-tip b{display:block;font-size:13px;margin-bottom:2px}
+.tl-tip .k{color:var(--stone)}
+.tl-read{font-size:13px;color:var(--stone);margin:10px 0 0;max-width:70ch}
+@media (max-width:640px){.tl-grid{grid-template-columns:118px 1fr;min-width:820px}.tl-name b{font-size:16px}.tl-bar{font-size:11.5px;padding:0 7px}}
+@media (prefers-reduced-motion: no-preference){.tl-track,.tl-name{transition:opacity .2s}}
+</style>
+<div class="page">
+  <div class="eyebrow">Hoosier Boy · Indianapolis</div>
+  <h1>Spring 2027 Perennial Program</h1>
+  <p class="sub">House 13 · quart and 9" basket perennials · prepared September 2026</p>
+  <p class="intro">This is what we plan to bring in for our House 13 perennial crop. Everything is planted the same week and finished the same way: potted in early January in a climate-controlled 3,000 sq. ft. range, then moved to a covered, ventilated outdoor space in late March with no temperature control beyond a little supplemental heat on cold nights. Cuttings arrive week 49 so they are rooted for the week 2 plant; plugs, liners and bare root arrive the week we pot.</p>
+
+  
+<section class="tl" id="timeline">
+  <div class="tl-head"><h2>Crop timeline by starting material</h2><p class="lede">Three ways in, one finish. Where each crop is, week by week, from arrival to ready.</p>
+    <div class="tl-ctl" role="group" aria-label="Timeline detail"><button type="button" data-mode="overview" aria-pressed="true">Overview</button><button type="button" data-mode="detailed" aria-pressed="false">Detailed</button></div></div>
+  <div class="tl-scroll"><div id="tl-root"></div></div>
+  <p class="tl-read">Read left to right. URC starts five weeks earlier because it roots in our prop house first; bare root and liners skip that step and go straight to the pot. All three converge at the move-outside line and finish under cover. Hover or tab onto any stage for exact dates; click a method name to highlight it.</p>
+</section>
+<script>
+window.HBTimeline = (function(){
+  // ISO-week helpers ---------------------------------------------------------
+  function isoMonday(y, w){ const s=new Date(Date.UTC(y,0,4)); const d=s.getUTCDay()||7; s.setUTCDate(s.getUTCDate()-d+1+(w-1)*7); return s; }
+  const MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const fmt=d=>MON[d.getUTCMonth()]+' '+d.getUTCDate();
+  const fmtY=d=>fmt(d)+', '+d.getUTCFullYear();
+  function render(el, spec){
+    const first=isoMonday(spec.season.first[0],spec.season.first[1]);
+    const last=isoMonday(spec.season.last[0],spec.season.last[1]);
+    const nWeeks=Math.round((last-first)/6048e5)+1; // inclusive of the last week
+    const idx=(y,w)=>Math.round((isoMonday(y,w)-first)/6048e5);
+    const pct=i=>(i/nWeeks*100);
+    const wkOf=(y,w)=>({y,w,mon:isoMonday(y,w)});
+    el.innerHTML='';
+    const grid=document.createElement('div'); grid.className='tl-grid'; el.appendChild(grid);
+    // calendar
+    const cal=document.createElement('div'); cal.className='tl-cal'; grid.appendChild(cal);
+    let lastMo=-1;
+    for(let i=0;i<nWeeks;i++){
+      const d=new Date(first.getTime()+i*6048e5);
+      if(d.getUTCMonth()!==lastMo){ lastMo=d.getUTCMonth(); const m=document.createElement('div'); m.className='mo'; m.style.left=pct(i)+'%'; m.textContent=MON[lastMo]+(lastMo===0?' '+d.getUTCFullYear():''); cal.appendChild(m); }
+      if(i%2===0){ const w=document.createElement('div'); w.className='wk'; w.style.left=pct(i+.5)+'%'; w.textContent='wk '+isoWeek(d); cal.appendChild(w); }
+    }
+    // move-outside line(s): one per distinct milestone week across lanes
+    const moves=new Map();
+    spec.lanes.forEach(l=>l.stages.filter(s=>s.milestone).forEach(s=>moves.set(s.yr+'-'+s.wk,s)));
+    // lanes
+    spec.lanes.forEach(lane=>{
+      const wrap=document.createElement('div'); wrap.className='tl-lane'; wrap.dataset.key=lane.key; grid.appendChild(wrap);
+      const name=document.createElement('div'); name.className='tl-name'; name.tabIndex=0; name.setAttribute('role','button'); name.title='Click to highlight this method';
+      name.innerHTML='<b>'+esc(lane.name)+'</b><small>'+esc(lane.how)+'</small><span class="cnt">'+esc(lane.summary)+'</span>'; wrap.appendChild(name);
+      const track=document.createElement('div'); track.className='tl-track'; wrap.appendChild(track);
+      lane.stages.forEach(s=>{
+        const a=idx(s.yr,s.wk);
+        if(s.kind==='bar'){
+          const b=idx(s.toyr,s.to); const weeks=b-a;
+          const bar=document.createElement('div'); bar.className='tl-bar '+s.loc; bar.tabIndex=0;
+          bar.style.left=pct(a)+'%'; bar.style.width='calc('+pct(Math.max(weeks,1))+'% - 3px)';
+          const inner=esc(s.label)+(s.loc==='ready'?'':'<span class="dur">'+weeks+' wk'+(weeks===1?'':'s')+'</span>'); bar.innerHTML='<span class="lab">'+inner+'</span>'; if(weeks<=3&&s.loc!=='ready') bar.classList.add('narrow');
+          bar.dataset.tip=JSON.stringify({t:s.label,rows:[['From','wk '+s.wk+' · '+fmtY(isoMonday(s.yr,s.wk))],['To','wk '+s.to+' · '+fmtY(isoMonday(s.toyr,s.to))],['Duration',weeks+' week'+(weeks===1?'':'s')],['Where',LOC[s.loc]]],note:s.note});
+          track.appendChild(bar);
+        } else {
+          const p=document.createElement('div'); p.className='tl-pt'+(s.milestone?' milestone':'')+(pct(a)<9?' edge-l':''); p.tabIndex=0;
+          p.style.left=pct(a)+'%';
+          p.innerHTML='<i></i><b>'+esc(s.label)+'</b><small>wk '+s.wk+' · '+fmt(isoMonday(s.yr,s.wk))+'</small>';
+          p.dataset.tip=JSON.stringify({t:s.label,rows:[['Week','wk '+s.wk+' · '+fmtY(isoMonday(s.yr,s.wk))],['Where',LOC[s.loc]]],note:s.note});
+          track.appendChild(p);
+        }
+      });
+      // detail row
+      const det=document.createElement('div'); det.className='tl-detail';
+      const early=lane.early&&lane.early.length?'<div><b>Ready before move-out in the plan:</b> '+lane.early.map(e=>esc(pretty(e.name))+' (wk '+e.ready+')').join(', ')+' — these finish inside.</div>':'';
+      det.innerHTML='<div><b>Lines:</b> '+lane.items.map(i=>esc(pretty(i.name))+' '+i.pots.toLocaleString()).join(' · ')+'</div>'+early;
+      wrap.appendChild(det);
+      name.addEventListener('click',()=>toggleFocus(grid,wrap));
+      name.addEventListener('keydown',e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); toggleFocus(grid,wrap);} });
+    });
+    // move-outside line: labeled in the calendar, echoed down every lane track
+    moves.forEach(s=>{
+      const x=pct(idx(s.yr,s.wk))+'%';
+      const c=document.createElement('div'); c.className='tl-move'; c.style.left=x; c.innerHTML='<span>Move outside · wk '+s.wk+'</span>'; cal.appendChild(c);
+      grid.querySelectorAll('.tl-track').forEach(t=>{ const l=document.createElement('div'); l.className='tl-move'; l.style.left=x; t.appendChild(l); });
+    });
+    // legend
+    const leg=document.createElement('div'); leg.className='tl-legend';
+    leg.innerHTML='<span><i class="prop"></i>Propagation house</span><span><i class="main"></i>Main range (climate controlled)</span><span><i class="outdoor"></i>Outdoor, covered</span><span><i class="ready"></i>Target ready / selling</span><span><i class="move"></i>Move outside</span>';
+    el.appendChild(leg);
+    // tooltip
+    let tip=document.querySelector('.tl-tip'); if(!tip){ tip=document.createElement('div'); tip.className='tl-tip'; document.body.appendChild(tip); }
+    const show=(t,x,y)=>{ const d=JSON.parse(t.dataset.tip); tip.innerHTML='<b>'+esc(d.t)+'</b>'+d.rows.map(r=>'<div><span class="k">'+esc(r[0])+'</span> · '+esc(r[1])+'</div>').join('')+(d.note?'<div style="margin-top:4px">'+esc(d.note)+'</div>':''); tip.style.display='block';
+      const w=tip.offsetWidth,h=tip.offsetHeight; let L=x+14,T=y+14; if(L+w>window.innerWidth-8)L=x-w-14; if(T+h>window.innerHeight-8)T=y-h-14; tip.style.left=L+'px'; tip.style.top=T+'px'; };
+    el.querySelectorAll('[data-tip]').forEach(t=>{
+      t.addEventListener('mousemove',e=>show(t,e.clientX,e.clientY));
+      t.addEventListener('mouseleave',()=>tip.style.display='none');
+      t.addEventListener('focus',()=>{ const r=t.getBoundingClientRect(); show(t,r.left,r.bottom); });
+      t.addEventListener('blur',()=>tip.style.display='none');
+    });
+    return grid;
+  }
+  function isoWeek(d){ const t=new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate())); const day=t.getUTCDay()||7; t.setUTCDate(t.getUTCDate()+4-day); const y0=new Date(Date.UTC(t.getUTCFullYear(),0,1)); return Math.ceil(((t-y0)/864e5+1)/7); }
+  function toggleFocus(grid,lane){ const on=lane.classList.contains('on'); grid.querySelectorAll('.tl-lane').forEach(l=>l.classList.remove('on')); if(on){ grid.classList.remove('focus'); } else { lane.classList.add('on'); grid.classList.add('focus'); } }
+  const LOC={prop:'Propagation house (mist)',main:'Main range, climate controlled',outdoor:'Outdoor, covered & ventilated',ready:'Sales yard / shipping'};
+  const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const pretty=n=>n.replace(/^1 QT /,'').replace(/^HB 9" /,'9" ').replace(/\(A\)/,'(English)').replace(/\(S\)/,'(Spanish)').toLowerCase().replace(/(^|\s|\()([a-z])/g,(m,a,b)=>a+b.toUpperCase());
+  return {render};
+})();
+</script>
+<script>
+(function(){
+  const spec={"season": {"first": [2026, 47], "last": [2027, 22]}, "lanes": [{"key": "bareroot", "name": "Bare root", "how": "Dormant crowns, potted on arrival", "summary": "1 line \u00b7 500 pots \u00b7 500 plants", "items": [{"name": "1 QT ALLIUM SPECIES ALLIUM MILLENIUM", "pots": 500, "ready": 15}], "early": [], "stages": [{"kind": "point", "label": "Receive & pot", "wk": 2, "yr": 2027, "loc": "main", "note": "Bare-root crowns potted straight into quarts on arrival."}, {"kind": "bar", "label": "Establish & grow on", "wk": 2, "yr": 2027, "to": 12, "toyr": 2027, "loc": "main", "note": "Climate-controlled 3,000 sq. ft. range."}, {"kind": "point", "label": "Move outside", "wk": 12, "yr": 2027, "loc": "outdoor", "milestone": true, "note": "Covered, ventilated outdoor space. No temperature control, light supplemental heat only."}, {"kind": "bar", "label": "Outdoor finish", "wk": 12, "yr": 2027, "to": 15, "toyr": 2027, "loc": "outdoor", "note": "Finishes under cover outdoors."}, {"kind": "bar", "label": "Ready wk 15 \u00b7 sells through Jun 1", "wk": 15, "yr": 2027, "to": 23, "toyr": 2027, "loc": "ready", "note": "Ready to sell / ship. "}]}, {"key": "urc", "name": "URC", "how": "Unrooted cuttings, stuck in our prop house", "summary": "40 lines \u00b7 5,600 pots \u00b7 5,600 plants", "items": [{"name": "1 QT ACHILLEA MILLY ROCK RED", "pots": 100, "ready": 15}, {"name": "1 QT ACHILLEA MILLY ROCK ROSE", "pots": 100, "ready": 15}, {"name": "1 QT ACHILLEA MILLY ROCK YELLOW TERRACOTTA", "pots": 100, "ready": 15}, {"name": "1 QT AGASTACHE CELESTIA", "pots": 100, "ready": 15}, {"name": "1 QT AJUGA BEST BUDDIES CARAMEL", "pots": 100, "ready": 12}, {"name": "1 QT AJUGA BEST BUDDIES ESPRESSO", "pots": 100, "ready": 12}, {"name": "1 QT AJUGA BEST BUDDIES LIME", "pots": 100, "ready": 12}, {"name": "1 QT AJUGA BEST BUDDIES TOFFEE", "pots": 100, "ready": 12}, {"name": "1 QT COREOPSIS SOLANNA\u2122 BRIGHT TOUCH", "pots": 100, "ready": 15}, {"name": "1 QT COREOPSIS UPTICK\u2122 GOLD & BRONZE", "pots": 200, "ready": 15}, {"name": "1 QT COREOPSIS UPTICK\u2122 YELLOW & RED", "pots": 100, "ready": 15}, {"name": "1 QT DIANTHUS DELILAH\u2122 BICOLOR MAGENTA", "pots": 100, "ready": 12}, {"name": "1 QT DIANTHUS DELILAH\u2122 MAGENTA", "pots": 100, "ready": 12}, {"name": "1 QT GAILLARDIA GUSTO\u2122 LEMON", "pots": 100, "ready": 15}, {"name": "1 QT GAILLARDIA GUSTO\u2122 ORANGE ZEST", "pots": 100, "ready": 15}, {"name": "1 QT GAILLARDIA GUSTO\u2122 SWIFT SAFFRON", "pots": 200, "ready": 15}, {"name": "1 QT GAURA STEFFI\u2122 BLUSH PINK IMP.", "pots": 200, "ready": 8}, {"name": "1 QT GAURA STEFFI\u2122 DARK ROSE IMP.", "pots": 200, "ready": 8}, {"name": "1 QT HEUCHERA KIRA ARIZONA", "pots": 200, "ready": 15}, {"name": "1 QT HEUCHERA KIRA EVERGREEN FOREST", "pots": 200, "ready": 15}, {"name": "1 QT HEUCHERA KIRA GREEN TEA", "pots": 200, "ready": 15}, {"name": "1 QT HEUCHERA KIRA JERSEY", "pots": 200, "ready": 15}, {"name": "1 QT HEUCHERA KIRA PURPLE RAIN FROST", "pots": 200, "ready": 15}, {"name": "1 QT LAMIUM LAMI\u2122 DARK PURPLE", "pots": 200, "ready": 12}, {"name": "1 QT LAVANDULA (A) LAYLA PRESTO BLUE", "pots": 100, "ready": 15}, {"name": "1 QT LEUCANTHEMUM LUCILLE WHITE", "pots": 200, "ready": 15}, {"name": "1 QT NEPETA CHARTREUS ON THE LOOSE", "pots": 100, "ready": 15}, {"name": "1 QT NEPETA KITTEN AROUND", "pots": 300, "ready": 15}, {"name": "1 QT NEPETA PURRSIAN BLUE", "pots": 300, "ready": 15}, {"name": "1 QT PENSTEMON ROCK CANDY BLUE", "pots": 100, "ready": 15}, {"name": "1 QT PENSTEMON ROCK CANDY CORAL", "pots": 100, "ready": 15}, {"name": "1 QT PENSTEMON ROCK CANDY PINK IMPROVED", "pots": 200, "ready": 15}, {"name": "1 QT PENSTEMON ROCK CANDY PURPLE", "pots": 100, "ready": 15}, {"name": "1 QT SALVIA SENSATION COMPACT BLUE DEEP", "pots": 100, "ready": 12}, {"name": "1 QT SALVIA SENSATION COMPACT BLUE SKY", "pots": 100, "ready": 12}, {"name": "1 QT SALVIA SENSATION COMPACT ROSE BRIGHT", "pots": 100, "ready": 12}, {"name": "1 QT SALVIA SENSATION MEDIUM ROSE DEEP", "pots": 100, "ready": 12}, {"name": "1 QT SALVIA SPECIES SAGE APEX BLUE", "pots": 100, "ready": 12}, {"name": "1 QT SALVIA SPECIES SAGE APEX PINK", "pots": 100, "ready": 12}, {"name": "1 QT SALVIA SPECIES SAGE DARK MATTER", "pots": 100, "ready": 12}], "early": [{"name": "1 QT GAURA STEFFI\u2122 BLUSH PINK IMP.", "ready": 8}, {"name": "1 QT GAURA STEFFI\u2122 DARK ROSE IMP.", "ready": 8}], "stages": [{"kind": "point", "label": "Receive & stick", "wk": 49, "yr": 2026, "loc": "prop", "note": "Cuttings arrive and are stuck the same week in 105-cell trays."}, {"kind": "bar", "label": "Callus & root", "wk": 49, "yr": 2026, "to": 2, "toyr": 2027, "loc": "prop", "note": "Under mist in the propagation house until rooted."}, {"kind": "point", "label": "Transplant to quart", "wk": 2, "yr": 2027, "loc": "main", "note": "Rooted cuttings potted into quarts."}, {"kind": "bar", "label": "Establish & grow on", "wk": 2, "yr": 2027, "to": 12, "toyr": 2027, "loc": "main", "note": "Climate-controlled 3,000 sq. ft. range."}, {"kind": "point", "label": "Move outside", "wk": 12, "yr": 2027, "loc": "outdoor", "milestone": true, "note": "Covered, ventilated outdoor space. No temperature control, light supplemental heat only."}, {"kind": "bar", "label": "Outdoor finish", "wk": 12, "yr": 2027, "to": 15, "toyr": 2027, "loc": "outdoor", "note": "Finishes under cover outdoors."}, {"kind": "bar", "label": "Ready wk 12\u201315 \u00b7 sells through Jun 1", "wk": 12, "yr": 2027, "to": 23, "toyr": 2027, "loc": "ready", "note": "Ready to sell / ship. Earliest crops are ready as they go out."}]}, {"key": "liner", "name": "Liner", "how": "Rooted plugs & liners, potted on arrival", "summary": "28 lines \u00b7 6,233 pots \u00b7 7,083 plants", "items": [{"name": "1 QT AGASTACHE HONEYSTICKS GOLD", "pots": 384, "ready": 15}, {"name": "1 QT BUDDLEIA LITTLE ROCKSTARS PINK", "pots": 256, "ready": 12}, {"name": "1 QT DIANTHUS SPRINT PINK", "pots": 256, "ready": 12}, {"name": "1 QT DIANTHUS SPRINT PINK & PROUD", "pots": 256, "ready": 12}, {"name": "1 QT LAVANDULA (A) AROMATICO FORTE BLUE", "pots": 256, "ready": 15}, {"name": "1 QT LAVANDULA (A) SCENT BLUE", "pots": 256, "ready": 15}, {"name": "1 QT LAVANDULA (A) SCENT WHITE", "pots": 256, "ready": 15}, {"name": "1 QT LAVANDULA (S) JAVELIN COMPACT PURPLE", "pots": 256, "ready": 15}, {"name": "1 QT LAVANDULA (S) LA DIVA BERRY BEAUTIFUL", "pots": 256, "ready": 15}, {"name": "1 QT LAVANDULA (S) LA DIVA BERRY ROSEY", "pots": 384, "ready": 15}, {"name": "1 QT LEUCANTHEMUM WESTERN STAR CAPRICORN", "pots": 256, "ready": 15}, {"name": "1 QT MONARDA BALMY LILAC", "pots": 144, "ready": 15}, {"name": "1 QT MONARDA BALMY PURPLE", "pots": 144, "ready": 15}, {"name": "1 QT MONARDA BALMY ROSE", "pots": 144, "ready": 15}, {"name": "1 QT SALVIA SAGE MIDNIGHT PURPLE", "pots": 256, "ready": 12}, {"name": "1 QT SALVIA SAGE MIDNIGHT ROSE", "pots": 256, "ready": 12}, {"name": "1 QT SCABIOSA FLUTTER BLUE DEEP", "pots": 256, "ready": 12}, {"name": "1 QT STACHYS LITTLE LAMB", "pots": 256, "ready": 12}, {"name": "1 QT VERONICA MOODY BLUES BLUE SKY", "pots": 256, "ready": 12}, {"name": "1 QT VERONICA MOODY BLUES MAUVE", "pots": 256, "ready": 12}, {"name": "1 QT VERONICA MOODY BLUES\u00ae DARK BLUE", "pots": 256, "ready": 12}, {"name": "1 QT VERONICA VERNIQUE BLUE", "pots": 256, "ready": 12}, {"name": "1 QT VERONICA VERNIQUE RASPBERRY", "pots": 256, "ready": 12}, {"name": "HB 9\" LAVANDULA (A) LA DIVA ETERNAL ELEGANCE", "pots": 85, "ready": 15}, {"name": "HB 9\" LAVANDULA (A) LA DIVA ETERNAL GRACE", "pots": 85, "ready": 15}, {"name": "HB 9\" LAVANDULA (S) LA DIVA BERRY BEAUTIFUL", "pots": 85, "ready": 15}, {"name": "HB 9\" LAVANDULA (S) LA DIVA BERRY BOUNTIFUL", "pots": 85, "ready": 15}, {"name": "HB 9\" LAVANDULA (S) LA DIVA BERRY ROSEY", "pots": 85, "ready": 15}], "early": [], "stages": [{"kind": "point", "label": "Receive & pot", "wk": 2, "yr": 2027, "loc": "main", "note": "Plugs and liners go straight from the truck into the pot."}, {"kind": "bar", "label": "Establish & grow on", "wk": 2, "yr": 2027, "to": 12, "toyr": 2027, "loc": "main", "note": "Climate-controlled 3,000 sq. ft. range."}, {"kind": "point", "label": "Move outside", "wk": 12, "yr": 2027, "loc": "outdoor", "milestone": true, "note": "Covered, ventilated outdoor space. No temperature control, light supplemental heat only."}, {"kind": "bar", "label": "Outdoor finish", "wk": 12, "yr": 2027, "to": 15, "toyr": 2027, "loc": "outdoor", "note": "Finishes under cover outdoors."}, {"kind": "bar", "label": "Ready wk 12\u201315 \u00b7 sells through Jun 1", "wk": 12, "yr": 2027, "to": 23, "toyr": 2027, "loc": "ready", "note": "Ready to sell / ship. Earliest crops are ready as they go out."}]}]};
+  const root=document.getElementById('tl-root');
+  const grid=window.HBTimeline.render(root, spec);
+  document.querySelectorAll('.tl-ctl button').forEach(b=>b.addEventListener('click',()=>{
+    document.querySelectorAll('.tl-ctl button').forEach(x=>x.setAttribute('aria-pressed', x===b?'true':'false'));
+    grid.classList.toggle('detailed', b.dataset.mode==='detailed');
+  }));
+})();
+</script>
+
+  <div class="figs">
+    <div class="fig"><b>5,600</b><span>unrooted cuttings · 14 genera</span></div>
+    <div class="fig"><b>7,083</b><span>plugs &amp; liners · 10 genera</span></div>
+    <div class="fig"><b>500</b><span>bare root crowns</span></div>
+    <div class="fig"><b>12,333</b><span>finished pots &amp; baskets</span></div>
+  </div>
+
+  <section>
+    <h2>Unrooted cuttings</h2>
+    <p class="lede">Stuck in 105-cell trays on arrival in December, rooted under mist, and potted to quarts week 2. One cutting per finished quart.</p>
+    <div class="tblwrap"><table><thead><tr><th class="">Variety</th><th class="">Genetics</th><th class="">Size</th><th class="num">Arrive</th><th class="num">Cuttings</th></tr></thead><tbody>
+<tr class="genus"><td colspan="4">Achillea <span class="gmeta">3 varieties</span></td><td class="num gnum">300</td></tr>
+<tr><td>Achillea Milly Rock Red</td><td class="mut">Darwin</td><td class="mut">Quart</td><td class="num mut">wk 49</td><td class="num">100</td></tr>
+<tr><td>Achillea Milly Rock Rose</td><td class="mut">Darwin</td><td class="mut">Quart</td><td class="num mut">wk 49</td><td class="num">100</td></tr>
+<tr><td>Achillea Milly Rock Yellow Terracotta</td><td class="mut">Darwin</td><td class="mut">Quart</td><td class="num mut">wk 49</td><td class="num">100</td></tr>
+<tr class="genus"><td colspan="4">Agastache <span class="gmeta">1 variety</span></td><td class="num gnum">100</td></tr>
+<tr><td>Agastache Celestia</td><td class="mut">Danziger</td><td class="mut">Quart</td><td class="num mut">wk 49</td><td class="num">100</td></tr>
+<tr class="genus"><td colspan="4">Ajuga <span class="gmeta">4 varieties</span></td><td class="num gnum">400</td></tr>
+<tr><td>Ajuga Best Buddies Caramel</td><td class="mut">Kientzler</td><td class="mut">Quart</td><td class="num mut">wk 49</td><td class="num">100</td></tr>
+<tr><td>Ajuga Best Buddies Espresso</td><td class="mut">Kientzler</td><td class="mut">Quart</td><td class="num mut">wk 49</td><td class="num">100</td></tr>
+<tr><td>Ajuga Best Buddies Lime</td><td class="mut">Kientzler</td><td class="mut">Quart</td><td class="num mut">wk 49</td><td class="num">100</td></tr>
+<tr><td>Ajuga Best Buddies Toffee</td><td class="mut">Kientzler</td><td class="mut">Quart</td><td class="num mut">wk 49</td><td class="num">100</td></tr>
+<tr class="genus"><td colspan="4">Coreopsis <span class="gmeta">3 varieties</span></td><td class="num gnum">400</td></tr>
+<tr><td>Coreopsis Solanna Bright Touch</td><td class="mut">Danziger</td><td class="mut">Quart</td><td class="num mut">wk 49</td><td class="num">100</td></tr>
+<tr><td>Coreopsis Uptick Gold &amp; Bronze</td><td class="mut">Darwin</td><td class="mut">Quart</td><td class="num mut">wk 49</td><td class="num">200</td></tr>
+<tr><td>Coreopsis Uptick Yellow &amp; Red</td><td class="mut">Darwin</td><td class="mut">Quart</td><td class="num mut">wk 49</td><td class="num">100</td></tr>
+<tr class="genus"><td colspan="4">Dianthus <span class="gmeta">2 varieties</span></td><td class="num gnum">200</td></tr>
+<tr><td>Dianthus Delilah Bicolor Magenta</td><td class="mut">Danziger</td><td class="mut">Quart</td><td class="num mut">wk 49</td><td class="num">100</td></tr>
+<tr><td>Dianthus Delilah Magenta</td><td class="mut">Danziger</td><td class="mut">Quart</td><td class="num mut">wk 49</td><td class="num">100</td></tr>
+<tr class="genus"><td colspan="4">Gaillardia <span class="gmeta">3 varieties</span></td><td class="num gnum">400</td></tr>
+<tr><td>Gaillardia Gusto Lemon</td><td class="mut">Danziger</td><td class="mut">Quart</td><td class="num mut">wk 49</td><td class="num">100</td></tr>
+<tr><td>Gaillardia Gusto Orange Zest</td><td class="mut">Danziger</td><td class="mut">Quart</td><td class="num mut">wk 49</td><td class="num">100</td></tr>
+<tr><td>Gaillardia Gusto Swift Saffron</td><td class="mut">Danziger</td><td class="mut">Quart</td><td class="num mut">wk 49</td><td class="num">200</td></tr>
+<tr class="genus"><td colspan="4">Gaura <span class="gmeta">2 varieties</span></td><td class="num gnum">400</td></tr>
+<tr><td>Gaura Steffi Blush Pink Improved</td><td class="mut">Danziger</td><td class="mut">Quart</td><td class="num mut">wk 49</td><td class="num">200</td></tr>
+<tr><td>Gaura Steffi Dark Rose Improved</td><td class="mut">Danziger</td><td class="mut">Quart</td><td class="num mut">wk 49</td><td class="num">200</td></tr>
+<tr class="genus"><td colspan="4">Heuchera <span class="gmeta">5 varieties</span></td><td class="num gnum">1,000</td></tr>
+<tr><td>Heuchera Kira Arizona</td><td class="mut">Danziger</td><td class="mut">Quart</td><td class="num mut">wk 49</td><td class="num">200</td></tr>
+<tr><td>Heuchera Kira Evergreen Forest</td><td class="mut">Danziger</td><td class="mut">Quart</td><td class="num mut">wk 49</td><td class="num">200</td></tr>
+<tr><td>Heuchera Kira Green Tea</td><td class="mut">Danziger</td><td class="mut">Quart</td><td class="num mut">wk 49</td><td class="num">200</td></tr>
+<tr><td>Heuchera Kira Jersey</td><td class="mut">Danziger</td><td class="mut">Quart</td><td class="num mut">wk 49</td><td class="num">200</td></tr>
+<tr><td>Heuchera Kira Purple Rain Frost</td><td class="mut">Danziger</td><td class="mut">Quart</td><td class="num mut">wk 49</td><td class="num">200</td></tr>
+<tr class="genus"><td colspan="4">Lamium <span class="gmeta">1 variety</span></td><td class="num gnum">200</td></tr>
+<tr><td>Lamium Lami Dark Purple</td><td class="mut">Danziger</td><td class="mut">Quart</td><td class="num mut">wk 49</td><td class="num">200</td></tr>
+<tr class="genus"><td colspan="4">Lavandula <span class="gmeta">1 variety</span></td><td class="num gnum">100</td></tr>
+<tr><td>Lavandula (English) Layla Presto Blue</td><td class="mut">Danziger</td><td class="mut">Quart</td><td class="num mut">wk 49</td><td class="num">100</td></tr>
+<tr class="genus"><td colspan="4">Leucanthemum <span class="gmeta">1 variety</span></td><td class="num gnum">200</td></tr>
+<tr><td>Leucanthemum Lucille White</td><td class="mut">Danziger</td><td class="mut">Quart</td><td class="num mut">wk 49</td><td class="num">200</td></tr>
+<tr class="genus"><td colspan="4">Nepeta <span class="gmeta">3 varieties</span></td><td class="num gnum">700</td></tr>
+<tr><td>Nepeta Chartreuse On The Loose</td><td class="mut">Darwin</td><td class="mut">Quart</td><td class="num mut">wk 49</td><td class="num">100</td></tr>
+<tr><td>Nepeta Kitten Around</td><td class="mut">Darwin</td><td class="mut">Quart</td><td class="num mut">wk 49</td><td class="num">300</td></tr>
+<tr><td>Nepeta Purrsian Blue</td><td class="mut">Darwin</td><td class="mut">Quart</td><td class="num mut">wk 49</td><td class="num">300</td></tr>
+<tr class="genus"><td colspan="4">Penstemon <span class="gmeta">4 varieties</span></td><td class="num gnum">500</td></tr>
+<tr><td>Penstemon Rock Candy Blue</td><td class="mut">Darwin</td><td class="mut">Quart</td><td class="num mut">wk 49</td><td class="num">100</td></tr>
+<tr><td>Penstemon Rock Candy Coral</td><td class="mut">Darwin</td><td class="mut">Quart</td><td class="num mut">wk 49</td><td class="num">100</td></tr>
+<tr><td>Penstemon Rock Candy Pink Improved</td><td class="mut">Darwin</td><td class="mut">Quart</td><td class="num mut">wk 49</td><td class="num">200</td></tr>
+<tr><td>Penstemon Rock Candy Purple</td><td class="mut">Darwin</td><td class="mut">Quart</td><td class="num mut">wk 49</td><td class="num">100</td></tr>
+<tr class="genus"><td colspan="4">Salvia <span class="gmeta">7 varieties</span></td><td class="num gnum">700</td></tr>
+<tr><td>Salvia Apex Blue</td><td class="mut">Danziger</td><td class="mut">Quart</td><td class="num mut">wk 49</td><td class="num">100</td></tr>
+<tr><td>Salvia Apex Pink</td><td class="mut">Danziger</td><td class="mut">Quart</td><td class="num mut">wk 49</td><td class="num">100</td></tr>
+<tr><td>Salvia Dark Matter</td><td class="mut">Danziger</td><td class="mut">Quart</td><td class="num mut">wk 49</td><td class="num">100</td></tr>
+<tr><td>Salvia Sensation Compact Blue Deep</td><td class="mut">Darwin</td><td class="mut">Quart</td><td class="num mut">wk 49</td><td class="num">100</td></tr>
+<tr><td>Salvia Sensation Compact Blue Sky</td><td class="mut">Darwin</td><td class="mut">Quart</td><td class="num mut">wk 49</td><td class="num">100</td></tr>
+<tr><td>Salvia Sensation Compact Rose Bright</td><td class="mut">Darwin</td><td class="mut">Quart</td><td class="num mut">wk 49</td><td class="num">100</td></tr>
+<tr><td>Salvia Sensation Medium Rose Deep</td><td class="mut">Darwin</td><td class="mut">Quart</td><td class="num mut">wk 49</td><td class="num">100</td></tr>
+</tbody></table></div>
+    <div class="total"><span>Cuttings <b>5,600</b></span><span>Quarts <b>5,600</b></span></div>
+  </section>
+
+  <section>
+    <h2>Plugs &amp; rooted liners</h2>
+    <p class="lede">Arrive week 2 and go straight to the pot. Lavender baskets take three liners each; everything else is one plant per quart.</p>
+    <div class="tblwrap"><table><thead><tr><th class="">Variety</th><th class="">Propagator</th><th class="">Size</th><th class="num">Tray</th><th class="num">Pots</th><th class="num">Plants</th></tr></thead><tbody>
+<tr class="genus"><td colspan="5">Agastache <span class="gmeta">1 variety</span></td><td class="num gnum">384</td></tr>
+<tr><td>Agastache Honeysticks Gold</td><td class="mut">Pacific Plug &amp; Liner</td><td class="mut">Quart</td><td class="num mut">128-cell</td><td class="num mut">384</td><td class="num">384</td></tr>
+<tr class="genus"><td colspan="5">Buddleia <span class="gmeta">1 variety</span></td><td class="num gnum">256</td></tr>
+<tr><td>Buddleia Little Rockstars Pink</td><td class="mut">Pacific Plug &amp; Liner</td><td class="mut">Quart</td><td class="num mut">128-cell</td><td class="num mut">256</td><td class="num">256</td></tr>
+<tr class="genus"><td colspan="5">Dianthus <span class="gmeta">2 varieties</span></td><td class="num gnum">512</td></tr>
+<tr><td>Dianthus Sprint Pink</td><td class="mut">Pacific Plug &amp; Liner</td><td class="mut">Quart</td><td class="num mut">128-cell</td><td class="num mut">256</td><td class="num">256</td></tr>
+<tr><td>Dianthus Sprint Pink &amp; Proud</td><td class="mut">Pacific Plug &amp; Liner</td><td class="mut">Quart</td><td class="num mut">128-cell</td><td class="num mut">256</td><td class="num">256</td></tr>
+<tr class="genus"><td colspan="5">Lavandula <span class="gmeta">11 varieties</span></td><td class="num gnum">2,939</td></tr>
+<tr><td>Lavandula (English) Aromatico Forte Blue</td><td class="mut">Pacific Plug &amp; Liner</td><td class="mut">Quart</td><td class="num mut">128-cell</td><td class="num mut">256</td><td class="num">256</td></tr>
+<tr><td>Lavandula (English) Scent Blue</td><td class="mut">Green Circle</td><td class="mut">Quart</td><td class="num mut">128-cell</td><td class="num mut">256</td><td class="num">256</td></tr>
+<tr><td>Lavandula (English) Scent White</td><td class="mut">Green Circle</td><td class="mut">Quart</td><td class="num mut">128-cell</td><td class="num mut">256</td><td class="num">256</td></tr>
+<tr><td>Lavandula (Spanish) Javelin Compact Purple</td><td class="mut">Pacific Plug &amp; Liner</td><td class="mut">Quart</td><td class="num mut">128-cell</td><td class="num mut">256</td><td class="num">256</td></tr>
+<tr><td>Lavandula (Spanish) La Diva Berry Beautiful</td><td class="mut">Pacific Plug &amp; Liner</td><td class="mut">Quart</td><td class="num mut">128-cell</td><td class="num mut">256</td><td class="num">256</td></tr>
+<tr><td>Lavandula (Spanish) La Diva Berry Rosey</td><td class="mut">Pacific Plug &amp; Liner</td><td class="mut">Quart</td><td class="num mut">128-cell</td><td class="num mut">384</td><td class="num">384</td></tr>
+<tr><td>Lavandula (English) La Diva Eternal Elegance</td><td class="mut">Pacific Plug &amp; Liner</td><td class="mut">9" basket</td><td class="num mut">128-cell</td><td class="num mut">85</td><td class="num">255</td></tr>
+<tr><td>Lavandula (English) La Diva Eternal Grace</td><td class="mut">Pacific Plug &amp; Liner</td><td class="mut">9" basket</td><td class="num mut">128-cell</td><td class="num mut">85</td><td class="num">255</td></tr>
+<tr><td>Lavandula (Spanish) La Diva Berry Beautiful</td><td class="mut">Pacific Plug &amp; Liner</td><td class="mut">9" basket</td><td class="num mut">128-cell</td><td class="num mut">85</td><td class="num">255</td></tr>
+<tr><td>Lavandula (Spanish) La Diva Berry Bountiful</td><td class="mut">Pacific Plug &amp; Liner</td><td class="mut">9" basket</td><td class="num mut">128-cell</td><td class="num mut">85</td><td class="num">255</td></tr>
+<tr><td>Lavandula (Spanish) La Diva Berry Rosey</td><td class="mut">Pacific Plug &amp; Liner</td><td class="mut">9" basket</td><td class="num mut">128-cell</td><td class="num mut">85</td><td class="num">255</td></tr>
+<tr class="genus"><td colspan="5">Leucanthemum <span class="gmeta">1 variety</span></td><td class="num gnum">256</td></tr>
+<tr><td>Leucanthemum Western Star Capricorn</td><td class="mut">Pacific Plug &amp; Liner</td><td class="mut">Quart</td><td class="num mut">128-cell</td><td class="num mut">256</td><td class="num">256</td></tr>
+<tr class="genus"><td colspan="5">Monarda <span class="gmeta">3 varieties</span></td><td class="num gnum">432</td></tr>
+<tr><td>Monarda Balmy Lilac</td><td class="mut">Pacific Plug &amp; Liner</td><td class="mut">Quart</td><td class="num mut">72-cell</td><td class="num mut">144</td><td class="num">144</td></tr>
+<tr><td>Monarda Balmy Purple</td><td class="mut">Pacific Plug &amp; Liner</td><td class="mut">Quart</td><td class="num mut">72-cell</td><td class="num mut">144</td><td class="num">144</td></tr>
+<tr><td>Monarda Balmy Rose</td><td class="mut">Pacific Plug &amp; Liner</td><td class="mut">Quart</td><td class="num mut">72-cell</td><td class="num mut">144</td><td class="num">144</td></tr>
+<tr class="genus"><td colspan="5">Salvia <span class="gmeta">2 varieties</span></td><td class="num gnum">512</td></tr>
+<tr><td>Salvia Midnight Purple</td><td class="mut">Pacific Plug &amp; Liner</td><td class="mut">Quart</td><td class="num mut">128-cell</td><td class="num mut">256</td><td class="num">256</td></tr>
+<tr><td>Salvia Midnight Rose</td><td class="mut">Pacific Plug &amp; Liner</td><td class="mut">Quart</td><td class="num mut">128-cell</td><td class="num mut">256</td><td class="num">256</td></tr>
+<tr class="genus"><td colspan="5">Scabiosa <span class="gmeta">1 variety</span></td><td class="num gnum">256</td></tr>
+<tr><td>Scabiosa Flutter Blue Deep</td><td class="mut">Pacific Plug &amp; Liner</td><td class="mut">Quart</td><td class="num mut">128-cell</td><td class="num mut">256</td><td class="num">256</td></tr>
+<tr class="genus"><td colspan="5">Stachys <span class="gmeta">1 variety</span></td><td class="num gnum">256</td></tr>
+<tr><td>Stachys Little Lamb</td><td class="mut">Pacific Plug &amp; Liner</td><td class="mut">Quart</td><td class="num mut">128-cell</td><td class="num mut">256</td><td class="num">256</td></tr>
+<tr class="genus"><td colspan="5">Veronica <span class="gmeta">5 varieties</span></td><td class="num gnum">1,280</td></tr>
+<tr><td>Veronica Moody Blues Blue Sky</td><td class="mut">Pacific Plug &amp; Liner</td><td class="mut">Quart</td><td class="num mut">128-cell</td><td class="num mut">256</td><td class="num">256</td></tr>
+<tr><td>Veronica Moody Blues Dark Blue</td><td class="mut">Pacific Plug &amp; Liner</td><td class="mut">Quart</td><td class="num mut">128-cell</td><td class="num mut">256</td><td class="num">256</td></tr>
+<tr><td>Veronica Moody Blues Mauve</td><td class="mut">Pacific Plug &amp; Liner</td><td class="mut">Quart</td><td class="num mut">128-cell</td><td class="num mut">256</td><td class="num">256</td></tr>
+<tr><td>Veronica Vernique Blue</td><td class="mut">Pacific Plug &amp; Liner</td><td class="mut">Quart</td><td class="num mut">128-cell</td><td class="num mut">256</td><td class="num">256</td></tr>
+<tr><td>Veronica Vernique Raspberry</td><td class="mut">Pacific Plug &amp; Liner</td><td class="mut">Quart</td><td class="num mut">128-cell</td><td class="num mut">256</td><td class="num">256</td></tr>
+</tbody></table></div>
+    <div class="total"><span>Pots &amp; baskets <b>6,233</b></span><span>Plants <b>7,083</b></span></div>
+  </section>
+
+  <section>
+    <h2>Bare root</h2>
+    <p class="lede">Potted directly on arrival week 2, one crown per quart.</p>
+    <div class="tblwrap"><table><thead><tr><th class="">Variety</th><th class="">Source</th><th class="">Size</th><th class="num">Arrive</th><th class="num">Crowns</th></tr></thead><tbody>
+<tr class="genus"><td colspan="4">Allium <span class="gmeta">1 variety</span></td><td class="num gnum">500</td></tr>
+<tr><td>Allium Millenium</td><td class="mut">Darwin</td><td class="mut">Quart</td><td class="num mut">wk 2</td><td class="num">500</td></tr>
+</tbody></table></div>
+    <div class="total"><span>Crowns <b>500</b></span></div>
+  </section>
+
+  <div class="notes">
+    <p>Lavender is listed by type: (English) is Lavandula angustifolia, (Spanish) is Lavandula stoechas.</p>
+    <p>Quantities are planning figures as of September 2026 and will be confirmed on purchase orders.</p>
+  </div>
+
+  <footer><span class="brand">Hoosier Boy</span><span>Spring 2027 · House 13 perennials · quarts and 9" baskets</span></footer>
+</div>
+</body></html>
