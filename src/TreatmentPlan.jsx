@@ -443,7 +443,8 @@ export default function TreatmentPlan({ onBack, onGoToGrowing, responsesOnly = f
     pullTaskPhotos(list, existing || [], recIdOf); // copy back any completed-task photos (fire-and-forget)
   }, [sb, crop]); // pullTaskPhotos intentionally not a dep
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { let ok = true; (async () => { const { data } = await sb.from("variety_reference").select("*").eq("crop", crop).order("sort"); if (ok) setRefs(data || []); })(); return () => { ok = false; }; }, [sb, crop]);
+  const [refsTick, setRefsTick] = useState(0);   // bumped when a height is typed so the 📈 Growth line for this year appears without a reload
+  useEffect(() => { let ok = true; (async () => { const { data } = await sb.from("variety_reference").select("*").eq("crop", crop).order("sort"); if (ok) setRefs(data || []); })(); return () => { ok = false; }; }, [sb, crop, refsTick]);
 
   const lastYear = recs.length ? Math.max(...recs.map(r => +String(r.rec_date).slice(0, 4) || 0)) : thisYear - 1;
 
@@ -727,7 +728,7 @@ export default function TreatmentPlan({ onBack, onGoToGrowing, responsesOnly = f
         </>)}
       </div>
 
-      {sel && <DetailModal sb={sb} rec={sel} thisYear={thisYear} defaultDate={targetDefault(sel)} varTasks={listOf(sel.id)} displayName={displayName}
+      {sel && <DetailModal sb={sb} rec={sel} thisYear={thisYear} defaultDate={targetDefault(sel)} varTasks={listOf(sel.id)} displayName={displayName} refs={refs} onRefsChanged={() => setRefsTick(t => t + 1)}
         onConvert={(td) => convert(sel, td)} onUndo={() => undo(sel)} onReconcile={(r) => reconcile(r)} onChanged={async () => { await load(); }} onSyncSel={r => setSel(r)} onClose={() => setSel(null)}
         onGoToGrowing={onGoToGrowing} />}
       {refZoom && <RefLightbox photos={refZoom.photos} index={refZoom.i} onClose={() => setRefZoom(null)} onIndex={i => setRefZoom({ ...refZoom, i })} />}
@@ -776,7 +777,7 @@ function HelpModal({ crop, year, onClose }) {
 }
 
 // Detail window — read the treatment, add plant-size photos + notes, set the date, create/undo the task.
-function DetailModal({ sb, rec, thisYear, defaultDate, varTasks = [], displayName, onConvert, onUndo, onReconcile, onChanged, onSyncSel, onClose, onGoToGrowing }) {
+function DetailModal({ sb, rec, thisYear, defaultDate, varTasks = [], displayName, refs = [], onRefsChanged, onConvert, onUndo, onReconcile, onChanged, onSyncSel, onClose, onGoToGrowing }) {
   const init = () => ({ application: rec.application || "", rates: rec.rates || "", location: rec.location || "", notes: rec.notes || "" });
   const [meta, setMeta] = useState(init);
   const [lines, setLines] = useState(() => { const v = splitVars(rec.crop_detail); return v.length ? v : [""]; });
@@ -807,11 +808,28 @@ function DetailModal({ sb, rec, thisYear, defaultDate, varTasks = [], displayNam
     const n = parseFloat(val);
     if (!key || isNaN(n)) return;
     const wk = "WK" + isoWeek(new Date().toISOString().slice(0, 10)).week;
-    const { data: ex } = await sb.from("variety_reference").select("id,heights").eq("crop", rec.crop).eq("year", thisYear).eq("variety", key).maybeSingle();
+    // Land on the SAME chart line as prior seasons: match the typed name to an existing
+    // reference variety (case/size-prefix/quote insensitive) so "Prestigious Red" joins
+    // '5" Prestigious Red' instead of starting a new variety in the dropdown.
+    const norm = x => String(x || "").toLowerCase().replace(/^\s*\d+(\.\d+)?\s*("|”|in\.?|inch)?\s*/, "").replace(/[^a-z0-9]+/g, " ").trim();
+    const wanted = norm(key);
+    const known = [...new Set(refs.filter(r => r.crop === rec.crop).map(r => r.variety).filter(Boolean))];
+    const match = known.find(v => v === key) || known.find(v => norm(v) === wanted) || known.find(v => wanted && (norm(v).includes(wanted) || wanted.includes(norm(v))));
+    const variety = match || key;
+    // greenhouse: reuse the reference's own location spelling (Main → Main House, etc.)
+    const locGuess = (rec.location || meta.location || "").trim();
+    const knownLocs = [...new Set(refs.map(r => r.location).filter(Boolean))];
+    const location = knownLocs.find(l => l.toLowerCase() === locGuess.toLowerCase())
+      || knownLocs.find(l => locGuess && l.toLowerCase().startsWith(locGuess.toLowerCase()))
+      || (locGuess || null);
+    let q = sb.from("variety_reference").select("id,heights").eq("crop", rec.crop).eq("year", thisYear).eq("variety", variety);
+    q = location ? q.eq("location", location) : q.is("location", null);
+    const { data: ex } = await q.maybeSingle();
     if (ex) await sb.from("variety_reference").update({ heights: { ...(ex.heights || {}), [wk]: n } }).eq("id", ex.id);
-    else await sb.from("variety_reference").insert({ crop: rec.crop, year: thisYear, variety: key, heights: { [wk]: n }, photos: [], sort: 999 });
-    setHtFlash(`${key}: ${n}" @ ${wk} ✓`);
+    else await sb.from("variety_reference").insert({ crop: rec.crop, year: thisYear, variety, location, heights: { [wk]: n }, photos: [], sort: 999 });
+    setHtFlash(`${variety}: ${n}" @ ${wk} ✓${location ? " · " + location : ""}`);
     setTimeout(() => setHtFlash(""), 3000);
+    onRefsChanged && onRefsChanged();
   }
   const saveVar = async (field, key, value) => {
     const cur = { variety_done: vd, variety_rates: vrs, variety_notes: vns }[field];
