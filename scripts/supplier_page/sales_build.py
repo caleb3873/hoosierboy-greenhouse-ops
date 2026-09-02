@@ -52,10 +52,10 @@ for r in rows:
     v = clean(tc(body))
     is_lav = genus == "Lavandula"
     typ = "English" if "(A)" in n else ("Spanish" if "(S)" in n else "")
-    items.append(dict(genus="Lavender" if is_lav else genus, size=size, name=v, typ=typ, pots=r["pots"], ready=r["ready_wk"], price=r.get("price")))
+    items.append(dict(genus=("Lavender baskets" if size != "Quart" else "Lavender") if is_lav else genus, size=size, name=v, typ=typ, pots=r["pots"], ready=r["ready_wk"], price=r.get("price")))
 by = {}
 for it in items: by.setdefault(it["genus"], []).append(it)
-order = sorted(by, key=lambda g: g.lower())
+order = sorted(by, key=lambda g: g.lower().replace("lavender baskets","lavender~"))
 
 GENUS_NOTE = {
     "Achillea": "Yarrow · full sun · pollinator favourite, drought tolerant once established",
@@ -69,7 +69,8 @@ GENUS_NOTE = {
     "Gaura": "Wand flower · full sun · airy, blooms to frost",
     "Heuchera": "Coral bells · part shade · foliage colour all season. Fyre Wing is Terra Nova's new premium series",
     "Lamium": "Dead nettle · shade · silver-leaf groundcover",
-    "Lavender": "Full sun · fragrant · English types are hardiest; Spanish bloom earliest",
+    "Lavender": "Quarts · full sun · fragrant · English types are hardiest; Spanish bloom earliest",
+    "Lavender baskets": "9\" hanging baskets · three plants per basket · English and Spanish La Diva",
     "Leucanthemum": "Shasta daisy · full sun · classic white cut flower",
     "Monarda": "Bee balm · sun to part shade · mildew resistant, pollinator magnet",
     "Nepeta": "Catmint · full sun · long blue bloom, deer resistant",
@@ -88,10 +89,10 @@ def card(g, its):
     ready = max(ready or 12, 12)
     rows_html = []
     for i in its:
-        nm = re.sub(rf"^{g}\s+", "", i["name"]) if g != "Lavender" else re.sub(r"^Lavandula\s+", "", i["name"])
+        nm = re.sub(r"^Lavandula\s+", "", i["name"]) if g.startswith("Lavender") else re.sub(rf"^{g}\s+", "", i["name"])
         sw = swatch(nm); dot = f'<i class="dot" style="background:{sw}"></i>' if sw else '<i class="dot none"></i>'
         typ = f'<span class="typ">{i["typ"]}</span>' if i["typ"] else ""
-        sz = "" if i["size"] == "Quart" else f'<span class="typ">{i["size"]}</span>'
+        sz = ""
         pr = f'<span class="price">${float(i["price"]):.2f}</span>' if i.get("price") else ""
         rows_html.append(f'<li>{dot}<span class="nm">{html.escape(nm)}</span>{typ}{sz}{pr}<span class="qty">{i["pots"]:,}</span></li>')
     note = GENUS_NOTE.get(g, "")
@@ -140,7 +141,7 @@ h1{{font-family:'Playfair Display',Georgia,serif;font-weight:500;font-size:clamp
 h2{{font-family:'Playfair Display',Georgia,serif;font-weight:500;font-size:28px;margin:0 0 6px;color:var(--pine)}}
 .sub{{color:var(--stone);margin:0 0 18px;max-width:66ch}}
 section{{margin:0 0 48px}}
-.grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}}
+.grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;align-items:start}}
 .card{{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px 18px 12px;display:flex;flex-direction:column}}
 .card header{{display:flex;justify-content:space-between;align-items:baseline;gap:10px}}
 .card h3{{font-family:'Playfair Display',Georgia,serif;font-weight:500;font-size:21px;margin:0;color:var(--pine)}}
@@ -151,10 +152,10 @@ section{{margin:0 0 48px}}
 .card li:first-child{{border-top:0}}
 .dot{{width:11px;height:11px;border-radius:50%;flex:0 0 11px;border:1px solid rgba(0,0,0,.12)}}
 .dot.none{{background:transparent;border:1px dashed var(--rule)}}
-.nm{{flex:1}}
-.typ{{font-size:11px;color:var(--stone);background:var(--tint);border-radius:4px;padding:1px 6px}}
-.qty{{font-variant-numeric:tabular-nums;color:var(--stone);font-size:13px;min-width:44px;text-align:right}}
-.price{{font-variant-numeric:tabular-nums;font-weight:600;color:var(--forest);font-size:13px;min-width:48px;text-align:right}}
+.nm{{flex:1;min-width:0}}
+.typ{{font-size:11px;color:var(--stone);background:var(--tint);border-radius:4px;padding:1px 6px;white-space:nowrap;flex:0 0 auto}}
+.qty{{font-variant-numeric:tabular-nums;color:var(--stone);font-size:13px;min-width:44px;text-align:right;white-space:nowrap;flex:0 0 auto}}
+.price{{font-variant-numeric:tabular-nums;font-weight:600;color:var(--forest);font-size:13px;min-width:48px;text-align:right;white-space:nowrap;flex:0 0 auto}}
 .card footer{{margin-top:10px;padding-top:8px;border-top:1px solid var(--rule);font-size:12px;color:var(--stone)}}
 .combo{{background:var(--tint)}}
 .how{{border-top:1px solid var(--rule);padding-top:20px;display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:20px}}
