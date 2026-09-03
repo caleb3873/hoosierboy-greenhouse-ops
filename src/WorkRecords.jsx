@@ -277,9 +277,9 @@ function ProductEditModal({ product, onClose, onSave }) {
         </div>
         {f.productType !== "fertigation" && (
           <>
-            <div style={{ display: "flex", gap: 8 }}>
-              <div style={{ flex: 1 }}><span style={label}>EPA Reg. #</span><input style={input} value={f.epaRegNumber} onChange={e => set("epaRegNumber", e.target.value)} /></div>
-              <div style={{ flex: 1 }}><span style={label}>REI hours</span><input style={input} inputMode="numeric" value={f.reiHours} onChange={e => set("reiHours", e.target.value)} /></div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <div style={{ flex: 1, minWidth: 0 }}><span style={label}>EPA Reg. #</span><input style={input} value={f.epaRegNumber} onChange={e => set("epaRegNumber", e.target.value)} /></div>
+              <div style={{ flex: 1, minWidth: 0 }}><span style={label}>REI hours</span><input style={input} inputMode="numeric" value={f.reiHours} onChange={e => set("reiHours", e.target.value)} /></div>
             </div>
             <span style={label}>Active ingredient</span>
             <input style={input} value={f.activeIngredient} onChange={e => set("activeIngredient", e.target.value)} />
@@ -468,19 +468,19 @@ export function PurdueTab() {
           </div>
         )}
 
-        <div style={{ display: "flex", gap: 8 }}>
-          <div style={{ flex: 1 }}><span style={label}>Plant / Host *</span><input style={input} value={f.plantHost} onChange={e => set("plantHost", e.target.value)} placeholder="e.g. Chrysanthemum" /></div>
-          <div style={{ flex: 1 }}><span style={label}>Cultivar / Variety</span><input style={input} value={f.cultivarVariety} onChange={e => set("cultivarVariety", e.target.value)} /></div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <div style={{ flex: 1, minWidth: 0 }}><span style={label}>Plant / Host *</span><input style={input} value={f.plantHost} onChange={e => set("plantHost", e.target.value)} placeholder="e.g. Chrysanthemum" /></div>
+          <div style={{ flex: 1, minWidth: 0 }}><span style={label}>Cultivar / Variety</span><input style={input} value={f.cultivarVariety} onChange={e => set("cultivarVariety", e.target.value)} /></div>
         </div>
         <span style={label}>Field ID (house / bench)</span>
         <input style={input} value={f.fieldId} onChange={e => set("fieldId", e.target.value)} placeholder="e.g. Bluff H4" />
-        <div style={{ display: "flex", gap: 8 }}>
-          <div style={{ flex: 1 }}><span style={label}>Date planted</span><input style={input} value={f.datePlanted} onChange={e => set("datePlanted", e.target.value)} placeholder="e.g. 5/15/26" /></div>
-          <div style={{ flex: 1 }}><span style={label}>Age of plant</span><input style={input} value={f.plantAge} onChange={e => set("plantAge", e.target.value)} placeholder="e.g. 8 weeks" /></div>
-          <div style={{ flex: 1 }}><span style={label}>% affected</span><input style={input} value={f.pctAffected} onChange={e => set("pctAffected", e.target.value)} placeholder="e.g. 10%" /></div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <div style={{ flex: 1, minWidth: 0 }}><span style={label}>Date planted</span><input style={input} value={f.datePlanted} onChange={e => set("datePlanted", e.target.value)} placeholder="e.g. 5/15/26" /></div>
+          <div style={{ flex: 1, minWidth: 0 }}><span style={label}>Age of plant</span><input style={input} value={f.plantAge} onChange={e => set("plantAge", e.target.value)} placeholder="e.g. 8 weeks" /></div>
+          <div style={{ flex: 1, minWidth: 0 }}><span style={label}>% affected</span><input style={input} value={f.pctAffected} onChange={e => set("pctAffected", e.target.value)} placeholder="e.g. 10%" /></div>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <div style={{ flex: 1 }}><span style={label}>Date first noticed</span><input style={input} value={f.dateNoticed} onChange={e => set("dateNoticed", e.target.value)} placeholder="e.g. 7/18/26" /></div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <div style={{ flex: 1, minWidth: 0 }}><span style={label}>Date first noticed</span><input style={input} value={f.dateNoticed} onChange={e => set("dateNoticed", e.target.value)} placeholder="e.g. 7/18/26" /></div>
           <div style={{ flex: 1 }}>
             <span style={label}>Distribution</span>
             <select style={input} value={f.distribution} onChange={e => set("distribution", e.target.value)}>

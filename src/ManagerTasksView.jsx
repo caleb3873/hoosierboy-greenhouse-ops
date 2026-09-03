@@ -963,7 +963,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
               style={{ width: 26, height: 26, minWidth: 26, borderRadius: 7, border: "2px solid #7fb069",
                 background: isDone ? "#7fb069" : "#fff", color: "#1e2d1a", fontSize: 15, fontWeight: 800,
                 cursor: "pointer", padding: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>{isDone ? "✓" : ""}</button>
-            <div style={{ flex: 1, cursor: "pointer" }} onClick={() => setSelectedTask(t)}>
+            <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }} onClick={() => setSelectedTask(t)}>
               <div style={{ display: "flex", gap: 7, alignItems: "baseline", flexWrap: "wrap" }}>
                 <b style={{ fontSize: 14.5, color: isDone ? "#7a8c74" : "#1e2d1a", textDecoration: isDone ? "line-through" : "none" }}>
                   {wp.kind === "potfill" ? "📦 Pot Fill" : "🌿 Planting"}
@@ -1061,7 +1061,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
               color: "#1e2d1a", fontSize: 15, fontWeight: 800, cursor: "pointer", padding: 0,
               display: "flex", alignItems: "center", justifyContent: "center",
             }}>{isDone ? "✓" : ""}</button>
-          <div style={{ flex: 1 }} onClick={() => setSelectedTask(t)}>
+          <div style={{ flex: 1, minWidth: 0 }} onClick={() => setSelectedTask(t)}>
             <div style={{ display: "flex", gap: 7, alignItems: "center", flexWrap: "wrap" }}>
               {typeLabel && <b style={{ fontSize: 14.5, color: isDone ? "#7a8c74" : "#1e2d1a", textDecoration: isDone ? "line-through" : "none" }}>{typeLabel}</b>}
               {typeLabel && locText && <span style={{ fontSize: 13, fontWeight: 800, color: locBarBg || "#4a7a35" }}>{locText}</span>}
@@ -2089,7 +2089,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       {showCodes && <CodesModal onClose={() => setShowCodes(false)} />}
       {confirmingDelete && (
         <div onClick={() => setConfirmingDelete(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 10001, display: "flex", alignItems: "center", justifyContent: "center", padding: 18, ...FONT }}>
-          <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 16, maxWidth: 440, width: "100%", padding: 22, color: "#1e2d1a" }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 16, maxWidth: 440, width: "100%", padding: 22, color: "#1e2d1a", maxHeight: "92vh", overflowY: "auto" }}>
             <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif", marginBottom: 6 }}>
               Were you trying to mark this complete?
             </div>
@@ -2729,7 +2729,7 @@ function DeclineModal({ request, onCancel, onDecline }) {
     <div onClick={onCancel}
       style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div onClick={e => e.stopPropagation()}
-        style={{ background: "#fff", borderRadius: 16, maxWidth: 480, width: "100%", padding: 0, fontFamily: "'DM Sans','Segoe UI',sans-serif" }}>
+        style={{ background: "#fff", borderRadius: 16, maxWidth: 480, width: "100%", padding: 0, maxHeight: "92vh", overflowY: "auto", fontFamily: "'DM Sans','Segoe UI',sans-serif" }}>
         <div style={{ background: "#d94f3d", color: "#fff", padding: "14px 18px", borderRadius: "16px 16px 0 0" }}>
           <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 1.2, textTransform: "uppercase", opacity: 0.85 }}>Decline Request</div>
           <div style={{ fontSize: 17, fontWeight: 800, fontFamily: "'DM Serif Display',Georgia,serif" }}>{request.title}</div>
@@ -2769,7 +2769,7 @@ function ApprovalModal({ request, onCancel, onApprove }) {
   return (
     <div onClick={onCancel}
       style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 10000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, ...FONT }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 460, padding: 24 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 460, padding: 24, maxHeight: "92vh", overflowY: "auto" }}>
         <div style={{ fontSize: 11, fontWeight: 800, color: "#7fb069", textTransform: "uppercase", letterSpacing: 1 }}>Approving</div>
         <div style={{ fontSize: 19, fontWeight: 800, color: "#1e2d1a", marginBottom: 16, fontFamily: "'DM Serif Display',Georgia,serif" }}>{request.title}</div>
 
@@ -3012,7 +3012,7 @@ function VoiceRecorderModal({ onSave, onCancel, defaultLocation = "bluff" }) {
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 9999, display: "flex", alignItems: "flex-end", justifyContent: "center" }}
       onClick={onCancel}>
       <div onClick={e => e.stopPropagation()} style={{
-        background: "#fff", borderRadius: "20px 20px 0 0", padding: 24, width: "100%", maxWidth: 500,
+        background: "#fff", borderRadius: "20px 20px 0 0", padding: 24, width: "100%", maxWidth: 500, maxHeight: "92vh", overflowY: "auto",
       }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
           <div style={{ fontSize: 18, fontWeight: 800, color: "#1e2d1a" }}>New Task</div>

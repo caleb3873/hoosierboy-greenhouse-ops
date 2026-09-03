@@ -380,12 +380,12 @@ export function NewWorkModal({ tasks, upsert, createdBy, defaultLocation = "bluf
                   </>
                 )}
 
-                <div style={{ display: "flex", gap: 8 }}>
-                  <div style={{ flex: 1 }}>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
                     <span style={label}>Rate</span>
                     <input style={input} placeholder={isFert ? "e.g. 200 ppm" : "e.g. 8 oz/100 gal"} value={rate} onChange={e => setRate(e.target.value)} />
                   </div>
-                  <div style={{ flex: 1 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
                     <span style={label}>Total volume</span>
                     <input style={input} placeholder="e.g. 100 gal" value={totalVolume} onChange={e => setTotalVolume(e.target.value)} />
                   </div>
@@ -425,12 +425,12 @@ export function NewWorkModal({ tasks, upsert, createdBy, defaultLocation = "bluf
               </>
             )}
 
-            <div style={{ display: "flex", gap: 8 }}>
-              <div style={{ flex: 1 }}>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
                 <span style={label}>Crop / variety</span>
                 <input style={input} placeholder="e.g. 8&quot; garden mums" value={crop} onChange={e => setCrop(e.target.value)} />
               </div>
-              <div style={{ flex: 1 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
                 <span style={label}>Houses / benches</span>
                 <input style={input} placeholder="e.g. Bluff H4–6" value={houses} onChange={e => setHouses(e.target.value)} />
               </div>

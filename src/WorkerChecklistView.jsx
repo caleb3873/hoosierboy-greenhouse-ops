@@ -885,7 +885,7 @@ function ReleaseModal({ task, onCancel, onRelease }) {
     <div onClick={onCancel}
       style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 9999, display: "flex", alignItems: "flex-end", justifyContent: "center", ...FONT }}>
       <div onClick={e => e.stopPropagation()} style={{
-        background: "#fff", borderRadius: "20px 20px 0 0", padding: 22, width: "100%", maxWidth: 500, color: "#1e2d1a",
+        background: "#fff", borderRadius: "20px 20px 0 0", padding: 22, width: "100%", maxWidth: 500, color: "#1e2d1a", maxHeight: "92vh", overflowY: "auto",
       }}>
         <div style={{ fontSize: 11, color: "#e89a3a", fontWeight: 800, textTransform: "uppercase", letterSpacing: 1 }}>Releasing</div>
         <div style={{ fontSize: 17, fontWeight: 800, color: "#1e2d1a", marginBottom: 14 }}>{task.title}</div>

@@ -322,9 +322,9 @@ export default function OperatorView({ onSwitchMode }) {
             ))}
           </button>
           {/* Current section label */}
-          <div>
+          <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 11, color: "#6a8a5a", fontWeight: 700, letterSpacing: .8, textTransform: "uppercase" }}>Floor View</div>
-            <div style={{ fontSize: 16, fontWeight: 800, color: "#e8f4d8", lineHeight: 1.2 }}>
+            <div style={{ fontSize: 16, fontWeight: 800, color: "#e8f4d8", lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
               {TABS.find(t => t.id === tab)?.label || ""}
             </div>
           </div>

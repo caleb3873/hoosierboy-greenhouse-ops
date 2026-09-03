@@ -624,9 +624,9 @@ export default function TreatmentPlan({ onBack, onGoToGrowing, responsesOnly = f
         </div>
 
         {(!responsesOnly || refs.length > 0) && (
-          <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+          <div style={{ display: "flex", gap: 8, marginBottom: 14, overflowX: "auto", paddingBottom: 2 }}>
             {[...(responsesOnly ? [] : [["log", "📒 This Year"], ["plan", "📜 Last Year"]]), ["responses", "📸 Responses"], ...(refs.length ? [["reference", "📏 Sizes"], ["growth", "📈 Growth"]] : [])].map(([id, label]) => (
-              <button key={id} onClick={() => setView(id)} style={{ flex: 1, background: view === id ? C.dark : "#fff", color: view === id ? "#c8e6b8" : C.muted, border: `1.5px solid ${view === id ? C.dark : C.border}`, borderRadius: 10, padding: "9px 8px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>{label}{id === "responses" && completedRecs.length > 0 ? ` (${completedRecs.length})` : ""}{id === "reference" ? ` (${refs.length})` : ""}</button>
+              <button key={id} onClick={() => setView(id)} style={{ flex: "1 0 auto", whiteSpace: "nowrap", background: view === id ? C.dark : "#fff", color: view === id ? "#c8e6b8" : C.muted, border: `1.5px solid ${view === id ? C.dark : C.border}`, borderRadius: 10, padding: "9px 8px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>{label}{id === "responses" && completedRecs.length > 0 ? ` (${completedRecs.length})` : ""}{id === "reference" ? ` (${refs.length})` : ""}</button>
             ))}
           </div>
         )}
@@ -958,14 +958,14 @@ function DetailModal({ sb, rec, thisYear, defaultDate, varTasks = [], displayNam
               const list = key ? photos.filter(p => p.variety === key) : [];
               return (
                 <div key={i} style={{ border: `1px solid ${C.border}`, borderRadius: 10, padding: 8, marginBottom: 8 }}>
-                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                     <input type="checkbox" checked={!!(key && vd[key])} disabled={!key}
                       title={key && vd[key] ? `done ${String(vd[key].at || "").slice(0, 10)}${vd[key].by ? " · " + vd[key].by : ""} — uncheck to undo` : "check when this variety is treated"}
                       onChange={e => saveVar("variety_done", key, e.target.checked ? { at: new Date().toISOString(), by: displayName || null } : null)}
                       style={{ width: 20, height: 20, accentColor: "#3a7d2c", flexShrink: 0 }} />
                     <input value={v} onChange={e => setLine(i, e.target.value)} list={knownVars.length ? "vr-varieties-" + rec.id : undefined}
                       onBlur={e => { const snapped = snapVar(e.target.value); if (snapped !== e.target.value) { const next = lines.map((x, j) => j === i ? snapped : x); setLines(next); saveMeta(next); } else saveMeta(); }}
-                      placeholder={knownVars.length ? "Pick a variety…" : 'Variety (e.g. 9" Nicki)'} style={{ ...inp, flex: 1, ...(key && vd[key] ? { background: "#f1f8ec" } : {}) }} />
+                      placeholder={knownVars.length ? "Pick a variety…" : 'Variety (e.g. 9" Nicki)'} style={{ ...inp, flex: "1 1 140px", minWidth: 0, ...(key && vd[key] ? { background: "#f1f8ec" } : {}) }} />
                     {i === 0 && knownVars.length > 0 && <datalist id={"vr-varieties-" + rec.id}>{knownVars.map(v => <option key={v} value={v} />)}</datalist>}
                     {rec.crop === "Poinsettia" && (
                       <input type="number" step="0.25" disabled={!key} placeholder={'ht"'}
@@ -1061,7 +1061,7 @@ function LogModal({ crop, year, sb, loggedBy, onClose, onSaved }) {
   }
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.5)", zIndex: 9999, display: "flex", alignItems: "flex-end", justifyContent: "center", padding: 12 }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 14, padding: 18, width: "100%", maxWidth: 460 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 14, padding: 18, width: "100%", maxWidth: 460, maxHeight: "92vh", overflowY: "auto" }}>
         <div style={{ fontWeight: 800, fontSize: 16, color: "#1e2d1a", marginBottom: 12 }}>Log a {crop} treatment</div>
         <input type="date" value={d.rec_date} onChange={e => set("rec_date", e.target.value)} style={inp} />
         <input value={d.application} onChange={e => set("application", e.target.value)} placeholder="Application (Piccolo, Planted, Dropped to 150ppm…)" style={inp} />
