@@ -30,7 +30,9 @@ const HOUSES = [
 // 4.5" crops that ALWAYS get space (Caleb 8/20 — he may add more): they carry their
 // own class and place against the SPACED tray numbers; everything else 4.5" is tight.
 // The old house-wide tight/spaced toggle is gone — spacing is a property of the CROP.
-export const SPACED_45 = /SUNPATIENS|NEW GUINEA|\bN\/?G\b|I'?CONIA|RIEGER|REIGER|GERANIUM/i;
+// vegetative begonias are all spaced at 4.5" (Caleb 9/3): I'Conia, iCandy, Move2, Solenia,
+// Waterfall, Belleconia and the Big/Dragon Wing/Whopper/Megawatt/Viking types
+export const SPACED_45 = /SUNPATIENS|NEW GUINEA|\bN\/?G\b|I'?CONIA|ICANDY|MOVE ?2|SOLENIA|WATERFALL|BELLECONIA|RIEGER|REIGER|BIG (GREEN|BRONZE)|DRAGON WING|WHOPPER|MEGAWATT|VIKING|GERANIUM/i;
 
 export function classOfItem(name) {
   const n = String(name || "").toUpperCase();
