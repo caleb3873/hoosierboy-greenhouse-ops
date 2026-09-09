@@ -37,13 +37,17 @@ export const SPACED_45 = /SUNPATIENS|NEW GUINEA|\bN\/?G\b|I'?CONIA|ICANDY|MOVE ?
 export function classOfItem(name) {
   const n = String(name || "").toUpperCase();
   if (/^HB /.test(n)) return "basket";
+  if (/^4\.5"|^6\.5"|^1801|^FLAT/.test(n)) return SPACED_45.test(n) ? "tray45sp" : "tray45";
+  if (/^1 QT/.test(n)) return "tray45";
   // 13" Fancy Boy (13X10.5 Baby Bell planter) spaces exactly like an 11"/12" fiber -
   // same footprint, so it shares the fiber_lg number instead of earning its own class
   // (Caleb 9/1). "POT 13\" GERANIUM" is the same 13" footprint and rides along.
   // 12" pansy bowls sit tight on the bench (Caleb 9/9) — same 12" footprint as a fiber LG
   if (/FIBER LG|^POT 13|^13"|^BOWL 12|^12" BOWL/.test(n)) return "fiber_lg";
   if (/FIBER SM|9" FIBER|FIBER 9|^POT 8|^8"/.test(n)) return "fiber_sm";
-  if (/CANYON/.test(n)) return "canyon14";
+  // the 14" canyon planter, not a variety with "Canyon" in its name (Akila Grand Canyon
+  // Mix was landing here and hiding 15 slots on EQ0501 — Caleb 9/9)
+  if (/^14"|CANYON 14|14" CANYON|^POT 14/.test(n)) return "canyon14";
   if (/^POT 11|^11"/.test(n)) return "pot11";
   if (/^POT 10|^10"/.test(n)) return "pot10";
   // 6.5" azaleas sit in the SP 650 heavy-duty 6-pack flat filler, which takes the same
