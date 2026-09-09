@@ -40,7 +40,8 @@ export function classOfItem(name) {
   // 13" Fancy Boy (13X10.5 Baby Bell planter) spaces exactly like an 11"/12" fiber -
   // same footprint, so it shares the fiber_lg number instead of earning its own class
   // (Caleb 9/1). "POT 13\" GERANIUM" is the same 13" footprint and rides along.
-  if (/FIBER LG|^POT 13|^13"/.test(n)) return "fiber_lg";
+  // 12" pansy bowls sit tight on the bench (Caleb 9/9) — same 12" footprint as a fiber LG
+  if (/FIBER LG|^POT 13|^13"|^BOWL 12|^12" BOWL/.test(n)) return "fiber_lg";
   if (/FIBER SM|9" FIBER|FIBER 9|^POT 8|^8"/.test(n)) return "fiber_sm";
   if (/CANYON/.test(n)) return "canyon14";
   if (/^POT 11|^11"/.test(n)) return "pot11";
@@ -58,6 +59,9 @@ export function classOfItem(name) {
 // flat filler (Caleb 9/1). One definition — it used to be copied into two scopes.
 export const potsPerSlot = name => {
   const n = String(name || "").toUpperCase();
+  // 1801 / FLAT rows carry qty_pots = FLATS (ppp 18), so one row unit = one slot —
+  // counting them /10 made a 90-flat shelf read 11/90 (Caleb 9/9)
+  if (/^1801|^FLAT/.test(n)) return 1;
   return /^1 QT/.test(n) ? 8 : /^6\.5"/.test(n) ? 6 : 10;
 };
 const TYPE_LABEL = { full8: "8'", full6: "6'", full4: "4'", third8: "⅓·8'", third4: "⅓·4'", wall4: "4' wall", mid8: "8' mid", basket_line: "line", low_line: "low", shelf: "shelf·tight" };
@@ -264,6 +268,18 @@ export default function SpaceMap({ plan: fixedPlan }) {
   });
   useEffect(() => { try { localStorage.setItem("space.houseKey", houseKey); } catch { /* ignore */ } }, [houseKey]);
   const [cls, setCls] = useState("tray45");
+  const planYear = +(fixedPlan?.year || plans.find(p => p.id === planId)?.year || (String(fixedPlan?.name || plans.find(p => p.id === planId)?.name || "").match(/20\d\d/) || [])[0] || new Date().getFullYear() + 1);
+  // Benches turn over: pansies/violas/osteos (planted wk49–wk5) leave before the main
+  // spring crop lands on the same bench. Without a window the map summed both seasons
+  // and every early-spring bench read over-full (Caleb 9/9).
+  const [season, setSeason] = useState(() => { try { return localStorage.getItem("space.season") || "all"; } catch { return "all"; } });
+  useEffect(() => { try { localStorage.setItem("space.season", season); } catch { /* ignore */ } }, [season]);
+  const inSeason = r => {
+    if (season === "all" || r.plant_week == null) return true;
+    const yr = r.plant_year ?? planYear;
+    const early = yr < planYear || (yr === planYear && r.plant_week <= 5);
+    return season === "early" ? early : !early;
+  };
   // Excel-style sweep: press on a bench or line, drag across others, read the running
   // total in the status bar. Only a multi-bench drag registers, so a plain click still
   // places (Caleb 9/1).
@@ -300,7 +316,7 @@ export default function SpaceMap({ plan: fixedPlan }) {
     if (!sb) return;
     (async () => {
       if (!fixedPlan) {
-        const { data: pl } = await sb.from("production_plans").select("id,name,status").neq("status", "archived").order("created_at", { ascending: false });
+        const { data: pl } = await sb.from("production_plans").select("id,name,status,year").neq("status", "archived").order("created_at", { ascending: false });
         setPlans(pl || []);
         if (!planId && pl?.length) setPlanId((pl.find(p => /spring.*2027/i.test(p.name)) || pl[0]).id);
       }
@@ -324,7 +340,7 @@ export default function SpaceMap({ plan: fixedPlan }) {
       const ids = b.map(x => x.id);
       let sc = [];
       for (let i = 0; i < ids.length; i += 80) {
-        const { data } = await sb.from("scheduled_crops").select("id,item_name,qty_pots,plant_week,bench_id,placed_at,recipe_id")
+        const { data } = await sb.from("scheduled_crops").select("id,item_name,qty_pots,plant_week,plant_year,bench_id,placed_at,recipe_id")
           .eq("plan_id", planId).in("bench_id", ids.slice(i, i + 80)).not("is_combo_component", "is", true).gt("qty_pots", 0).limit(2000);
         sc = sc.concat(data || []);
       }
@@ -400,8 +416,8 @@ export default function SpaceMap({ plan: fixedPlan }) {
   const isTray = k => k === "tray45" || k === "tray45sp";
   const inUnits = (q, k, name) => isTray(k) ? Math.ceil(q / potsPerSlot(name)) : q;
 
-  const placedRows = useMemo(() => rows.filter(r => r.placed_at), [rows]);
-  const lastYearRows = useMemo(() => rows.filter(r => !r.placed_at), [rows]);
+  const placedRows = useMemo(() => rows.filter(r => r.placed_at && inSeason(r)), [rows, season]); // eslint-disable-line
+  const lastYearRows = useMemo(() => rows.filter(r => !r.placed_at && inSeason(r)), [rows, season]); // eslint-disable-line
   const byBench = useMemo(() => {
     const src = mode === "lastyear" ? lastYearRows : placedRows;
     const lineIds = new Set(benches.filter(b => ["basket_line", "low_line"].includes(b.bench_type)).map(b => b.id));
@@ -883,6 +899,13 @@ export default function SpaceMap({ plan: fixedPlan }) {
             <button key={k} onClick={() => setCls(k)}
               style={{ padding: "4px 10px", borderRadius: 8, fontWeight: 800, fontSize: 11, cursor: "pointer", fontFamily: FONT,
                 border: `1.5px solid ${cls === k ? C.light : C.border}`, background: cls === k ? "#eef6e8" : "#fff", color: cls === k ? C.dark : C.muted }}>{label}</button>
+          ))}
+        </span>
+        <span style={{ display: "inline-flex", gap: 4 }} title="which crop turn to count — benches hold early spring (planted through wk 5) and then the main spring crop">
+          {[["early", "❄ early (≤wk5)"], ["main", "🌱 main (wk6+)"], ["all", "both"]].map(([k, label]) => (
+            <button key={k} onClick={() => setSeason(k)}
+              style={{ padding: "4px 10px", borderRadius: 8, fontWeight: 800, fontSize: 11, cursor: "pointer", fontFamily: FONT,
+                border: `1.5px solid ${season === k ? C.amber : C.border}`, background: season === k ? "#fdf6e3" : "#fff", color: season === k ? C.dark : C.muted }}>{label}</button>
           ))}
         </span>
         <span style={{ display: "inline-flex", gap: 10, marginLeft: 4 }}>
