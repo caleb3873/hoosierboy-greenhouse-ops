@@ -183,7 +183,18 @@ export function PreOrderSheetViewer({ id }) {
         .po-card img.po-photo{width:100%;aspect-ratio:4/3;object-fit:cover;display:block;background:${C.chip};cursor:zoom-in}
         img.po-zoom{cursor:zoom-in}
         .po-color{display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px dashed ${C.border}}
-        .po-color img{width:64px;height:48px;object-fit:cover;border-radius:8px;flex-shrink:0;background:${C.chip}}
+        .po-color img{width:88px;height:66px;object-fit:cover;border-radius:8px;flex-shrink:0;background:${C.chip};cursor:zoom-in}
+        .po-pk{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin:14px 0 6px}
+        .po-pk div{background:#fff;border:1px solid ${C.border};border-radius:12px;padding:10px 10px 9px;text-align:center}
+        .po-pk b{display:block;font-family:${SERIF};font-size:16px;color:${C.dark};font-weight:400;line-height:1.15}
+        .po-pk small{display:block;font-size:11.5px;color:${C.muted};margin-top:3px}
+        .po-pk .pr{font-size:15px;font-weight:800;color:${C.dark};margin-top:6px}
+        .po-det{background:#fff;border:1px solid ${C.border};border-radius:14px;padding:12px 16px;margin:14px 0}
+        .po-det div{display:flex;gap:12px;padding:5px 0;border-bottom:1px dashed ${C.border};font-size:14px;line-height:1.4}
+        .po-det div:last-child{border-bottom:0}
+        .po-det span:first-child{flex:0 0 96px;font-size:11px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:${C.muted};padding-top:3px}
+        .po-prop{font-size:15.5px;line-height:1.5;color:${C.dark};font-weight:500;margin:6px 0 2px}
+        @media (max-width:420px){.po-pk{gap:6px}.po-pk b{font-size:14px}}
         .po-color .nm{flex:1;font-weight:700;color:${C.dark};font-size:15px}
         .po-qty{display:flex;align-items:center;gap:8px}
         .po-qty button{width:44px;height:44px;border-radius:10px;border:1.5px solid ${C.border};background:#fff;font-size:22px;font-weight:700;color:${C.dark};cursor:pointer}
@@ -205,17 +216,34 @@ export function PreOrderSheetViewer({ id }) {
         {program.hero_url && (
           <img src={program.hero_url} alt={program.title} className="po-zoom" onClick={() => setPhoto({ url: program.hero_url, name: program.title })} style={{ width: "100%", maxHeight: 360, objectFit: "cover", borderRadius: 14, margin: "16px 0 4px", display: "block" }} />
         )}
-        <h1 style={{ fontFamily: SERIF, fontSize: 34, color: C.dark, margin: "18px 0 4px", lineHeight: 1.1, textWrap: "balance" }}>{program.title}</h1>
-        {program.subtitle && <div style={{ fontSize: 16, color: C.muted, marginBottom: 12 }}>{program.subtitle}</div>}
-
-        <div style={{ background: "#fff", border: `1px solid ${C.border}`, borderRadius: 14, padding: "14px 16px", margin: "12px 0 18px" }}>
-          <div style={{ fontSize: 17, fontWeight: 800, color: C.dark }}>For {sheet.customer_name}</div>
-          {sheet.message && <div style={{ marginTop: 6, fontSize: 15, lineHeight: 1.5 }}>{sheet.message}</div>}
-          <div style={{ marginTop: 8, fontSize: 13, color: C.muted }}>
-            {sheet.rep_name ? `From ${sheet.rep_name} at Hoosier Boy` : "From Hoosier Boy"}
-            {program.availability ? ` · ${program.availability}` : ""}
-            {deadline ? ` · Pre-orders close ${deadline}` : ""}
+        <h1 style={{ fontFamily: SERIF, fontSize: 34, color: C.dark, margin: "18px 0 2px", lineHeight: 1.1, textWrap: "balance" }}>{program.title}</h1>
+        {program.subtitle && <div style={{ fontSize: 17, color: C.text, marginBottom: 4 }}>{program.subtitle}</div>}
+        {(program.availability || deadline) && (
+          <div style={{ fontSize: 14, fontWeight: 700, color: C.dark, marginBottom: 8 }}>
+            {[program.availability, deadline ? `Pre-order by ${deadline}` : null].filter(Boolean).join(" · ")}
           </div>
+        )}
+        {program.proposition && <div className="po-prop">{program.proposition}</div>}
+
+        {items.length > 0 && (
+          <div className="po-pk">
+            {items.map(it => (
+              <div key={it.id}>
+                <b>{it.name.replace(/^Antoinette (Pansy, |Pansy |)/i, "").replace(/^\s*,\s*/, "")}</b>
+                <small>{it.size_label}</small>
+                <div className="pr">{money(it.wholesale_price)}</div>
+                {it.retail_price != null && <small>{money(it.retail_price)} SRP</small>}
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div style={{ background: "#fff", border: `1px solid ${C.border}`, borderRadius: 14, padding: "12px 16px", margin: "10px 0 12px" }}>
+          <div style={{ fontSize: 13, color: C.muted }}>Prepared for <b style={{ color: C.dark }}>{sheet.customer_name}</b>{sheet.rep_name ? <> · Your Hoosier Boy rep: <b style={{ color: C.dark }}>{sheet.rep_name}</b></> : null}</div>
+          {sheet.message && <div style={{ marginTop: 6, fontSize: 15, lineHeight: 1.5 }}>{sheet.message}</div>}
+          {!sheet.submitted_at && !sent && !closed && (
+            <div style={{ marginTop: 8, fontSize: 14, lineHeight: 1.5 }}>Enter the quantities you would like us to grow for you. No invoice is created today. Your rep will confirm your pre-order.</div>
+          )}
         </div>
 
         {(sent || already) && (
@@ -231,7 +259,13 @@ export function PreOrderSheetViewer({ id }) {
         )}
 
         {program.story && (
-          <div style={{ fontSize: 16, lineHeight: 1.6, maxWidth: "62ch", whiteSpace: "pre-line", marginBottom: 20 }}>{program.story}</div>
+          <div style={{ fontSize: 16, lineHeight: 1.6, maxWidth: "62ch", whiteSpace: "pre-line", marginBottom: 14 }}>{program.story}</div>
+        )}
+        {Array.isArray(program.details) && program.details.length > 0 && (
+          <div className="po-det">
+            <div style={{ borderBottom: `1px solid ${C.border}`, paddingBottom: 8, marginBottom: 2 }}><span style={{ flex: "0 0 auto", fontFamily: SERIF, fontSize: 18, color: C.dark, textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>Pre-order details</span></div>
+            {program.details.map((d, i) => <div key={i}><span>{d.label}</span><span>{d.value}</span></div>)}
+          </div>
         )}
 
         {items.map(it => { const q = itemQty(it); const cs = colorsOf(it); return (
@@ -241,8 +275,9 @@ export function PreOrderSheetViewer({ id }) {
               <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline" }}>
                 <div style={{ fontFamily: SERIF, fontSize: 22, color: C.dark }}>{it.name}</div>
                 <div style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                  <div style={{ fontSize: 20, fontWeight: 800, color: C.dark }}>{money(it.wholesale_price)}</div>
-                  {it.retail_price != null && <div style={{ fontSize: 12, color: C.muted }}>suggested retail {money(it.retail_price)}</div>}
+                  <div style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: ".06em", color: C.muted }}>WHOLESALE</div>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: C.dark, lineHeight: 1.05 }}>{money(it.wholesale_price)}</div>
+                  {it.retail_price != null && <div style={{ fontSize: 12, color: C.muted }}>Suggested retail {money(it.retail_price)}</div>}
                 </div>
               </div>
               {(it.size_label || it.pack) && <div style={{ fontSize: 13, color: C.muted, marginTop: 2 }}>{[it.size_label, it.pack].filter(Boolean).join(" · ")}</div>}
@@ -308,14 +343,14 @@ export function PreOrderSheetViewer({ id }) {
 
         <div style={{ textAlign: "center", padding: "26px 0 6px" }}>
           <img src={LOGO_COLOR} alt="Hoosier Boy" style={{ height: 58, width: "auto", maxWidth: "80%", objectFit: "contain" }} />
-          <div style={{ fontSize: 12, color: C.muted, marginTop: 6 }}>705 Sprague St, Indianapolis · your rep confirms every pre-order before it ships</div>
+          <div style={{ fontSize: 12, color: C.muted, marginTop: 6 }}>Indianapolis, Indiana</div>
         </div>
         <div className="po-cta">
           <button className="po-btn" disabled={saving || closed} onClick={submit}>
             {saving ? "Sending…" : (sheet.submitted_at || sent) ? "Update my pre-order" : "Send my pre-order"}
           </button>
           <div style={{ textAlign: "center", fontSize: 12, color: C.muted, marginTop: 8 }}>
-            A pre-order holds your spot, it is not an invoice. We confirm before anything ships.
+            A pre-order is not an invoice. Your rep confirms quantities and delivery before anything ships.
           </div>
         </div>
       </div>
@@ -432,7 +467,9 @@ export default function PreOrders({ onBack, embedded }) {
   const saveProgram = async () => {
     if (!pe?.title?.trim()) return;
     setBusy(true);
-    const row = { title: pe.title.trim(), subtitle: pe.subtitle || null, story: pe.story || null, hero_url: pe.hero_url || null,
+    const details = (pe._detailsText != null ? pe._detailsText.split("\n") : (pe.details || []).map(d => `${d.label}: ${d.value}`))
+      .map(l => l.trim()).filter(Boolean).map(l => { const i = l.indexOf(":"); return i > 0 ? { label: l.slice(0, i).trim(), value: l.slice(i + 1).trim() } : { label: "", value: l }; });
+    const row = { title: pe.title.trim(), subtitle: pe.subtitle || null, story: pe.story || null, hero_url: pe.hero_url || null, proposition: pe.proposition || null, details,
       deadline: pe.deadline || null, availability: pe.availability || null, terms: pe.terms || null, status: pe.status || "draft", updated_at: new Date().toISOString() };
     if (pe.id) await sb.from("preorder_programs").update(row).eq("id", pe.id);
     else { const { data } = await sb.from("preorder_programs").insert({ ...row, created_by: displayName || null }).select("id").single(); if (data) setProgId(data.id); }
@@ -625,7 +662,11 @@ export default function PreOrders({ onBack, embedded }) {
             <div style={{ background: "#fff", border: `1px solid ${C.border}`, borderRadius: 12, padding: "12px 14px", marginBottom: 12 }}>
               <div style={label}>Title</div><input style={field} value={pe.title || ""} onChange={e => setPe({ ...pe, title: e.target.value })} placeholder="Antoinette Pansies — 2027" />
               <div style={label}>Subtitle</div><input style={field} value={pe.subtitle || ""} onChange={e => setPe({ ...pe, subtitle: e.target.value })} placeholder="Double, ruffled, and only from Hoosier Boy this spring" />
+              <div style={label}>Proposition (one or two lines under the title)</div><textarea style={field} rows={2} value={pe.proposition || ""} onChange={e => setPe({ ...pe, proposition: e.target.value })} placeholder="Three finished packages from $6.50 wholesale, about 50% margin at suggested retail, individually tagged." />
               <div style={label}>Story (customer-facing)</div><textarea style={field} rows={6} value={pe.story || ""} onChange={e => setPe({ ...pe, story: e.target.value })} />
+              <div style={label}>Pre-order details (one per line, "Label: value")</div>
+              <textarea style={field} rows={6} value={pe._detailsText ?? (Array.isArray(pe.details) ? pe.details.map(d => `${d.label}: ${d.value}`).join("\n") : "")}
+                onChange={e => setPe({ ...pe, _detailsText: e.target.value })} placeholder={"Ready: Late February 2027\nMinimum: 8 per color\nDelivery: On your regular route"} />
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                 <div><div style={label}>Pre-orders close</div><input type="date" style={field} value={pe.deadline || ""} onChange={e => setPe({ ...pe, deadline: e.target.value })} /></div>
                 <div><div style={label}>Availability</div><input style={field} value={pe.availability || ""} onChange={e => setPe({ ...pe, availability: e.target.value })} placeholder="Ready late February" /></div>
