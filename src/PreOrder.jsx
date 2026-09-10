@@ -22,10 +22,10 @@ const money = n => n == null || n === "" ? "—" : `$${(+n).toFixed(2)}`;
 export const LOGO_WHITE = "/hoosier-boy-logo-white.png";
 export const LOGO_COLOR = "/hoosier-boy-logo-color.jpg";
 export const LOGO_MARK = "/hoosier-boy-mark-color.jpg";   // square mascot, no words
-export const preorderUrl = id => `${window.location.origin}/?po=${id}`;
+export const preorderUrl = id => `${window.location.origin}/p/${id}`;   // /p/<id> = link-preview wrapper → /?po=<id>
 // general link for a whole program — anyone who opens it types their business name and
 // gets their own sheet on submit (Caleb 9/10: "copy the link and text it")
-export const programUrl = id => `${window.location.origin}/?pop=${id}`;
+export const programUrl = id => `${window.location.origin}/pp/${id}`;   // /pp/<id> = link-preview wrapper → /?pop=<id>
 const colorsOf = it => Array.isArray(it?.colors) ? it.colors.filter(c => c && c.name) : [];
 const ek = (itemId, color) => `${itemId}|${color || ""}`;
 

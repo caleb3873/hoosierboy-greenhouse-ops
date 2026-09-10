@@ -44,5 +44,15 @@
       "path": "/api/inventory-snapshot?save=1",
       "schedule": "0 11 * * 1"
     }
+  ],
+  "rewrites": [
+    {
+      "source": "/pp/:id",
+      "destination": "/api/preorder-share?kind=pop&id=:id"
+    },
+    {
+      "source": "/p/:id",
+      "destination": "/api/preorder-share?kind=po&id=:id"
+    }
   ]
 }
