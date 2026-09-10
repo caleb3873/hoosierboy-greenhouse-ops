@@ -17,7 +17,55 @@ const C = { dark: "#1e2d1a", light: "#7fb069", cream: "#c8e6b8", muted: "#7a8c74
 const FONT = "'DM Sans', sans-serif";
 const SERIF = "'DM Serif Display', Georgia, serif";
 const money = n => n == null || n === "" ? "—" : `$${(+n).toFixed(2)}`;
+// Real Hoosier Boy logos on every customer-facing page (Caleb 9/10): white reversed on the
+// dark bar, two-color for light backgrounds. Served from the app's own public/ folder.
+export const LOGO_WHITE = "/hoosier-boy-logo-white.png";
+export const LOGO_COLOR = "/hoosier-boy-logo-color.jpg";
 export const preorderUrl = id => `${window.location.origin}/?po=${id}`;
+const colorsOf = it => Array.isArray(it?.colors) ? it.colors.filter(c => c && c.name) : [];
+const ek = (itemId, color) => `${itemId}|${color || ""}`;
+
+// Every photo on a customer sheet expands, downloads and shares (Caleb 9/10).
+function Lightbox({ photo, onClose }) {
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    const k = e => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", k); document.body.style.overflow = "hidden";
+    return () => { window.removeEventListener("keydown", k); document.body.style.overflow = ""; };
+  }, [onClose]);
+  if (!photo) return null;
+  const fname = (photo.name || "hoosier-boy-photo").replace(/[^\w\-]+/g, "-").toLowerCase() + (/(\.png)(\?|$)/i.test(photo.url) ? ".png" : ".jpg");
+  const asFile = async () => { const r = await fetch(photo.url, { mode: "cors" }); const b = await r.blob(); return new File([b], fname, { type: b.type || "image/jpeg" }); };
+  const download = async () => {
+    setBusy(true);
+    try { const f = await asFile(); const u = URL.createObjectURL(f); const a = document.createElement("a"); a.href = u; a.download = fname; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 4000); }
+    catch { window.open(photo.url, "_blank", "noopener"); }
+    setBusy(false);
+  };
+  const share = async () => {
+    setBusy(true);
+    try {
+      if (navigator.share) {
+        let files = null; try { const f = await asFile(); if (navigator.canShare && navigator.canShare({ files: [f] })) files = [f]; } catch { /* fall back to the link */ }
+        await navigator.share({ title: photo.name || "Hoosier Boy", text: photo.name ? `${photo.name} — Hoosier Boy` : "Hoosier Boy", ...(files ? { files } : { url: photo.url }) });
+      } else { await navigator.clipboard.writeText(photo.url); window.alert("Photo link copied"); }
+    } catch { /* cancelled */ }
+    setBusy(false);
+  };
+  const b = { background: "rgba(255,255,255,.14)", color: "#fff", border: "1px solid rgba(255,255,255,.35)", borderRadius: 10, padding: "10px 14px", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: FONT };
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(10,16,8,.94)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 12 }}>
+      <img src={photo.url} alt={photo.name || ""} onClick={e => e.stopPropagation()} style={{ maxWidth: "100%", maxHeight: "calc(100vh - 120px)", objectFit: "contain", borderRadius: 8, boxShadow: "0 20px 60px rgba(0,0,0,.5)" }} />
+      <div onClick={e => e.stopPropagation()} style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap", justifyContent: "center" }}>
+        {photo.name && <span style={{ color: "#fff", fontFamily: SERIF, fontSize: 17, alignSelf: "center", marginRight: 6 }}>{photo.name}</span>}
+        <button style={b} disabled={busy} onClick={download}>⤓ Download</button>
+        <button style={b} disabled={busy} onClick={share}>{navigator.share ? "Share…" : "Copy link"}</button>
+        <a href={photo.url} target="_blank" rel="noreferrer" style={{ ...b, textDecoration: "none" }}>Open full size</a>
+        <button style={b} onClick={onClose}>✕ Close</button>
+      </div>
+    </div>
+  );
+}
 
 function visitorId() {
   try {
@@ -51,6 +99,7 @@ export function PreOrderSheetViewer({ id }) {
   const [saving, setSaving] = useState(false);
   const [sent, setSent] = useState(null);            // ISO of last submit in this session
   const [err, setErr] = useState(null);
+  const [photo, setPhoto] = useState(null);         // lightbox {url,name}
 
   useEffect(() => {
     (async () => {
@@ -59,10 +108,10 @@ export function PreOrderSheetViewer({ id }) {
       const [{ data: p }, { data: its }, { data: ents }] = await Promise.all([
         sb.from("preorder_programs").select("*").eq("id", s.program_id).maybeSingle(),
         sb.from("preorder_program_items").select("*").eq("program_id", s.program_id).eq("active", true).order("sort").order("name"),
-        sb.from("preorder_entries").select("item_id,qty").eq("sheet_id", id),
+        sb.from("preorder_entries").select("item_id,color,qty").eq("sheet_id", id),
       ]);
       setSheet(s); setProgram(p || null); setItems(its || []);
-      const q = {}; (ents || []).forEach(e => { q[e.item_id] = e.qty; }); setQty(q);
+      const q = {}; (ents || []).forEach(e => { q[ek(e.item_id, e.color)] = e.qty; }); setQty(q);
       setName(s.submitted_name || s.contact_name || "");
       setNote(s.submitted_note || "");
       if (p?.title) document.title = `${p.title} · Hoosier Boy`;
@@ -80,25 +129,30 @@ export function PreOrderSheetViewer({ id }) {
   }, [id]); // eslint-disable-line
 
   const closed = program && (program.status === "closed" || (program.deadline && new Date(program.deadline + "T23:59:59") < new Date()));
-  const lines = items.map(it => ({ it, q: Math.max(0, Math.round(+qty[it.id] || 0)) }));
+  // one line per item × color (a plain item is a single line with color "")
+  const lines = items.flatMap(it => {
+    const cs = colorsOf(it);
+    return (cs.length ? cs.map(c => c.name) : [""]).map(color => ({ it, color, q: Math.max(0, Math.round(+qty[ek(it.id, color)] || 0)) }));
+  });
   const totalQty = lines.reduce((a, l) => a + l.q, 0);
   const totalAmt = lines.reduce((a, l) => a + l.q * (+l.it.wholesale_price || 0), 0);
+  const itemQty = it => lines.filter(l => l.it.id === it.id).reduce((a, l) => a + l.q, 0);
 
-  const setQ = (it, v) => {
+  const setQ = (it, v, color = "") => {
     const step = Math.max(1, +it.qty_step || 1);
     let n = Math.max(0, Math.round(+v || 0));
     if (n > 0 && it.min_qty && n < it.min_qty) n = it.min_qty;
     if (step > 1 && n % step) n = Math.ceil(n / step) * step;
-    setQty(q => ({ ...q, [it.id]: n }));
+    setQty(q => ({ ...q, [ek(it.id, color)]: n }));
   };
   const submit = async () => {
     if (closed) return;
     if (!name.trim()) { setErr("Add your name so we know who to call back."); return; }
     setSaving(true); setErr(null);
     try {
-      const rows = lines.map(l => ({ sheet_id: id, item_id: l.it.id, qty: l.q, updated_at: new Date().toISOString() }));
+      const rows = lines.map(l => ({ sheet_id: id, item_id: l.it.id, color: l.color || "", qty: l.q, updated_at: new Date().toISOString() }));
       if (rows.length) {
-        const { error } = await sb.from("preorder_entries").upsert(rows, { onConflict: "sheet_id,item_id" });
+        const { error } = await sb.from("preorder_entries").upsert(rows, { onConflict: "sheet_id,item_id,color" });
         if (error) throw error;
       }
       const now = new Date().toISOString();
@@ -126,7 +180,11 @@ export function PreOrderSheetViewer({ id }) {
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700;800&family=DM+Serif+Display&display=swap');
         .po-wrap{max-width:760px;margin:0 auto;padding:0 16px 60px}
         .po-card{background:#fff;border:1px solid ${C.border};border-radius:14px;overflow:hidden;margin-bottom:14px}
-        .po-card img{width:100%;aspect-ratio:4/3;object-fit:cover;display:block;background:${C.chip}}
+        .po-card img.po-photo{width:100%;aspect-ratio:4/3;object-fit:cover;display:block;background:${C.chip};cursor:zoom-in}
+        img.po-zoom{cursor:zoom-in}
+        .po-color{display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px dashed ${C.border}}
+        .po-color img{width:64px;height:48px;object-fit:cover;border-radius:8px;flex-shrink:0;background:${C.chip}}
+        .po-color .nm{flex:1;font-weight:700;color:${C.dark};font-size:15px}
         .po-qty{display:flex;align-items:center;gap:8px}
         .po-qty button{width:44px;height:44px;border-radius:10px;border:1.5px solid ${C.border};background:#fff;font-size:22px;font-weight:700;color:${C.dark};cursor:pointer}
         .po-qty input{width:84px;height:44px;text-align:center;font-size:18px;font-weight:800;border:1.5px solid ${C.border};border-radius:10px;font-family:inherit;color:${C.dark}}
@@ -137,15 +195,15 @@ export function PreOrderSheetViewer({ id }) {
         input.po-text,textarea.po-text{width:100%;box-sizing:border-box;padding:12px;border:1.5px solid ${C.border};border-radius:10px;font-size:16px;font-family:inherit}
         @media print{.po-cta,.po-qty button{display:none}.po-card{break-inside:avoid;box-shadow:none}body{background:#fff}}
       `}</style>
-      <div style={{ background: C.dark, color: C.cream, padding: "14px 16px" }}>
-        <div className="po-wrap" style={{ padding: 0, display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-          <span style={{ fontFamily: SERIF, fontSize: 22 }}>Hoosier Boy</span>
-          <span style={{ fontSize: 12, opacity: .85 }}>Pre-order sheet</span>
+      <div style={{ background: C.dark, color: C.cream, padding: "12px 16px" }}>
+        <div className="po-wrap" style={{ padding: 0, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+          <img src={LOGO_WHITE} alt="Hoosier Boy" style={{ height: 54, width: "auto", objectFit: "contain", display: "block" }} />
+          <span style={{ fontSize: 12, opacity: .85, textAlign: "right" }}>Pre-order sheet<br /><span style={{ fontFamily: SERIF, fontSize: 15, opacity: 1 }}>Hoosier Boy</span></span>
         </div>
       </div>
       <div className="po-wrap">
         {program.hero_url && (
-          <img src={program.hero_url} alt={program.title} style={{ width: "100%", maxHeight: 360, objectFit: "cover", borderRadius: 14, margin: "16px 0 4px", display: "block" }} />
+          <img src={program.hero_url} alt={program.title} className="po-zoom" onClick={() => setPhoto({ url: program.hero_url, name: program.title })} style={{ width: "100%", maxHeight: 360, objectFit: "cover", borderRadius: 14, margin: "16px 0 4px", display: "block" }} />
         )}
         <h1 style={{ fontFamily: SERIF, fontSize: 34, color: C.dark, margin: "18px 0 4px", lineHeight: 1.1, textWrap: "balance" }}>{program.title}</h1>
         {program.subtitle && <div style={{ fontSize: 16, color: C.muted, marginBottom: 12 }}>{program.subtitle}</div>}
@@ -176,9 +234,9 @@ export function PreOrderSheetViewer({ id }) {
           <div style={{ fontSize: 16, lineHeight: 1.6, maxWidth: "62ch", whiteSpace: "pre-line", marginBottom: 20 }}>{program.story}</div>
         )}
 
-        {lines.map(({ it, q }) => (
+        {items.map(it => { const q = itemQty(it); const cs = colorsOf(it); return (
           <div className="po-card" key={it.id}>
-            {it.image_url && <img src={it.image_url} alt={it.name} />}
+            {it.image_url && <img className="po-photo" src={it.image_url} alt={it.name} onClick={() => setPhoto({ url: it.image_url, name: it.name })} />}
             <div style={{ padding: "14px 16px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline" }}>
                 <div style={{ fontFamily: SERIF, fontSize: 22, color: C.dark }}>{it.name}</div>
@@ -189,30 +247,52 @@ export function PreOrderSheetViewer({ id }) {
               </div>
               {(it.size_label || it.pack) && <div style={{ fontSize: 13, color: C.muted, marginTop: 2 }}>{[it.size_label, it.pack].filter(Boolean).join(" · ")}</div>}
               {it.description && <div style={{ fontSize: 15, lineHeight: 1.5, marginTop: 8 }}>{it.description}</div>}
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14, gap: 10, flexWrap: "wrap" }}>
-                <div style={{ fontSize: 13, color: C.muted }}>
-                  How many?{it.min_qty ? ` (min ${it.min_qty})` : ""}{it.qty_step > 1 ? ` · in ${it.qty_step}s` : ""}
+              {cs.length > 0 ? (
+                <div style={{ marginTop: 12 }}>
+                  <div style={{ fontSize: 13, color: C.muted, marginBottom: 4 }}>How many of each color?{it.min_qty ? ` (min ${it.min_qty} per color)` : ""}{it.qty_step > 1 ? ` · in ${it.qty_step}s` : ""}</div>
+                  {cs.map(c => { const cq = Math.max(0, Math.round(+qty[ek(it.id, c.name)] || 0)); return (
+                    <div className="po-color" key={c.name}>
+                      {c.image_url ? <img src={c.image_url} alt={c.name} className="po-zoom" onClick={() => setPhoto({ url: c.image_url, name: `${it.name} · ${c.name}` })} /> : <div style={{ width: 64, height: 48, borderRadius: 8, background: C.chip }} />}
+                      <div className="nm">{c.name}{cq > 0 && <div style={{ fontSize: 12, fontWeight: 500, color: C.muted }}>{cq} × {money(it.wholesale_price)} = {money(cq * (+it.wholesale_price || 0))}</div>}</div>
+                      <div className="po-qty">
+                        <button type="button" disabled={closed} onClick={() => setQ(it, cq - (it.qty_step || 1), c.name)} aria-label="less">−</button>
+                        <input inputMode="numeric" value={cq || ""} placeholder="0" disabled={closed}
+                          onChange={e => setQty(s => ({ ...s, [ek(it.id, c.name)]: e.target.value.replace(/[^\d]/g, "") }))}
+                          onBlur={e => setQ(it, e.target.value, c.name)} />
+                        <button type="button" disabled={closed} onClick={() => setQ(it, (cq || 0) + (it.qty_step || 1), c.name)} aria-label="more">+</button>
+                      </div>
+                    </div>
+                  ); })}
+                  {q > 0 && <div style={{ textAlign: "right", fontSize: 13, color: C.muted, marginTop: 6 }}>{q} {it.name} = <b style={{ color: C.dark }}>{money(q * (+it.wholesale_price || 0))}</b></div>}
                 </div>
-                <div className="po-qty">
-                  <button type="button" disabled={closed} onClick={() => setQ(it, q - (it.qty_step || 1))} aria-label="less">−</button>
-                  <input inputMode="numeric" value={q || ""} placeholder="0" disabled={closed}
-                    onChange={e => setQty(s => ({ ...s, [it.id]: e.target.value.replace(/[^\d]/g, "") }))}
-                    onBlur={e => setQ(it, e.target.value)} />
-                  <button type="button" disabled={closed} onClick={() => setQ(it, (q || 0) + (it.qty_step || 1))} aria-label="more">+</button>
-                </div>
-              </div>
-              {q > 0 && <div style={{ textAlign: "right", fontSize: 13, color: C.muted, marginTop: 6 }}>{q} × {money(it.wholesale_price)} = <b style={{ color: C.dark }}>{money(q * (+it.wholesale_price || 0))}</b></div>}
+              ) : (
+                <>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14, gap: 10, flexWrap: "wrap" }}>
+                    <div style={{ fontSize: 13, color: C.muted }}>
+                      How many?{it.min_qty ? ` (min ${it.min_qty})` : ""}{it.qty_step > 1 ? ` · in ${it.qty_step}s` : ""}
+                    </div>
+                    <div className="po-qty">
+                      <button type="button" disabled={closed} onClick={() => setQ(it, q - (it.qty_step || 1))} aria-label="less">−</button>
+                      <input inputMode="numeric" value={q || ""} placeholder="0" disabled={closed}
+                        onChange={e => setQty(s => ({ ...s, [ek(it.id, "")]: e.target.value.replace(/[^\d]/g, "") }))}
+                        onBlur={e => setQ(it, e.target.value)} />
+                      <button type="button" disabled={closed} onClick={() => setQ(it, (q || 0) + (it.qty_step || 1))} aria-label="more">+</button>
+                    </div>
+                  </div>
+                  {q > 0 && <div style={{ textAlign: "right", fontSize: 13, color: C.muted, marginTop: 6 }}>{q} × {money(it.wholesale_price)} = <b style={{ color: C.dark }}>{money(q * (+it.wholesale_price || 0))}</b></div>}
+                </>
+              )}
             </div>
           </div>
-        ))}
+        ); })}
 
         <div style={{ background: "#fff", border: `1px solid ${C.border}`, borderRadius: 14, padding: "14px 16px", marginTop: 6 }}>
           <div style={{ fontFamily: SERIF, fontSize: 20, color: C.dark, marginBottom: 10 }}>Your pre-order</div>
           {lines.filter(l => l.q > 0).length === 0
             ? <div style={{ color: C.muted, fontSize: 14 }}>Nothing yet — put a number on anything above.</div>
             : lines.filter(l => l.q > 0).map(l => (
-              <div key={l.it.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 15, padding: "5px 0", borderBottom: `1px dashed ${C.border}` }}>
-                <span>{l.q} × {l.it.name}</span><span style={{ fontVariantNumeric: "tabular-nums" }}>{money(l.q * (+l.it.wholesale_price || 0))}</span>
+              <div key={ek(l.it.id, l.color)} style={{ display: "flex", justifyContent: "space-between", fontSize: 15, padding: "5px 0", borderBottom: `1px dashed ${C.border}` }}>
+                <span>{l.q} × {l.it.name}{l.color ? ` · ${l.color}` : ""}</span><span style={{ fontVariantNumeric: "tabular-nums" }}>{money(l.q * (+l.it.wholesale_price || 0))}</span>
               </div>
             ))}
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 17, fontWeight: 800, color: C.dark, marginTop: 10 }}>
@@ -226,6 +306,10 @@ export function PreOrderSheetViewer({ id }) {
           {program.terms && <div style={{ fontSize: 12, color: C.muted, marginTop: 12, lineHeight: 1.5 }}>{program.terms}</div>}
         </div>
 
+        <div style={{ textAlign: "center", padding: "26px 0 6px" }}>
+          <img src={LOGO_COLOR} alt="Hoosier Boy" style={{ height: 58, width: "auto", maxWidth: "80%", objectFit: "contain" }} />
+          <div style={{ fontSize: 12, color: C.muted, marginTop: 6 }}>705 Sprague St, Indianapolis · your rep confirms every pre-order before it ships</div>
+        </div>
         <div className="po-cta">
           <button className="po-btn" disabled={saving || closed} onClick={submit}>
             {saving ? "Sending…" : (sheet.submitted_at || sent) ? "Update my pre-order" : "Send my pre-order"}
@@ -235,6 +319,7 @@ export function PreOrderSheetViewer({ id }) {
           </div>
         </div>
       </div>
+      <Lightbox photo={photo} onClose={() => setPhoto(null)} />
     </div>
   );
 }
@@ -266,7 +351,7 @@ export default function PreOrders({ onBack, embedded }) {
       sb.from("preorder_programs").select("*").order("created_at", { ascending: false }),
       sb.from("preorder_program_items").select("*").order("sort").order("name"),
       sb.from("preorder_sheets").select("*").order("created_at", { ascending: false }).limit(2000),
-      sb.from("preorder_entries").select("sheet_id,item_id,qty,updated_at").limit(5000),
+      sb.from("preorder_entries").select("sheet_id,item_id,color,qty,updated_at").limit(5000),
       sb.from("shipping_customers").select("id,company_name,care_of,email,phone,city,state,customer_type").order("company_name").limit(2000),
     ]);
     setPrograms(p || []); setItems(it || []); setSheets(s || []); setEntries(e || []); setCustomers(c || []);
@@ -284,10 +369,14 @@ export default function PreOrders({ onBack, embedded }) {
   const program = programs.find(p => p.id === progId) || null;
   const progItems = useMemo(() => items.filter(i => i.program_id === progId), [items, progId]);
   const progSheets = useMemo(() => sheets.filter(s => s.program_id === progId), [sheets, progId]);
-  const qtyOf = useMemo(() => { const m = {}; entries.forEach(e => { m[`${e.sheet_id}|${e.item_id}`] = e.qty; }); return m; }, [entries]);
-  const sheetTotal = s => progItems.reduce((a, it) => a + (qtyOf[`${s.id}|${it.id}`] || 0), 0);
-  const sheetAmt = s => progItems.reduce((a, it) => a + (qtyOf[`${s.id}|${it.id}`] || 0) * (+it.wholesale_price || 0), 0);
-  const itemTotal = it => progSheets.reduce((a, s) => a + (qtyOf[`${s.id}|${it.id}`] || 0), 0);
+  // entries keyed sheet|item|color; an item's total sums its colors
+  const qtyOf = useMemo(() => { const m = {}; entries.forEach(e => { m[`${e.sheet_id}|${e.item_id}|${e.color || ""}`] = e.qty; }); return m; }, [entries]);
+  const cellsOf = (s, it) => { const cs = colorsOf(it); return (cs.length ? cs.map(c => c.name) : [""]).map(color => ({ color, q: qtyOf[`${s.id}|${it.id}|${color}`] || 0 })); };
+  const itemQtyOn = (s, it) => cellsOf(s, it).reduce((a, c) => a + c.q, 0);
+  const sheetTotal = s => progItems.reduce((a, it) => a + itemQtyOn(s, it), 0);
+  const sheetAmt = s => progItems.reduce((a, it) => a + itemQtyOn(s, it) * (+it.wholesale_price || 0), 0);
+  const itemTotal = it => progSheets.reduce((a, s) => a + itemQtyOn(s, it), 0);
+  const colorTotal = (it, color) => progSheets.reduce((a, s) => a + (qtyOf[`${s.id}|${it.id}|${color}`] || 0), 0);
   const stats = {
     sent: progSheets.filter(s => s.sent_at).length,
     opened: progSheets.filter(s => s.first_opened_at).length,
@@ -355,7 +444,8 @@ export default function PreOrders({ onBack, embedded }) {
     const row = { program_id: program.id, name: ie.name.trim(), description: ie.description || null, size_label: ie.size_label || null, pack: ie.pack || null,
       wholesale_price: ie.wholesale_price === "" || ie.wholesale_price == null ? null : +ie.wholesale_price,
       retail_price: ie.retail_price === "" || ie.retail_price == null ? null : +ie.retail_price,
-      image_url: ie.image_url || null, min_qty: +ie.min_qty || 0, qty_step: Math.max(1, +ie.qty_step || 1), sort: +ie.sort || 0, active: ie.active !== false };
+      image_url: ie.image_url || null, min_qty: +ie.min_qty || 0, qty_step: Math.max(1, +ie.qty_step || 1), sort: +ie.sort || 0, active: ie.active !== false,
+      colors: (ie.colors || []).filter(c => c && c.name && c.name.trim()).map(c => ({ name: c.name.trim(), image_url: c.image_url || null })) };
     if (ie.id) await sb.from("preorder_program_items").update(row).eq("id", ie.id);
     else await sb.from("preorder_program_items").insert(row);
     setBusy(false); setIe(null); setTick(t => t + 1);
@@ -372,13 +462,15 @@ export default function PreOrders({ onBack, embedded }) {
     if (error) { window.alert(error.message); setBusy(false); return; }
     const url = sb.storage.from("preorder-photos").getPublicUrl(path).data.publicUrl;
     if (uploadFor.kind === "hero") setPe(p => ({ ...p, hero_url: url }));
+    else if (uploadFor.kind === "color") setIe(i => ({ ...i, colors: (i.colors || []).map((c, k) => k === uploadFor.idx ? { ...c, image_url: url } : c) }));
     else setIe(i => ({ ...i, image_url: url }));
     setBusy(false); setUploadFor(null);
   };
   const exportCsv = () => {
-    const head = ["Customer", "Contact", "Email", "Phone", "Sent", "Opened", "Opens", "Submitted", "By", ...progItems.map(i => i.name), "Total qty", "Total $", "Note"];
+    const cols = progItems.flatMap(i => (colorsOf(i).length ? colorsOf(i).map(c => ({ i, color: c.name, label: `${i.name} · ${c.name}` })) : [{ i, color: "", label: i.name }]));
+    const head = ["Customer", "Contact", "Email", "Phone", "Sent", "Opened", "Opens", "Submitted", "By", ...cols.map(c => c.label), "Total qty", "Total $", "Note"];
     const rows = progSheets.map(s => [s.customer_name, s.contact_name || "", s.contact_email || "", s.contact_phone || "", s.sent_at || "", s.first_opened_at || "", s.open_count || 0,
-      s.submitted_at || "", s.submitted_name || "", ...progItems.map(i => qtyOf[`${s.id}|${i.id}`] || 0), sheetTotal(s), sheetAmt(s).toFixed(2), s.submitted_note || ""]);
+      s.submitted_at || "", s.submitted_name || "", ...cols.map(c => qtyOf[`${s.id}|${c.i.id}|${c.color}`] || 0), sheetTotal(s), sheetAmt(s).toFixed(2), s.submitted_note || ""]);
     const csv = [head, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
     const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" })); a.download = `${(program?.title || "preorders").replace(/\W+/g, "_")}_preorders.csv`; a.click();
   };
@@ -424,8 +516,15 @@ export default function PreOrders({ onBack, embedded }) {
             <div style={{ background: "#fff", border: `1px solid ${C.border}`, borderRadius: 12, padding: "10px 12px", marginBottom: 12 }}>
               <div style={label}>By item</div>
               {progItems.map(it => (
-                <div key={it.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 14, padding: "4px 0" }}>
-                  <span>{it.name}</span><b style={{ fontVariantNumeric: "tabular-nums" }}>{itemTotal(it).toLocaleString()}</b>
+                <div key={it.id} style={{ padding: "4px 0" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14 }}>
+                    <span>{it.name}</span><b style={{ fontVariantNumeric: "tabular-nums" }}>{itemTotal(it).toLocaleString()}</b>
+                  </div>
+                  {colorsOf(it).length > 0 && (
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 3 }}>
+                      {colorsOf(it).map(c => <span key={c.name} style={{ fontSize: 11.5, background: C.chip, borderRadius: 6, padding: "1px 7px", color: C.text }}>{c.name} <b>{colorTotal(it, c.name)}</b></span>)}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -455,9 +554,9 @@ export default function PreOrders({ onBack, embedded }) {
                 </div>
                 {tot > 0 && (
                   <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 6 }}>
-                    {progItems.filter(it => qtyOf[`${s.id}|${it.id}`]).map(it => (
-                      <span key={it.id} style={{ fontSize: 12, background: C.chip, borderRadius: 6, padding: "2px 8px" }}><b>{qtyOf[`${s.id}|${it.id}`]}</b> {it.name}</span>
-                    ))}
+                    {progItems.flatMap(it => cellsOf(s, it).filter(c => c.q).map(c => (
+                      <span key={`${it.id}|${c.color}`} style={{ fontSize: 12, background: C.chip, borderRadius: 6, padding: "2px 8px" }}><b>{c.q}</b> {it.name}{c.color ? ` · ${c.color}` : ""}</span>
+                    )))}
                   </div>
                 )}
                 {s.submitted_note && <div style={{ fontSize: 13, marginTop: 6, fontStyle: "italic" }}>“{s.submitted_note}”</div>}
@@ -560,7 +659,7 @@ export default function PreOrders({ onBack, embedded }) {
                   <div style={{ width: 56, height: 42, borderRadius: 6, background: C.chip, overflow: "hidden", flexShrink: 0 }}>{it.image_url && <img src={it.image_url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />}</div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: 800, fontSize: 14, color: C.dark }}>{it.name}</div>
-                    <div style={{ fontSize: 12, color: C.muted }}>{[it.size_label, it.pack].filter(Boolean).join(" · ")} · {money(it.wholesale_price)}{it.retail_price != null ? ` / retail ${money(it.retail_price)}` : ""}</div>
+                    <div style={{ fontSize: 12, color: C.muted }}>{[it.size_label, it.pack].filter(Boolean).join(" · ")} · {money(it.wholesale_price)}{it.retail_price != null ? ` / retail ${money(it.retail_price)}` : ""}{colorsOf(it).length ? ` · ${colorsOf(it).length} colors` : ""}</div>
                   </div>
                   <button style={btn({ padding: "6px 10px", fontSize: 12 })} onClick={() => setIe({ ...it })}>Edit</button>
                   <button style={btn({ padding: "6px 10px", fontSize: 12, color: C.red })} onClick={() => removeItem(it)}>✕</button>
@@ -587,6 +686,16 @@ export default function PreOrders({ onBack, embedded }) {
                 <button style={btn()} disabled={busy} onClick={() => { setUploadFor({ kind: "item" }); fileRef.current?.click(); }}>{ie.image_url ? "Replace" : "Upload"} photo</button>
                 <input style={{ ...field, flex: 1 }} value={ie.image_url || ""} onChange={e => setIe({ ...ie, image_url: e.target.value })} placeholder="or paste an image URL" />
               </div>
+              <div style={label}>Colors (optional — customers order by color)</div>
+              {(ie.colors || []).map((c, k) => (
+                <div key={k} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
+                  {c.image_url ? <img src={c.image_url} alt="" style={{ width: 48, height: 36, objectFit: "cover", borderRadius: 6 }} /> : <div style={{ width: 48, height: 36, borderRadius: 6, background: C.chip }} />}
+                  <input style={{ ...field, flex: 1 }} placeholder="Color name" value={c.name || ""} onChange={e => setIe({ ...ie, colors: ie.colors.map((x, j) => j === k ? { ...x, name: e.target.value } : x) })} />
+                  <button style={btn({ padding: "8px 10px", fontSize: 12 })} disabled={busy} onClick={() => { setUploadFor({ kind: "color", idx: k }); fileRef.current?.click(); }}>{c.image_url ? "Replace" : "Photo"}</button>
+                  <button style={btn({ padding: "8px 10px", fontSize: 12, color: C.red })} onClick={() => setIe({ ...ie, colors: ie.colors.filter((_, j) => j !== k) })}>✕</button>
+                </div>
+              ))}
+              <button style={btn({ padding: "6px 10px", fontSize: 12 })} onClick={() => setIe({ ...ie, colors: [...(ie.colors || []), { name: "", image_url: null }] })}>＋ Add color</button>
               <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 14, marginTop: 10 }}><input type="checkbox" checked={ie.active !== false} onChange={e => setIe({ ...ie, active: e.target.checked })} /> shown on the sheet</label>
               <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
                 <button style={primary()} disabled={busy} onClick={saveItem}>Save item</button>

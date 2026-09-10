@@ -255,7 +255,7 @@ export function SharedGalleryViewer({ id }) {
 
       {/* Brand bar — deep pine, blurred, like the retail site header */}
       <div style={{ position: "sticky", top: 0, zIndex: 50, background: "rgba(22,64,58,.95)", backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)", padding: "13px 20px", display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
-        <img src="/favicon-512.png" alt="" style={{ width: 26, height: 26, borderRadius: 6 }} />
+        <img src="/hoosier-boy-logo-white.png" alt="Hoosier Boy" style={{ height: 44, width: "auto", objectFit: "contain", display: "block" }} />
         <div style={{ color: "#f2ede4", ...EYEBROW, fontSize: 12.5, letterSpacing: "0.22em" }}>Hoosier Boy</div>
       </div>
 
@@ -326,8 +326,8 @@ export function SharedGalleryViewer({ id }) {
             <div style={{ color: HB.terra, fontSize: 14 }}>❦</div>
             <div style={{ width: 60, height: 1, background: HB.border }} />
           </div>
-          <div style={{ fontFamily: SERIF, fontSize: 24, color: HB.forest }}>Hoosier Boy</div>
-          <div style={{ ...EYEBROW, fontSize: 10, color: "#a8a094", marginTop: 6 }}>By Schlegel Greenhouse · Indianapolis</div>
+          <img src="/hoosier-boy-logo-color.jpg" alt="Hoosier Boy" style={{ height: 64, width: "auto", maxWidth: "80%", objectFit: "contain", display: "block", margin: "0 auto" }} />
+          <div style={{ ...EYEBROW, fontSize: 10, color: "#a8a094", marginTop: 8 }}>Indianapolis</div>
           <div style={{ fontSize: 14, color: HB.stone, marginTop: 18, lineHeight: 1.6 }}>Questions or ready to order?<br />Reach out to your sales rep — we'd love to grow with you.</div>
           <a href="https://hoosierboy.com" target="_blank" rel="noopener noreferrer"
             style={{ display: "inline-block", marginTop: 20, background: HB.terra, color: "#fff", padding: "11px 26px", borderRadius: 8, textDecoration: "none", fontWeight: 600, fontSize: 14, boxShadow: "0 6px 18px -6px rgba(194,112,62,.5)" }}>Explore hoosierboy.com</a>
