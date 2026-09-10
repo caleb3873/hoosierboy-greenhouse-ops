@@ -185,7 +185,7 @@ export function PreOrderSheetViewer({ id }) {
         .po-color{display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px dashed ${C.border}}
         .po-color img{width:88px;height:66px;object-fit:cover;border-radius:8px;flex-shrink:0;background:${C.chip};cursor:zoom-in}
         .po-pk{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin:14px 0 6px}
-        .po-pk div{background:#fff;border:1px solid ${C.border};border-radius:12px;padding:10px 10px 9px;text-align:center}
+        .po-pk>div{background:#fff;border:1px solid ${C.border};border-radius:12px;padding:10px 10px 9px;text-align:center}
         .po-pk b{display:block;font-family:${SERIF};font-size:16px;color:${C.dark};font-weight:400;line-height:1.15}
         .po-pk small{display:block;font-size:11.5px;color:${C.muted};margin-top:3px}
         .po-pk .pr{font-size:15px;font-weight:800;color:${C.dark};margin-top:6px}
