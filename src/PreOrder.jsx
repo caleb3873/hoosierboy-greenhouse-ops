@@ -21,6 +21,7 @@ const money = n => n == null || n === "" ? "—" : `$${(+n).toFixed(2)}`;
 // dark bar, two-color for light backgrounds. Served from the app's own public/ folder.
 export const LOGO_WHITE = "/hoosier-boy-logo-white.png";
 export const LOGO_COLOR = "/hoosier-boy-logo-color.jpg";
+export const LOGO_MARK = "/hoosier-boy-mark-color.jpg";   // square mascot, no words
 export const preorderUrl = id => `${window.location.origin}/?po=${id}`;
 const colorsOf = it => Array.isArray(it?.colors) ? it.colors.filter(c => c && c.name) : [];
 const ek = (itemId, color) => `${itemId}|${color || ""}`;
@@ -93,7 +94,7 @@ export function PreOrderSheetViewer({ id }) {
   const [sheet, setSheet] = useState(undefined);   // undefined=loading, null=not found
   const [program, setProgram] = useState(null);
   const [items, setItems] = useState([]);
-  const [qty, setQty] = useState({});                // item_id → qty
+  const [qty, setQty] = useState({});                // ek(item,color) → qty
   const [name, setName] = useState("");
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
@@ -115,8 +116,7 @@ export function PreOrderSheetViewer({ id }) {
       setName(s.submitted_name || s.contact_name || "");
       setNote(s.submitted_note || "");
       if (p?.title) document.title = `${p.title} · Hoosier Boy`;
-      // one visit per device per 30 minutes; first/last open + count live on the sheet
-      try {
+      try {   // one visit per device per 30 minutes; first/last open + count live on the sheet
         const k = `hb_po_seen_${id}`; const last = +(localStorage.getItem(k) || 0);
         if (Date.now() - last > 30 * 60 * 1000) {
           localStorage.setItem(k, String(Date.now()));
@@ -132,34 +132,40 @@ export function PreOrderSheetViewer({ id }) {
   // one line per item × color (a plain item is a single line with color "")
   const lines = items.flatMap(it => {
     const cs = colorsOf(it);
-    return (cs.length ? cs.map(c => c.name) : [""]).map(color => ({ it, color, q: Math.max(0, Math.round(+qty[ek(it.id, color)] || 0)) }));
+    return (cs.length ? cs : [{ name: "", image_url: it.image_url }]).map(c => ({ it, color: c.name, img: c.image_url || it.image_url, q: Math.max(0, Math.round(+qty[ek(it.id, c.name)] || 0)) }));
   });
   const totalQty = lines.reduce((a, l) => a + l.q, 0);
   const totalAmt = lines.reduce((a, l) => a + l.q * (+l.it.wholesale_price || 0), 0);
-  const itemQty = it => lines.filter(l => l.it.id === it.id).reduce((a, l) => a + l.q, 0);
-
+  const stepOf = it => Math.max(1, +it.qty_step || 1);
   const setQ = (it, v, color = "") => {
-    const step = Math.max(1, +it.qty_step || 1);
+    const step = stepOf(it);
     let n = Math.max(0, Math.round(+v || 0));
     if (n > 0 && it.min_qty && n < it.min_qty) n = it.min_qty;
     if (step > 1 && n % step) n = Math.ceil(n / step) * step;
     setQty(q => ({ ...q, [ek(it.id, color)]: n }));
   };
+  const bump = (it, color, dir) => {
+    const cur = Math.max(0, Math.round(+qty[ek(it.id, color)] || 0));
+    const step = stepOf(it);
+    let n = cur + dir * step;
+    if (dir < 0 && it.min_qty && n < it.min_qty) n = 0;          // below the minimum means none
+    if (dir > 0 && cur === 0 && it.min_qty) n = Math.max(n, it.min_qty);
+    setQ(it, n, color);
+  };
   const submit = async () => {
     if (closed) return;
+    if (totalQty === 0) { setErr("Add a quantity to at least one color."); return; }
     if (!name.trim()) { setErr("Add your name so we know who to call back."); return; }
     setSaving(true); setErr(null);
     try {
       const rows = lines.map(l => ({ sheet_id: id, item_id: l.it.id, color: l.color || "", qty: l.q, updated_at: new Date().toISOString() }));
-      if (rows.length) {
-        const { error } = await sb.from("preorder_entries").upsert(rows, { onConflict: "sheet_id,item_id,color" });
-        if (error) throw error;
-      }
+      const { error } = await sb.from("preorder_entries").upsert(rows, { onConflict: "sheet_id,item_id,color" });
+      if (error) throw error;
       const now = new Date().toISOString();
       const { error: e2 } = await sb.from("preorder_sheets").update({ submitted_at: now, submitted_name: name.trim(), submitted_note: note.trim() || null, updated_at: now }).eq("id", id);
       if (e2) throw e2;
       setSent(now);
-      window.scrollTo({ top: 0, behavior: "smooth" });
+      document.getElementById("po-summary")?.scrollIntoView({ behavior: "smooth", block: "start" });
     } catch (e) { setErr(e.message || "Something went wrong — try again or call us."); }
     setSaving(false);
   };
@@ -172,186 +178,160 @@ export function PreOrderSheetViewer({ id }) {
     </div>
   );
 
-  const deadline = fmtDeadline(program.deadline);
-  const already = !!sheet.submitted_at && !sent;
+  const deadline = program.deadline ? new Date(program.deadline + "T12:00:00").toLocaleDateString("en-US", { month: "long", day: "numeric" }) : null;
+  const lead = items[0];   // the offer line reads off the first item (single-item programs are the norm)
+  const savedAt = sent || sheet.submitted_at;
+  const single = items.length === 1;
+  const picked = lines.filter(l => l.q > 0);
   return (
-    <div style={{ fontFamily: FONT, background: C.paper, minHeight: "100vh", color: C.text }}>
+    <div style={{ fontFamily: FONT, background: C.paper, minHeight: "100vh", color: C.text, WebkitTextSizeAdjust: "100%" }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700;800&family=DM+Serif+Display&display=swap');
-        .po-wrap{max-width:760px;margin:0 auto;padding:0 16px 60px}
-        .po-card{background:#fff;border:1px solid ${C.border};border-radius:14px;overflow:hidden;margin-bottom:14px}
-        .po-card img.po-photo{width:100%;aspect-ratio:4/3;object-fit:cover;display:block;background:${C.chip};cursor:zoom-in}
-        img.po-zoom{cursor:zoom-in}
-        .po-color{display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px dashed ${C.border}}
-        .po-color img{width:88px;height:66px;object-fit:cover;border-radius:8px;flex-shrink:0;background:${C.chip};cursor:zoom-in}
-        .po-pk{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin:14px 0 6px}
-        .po-pk>div{background:#fff;border:1px solid ${C.border};border-radius:12px;padding:10px 10px 9px;text-align:center}
-        .po-pk b{display:block;font-family:${SERIF};font-size:16px;color:${C.dark};font-weight:400;line-height:1.15}
-        .po-pk small{display:block;font-size:11.5px;color:${C.muted};margin-top:3px}
-        .po-pk .pr{font-size:15px;font-weight:800;color:${C.dark};margin-top:6px}
-        .po-det{background:#fff;border:1px solid ${C.border};border-radius:14px;padding:12px 16px;margin:14px 0}
-        .po-det div{display:flex;gap:12px;padding:5px 0;border-bottom:1px dashed ${C.border};font-size:14px;line-height:1.4}
-        .po-det div:last-child{border-bottom:0}
-        .po-det span:first-child{flex:0 0 96px;font-size:11px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:${C.muted};padding-top:3px}
-        .po-prop{font-size:15.5px;line-height:1.5;color:${C.dark};font-weight:500;margin:6px 0 2px}
-        @media (max-width:420px){.po-pk{gap:6px}.po-pk b{font-size:14px}}
-        .po-color .nm{flex:1;font-weight:700;color:${C.dark};font-size:15px}
-        .po-qty{display:flex;align-items:center;gap:8px}
-        .po-qty button{width:44px;height:44px;border-radius:10px;border:1.5px solid ${C.border};background:#fff;font-size:22px;font-weight:700;color:${C.dark};cursor:pointer}
-        .po-qty input{width:84px;height:44px;text-align:center;font-size:18px;font-weight:800;border:1.5px solid ${C.border};border-radius:10px;font-family:inherit;color:${C.dark}}
-        .po-qty input:focus{outline:2px solid ${C.light};border-color:${C.light}}
-        .po-cta{position:sticky;bottom:0;background:rgba(247,246,241,.96);backdrop-filter:blur(6px);border-top:1px solid ${C.border};padding:12px 16px;margin:0 -16px}
-        .po-btn{width:100%;padding:16px;border-radius:12px;border:none;background:${C.dark};color:#fff;font-size:17px;font-weight:800;cursor:pointer;font-family:inherit}
-        .po-btn:disabled{opacity:.55;cursor:default}
-        input.po-text,textarea.po-text{width:100%;box-sizing:border-box;padding:12px;border:1.5px solid ${C.border};border-radius:10px;font-size:16px;font-family:inherit}
-        @media print{.po-cta,.po-qty button{display:none}.po-card{break-inside:avoid;box-shadow:none}body{background:#fff}}
+        *{box-sizing:border-box}
+        .po-wrap{max-width:640px;margin:0 auto;padding:0 18px 40px}
+        .po-bar{background:${C.dark};padding:12px 18px}
+        .po-bar>div{max-width:640px;margin:0 auto;display:flex;align-items:center;justify-content:space-between}
+        .po-hero{width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:16px;display:block;margin:18px 0 0;cursor:zoom-in;background:${C.chip}}
+        .po-h1{font-family:${SERIF};font-size:36px;line-height:1.05;color:${C.dark};margin:18px 0 4px;text-wrap:balance}
+        .po-sub{font-size:18px;color:${C.text};margin:0 0 14px}
+        .po-offer{font-size:17px;color:${C.dark};line-height:1.55}
+        .po-offer b{font-size:22px;font-weight:800}
+        .po-offer small{display:block;font-size:14.5px;color:${C.muted};margin-top:2px}
+        .po-for{font-size:13.5px;color:${C.muted};margin-top:12px}
+        .po-for b{color:${C.dark};font-weight:700}
+        .po-note{font-size:15px;line-height:1.5;margin-top:8px;padding:10px 12px;background:#fff;border-left:3px solid ${C.light};border-radius:6px}
+        .po-saved{font-size:13.5px;color:${C.muted};margin-top:10px;padding:8px 12px;background:${C.chip};border-radius:8px}
+        .po-jump{display:inline-block;margin-top:16px;font-weight:800;color:${C.dark};text-decoration:none;font-size:15px}
+        .po-story{font-size:16.5px;line-height:1.6;max-width:60ch;white-space:pre-line;margin:26px 0 8px}
+        .po-story b{font-family:${SERIF};font-weight:400;font-size:22px;color:${C.dark}}
+        .po-sec{font-family:${SERIF};font-size:26px;color:${C.dark};margin:30px 0 2px}
+        .po-secsub{font-size:14px;color:${C.muted};margin:0 0 14px}
+        .po-grid{display:grid;grid-template-columns:1fr;gap:16px}
+        @media (min-width:560px){.po-grid{grid-template-columns:1fr 1fr}}
+        .po-c{background:#fff;border:1px solid ${C.border};border-radius:16px;overflow:hidden}
+        .po-c img{width:100%;aspect-ratio:4/3;object-fit:cover;display:block;cursor:zoom-in;background:${C.chip}}
+        .po-c .b{padding:12px 14px 14px}
+        .po-c .n{font-family:${SERIF};font-size:21px;color:${C.dark};margin-bottom:10px}
+        .po-q{display:flex;align-items:center;justify-content:space-between;gap:8px}
+        .po-q button{width:56px;height:52px;border-radius:12px;border:1.5px solid ${C.border};background:#fff;font-size:26px;font-weight:700;color:${C.dark};cursor:pointer;line-height:1}
+        .po-q button:active{background:${C.chip}}
+        .po-q button:disabled{opacity:.4}
+        .po-q input{flex:1;min-width:0;height:52px;text-align:center;font-size:26px;font-weight:800;border:1.5px solid ${C.border};border-radius:12px;font-family:inherit;color:${C.dark};background:#fff}
+        .po-q input:focus{outline:2px solid ${C.light};border-color:${C.light}}
+        .po-q input::placeholder{color:#b9c2b3;font-weight:600}
+        .po-line{font-size:13px;color:${C.muted};margin-top:6px;text-align:right;min-height:16px}
+        details.po-det{margin-top:26px;border-top:1px solid ${C.border};border-bottom:1px solid ${C.border};padding:4px 0}
+        details.po-det summary{cursor:pointer;font-family:${SERIF};font-size:20px;color:${C.dark};padding:12px 0;list-style:none;display:flex;justify-content:space-between;align-items:center}
+        details.po-det summary::-webkit-details-marker{display:none}
+        details.po-det summary::after{content:"+";font-size:24px;color:${C.muted}}
+        details.po-det[open] summary::after{content:"–"}
+        .po-det .r{display:flex;gap:12px;padding:7px 0 9px;font-size:15px;line-height:1.45}
+        .po-det .r span:first-child{flex:0 0 92px;color:${C.muted}}
+        .po-sum{background:#fff;border:1px solid ${C.border};border-radius:16px;padding:16px 16px 18px;margin-top:26px}
+        .po-sum h3{font-family:${SERIF};font-size:24px;color:${C.dark};margin:0 0 6px;font-weight:400}
+        .po-sum .big{font-size:30px;font-weight:800;color:${C.dark};line-height:1.1}
+        .po-sum .big small{font-size:16px;font-weight:500;color:${C.muted};margin-left:8px}
+        .po-sum .it{display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid ${C.border};font-size:16px}
+        .po-sum .it img{width:44px;height:34px;object-fit:cover;border-radius:6px}
+        .po-sum .it b{margin-left:auto;font-variant-numeric:tabular-nums}
+        .po-in{width:100%;padding:13px 14px;border:1.5px solid ${C.border};border-radius:12px;font-size:16px;font-family:inherit;background:#fff}
+        .po-cta{width:100%;margin-top:14px;padding:18px;border-radius:14px;border:none;background:${C.dark};color:#fff;font-size:17px;font-weight:800;letter-spacing:.04em;cursor:pointer;font-family:inherit}
+        .po-cta:disabled{opacity:.5}
+        .po-foot{text-align:center;padding:36px 0 10px;color:${C.muted};font-size:13.5px;line-height:1.6}
+        .po-foot img{height:64px;width:auto;display:block;margin:0 auto 8px}
+        @media print{.po-cta,.po-q button{display:none}.po-c{break-inside:avoid}body{background:#fff}}
       `}</style>
-      <div style={{ background: C.dark, color: C.cream, padding: "12px 16px" }}>
-        <div className="po-wrap" style={{ padding: 0, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-          <img src={LOGO_WHITE} alt="Hoosier Boy" style={{ height: 54, width: "auto", objectFit: "contain", display: "block" }} />
-          <span style={{ fontSize: 12, opacity: .85, textAlign: "right" }}>Pre-order sheet<br /><span style={{ fontFamily: SERIF, fontSize: 15, opacity: 1 }}>Hoosier Boy</span></span>
-        </div>
-      </div>
+
+      <div className="po-bar"><div>
+        <img src={LOGO_WHITE} alt="Hoosier Boy" style={{ height: 50, width: "auto", display: "block" }} />
+        <span style={{ color: C.cream, fontSize: 12.5, letterSpacing: ".08em", textTransform: "uppercase" }}>Pre-order</span>
+      </div></div>
+
       <div className="po-wrap">
-        {program.hero_url && (
-          <img src={program.hero_url} alt={program.title} className="po-zoom" onClick={() => setPhoto({ url: program.hero_url, name: program.title })} style={{ width: "100%", maxHeight: 360, objectFit: "cover", borderRadius: 14, margin: "16px 0 4px", display: "block" }} />
-        )}
-        <h1 style={{ fontFamily: SERIF, fontSize: 34, color: C.dark, margin: "18px 0 2px", lineHeight: 1.1, textWrap: "balance" }}>{program.title}</h1>
-        {program.subtitle && <div style={{ fontSize: 17, color: C.text, marginBottom: 4 }}>{program.subtitle}</div>}
-        {(program.availability || deadline) && (
-          <div style={{ fontSize: 14, fontWeight: 700, color: C.dark, marginBottom: 8 }}>
-            {[program.availability, deadline ? `Pre-order by ${deadline}` : null].filter(Boolean).join(" · ")}
+        {program.hero_url && <img className="po-hero" src={program.hero_url} alt={program.title} onClick={() => setPhoto({ url: program.hero_url, name: program.title })} />}
+        <h1 className="po-h1">{program.title}</h1>
+        {program.subtitle && <p className="po-sub">{program.subtitle}</p>}
+        {lead && (
+          <div className="po-offer">
+            <b>{money(lead.wholesale_price)}</b> wholesale{lead.retail_price != null ? <> · {money(lead.retail_price)} suggested retail</> : null}
+            {lead.size_label && <small>{lead.size_label}</small>}
+            {(program.availability || deadline) && <small>{[program.availability, deadline ? `Pre-order by ${deadline}` : null].filter(Boolean).join(" · ")}</small>}
           </div>
         )}
-        {program.proposition && <div className="po-prop">{program.proposition}</div>}
+        <div className="po-for">Prepared for <b>{sheet.customer_name}</b>{sheet.rep_name ? <> · Rep: <b>{sheet.rep_name}</b></> : null}</div>
+        {sheet.message && <div className="po-note">{sheet.message}</div>}
+        {savedAt && <div className="po-saved">Pre-order saved {fmtWhen(savedAt)}. Change quantities and submit again to update.</div>}
+        {closed && <div className="po-saved" style={{ background: "#fff7ec", color: C.text }}>Pre-orders for this program are closed. Call your rep if you still want in.</div>}
+        {!closed && <a className="po-jump" href="#po-colors">Choose your colors ↓</a>}
 
-        {items.length > 0 && (
-          <div className="po-pk">
-            {items.map(it => (
-              <div key={it.id}>
-                <b>{it.name.replace(/^Antoinette (Pansy, |Pansy |)/i, "").replace(/^\s*,\s*/, "")}</b>
-                <small>{it.size_label}</small>
-                <div className="pr">{money(it.wholesale_price)}</div>
-                {it.retail_price != null && <small>{money(it.retail_price)} SRP</small>}
-              </div>
-            ))}
-          </div>
-        )}
+        {program.story && (() => { const [first, ...rest] = program.story.split("\n"); return (
+          <div className="po-story"><b>{first}</b>{"\n"}{rest.join("\n").replace(/^\n+/, "")}</div>
+        ); })()}
 
-        <div style={{ background: "#fff", border: `1px solid ${C.border}`, borderRadius: 14, padding: "12px 16px", margin: "10px 0 12px" }}>
-          <div style={{ fontSize: 13, color: C.muted }}>Prepared for <b style={{ color: C.dark }}>{sheet.customer_name}</b>{sheet.rep_name ? <> · Your Hoosier Boy rep: <b style={{ color: C.dark }}>{sheet.rep_name}</b></> : null}</div>
-          {sheet.message && <div style={{ marginTop: 6, fontSize: 15, lineHeight: 1.5 }}>{sheet.message}</div>}
-          {!sheet.submitted_at && !sent && !closed && (
-            <div style={{ marginTop: 8, fontSize: 14, lineHeight: 1.5 }}>Enter the quantities you would like us to grow for you. No invoice is created today. Your rep will confirm your pre-order.</div>
-          )}
-        </div>
-
-        {(sent || already) && (
-          <div style={{ background: "#eef6e8", border: `1px solid ${C.light}`, borderRadius: 12, padding: "12px 14px", marginBottom: 16, fontSize: 15 }}>
-            {sent ? <><b>Got it, thank you.</b> We have your numbers as of {fmtWhen(sent)}. You can change them any time before the deadline, just send again.</>
-                  : <><b>Your pre-order is in</b> as of {fmtWhen(sheet.submitted_at)}. Change the numbers below and send again to update it.</>}
-          </div>
-        )}
-        {closed && (
-          <div style={{ background: "#fff7ec", border: `1px solid ${C.amber}`, borderRadius: 12, padding: "12px 14px", marginBottom: 16, fontSize: 15 }}>
-            Pre-orders for this program are closed. Call us if you still want in and we will see what is left.
-          </div>
-        )}
-
-        {program.story && (
-          <div style={{ fontSize: 16, lineHeight: 1.6, maxWidth: "62ch", whiteSpace: "pre-line", marginBottom: 14 }}>{program.story}</div>
-        )}
-        {Array.isArray(program.details) && program.details.length > 0 && (
-          <div className="po-det">
-            <div style={{ borderBottom: `1px solid ${C.border}`, paddingBottom: 8, marginBottom: 2 }}><span style={{ flex: "0 0 auto", fontFamily: SERIF, fontSize: 18, color: C.dark, textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>Pre-order details</span></div>
-            {program.details.map((d, i) => <div key={i}><span>{d.label}</span><span>{d.value}</span></div>)}
-          </div>
-        )}
-
-        {items.map(it => { const q = itemQty(it); const cs = colorsOf(it); return (
-          <div className="po-card" key={it.id}>
-            {it.image_url && <img className="po-photo" src={it.image_url} alt={it.name} onClick={() => setPhoto({ url: it.image_url, name: it.name })} />}
-            <div style={{ padding: "14px 16px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline" }}>
-                <div style={{ fontFamily: SERIF, fontSize: 22, color: C.dark }}>{it.name}</div>
-                <div style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                  <div style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: ".06em", color: C.muted }}>WHOLESALE</div>
-                  <div style={{ fontSize: 20, fontWeight: 800, color: C.dark, lineHeight: 1.05 }}>{money(it.wholesale_price)}</div>
-                  {it.retail_price != null && <div style={{ fontSize: 12, color: C.muted }}>Suggested retail {money(it.retail_price)}</div>}
-                </div>
-              </div>
-              {(it.size_label || it.pack) && <div style={{ fontSize: 13, color: C.muted, marginTop: 2 }}>{[it.size_label, it.pack].filter(Boolean).join(" · ")}</div>}
-              {it.description && <div style={{ fontSize: 15, lineHeight: 1.5, marginTop: 8 }}>{it.description}</div>}
-              {cs.length > 0 ? (
-                <div style={{ marginTop: 12 }}>
-                  <div style={{ fontSize: 13, color: C.muted, marginBottom: 4 }}>How many of each color?{it.min_qty ? ` (min ${it.min_qty} per color)` : ""}{it.qty_step > 1 ? ` · in ${it.qty_step}s` : ""}</div>
-                  {cs.map(c => { const cq = Math.max(0, Math.round(+qty[ek(it.id, c.name)] || 0)); return (
-                    <div className="po-color" key={c.name}>
-                      {c.image_url ? <img src={c.image_url} alt={c.name} className="po-zoom" onClick={() => setPhoto({ url: c.image_url, name: `${it.name} · ${c.name}` })} /> : <div style={{ width: 64, height: 48, borderRadius: 8, background: C.chip }} />}
-                      <div className="nm">{c.name}{cq > 0 && <div style={{ fontSize: 12, fontWeight: 500, color: C.muted }}>{cq} × {money(it.wholesale_price)} = {money(cq * (+it.wholesale_price || 0))}</div>}</div>
-                      <div className="po-qty">
-                        <button type="button" disabled={closed} onClick={() => setQ(it, cq - (it.qty_step || 1), c.name)} aria-label="less">−</button>
-                        <input inputMode="numeric" value={cq || ""} placeholder="0" disabled={closed}
-                          onChange={e => setQty(s => ({ ...s, [ek(it.id, c.name)]: e.target.value.replace(/[^\d]/g, "") }))}
-                          onBlur={e => setQ(it, e.target.value, c.name)} />
-                        <button type="button" disabled={closed} onClick={() => setQ(it, (cq || 0) + (it.qty_step || 1), c.name)} aria-label="more">+</button>
-                      </div>
+        <div id="po-colors" />
+        {items.map(it => { const cs = colorsOf(it); const min = it.min_qty ? `Minimum ${it.min_qty} per ${cs.length ? "color" : "item"}` : null; return (
+          <div key={it.id}>
+            <div className="po-sec">{cs.length ? (single ? "Choose your colors" : it.name) : it.name}</div>
+            <div className="po-secsub">{[!single && cs.length ? `${money(it.wholesale_price)} wholesale · ${it.size_label || ""}` : null, min].filter(Boolean).join(" · ")}</div>
+            <div className="po-grid">
+              {(cs.length ? cs : [{ name: "", image_url: it.image_url }]).map(c => { const q = Math.max(0, Math.round(+qty[ek(it.id, c.name)] || 0)); const label = c.name || it.name; return (
+                <div className="po-c" key={c.name || "item"}>
+                  {(c.image_url || it.image_url) && <img src={c.image_url || it.image_url} alt={label} onClick={() => setPhoto({ url: c.image_url || it.image_url, name: single && c.name ? c.name : `${it.name}${c.name ? " · " + c.name : ""}` })} />}
+                  <div className="b">
+                    <div className="n">{label}</div>
+                    <div className="po-q">
+                      <button type="button" disabled={closed || q === 0} onClick={() => bump(it, c.name, -1)} aria-label={`fewer ${label}`}>−</button>
+                      <input inputMode="numeric" value={q || ""} placeholder="0" disabled={closed} aria-label={`${label} quantity`}
+                        onChange={e => setQty(s => ({ ...s, [ek(it.id, c.name)]: e.target.value.replace(/[^\d]/g, "") }))}
+                        onBlur={e => setQ(it, e.target.value, c.name)} />
+                      <button type="button" disabled={closed} onClick={() => bump(it, c.name, 1)} aria-label={`more ${label}`}>+</button>
                     </div>
-                  ); })}
-                  {q > 0 && <div style={{ textAlign: "right", fontSize: 13, color: C.muted, marginTop: 6 }}>{q} {it.name} = <b style={{ color: C.dark }}>{money(q * (+it.wholesale_price || 0))}</b></div>}
-                </div>
-              ) : (
-                <>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14, gap: 10, flexWrap: "wrap" }}>
-                    <div style={{ fontSize: 13, color: C.muted }}>
-                      How many?{it.min_qty ? ` (min ${it.min_qty})` : ""}{it.qty_step > 1 ? ` · in ${it.qty_step}s` : ""}
-                    </div>
-                    <div className="po-qty">
-                      <button type="button" disabled={closed} onClick={() => setQ(it, q - (it.qty_step || 1))} aria-label="less">−</button>
-                      <input inputMode="numeric" value={q || ""} placeholder="0" disabled={closed}
-                        onChange={e => setQty(s => ({ ...s, [ek(it.id, "")]: e.target.value.replace(/[^\d]/g, "") }))}
-                        onBlur={e => setQ(it, e.target.value)} />
-                      <button type="button" disabled={closed} onClick={() => setQ(it, (q || 0) + (it.qty_step || 1))} aria-label="more">+</button>
-                    </div>
+                    <div className="po-line">{q > 0 ? `${q} × ${money(it.wholesale_price)} = ${money(q * (+it.wholesale_price || 0))}` : ""}</div>
                   </div>
-                  {q > 0 && <div style={{ textAlign: "right", fontSize: 13, color: C.muted, marginTop: 6 }}>{q} × {money(it.wholesale_price)} = <b style={{ color: C.dark }}>{money(q * (+it.wholesale_price || 0))}</b></div>}
-                </>
-              )}
+                </div>
+              ); })}
             </div>
           </div>
         ); })}
 
-        <div style={{ background: "#fff", border: `1px solid ${C.border}`, borderRadius: 14, padding: "14px 16px", marginTop: 6 }}>
-          <div style={{ fontFamily: SERIF, fontSize: 20, color: C.dark, marginBottom: 10 }}>Your pre-order</div>
-          {lines.filter(l => l.q > 0).length === 0
-            ? <div style={{ color: C.muted, fontSize: 14 }}>Nothing yet — put a number on anything above.</div>
-            : lines.filter(l => l.q > 0).map(l => (
-              <div key={ek(l.it.id, l.color)} style={{ display: "flex", justifyContent: "space-between", fontSize: 15, padding: "5px 0", borderBottom: `1px dashed ${C.border}` }}>
-                <span>{l.q} × {l.it.name}{l.color ? ` · ${l.color}` : ""}</span><span style={{ fontVariantNumeric: "tabular-nums" }}>{money(l.q * (+l.it.wholesale_price || 0))}</span>
+        {Array.isArray(program.details) && program.details.length > 0 && (
+          <details className="po-det">
+            <summary>Order details</summary>
+            {program.details.map((d, i) => <div className="r" key={i}><span>{d.label}</span><span>{d.value}</span></div>)}
+          </details>
+        )}
+
+        <div className="po-sum" id="po-summary">
+          <h3>Your pre-order</h3>
+          {picked.length === 0 ? (
+            <div style={{ color: C.muted, fontSize: 15 }}>Nothing selected yet.</div>
+          ) : (
+            <>
+              <div className="big">{totalQty} plants<small>{money(totalAmt)} wholesale</small></div>
+              <div style={{ marginTop: 10 }}>
+                {picked.map(l => (
+                  <div className="it" key={ek(l.it.id, l.color)}>
+                    {l.img && <img src={l.img} alt="" />}
+                    <span>{single && l.color ? l.color : `${l.it.name}${l.color ? " — " + l.color : ""}`}</span>
+                    <b>{l.q}</b>
+                  </div>
+                ))}
               </div>
-            ))}
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 17, fontWeight: 800, color: C.dark, marginTop: 10 }}>
-            <span>{totalQty} total</span><span style={{ fontVariantNumeric: "tabular-nums" }}>{money(totalAmt)}</span>
+            </>
+          )}
+          <div style={{ display: "grid", gap: 10, marginTop: 16 }}>
+            <input className="po-in" placeholder="Your name" value={name} onChange={e => setName(e.target.value)} disabled={closed} autoComplete="name" />
+            <textarea className="po-in" rows={2} placeholder="Notes for your rep (optional)" value={note} onChange={e => setNote(e.target.value)} disabled={closed} />
           </div>
-          <div style={{ marginTop: 14, display: "grid", gap: 10 }}>
-            <input className="po-text" placeholder="Your name" value={name} onChange={e => setName(e.target.value)} disabled={closed} />
-            <textarea className="po-text" rows={2} placeholder="Anything we should know? (colors, timing, delivery)" value={note} onChange={e => setNote(e.target.value)} disabled={closed} />
-          </div>
-          {err && <div style={{ color: C.red, fontSize: 14, marginTop: 8 }}>{err}</div>}
-          {program.terms && <div style={{ fontSize: 12, color: C.muted, marginTop: 12, lineHeight: 1.5 }}>{program.terms}</div>}
+          {err && <div style={{ color: C.red, fontSize: 14.5, marginTop: 10 }}>{err}</div>}
+          <button className="po-cta" disabled={saving || closed} onClick={submit}>{saving ? "SENDING…" : savedAt ? "UPDATE PRE-ORDER" : "SUBMIT PRE-ORDER"}</button>
+          <div style={{ textAlign: "center", fontSize: 13.5, color: C.muted, marginTop: 10 }}>Your Hoosier Boy rep will confirm your pre-order.</div>
         </div>
 
-        <div style={{ textAlign: "center", padding: "26px 0 6px" }}>
-          <img src={LOGO_COLOR} alt="Hoosier Boy" style={{ height: 58, width: "auto", maxWidth: "80%", objectFit: "contain" }} />
-          <div style={{ fontSize: 12, color: C.muted, marginTop: 6 }}>Indianapolis, Indiana</div>
-        </div>
-        <div className="po-cta">
-          <button className="po-btn" disabled={saving || closed} onClick={submit}>
-            {saving ? "Sending…" : (sheet.submitted_at || sent) ? "Update my pre-order" : "Send my pre-order"}
-          </button>
-          <div style={{ textAlign: "center", fontSize: 12, color: C.muted, marginTop: 8 }}>
-            A pre-order is not an invoice. Your rep confirms quantities and delivery before anything ships.
-          </div>
+        <div className="po-foot">
+          <img src={LOGO_MARK} alt="" />
+          <div style={{ fontFamily: SERIF, fontSize: 18, color: C.dark }}>Hoosier Boy</div>
+          <div>Indianapolis, Indiana</div>
         </div>
       </div>
       <Lightbox photo={photo} onClose={() => setPhoto(null)} />
