@@ -23,6 +23,9 @@ export const LOGO_WHITE = "/hoosier-boy-logo-white.png";
 export const LOGO_COLOR = "/hoosier-boy-logo-color.jpg";
 export const LOGO_MARK = "/hoosier-boy-mark-color.jpg";   // square mascot, no words
 export const preorderUrl = id => `${window.location.origin}/?po=${id}`;
+// general link for a whole program — anyone who opens it types their business name and
+// gets their own sheet on submit (Caleb 9/10: "copy the link and text it")
+export const programUrl = id => `${window.location.origin}/?pop=${id}`;
 const colorsOf = it => Array.isArray(it?.colors) ? it.colors.filter(c => c && c.name) : [];
 const ek = (itemId, color) => `${itemId}|${color || ""}`;
 
@@ -89,8 +92,10 @@ function fmtDeadline(d) {
 // ─────────────────────────────────────────────────────────────────────────────
 // PUBLIC PAGE  /?po=<sheet id>  — what the customer sees. No login.
 // ─────────────────────────────────────────────────────────────────────────────
-export function PreOrderSheetViewer({ id }) {
+export function PreOrderSheetViewer({ id, programId }) {
   const sb = getSupabase();
+  const [openSheetId, setOpenSheetId] = useState(null);   // sheet created from a general link on first submit
+  const [business, setBusiness] = useState("");
   const [sheet, setSheet] = useState(undefined);   // undefined=loading, null=not found
   const [program, setProgram] = useState(null);
   const [items, setItems] = useState([]);
@@ -104,29 +109,38 @@ export function PreOrderSheetViewer({ id }) {
 
   useEffect(() => {
     (async () => {
-      const { data: s } = await sb.from("preorder_sheets").select("*").eq("id", id).maybeSingle();
-      if (!s || s.active === false) { setSheet(null); return; }
+      let s = null;
+      if (id) {
+        const { data } = await sb.from("preorder_sheets").select("*").eq("id", id).maybeSingle(); s = data;
+        if (!s || s.active === false) { setSheet(null); return; }
+      } else if (programId) {
+        // general link: a stand-in sheet until they submit (then a real one is created)
+        let remembered = null; try { remembered = localStorage.getItem(`hb_po_open_${programId}`); } catch { /* private mode */ }
+        if (remembered) { const { data } = await sb.from("preorder_sheets").select("*").eq("id", remembered).maybeSingle(); if (data && data.active !== false) { s = data; setOpenSheetId(data.id); } }
+        if (!s) s = { id: null, program_id: programId, customer_name: "", rep_name: null, message: null, open: true };
+      } else { setSheet(null); return; }
       const [{ data: p }, { data: its }, { data: ents }] = await Promise.all([
         sb.from("preorder_programs").select("*").eq("id", s.program_id).maybeSingle(),
         sb.from("preorder_program_items").select("*").eq("program_id", s.program_id).eq("active", true).order("sort").order("name"),
-        sb.from("preorder_entries").select("item_id,color,qty").eq("sheet_id", id),
+        s.id ? sb.from("preorder_entries").select("item_id,color,qty").eq("sheet_id", s.id) : Promise.resolve({ data: [] }),
       ]);
-      setSheet(s); setProgram(p || null); setItems(its || []);
+      setSheet(s); setProgram(p || null); setItems(its || []); if (s.customer_name) setBusiness(s.customer_name);
       const q = {}; (ents || []).forEach(e => { q[ek(e.item_id, e.color)] = e.qty; }); setQty(q);
       setName(s.submitted_name || s.contact_name || "");
       setNote(s.submitted_note || "");
       if (p?.title) document.title = `${p.title} · Hoosier Boy`;
       try {   // one visit per device per 30 minutes; first/last open + count live on the sheet
-        const k = `hb_po_seen_${id}`; const last = +(localStorage.getItem(k) || 0);
+        if (!s.id) return;
+        const k = `hb_po_seen_${s.id}`; const last = +(localStorage.getItem(k) || 0);
         if (Date.now() - last > 30 * 60 * 1000) {
           localStorage.setItem(k, String(Date.now()));
-          await sb.from("preorder_visits").insert({ sheet_id: id, visitor: visitorId(), user_agent: navigator.userAgent.slice(0, 200) });
+          await sb.from("preorder_visits").insert({ sheet_id: s.id, visitor: visitorId(), user_agent: navigator.userAgent.slice(0, 200) });
           const now = new Date().toISOString();
-          await sb.from("preorder_sheets").update({ first_opened_at: s.first_opened_at || now, last_opened_at: now, open_count: (s.open_count || 0) + 1 }).eq("id", id);
+          await sb.from("preorder_sheets").update({ first_opened_at: s.first_opened_at || now, last_opened_at: now, open_count: (s.open_count || 0) + 1 }).eq("id", s.id);
         }
       } catch { /* tracking is best-effort */ }
     })();
-  }, [id]); // eslint-disable-line
+  }, [id, programId]); // eslint-disable-line
 
   const closed = program && (program.status === "closed" || (program.deadline && new Date(program.deadline + "T23:59:59") < new Date()));
   // one line per item × color (a plain item is a single line with color "")
@@ -156,13 +170,21 @@ export function PreOrderSheetViewer({ id }) {
     if (closed) return;
     if (totalQty === 0) { setErr("Add a quantity to at least one color."); return; }
     if (!name.trim()) { setErr("Add your name so we know who to call back."); return; }
+    if (!sheet.id && !business.trim()) { setErr("Add your business name."); return; }
     setSaving(true); setErr(null);
     try {
-      const rows = lines.map(l => ({ sheet_id: id, item_id: l.it.id, color: l.color || "", qty: l.q, updated_at: new Date().toISOString() }));
+      let sid = sheet.id;
+      if (!sid) {   // general link: make this customer's sheet now
+        const { data, error: e0 } = await sb.from("preorder_sheets").insert({ program_id: sheet.program_id, customer_name: business.trim(), contact_name: name.trim(), sent_via: "open-link", sent_at: new Date().toISOString(), first_opened_at: new Date().toISOString(), last_opened_at: new Date().toISOString(), open_count: 1, created_by: "open link" }).select("*").single();
+        if (e0) throw e0;
+        sid = data.id; setOpenSheetId(sid); setSheet(data);
+        try { localStorage.setItem(`hb_po_open_${sheet.program_id}`, sid); } catch { /* private mode */ }
+      }
+      const rows = lines.map(l => ({ sheet_id: sid, item_id: l.it.id, color: l.color || "", qty: l.q, updated_at: new Date().toISOString() }));
       const { error } = await sb.from("preorder_entries").upsert(rows, { onConflict: "sheet_id,item_id,color" });
       if (error) throw error;
       const now = new Date().toISOString();
-      const { error: e2 } = await sb.from("preorder_sheets").update({ submitted_at: now, submitted_name: name.trim(), submitted_note: note.trim() || null, updated_at: now }).eq("id", id);
+      const { error: e2 } = await sb.from("preorder_sheets").update({ submitted_at: now, submitted_name: name.trim(), submitted_note: note.trim() || null, customer_name: sheet.id ? undefined : business.trim(), updated_at: now }).eq("id", sid);
       if (e2) throw e2;
       setSent(now);
       document.getElementById("po-summary")?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -258,7 +280,7 @@ export function PreOrderSheetViewer({ id }) {
             {(program.availability || deadline) && <small>{[program.availability, deadline ? `Pre-order by ${deadline}` : null].filter(Boolean).join(" · ")}</small>}
           </div>
         )}
-        <div className="po-for">Prepared for <b>{sheet.customer_name}</b>{sheet.rep_name ? <> · Rep: <b>{sheet.rep_name}</b></> : null}</div>
+        {sheet.customer_name && <div className="po-for">Prepared for <b>{sheet.customer_name}</b>{sheet.rep_name ? <> · Rep: <b>{sheet.rep_name}</b></> : null}</div>}
         {sheet.message && <div className="po-note">{sheet.message}</div>}
         {savedAt && <div className="po-saved">Pre-order saved {fmtWhen(savedAt)}. Change quantities and submit again to update.</div>}
         {closed && <div className="po-saved" style={{ background: "#fff7ec", color: C.text }}>Pre-orders for this program are closed. Call your rep if you still want in.</div>}
@@ -320,6 +342,7 @@ export function PreOrderSheetViewer({ id }) {
             </>
           )}
           <div style={{ display: "grid", gap: 10, marginTop: 16 }}>
+            {!sheet.id && <input className="po-in" placeholder="Your business" value={business} onChange={e => setBusiness(e.target.value)} disabled={closed} autoComplete="organization" />}
             <input className="po-in" placeholder="Your name" value={name} onChange={e => setName(e.target.value)} disabled={closed} autoComplete="name" />
             <textarea className="po-in" rows={2} placeholder="Notes for your rep (optional)" value={note} onChange={e => setNote(e.target.value)} disabled={closed} />
           </div>
@@ -404,6 +427,19 @@ export default function PreOrders({ onBack, embedded }) {
   const [q, setQ] = useState("");
   const [picked, setPicked] = useState({});          // customer_id → true
   const [msg, setMsg] = useState("");
+  const [quick, setQuick] = useState({ name: "", phone: "" });
+  const quickSheet = async (via) => {
+    if (!program || !quick.name.trim()) return;
+    setBusy(true);
+    const match = customers.find(c => (c.company_name || "").trim().toLowerCase() === quick.name.trim().toLowerCase());
+    const { data, error } = await sb.from("preorder_sheets").insert({ program_id: program.id, customer_id: match?.id || null, customer_name: quick.name.trim(),
+      contact_name: match?.care_of || null, contact_email: match?.email || null, contact_phone: quick.phone.trim() || match?.phone || null,
+      rep_name: displayName || null, message: msg.trim() || null, created_by: displayName || null }).select("*").single();
+    setBusy(false);
+    if (error) { window.alert(error.message); return; }
+    setQuick({ name: "", phone: "" }); setTick(t => t + 1); setView("sheets");
+    await shareSheet(data, via);
+  };
   const custHits = useMemo(() => {
     const s = q.trim().toLowerCase();
     return customers.filter(c => !s || (c.company_name || "").toLowerCase().includes(s) || (c.city || "").toLowerCase().includes(s)).slice(0, 40);
@@ -521,6 +557,16 @@ export default function PreOrders({ onBack, embedded }) {
 
       {view === "sheets" && program && (
         <>
+          <div style={{ background: "#fff", border: `1px solid ${C.border}`, borderRadius: 12, padding: "10px 12px", marginBottom: 12 }}>
+            <div style={label}>New pre-order sheet — type the customer, then copy, text, or share the link</div>
+            <input style={field} placeholder="Customer name (as you want it tracked)" value={quick.name} onChange={e => setQuick({ ...quick, name: e.target.value })} />
+            <input style={{ ...field, marginTop: 8 }} placeholder="Cell number for texting (optional)" inputMode="tel" value={quick.phone} onChange={e => setQuick({ ...quick, phone: e.target.value })} />
+            <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+              <button style={primary({ flex: 1 })} disabled={busy || !quick.name.trim()} onClick={() => quickSheet("copy")}>Make sheet + copy link</button>
+              <button style={btn({ flex: 1 })} disabled={busy || !quick.name.trim()} onClick={() => quickSheet(quick.phone.trim() ? "text" : "share")}>{quick.phone.trim() ? "Make sheet + text it" : "Make sheet + share…"}</button>
+            </div>
+            <div style={{ fontSize: 12, color: C.muted, marginTop: 6 }}>If the name matches a customer on file, their contact info is attached automatically.</div>
+          </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(110px,1fr))", gap: 8, marginBottom: 12 }}>
             {[["Sent", stats.sent, `of ${progSheets.length}`], ["Opened", stats.opened, ""], ["Pre-ordered", stats.submitted, ""], ["Units", stats.qty.toLocaleString(), ""], ["Value", `$${Math.round(stats.amt).toLocaleString()}`, "wholesale"]].map(([l, v, sub]) => (
               <div key={l} style={{ background: "#fff", border: `1px solid ${C.border}`, borderRadius: 12, padding: "10px 12px" }}>
@@ -546,6 +592,15 @@ export default function PreOrders({ onBack, embedded }) {
               ))}
             </div>
           )}
+          <div style={{ background: "#fff", border: `1px solid ${C.border}`, borderRadius: 12, padding: "10px 12px", marginBottom: 12, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ flex: 1, minWidth: 180 }}>
+              <div style={{ fontWeight: 800, fontSize: 14, color: C.dark }}>General link</div>
+              <div style={{ fontSize: 12, color: C.muted }}>Text it to anyone. They type their business name and get their own sheet when they submit.</div>
+            </div>
+            <button style={btn({ padding: "8px 12px", fontSize: 12 })} onClick={async () => { await navigator.clipboard.writeText(programUrl(program.id)); flash("General link copied"); }}>Copy link</button>
+            {navigator.share && <button style={btn({ padding: "8px 12px", fontSize: 12 })} onClick={async () => { try { await navigator.share({ title: `${program.title} — Hoosier Boy`, text: `Here is the Hoosier Boy pre-order page for ${program.title}.`, url: programUrl(program.id) }); } catch { /* cancelled */ } }}>Share…</button>}
+            <a href={`sms:?&body=${encodeURIComponent(`Here is the Hoosier Boy pre-order page for ${program.title}: ${programUrl(program.id)}`)}`} style={btn({ padding: "8px 12px", fontSize: 12, textDecoration: "none" })}>Text</a>
+          </div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
             <div style={label}>Customers · newest first</div>
             {progSheets.length > 0 && <button style={btn({ padding: "6px 10px", fontSize: 12 })} onClick={exportCsv}>Export CSV</button>}

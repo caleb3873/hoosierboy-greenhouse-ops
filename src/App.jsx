@@ -481,6 +481,9 @@ export default function App() {
   // Public pre-order sheet (?po=<sheet id>) — a customer's personal pre-order page (PreOrder module)
   const poId = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("po") : null;
   if (poId) return <PreOrderSheetViewer id={poId} />;
+  // General pre-order link (?pop=<program id>) — no customer yet; they name themselves on submit
+  const popId = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("pop") : null;
+  if (popId) return <PreOrderSheetViewer programId={popId} />;
   // Public sales-visit page (?sv=<slug>) — a customer-facing deal sheet (Sales Visits module)
   const svSlug = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("sv") : null;
   if (svSlug) return <SalesVisitViewer slug={svSlug} />;
