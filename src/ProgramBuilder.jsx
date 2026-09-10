@@ -91,7 +91,8 @@ export default function ProgramsPanel({ plan, onAddPlant }) {
         if (ve) { window.alert(`Variety for ${it.item_name}: ${ve.message}`); continue; }
       }
       const rowId = crypto.randomUUID();
-      const recipeId = await resolveRecipeId(sb, cropName, it.container_id);   // inherit the family
+      const recipeId = await resolveRecipeId(sb, cropName, it.container_id,   // inherit the family
+        { form: it.prop_method || it.form || it.material?.form_class || null });   // SEED → the "(seed)" family
       // sellable-unit encoding: the recipe knows the pack (4.5" = flat of 10). Rows
       // without it read as bare pots and desync every cases surface (Caleb 7/29).
       let ppu = 0;

@@ -14,10 +14,27 @@ export function sizeLabelForContainer(c) {
   return `${d.toString().replace(/\.0$/, "")}" ${tag}`;
 }
 
-export async function resolveRecipeId(sb, cropName, containerId) {
+// Seed and vegetative material never share a family (Caleb 9/10/2026: "seed variety
+// osteos are mixed with vegetative osteos which we shouldn't do"). Seed families are a
+// separate recipe named "<Crop> (seed)" (crop_name+size is unique, so the name carries
+// the split). `hint` = { form, varietyType } — a SEED form, or a variety whose library
+// type is "seed", resolves to the seed family when one exists.
+export const SEED_FAMILY_SUFFIX = " (seed)";
+export function isSeedHint(hint) {
+  if (!hint) return false;
+  return /^SEED/i.test(hint.form || "") || /^seed$/i.test(hint.varietyType || "");
+}
+
+export async function resolveRecipeId(sb, cropName, containerId, hint) {
   if (!sb || !cropName) return null;
-  const { data: recs } = await sb.from("crop_recipes").select("id,size_label").eq("crop_name", cropName);
-  if (!recs?.length) return null;
+  const seed = isSeedHint(hint);
+  const baseName = String(cropName).replace(/ \(seed\)$/i, "");
+  const names = seed ? [baseName + SEED_FAMILY_SUFFIX, baseName] : [baseName];
+  const { data: all } = await sb.from("crop_recipes").select("id,size_label,crop_name").in("crop_name", names);
+  if (!all?.length) return null;
+  // seed hint: prefer the "(seed)" family whenever it exists; otherwise fall back to the crop
+  const recs = seed && all.some(r => r.crop_name !== baseName) ? all.filter(r => r.crop_name !== baseName) : all.filter(r => r.crop_name === baseName);
+  if (!recs.length) return null;
   if (recs.length === 1) return recs[0].id;
   if (containerId) {
     const { data: c } = await sb.from("containers").select("name,kind,type,diameter_in").eq("id", containerId).single();

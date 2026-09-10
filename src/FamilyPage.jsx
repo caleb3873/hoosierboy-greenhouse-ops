@@ -2304,9 +2304,11 @@ Combine the groups?`)) return;
                           {!!vr.benches.size && <div style={{ fontSize: 9.5, fontWeight: 500, color: C.muted, fontFamily: "ui-monospace,Menlo,monospace" }}>{[...vr.benches].sort().join(" ")}</div>}
                         </td>
                         <td style={{ ...td, color: C.muted, fontSize: 11 }}>{s?.series_name || "—"}</td>
-                        {(() => {   // series form when set; else the rows' prop method (muted = inherited)
-                          const inh = !s?.form ? vr.rows.map(r => r.prop_method).find(Boolean) : null;
-                          const f = s?.form || inh;
+                        {(() => {   // the rows' own prop method when they agree (the rows are the truth —
+                          // Akila seed plugs read "CALL" off the recipe, Caleb 9/10); else the series form
+                          const own = [...new Set(vr.rows.map(r => r.prop_method).filter(Boolean))];
+                          const inh = own.length === 1 && own[0] !== s?.form ? own[0] : (!s?.form ? own[0] : null);
+                          const f = inh || s?.form;
                           return <td style={td}><span title={inh ? "from the rows' prop method — set the form on the series (recipe editor) to make it official" : undefined}
                             style={{ fontFamily: "ui-monospace,Menlo,monospace", fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 5, opacity: inh ? 0.65 : 1, background: /CALL/.test(f || "") ? C.amberBg : C.chip, color: /CALL/.test(f || "") ? C.amber : C.green }}>{f || "—"}</span></td>;
                         })()}
@@ -2338,7 +2340,8 @@ Combine the groups?`)) return;
                           const vv0 = vmap[vr.rows[0]?.variety_id] || {};
                           const qForm = [vv0.variety_key, ...(vv0.match_aliases || [])].filter(Boolean)
                             .flatMap(k => quotesByKey[k] || [])[0]?.form_class || "";
-                          const effForm = sSp.form || vr.rows.map(r => r.prop_method).find(Boolean) || qForm;
+                          const ownForms = [...new Set(vr.rows.map(r => r.prop_method).filter(Boolean))];
+                          const effForm = (ownForms.length === 1 ? ownForms[0] : null) || sSp.form || ownForms[0] || qForm;
                           if (plants > 0 && /^(URC|CALL)/i.test(effForm)) orderQty = Math.max(100, Math.ceil(orderQty / 100) * 100);
                           return (<>
                             <td style={{ ...td, textAlign: "center", fontVariantNumeric: "tabular-nums", color: ppps.length === 1 && ppps[0] === 1 ? C.muted : C.dark, fontWeight: 700 }}
@@ -2564,9 +2567,10 @@ Combine the groups?`)) return;
                               {!!vr.benches.size && <div style={{ fontSize: 9.5, fontWeight: 500, color: C.muted, fontFamily: "ui-monospace,Menlo,monospace" }}>{[...vr.benches].sort().join(" ")}</div>}
                             </td>
                             <td style={{ ...td, color: C.muted, fontSize: 11 }}>{s?.series_name || "—"}</td>
-                            {(() => {   // series form when set; else the rows' prop method (muted = inherited)
-                              const inh = !s?.form ? vr.rows.map(r => r.prop_method).find(Boolean) : null;
-                              const f = s?.form || inh;
+                            {(() => {   // rows' own prop method when they agree; else the series form (see season view)
+                              const own = [...new Set(vr.rows.map(r => r.prop_method).filter(Boolean))];
+                              const inh = own.length === 1 && own[0] !== s?.form ? own[0] : (!s?.form ? own[0] : null);
+                              const f = inh || s?.form;
                               return <td style={td}><span title={inh ? "from the rows' prop method — set the form on the series (recipe editor) to make it official" : undefined}
                                 style={{ fontFamily: "ui-monospace,Menlo,monospace", fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 5, opacity: inh ? 0.65 : 1, background: /CALL/.test(f || "") ? C.amberBg : C.chip, color: /CALL/.test(f || "") ? C.amber : C.green }}>{f || "—"}</span></td>;
                             })()}

@@ -5,8 +5,10 @@
 // tab as reference and never count as fill. ✂ Trim cuts unplaced remainder.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getSupabase } from "./supabase";
-import { amendOrdersForTrim } from "./shared";
+import { amendOrdersForTrim, sizeLabelForItem } from "./shared";
 import FamilyPage from "./FamilyPage";
+import ItemDrill from "./ItemDrill";
+import { useAuth } from "./Auth";
 
 const C = { dark: "#1e2d1a", light: "#7fb069", cream: "#c8e6b8", muted: "#7a8c74", red: "#d94f3d", amber: "#e89a3a", border: "#dfe7d8", chip: "#eef3e8", card: "#fff" };
 const FONT = "'DM Sans', sans-serif";
@@ -301,6 +303,8 @@ export default function SpaceMap({ plan: fixedPlan }) {
   const [recipeNames, setRecipeNames] = useState({});
   const [showAll, setShowAll] = useState(false);
   const [famOpen, setFamOpen] = useState(null);
+  const [itemOpen, setItemOpen] = useState(null);   // item page opened from a family page (Caleb 9/10: names must click through from Space too)
+  const { displayName } = useAuth();
   const [drill, setDrill] = useState(null);           // { bench, items:[agg] } — click-to-inspect a placed spot
   const [placeItem, setPlaceItem] = useState("");
   const [poolQ, setPoolQ] = useState("");
@@ -1083,8 +1087,22 @@ export default function SpaceMap({ plan: fixedPlan }) {
         onUnplace={async agg => { await unplace(agg); setDrill(null); }} />}
       {famOpen && (
         <FamilyPage plan={fixedPlan || plans.find(p => p.id === planId) || { id: planId }} recipeId={famOpen}
-          onClose={() => { setFamOpen(null); setTick(t => t + 1); }} />
+          onClose={() => { setFamOpen(null); setTick(t => t + 1); }}
+          onOpenItem={name => { setFamOpen(null); setTick(t => t + 1); setItemOpen(name); }} />
       )}
+      {itemOpen && (() => {
+        // the same item page the plan tabs open — minimal row (the drill loads its own
+        // plan rows), no sales context here, targets saved partially like saveTarget does
+        const plan = fixedPlan || plans.find(p => p.id === planId) || { id: planId };
+        const row = { item: itemOpen, size: sizeLabelForItem(itemOpen), planned: 0, planRaw: 0, sold: 0, st: 0, over: 0, lostEst: 0, soldOut: false, price: null, rev: 0, wk: [], peak: null, ship: null, firstWk: null, isNew: false, status: "" };
+        const saveTarget = async patch => {
+          const stamp = new Date().toISOString();
+          await sb.from("plan_targets").upsert({ plan_id: plan.id, item_name: itemOpen, ...patch, decided_by: displayName || "planner", decided_at: stamp, updated_at: stamp }, { onConflict: "plan_id,item_name" });
+        };
+        return <ItemDrill plan={plan} row={row} tgt={undefined} weeks={[]} onSaveTarget={saveTarget}
+          onClose={() => { setItemOpen(null); setTick(t => t + 1); }} onMutated={() => setTick(t => t + 1)}
+          onReplace={name => { setItemOpen(name); setTick(t => t + 1); }} />;
+      })()}
     </div>
   );
 }
