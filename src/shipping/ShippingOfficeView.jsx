@@ -4,6 +4,7 @@ import { useAuth } from "../Auth";
 import { customerConfirmationValid } from "./ShippingCommand";
 import DeliveryImporter from "./DeliveryImporter";
 import { NotificationBanner } from "../PushNotifications";
+import PreOrders from "../PreOrder";
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
 const DARK = "#1e2d1a";
@@ -38,6 +39,7 @@ export default function ShippingOfficeView() {
   const [dismissedChanges, setDismissedChanges] = useState(new Set());
   const [showCodes, setShowCodes] = useState(false);
   const [tab, setTab] = useState("day"); // 'day' | 'reconfirm' | 'import'
+  const [showPreorders, setShowPreorders] = useState(false);   // 🧾 customer pre-order sheets (Caleb 9/10)
 
   // Day deliveries
   const dayDeliveries = useMemo(() => {
@@ -77,6 +79,12 @@ export default function ShippingOfficeView() {
   function nextDay() {
     setSelectedDate(toISODate(addDays(selectedDate, 1)));
   }
+
+  if (showPreorders) return (
+    <div style={{ padding: "12px 14px", maxWidth: 720, margin: "0 auto" }}>
+      <PreOrders onBack={() => setShowPreorders(false)} />
+    </div>
+  );
 
   return (
     <div style={{ ...FONT, maxWidth: 600, margin: "0 auto", padding: "0 12px 100px" }}>
@@ -180,6 +188,10 @@ export default function ShippingOfficeView() {
           🔑 Codes
         </button>
       </div>
+      <button onClick={() => setShowPreorders(true)}
+        style={{ width: "100%", marginTop: -8, marginBottom: 16, padding: "11px 12px", borderRadius: 10, border: `1.5px solid ${DARK}`, background: DARK, color: "#fff", fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+        🧾 Pre-orders — send sheets, see who opened and what they want
+      </button>
 
       {/* Delivery list */}
       {dayDeliveries.length === 0 ? (
