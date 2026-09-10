@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { AuthProvider, LoginScreen, UserMenu, useAuth, RecoveryPasswordForm } from "./Auth";
 import { SharedGalleryViewer } from "./Sharing";
+import PreOrders, { PreOrderSheetViewer } from "./PreOrder";
 import { SalesVisitViewer } from "./SalesVisits";
 import MumTruckBuilder from "./MumTruckBuilder";
 import InventoryValuation from "./InventoryValuation";
@@ -128,6 +129,7 @@ const NAV_GROUPS = [
       { id: "orders",            label: "🧾 Orders" },
       { id: "reservations",      label: "Reservations" },
       { id: "cat-hotlists",      label: "🔥 Hot Lists" },
+      { id: "preorders",         label: "🧾 Pre-orders" },
       { id: "campaigns",         label: "📣 Campaigns" },
       { id: "catalog",           label: "📦 Catalog" },
       { id: "fundraiser",        label: "🎗 Fundraiser 2027" },
@@ -304,6 +306,7 @@ function PlannerShell() {
         {page === "catalog"            && <CatalogViewer />}
         {page === "orders"             && <Orders />}
         {page === "cat-hotlists"       && <CatalogHotLists />}
+        {page === "preorders"          && <div style={{ padding: 16 }}><PreOrders embedded /></div>}
         {page === "fundraiser"         && <FundraiserPlanner />}
         {page === "plan-totals"        && <PlanTotals embedded />}
         {page === "planted-inventory"  && <PlantedInventory />}
@@ -475,6 +478,9 @@ export default function App() {
   // Public shareable link (?g=<id>) — a slideshow / hot list a customer opens with NO login.
   const shareId = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("g") : null;
   if (shareId) return <SharedGalleryViewer id={shareId} />;
+  // Public pre-order sheet (?po=<sheet id>) — a customer's personal pre-order page (PreOrder module)
+  const poId = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("po") : null;
+  if (poId) return <PreOrderSheetViewer id={poId} />;
   // Public sales-visit page (?sv=<slug>) — a customer-facing deal sheet (Sales Visits module)
   const svSlug = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("sv") : null;
   if (svSlug) return <SalesVisitViewer slug={svSlug} />;

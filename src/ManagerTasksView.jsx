@@ -25,6 +25,7 @@ import { NewWorkModal, ReiBanner, logWorkCompliance } from "./WorkHub";
 import PhotoLibrary from "./PhotoLibrary";
 import PropagationGuide from "./PropagationGuide";
 import SalesVisits from "./SalesVisits";
+import PreOrders from "./PreOrder";
 
 const FONT = { fontFamily: "'DM Sans','Segoe UI',sans-serif" };
 
@@ -427,7 +428,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
   // Remember the open module across a page refresh so reloading (e.g. inside Trade Show)
   // keeps you where you were instead of dumping you back to the hub. Only restore modules
   // that have a back-to-hub and aren't tightly role-gated, so a reload can't strand anyone.
-  const PERSISTABLE_VIEWS = ["tasks", "tradeshow", "photos", "hotlist", "treatment", "today", "week", "messages", "vacation", "evaluations", "receiving", "inventory", "reference-docs", "driver-schedule", "prop-guide", "sales-visits"];
+  const PERSISTABLE_VIEWS = ["tasks", "tradeshow", "photos", "hotlist", "treatment", "today", "week", "messages", "vacation", "evaluations", "receiving", "inventory", "reference-docs", "driver-schedule", "prop-guide", "sales-visits", "preorders"];
   const [currentView, setCurrentView] = useState(() => { try { const v = sessionStorage.getItem("mtv_view_v1"); return v && PERSISTABLE_VIEWS.includes(v) ? v : "hub"; } catch { return "hub"; } }); // hub | tasks | vacation | messages | today | week | hr-inbox
   const [hubFavEdit, setHubFavEdit] = useState(false);
   const [, setHubFavTick] = useState(0);   // re-render after a pin toggle
@@ -1295,6 +1296,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
                 ["vacation", "🌴", "Time Off", () => setCurrentView("vacation")],
                 ["photos", "📸", "Photos", () => setCurrentView("photos")],
                 ["sales-visits", "💼", "Sales Visits", () => setCurrentView("sales-visits")],
+                ["preorders", "🧾", "Pre-orders", () => setCurrentView("preorders")],
                 ["hotlist", "🔥", "Hot List", () => setCurrentView("hotlist")],
                 ["prop-guide", "🌱", "Prop Guide", () => setCurrentView("prop-guide")],
                 ["reference-docs", "📚", "Reference", () => setCurrentView("reference-docs")],
@@ -1491,6 +1493,13 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
                   <div className="hub-card-emoji">💼</div>
                   <div className="hub-card-title">Sales Visits</div>
                   <div className="hub-card-sub">Deal pages · share with customers</div>
+                </div>
+
+                {/* Pre-orders — per-customer pre-order sheets for a new item / program (Caleb 9/10) */}
+                <div className="hub-card" onClick={() => setCurrentView("preorders")} style={{ borderTopColor: "#e89a3a", borderTopWidth: 4 }}>
+                  <div className="hub-card-emoji">🧾</div>
+                  <div className="hub-card-title">Pre-orders</div>
+                  <div className="hub-card-sub">Send a sheet · see who wants what</div>
                 </div>
 
                 {/* Photo Library — every marketing photo, one door */}
@@ -2031,6 +2040,7 @@ export default function ManagerTasksView({ onSwitchMode, onBackToApp, canCreateG
       )}
 
       {currentView === "hotlist" && <HotList onBack={() => setCurrentView("hub")} />}
+      {currentView === "preorders" && <PreOrders onBack={() => setCurrentView("hub")} />}
 
       {currentView === "tradeshow" && (
         <div>
