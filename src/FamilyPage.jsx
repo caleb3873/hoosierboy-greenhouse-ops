@@ -433,7 +433,12 @@ export default function FamilyPage({ plan, recipeId, onClose, onOpenItem }) {
       // shows as a range when series diverge — it must never split a planting week.
       // A group_tag pins rows into their OWN group even on matching dates
       // (Caleb 8/17: House 23 material stays its own group beside House 21's).
-      const k = `${r.plant_year ?? "?"}|${r.plant_week ?? "?"}|${r.ready_year ?? "?"}|${r.ready_week ?? "?"}|${r.group_tag ?? ""}`;
+      // Caleb 9/10: "as long as it shares the same date shipped in, same date planted,
+      // same location and same family, it should be the same group" — so the key is
+      // ship + plant + house (+ tag). Finish week is NOT in the key; it shows as a range.
+      const bcode = r.bench_id && bmap[r.bench_id] ? String(bmap[r.bench_id]) : "";
+      const house = /^EQ\d{2}/.test(bcode) ? bcode.slice(0, 4) : bcode.replace(/\d+$/, "").slice(0, 3);
+      const k = `${r.plant_year ?? "?"}|${r.plant_week ?? "?"}|${r.ship_year ?? "?"}|${r.ship_week ?? "?"}|${house}|${r.group_tag ?? ""}`;
       const g = (m[k] = m[k] || { key: k, plant: r.plant_week, plantYear: r.plant_year, tag: r.group_tag || null,
         ready: r.ready_week, readyYear: r.ready_year, shipMin: null, shipMax: null, rows: [] });
       g.rows.push(r);
@@ -1104,7 +1109,7 @@ Combine the groups?`)) return;
         { ship: sh.wk, shipYear: sh.yr, plant: target.plant, plantYear: pYr },
         { wk: vr.rows[0]?.ship_week, yr: vr.rows[0]?.ship_year ?? vr.rows[0]?.plant_year }, displayName);
       setRipple(mvRes.moved || mvRes.flags.length ? mvRes : null);
-      setFlashKey(`${target.plantYear ?? vr.rows[0]?.plant_year ?? "?"}|${target.plant}|${target.readyYear ?? "?"}|${target.ready ?? "?"}`);
+      setFlashKey(target.key);
       try {
         await sb.from("item_change_log").insert({ plan_id: plan.id, item_name: vr.rows[0]?.item_name || vr.variety,
           variety_key: vr.vkey || null, change_type: "group_move",
