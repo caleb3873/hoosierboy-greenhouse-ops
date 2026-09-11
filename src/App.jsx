@@ -8,6 +8,7 @@ import InventoryValuation from "./InventoryValuation";
 import TagManager from "./TagManager";
 import { ExtractionProvider, useExtraction } from "./ExtractionContext";
 import { CROP_STATUS } from "./shared";
+import useIsMobile from "./useIsMobile";
 
 // Module imports — each is a self-contained page
 import PlannerHome      from "./PlannerHome";
@@ -197,13 +198,64 @@ function PlannerShell() {
   const activeGroup = pageGroup(page) || page;
   const currentGroup = navGroups.find(g => g.id === activeGroup);
   const subItems = currentGroup?.items || null;
+  const isMobile = useIsMobile();
+  const [navOpen, setNavOpen] = useState(false);
+  const currentPageLabel = subItems?.find(i => i.id === page)?.label || "";
 
   return (
     <div style={{ fontFamily: "'DM Sans','Segoe UI',sans-serif", background: "#f2f5ef", minHeight: "100vh" }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
 
-      {/* ── TOP NAV — primary group bar ── */}
+      {/* ── PLANNER CSS — phone-width rules for pages that were built desktop-first ── */}
+      <style>{`
+        @media (max-width: 820px) {
+          .pp-root > div { padding: 10px !important; }
+          .pp-root table { display: block; overflow-x: auto; max-width: 100%; -webkit-overflow-scrolling: touch; }
+          .pp-root div[style*="position: sticky"][style*="flex-wrap: wrap"] { flex-wrap: nowrap !important; overflow-x: auto !important; -webkit-overflow-scrolling: touch; scrollbar-width: thin; }
+          .pp-root div[style*="position: sticky"][style*="flex-wrap: wrap"] > button { flex-shrink: 0; white-space: nowrap; }
+          .pp-root [style*="grid-template-columns: repeat("] { grid-template-columns: 1fr !important; }
+          .pp-root [style*="grid-template-columns: 1fr 1fr"] { grid-template-columns: 1fr !important; }
+          .pp-root [style*="min-width"] { min-width: 0 !important; }
+          .pp-root input, .pp-root select, .pp-root textarea { max-width: 100%; }
+          .sm-two-col { grid-template-columns: 1fr !important; }
+          .sm-two-col > * { grid-column: 1 !important; grid-row: auto !important; }
+          .sm-banks { grid-template-columns: 1fr !important; }
+        }
+      `}</style>
+
+      {isMobile ? (
+      <div style={{ background: "#1a2a1a", position: "sticky", top: 0, zIndex: 100 }}>
+        <div style={{ padding: "0 10px", display: "flex", alignItems: "center", gap: 8, minHeight: 52 }}>
+          <button onClick={() => setNavOpen(o => !o)} aria-label="Menu"
+            style={{ background: navOpen ? "#2a4a25" : "none", border: "1px solid #3a5a35", borderRadius: 8, color: "#c8e6b8", fontSize: 20, lineHeight: 1, padding: "6px 10px", cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}>☰</button>
+          <img src={LOGO_WHITE} alt="Hoosier Boy" style={{ height: 30, objectFit: "contain", flexShrink: 0 }} />
+          <div style={{ flex: 1, minWidth: 0, color: "#c8e6b8", fontWeight: 800, fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {currentGroup?.label || ""}{currentPageLabel ? ` › ${currentPageLabel}` : ""}
+          </div>
+          <UserMenu />
+        </div>
+        {navOpen && (
+          <div style={{ position: "fixed", left: 0, right: 0, top: 52, bottom: 0, zIndex: 99, background: "#162212", overflowY: "auto", padding: "6px 12px calc(40px + env(safe-area-inset-bottom))" }}>
+            {navGroups.map(g => (
+              <div key={g.id} style={{ marginBottom: 4 }}>
+                <button onClick={() => { setPage(g.solo ? g.id : (g.items?.[0]?.id || g.id)); setNavOpen(false); }}
+                  style={{ width: "100%", textAlign: "left", padding: "13px 8px", background: "none", border: "none", borderBottom: "1px solid #24361f", color: activeGroup === g.id ? "#c8e6b8" : "#8fae82", fontWeight: 800, fontSize: 15, fontFamily: "inherit", cursor: "pointer" }}>{g.label}</button>
+                {g.items && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, padding: "8px 4px 10px" }}>
+                    {g.items.map(item => (
+                      <button key={item.id} onClick={() => { setPage(item.id); setNavOpen(false); }}
+                        style={{ padding: "8px 12px", borderRadius: 999, border: `1px solid ${page === item.id ? "#7fb069" : "#2f4a2a"}`, background: page === item.id ? "#2a4a25" : "transparent", color: page === item.id ? "#c8e6b8" : "#9fbf92", fontSize: 13, fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}>{item.label}</button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      ) : (
+      /* ── TOP NAV — primary group bar (desktop) ── */
       <div style={{ background: "#1a2a1a", position: "sticky", top: 0, zIndex: 100 }}>
         <div style={{ padding: "0 20px", display: "flex", alignItems: "center", gap: 0 }}>
           <img src={LOGO_WHITE} alt="Hoosier Boy" style={{ height: 40, objectFit: "contain", marginRight: 20, flexShrink: 0 }} />
@@ -236,6 +288,8 @@ function PlannerShell() {
           </div>
         )}
       </div>
+
+      )}
 
       {/* Announcements banner — visible across PlannerShell */}
       <AnnouncementBanner />
@@ -274,7 +328,7 @@ function PlannerShell() {
       )}
 
       {/* Page content */}
-      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "28px 24px" }}>
+      <div style={{ maxWidth: 1100, margin: "0 auto", padding: isMobile ? "10px 6px calc(24px + env(safe-area-inset-bottom))" : "28px 24px" }}>
         {page === "home"       && <PlannerHome    onNavigate={setPage} />}
         {page === "spraylog"  && <WorkRecords />}
         {page === "head-grower" && <GrowerProgram />}
@@ -297,7 +351,7 @@ function PlannerShell() {
         {page === "inventory-value" && <InventoryValuation />}
         {page === "tags" && <TagManager />}
         {page === "fall"       && <FallProgram />}
-        {page === "plans"      && <ProductionPlans />}
+        {page === "plans"      && <div className="pp-root"><ProductionPlans /></div>}
         {page === "sourcing"   && <SourcingPage />}
         {page === "houseplants" && <HouseplantAvailability />}
         {page === "customer-profiles" && <CustomerProfiles />}

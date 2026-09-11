@@ -6,6 +6,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getSupabase } from "./supabase";
 import { amendOrdersForTrim, sizeLabelForItem } from "./shared";
+import useIsMobile from "./useIsMobile";
 import FamilyPage from "./FamilyPage";
 import ItemDrill from "./ItemDrill";
 import { useAuth } from "./Auth";
@@ -310,6 +311,7 @@ export default function SpaceMap({ plan: fixedPlan }) {
   const [poolQ, setPoolQ] = useState("");
   const [busy, setBusy] = useState(false);
   const [tick, setTick] = useState(0);
+  const isMobile = useIsMobile();
   const house = HOUSES.find(h => h.key === houseKey);
 
   // family edits happen in other tabs/overlays — refetch whenever we come back
@@ -860,7 +862,7 @@ export default function SpaceMap({ plan: fixedPlan }) {
     <div style={{ fontFamily: FONT }}>
       {selSummary && (
         <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 60, background: C.dark, color: "#fff",
-          padding: "9px 14px", display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap",
+          padding: "9px 14px calc(9px + env(safe-area-inset-bottom))", display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap",
           fontSize: 12.5, fontWeight: 700, boxShadow: "0 -2px 10px rgba(0,0,0,.18)" }}>
           <span style={{ fontWeight: 800 }}>{selSummary.n} selected</span>
           {selSummary.buckets.map(bk => (
@@ -926,9 +928,9 @@ export default function SpaceMap({ plan: fixedPlan }) {
       {houseKey === "ALL" ? (
         <AllHousesOverview sb={sb} planId={planId} rules={rules} cls={cls} onPick={k => setHouseKey(k)} tick={tick} />
       ) : (
-      <div style={{ display: "grid", gridTemplateColumns: mode === "plan" ? "280px 1fr" : "1fr", gap: 14, alignItems: "start" }}>
+      <div style={{ display: "grid", gridTemplateColumns: mode === "plan" && !isMobile ? "280px 1fr" : "1fr", gap: 14, alignItems: "start" }}>
         {mode === "plan" && (
-          <div style={{ background: C.card, border: `1.5px solid ${placeItem ? C.light : C.border}`, borderRadius: 12, padding: "10px 12px", position: "sticky", top: 8, maxHeight: "82vh", overflowY: "auto" }}>
+          <div style={{ background: C.card, border: `1.5px solid ${placeItem ? C.light : C.border}`, borderRadius: 12, padding: "10px 12px", position: isMobile ? "static" : "sticky", top: 8, maxHeight: isMobile ? "38vh" : "82vh", overflowY: "auto" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
               <span style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: C.muted }}>📥 To place</span>
               <span style={{ flex: 1 }} />
@@ -1011,7 +1013,7 @@ export default function SpaceMap({ plan: fixedPlan }) {
             const hi = north.filter(b => +b.code.slice(4) >= 9);
             const lo = north.filter(b => +b.code.slice(4) < 9);
             return (
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "5px 12px", marginBottom: 12 }}>
+              <div className="sm-two-col" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "5px 12px", marginBottom: 12 }}>
                 <div style={{ ...lbl, gridColumn: 1, gridRow: 1 }}>South row — walk ↓</div>
                 <div style={{ ...lbl, gridColumn: 2, gridRow: 1 }}>North row (09–16 ⅓) — walk ↓</div>
                 {south.map((b, i) => <div key={b.id} style={{ gridColumn: 1, gridRow: i + 2 }}><BenchWide b={b} /></div>)}
@@ -1035,7 +1037,7 @@ export default function SpaceMap({ plan: fixedPlan }) {
             const backWall = W.get("00");
             const rows = [...new Set([...W.keys(), ...E.keys()])].filter(p => p !== "00").sort().reverse();
             return (
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "5px 12px", marginBottom: 12 }}>
+              <div className="sm-two-col" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "5px 12px", marginBottom: 12 }}>
                 <div style={{ ...lbl, gridColumn: 1, gridRow: 1 }}>West range — walk ↓</div>
                 <div style={{ ...lbl, gridColumn: 2, gridRow: 1 }}>East range — walk ↓</div>
                 {rows.flatMap((pos, i) => [
@@ -1051,7 +1053,7 @@ export default function SpaceMap({ plan: fixedPlan }) {
               </div>
             );
           })() : house?.vertical ? (
-            <div style={{ display: "grid", gridTemplateColumns: `repeat(${house.banks.length}, 1fr)`, gap: 12, marginBottom: 12 }}>
+            <div className="sm-banks" style={{ display: "grid", gridTemplateColumns: `repeat(${house.banks.length}, 1fr)`, gap: 12, marginBottom: 12 }}>
               {house.banks.map(([label, re, rev]) => {
                 let bs = benchOf(re);
                 if (rev) bs = bs.slice().reverse();
