@@ -47,6 +47,10 @@
   ],
   "rewrites": [
     {
+      "source": "/r/:id",
+      "destination": "/api/review-share?id=:id"
+    },
+    {
       "source": "/pp/:id",
       "destination": "/api/preorder-share?kind=pop&id=:id"
     },

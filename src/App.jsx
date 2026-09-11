@@ -2,6 +2,7 @@ import { useState } from "react";
 import { AuthProvider, LoginScreen, UserMenu, useAuth, RecoveryPasswordForm } from "./Auth";
 import { SharedGalleryViewer } from "./Sharing";
 import PreOrders, { PreOrderSheetViewer } from "./PreOrder";
+import ReviewSheets, { ReviewSheetViewer } from "./ReviewSheet";
 import { SalesVisitViewer } from "./SalesVisits";
 import MumTruckBuilder from "./MumTruckBuilder";
 import InventoryValuation from "./InventoryValuation";
@@ -88,6 +89,7 @@ const NAV_GROUPS = [
       { id: "tags", label: "🏷 Tag Manager" },
       { id: "plan-totals", label: "Σ Plan Totals" },
       { id: "planted-inventory", label: "📋 Planted Counts" },
+      { id: "reviews",   label: "🗳 Reviews" },
     ],
   },
   {
@@ -363,6 +365,7 @@ function PlannerShell() {
         {page === "orders"             && <Orders />}
         {page === "cat-hotlists"       && <CatalogHotLists />}
         {page === "preorders"          && <div style={{ padding: 16 }}><PreOrders embedded /></div>}
+        {page === "reviews"            && <div style={{ padding: 16 }}><ReviewSheets embedded /></div>}
         {page === "fundraiser"         && <FundraiserPlanner />}
         {page === "plan-totals"        && <PlanTotals embedded />}
         {page === "planted-inventory"  && <PlantedInventory />}
@@ -540,6 +543,9 @@ export default function App() {
   // General pre-order link (?pop=<program id>) — no customer yet; they name themselves on submit
   const popId = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("pop") : null;
   if (popId) return <PreOrderSheetViewer programId={popId} />;
+  // Plan review link (?rv=<sheet id>) — sales feedback on a proposed program (ReviewSheet module)
+  const rvId = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("rv") : null;
+  if (rvId) return <ReviewSheetViewer id={rvId} />;
   // Public sales-visit page (?sv=<slug>) — a customer-facing deal sheet (Sales Visits module)
   const svSlug = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("sv") : null;
   if (svSlug) return <SalesVisitViewer slug={svSlug} />;
