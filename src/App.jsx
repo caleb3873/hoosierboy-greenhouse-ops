@@ -3,6 +3,7 @@ import { AuthProvider, LoginScreen, UserMenu, useAuth, RecoveryPasswordForm } fr
 import { SharedGalleryViewer } from "./Sharing";
 import PreOrders, { PreOrderSheetViewer } from "./PreOrder";
 import ReviewSheets, { ReviewSheetViewer } from "./ReviewSheet";
+import PicksViewer from "./Picks";
 import { SalesVisitViewer } from "./SalesVisits";
 import MumTruckBuilder from "./MumTruckBuilder";
 import InventoryValuation from "./InventoryValuation";
@@ -546,6 +547,9 @@ export default function App() {
   // Plan review link (?rv=<sheet id>) — sales feedback on a proposed program (ReviewSheet module)
   const rvId = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("rv") : null;
   if (rvId) return <ReviewSheetViewer id={rvId} />;
+  // Season picks link (?picks=<reviewer token>) — one link per reviewer, deciders set pots, voters like/dislike
+  const picksToken = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("picks") : null;
+  if (picksToken) return <PicksViewer token={picksToken} />;
   // Public sales-visit page (?sv=<slug>) — a customer-facing deal sheet (Sales Visits module)
   const svSlug = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("sv") : null;
   if (svSlug) return <SalesVisitViewer slug={svSlug} />;

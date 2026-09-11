@@ -47,6 +47,10 @@
   ],
   "rewrites": [
     {
+      "source": "/k/:id",
+      "destination": "/api/picks-share?id=:id"
+    },
+    {
       "source": "/r/:id",
       "destination": "/api/review-share?id=:id"
     },

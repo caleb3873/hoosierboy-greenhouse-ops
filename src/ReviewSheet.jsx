@@ -8,22 +8,23 @@ import { useEffect, useMemo, useState } from "react";
 import { getSupabase } from "./supabase";
 import { LOGO_WHITE } from "./PreOrder";
 
-const FONT = "'DM Sans','Segoe UI',sans-serif";
-const SERIF = "'DM Serif Display',Georgia,serif";
-const C = { dark: "#1e2d1a", light: "#7fb069", cream: "#c8e6b8", muted: "#7a8c74", red: "#d94f3d", amber: "#e89a3a", paper: "#f6f7f3", chip: "#eef2e6", border: "#d9dfd3", text: "#2b3a27" };
+export const FONT = "'DM Sans','Segoe UI',sans-serif";
+export const SERIF = "'DM Serif Display',Georgia,serif";
+export const C = { dark: "#1e2d1a", light: "#7fb069", cream: "#c8e6b8", muted: "#7a8c74", red: "#d94f3d", amber: "#e89a3a", paper: "#f6f7f3", chip: "#eef2e6", border: "#d9dfd3", text: "#2b3a27" };
 export const reviewUrl = id => `${window.location.origin}/r/${id}`;   // /r/<id> = link-preview wrapper → /?rv=<id>
+export const picksUrl = token => `${window.location.origin}/k/${token}`; // /k/<token> = link-preview wrapper → /?picks=<token>
 
 const VERDICTS = [
   ["more", "More", "#2f6ea5"], ["right", "Just right", "#4f8a3a"], ["less", "Less", "#e89a3a"], ["drop", "Don't grow", "#d94f3d"],
 ];
 const OVERALL = [["too_many", "Too many overall"], ["about_right", "About right"], ["room_for_more", "Room for more"]];
-const fmtWhen = iso => iso ? new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
-const n = v => (v == null ? "" : (+v).toLocaleString());
+export const fmtWhen = iso => iso ? new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+export const n = v => (v == null ? "" : (+v).toLocaleString());
 // Colour swatch fallback when an item has no photo — reads the colour out of the name.
 const SWATCH = [["white", "#f4f2ea"], ["yellow", "#f2c94c"], ["golden", "#e6a92b"], ["orange", "#ef7f2c"], ["red", "#c9332b"], ["scarlet", "#d63a2f"], ["hot pink", "#e0409a"], ["pink", "#ef9ab8"], ["salmon", "#f2a07b"], ["peach", "#f5b98e"], ["coral", "#f07a6a"], ["lilac", "#b79bd6"], ["purple", "#6a3d9a"], ["lavender", "#b8a4d9"], ["mix", "linear-gradient(135deg,#f2c94c,#ef7f2c,#c9332b,#ef9ab8,#b79bd6)"]];
-const swatchFor = (name, given) => given || (SWATCH.find(([k]) => name.toLowerCase().includes(k)) || [null, "#c8d5bf"])[1];
+export const swatchFor = (name, given) => given || (SWATCH.find(([k]) => name.toLowerCase().includes(k)) || [null, "#c8d5bf"])[1];
 
-function Lightbox({ photo, onClose }) {
+export function Lightbox({ photo, onClose }) {
   useEffect(() => { if (!photo) return; const k = e => e.key === "Escape" && onClose(); window.addEventListener("keydown", k); return () => window.removeEventListener("keydown", k); }, [photo, onClose]);
   if (!photo) return null;
   return (
@@ -34,7 +35,7 @@ function Lightbox({ photo, onClose }) {
   );
 }
 
-function Photo({ item, big, onOpen }) {
+export function Photo({ item, big, onOpen }) {
   const bg = swatchFor(item.name, item.swatch);
   if (item.image_url) return <img src={item.image_url} alt={item.name} onClick={() => onOpen({ url: item.image_url, name: item.name })} style={{ width: "100%", aspectRatio: big ? "4/3" : "1", objectFit: "cover", display: "block", cursor: "zoom-in", background: C.chip }} />;
   return <div title="no photo yet" style={{ width: "100%", aspectRatio: big ? "4/3" : "1", background: bg, display: "flex", alignItems: "flex-end", padding: 8 }}><span style={{ fontSize: 10.5, color: "rgba(0,0,0,.45)", fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase" }}>no photo yet</span></div>;
@@ -100,7 +101,7 @@ export function ReviewSheetViewer({ id }) {
       if (!s) { setSheet(null); return; }
       const [{ data: it }, { data: rs }] = await Promise.all([
         sb.from("review_items").select("*").eq("sheet_id", id).eq("active", true).order("sort").order("name"),
-        sb.from("review_responses").select("item_id,verdict,suggested_qty,comment").eq("sheet_id", id),
+        sb.from("review_responses").select("item_id,verdict,suggested_qty,comment").eq("sheet_id", id).eq("reviewer", ""),
       ]);
       setSheet(s); setItems(it || []);
       const m = {}; (rs || []).forEach(r => { m[r.item_id] = { verdict: r.verdict, suggested_qty: r.suggested_qty, comment: r.comment || "" }; });
@@ -122,7 +123,7 @@ export function ReviewSheetViewer({ id }) {
     try {
       const now = new Date().toISOString();
       const rows = Object.entries(resp).filter(([, r]) => r.verdict || r.comment).map(([item_id, r]) => ({ sheet_id: id, item_id, verdict: r.verdict || "skip", suggested_qty: r.suggested_qty ? Math.round(+r.suggested_qty) : null, comment: r.comment?.trim() || null, updated_at: now }));
-      if (rows.length) { const { error } = await sb.from("review_responses").upsert(rows, { onConflict: "sheet_id,item_id" }); if (error) throw error; }
+      if (rows.length) { const { error } = await sb.from("review_responses").upsert(rows.map(r => ({ ...r, reviewer: "" })), { onConflict: "sheet_id,item_id,reviewer" }); if (error) throw error; }
       const { error: e2 } = await sb.from("review_sheets").update({ submitted_at: now, submitted_name: name.trim() || null, overall_verdict: overall || null, overall_note: note.trim() || null, updated_at: now }).eq("id", id);
       if (e2) throw e2;
       setSent(now);
@@ -239,15 +240,23 @@ export default function ReviewSheets({ embedded }) {
   const [resps, setResps] = useState([]);
   const [open, setOpen] = useState(null);
   const [copied, setCopied] = useState(null);
+  const [seasons, setSeasons] = useState([]);
+  const [reviewers, setReviewers] = useState([]);
+  const [openSeason, setOpenSeason] = useState(null);
   const load = async () => {
     if (!sb) return;
-    const [{ data: s }, { data: it }, { data: r }] = await Promise.all([
+    const [{ data: s }, { data: it }, { data: r }, { data: se }, { data: rv }] = await Promise.all([
       sb.from("review_sheets").select("*").order("created_at", { ascending: false }),
       sb.from("review_items").select("*").order("sort").order("name"),
       sb.from("review_responses").select("*"),
+      sb.from("pick_seasons").select("*").order("created_at", { ascending: false }),
+      sb.from("pick_reviewers").select("*").order("role").order("name"),
     ]);
-    setSheets(s || []); setItems(it || []); setResps(r || []);
+    setSheets(s || []); setItems(it || []); setResps(r || []); setSeasons(se || []); setReviewers(rv || []);
   };
+  const copyText = async (key, text) => { try { await navigator.clipboard.writeText(text); setCopied(key); setTimeout(() => setCopied(null), 1500); } catch { window.prompt("Copy this link", text); } };
+  const shareText = async (key, title, text, url) => { if (navigator.share) { try { await navigator.share({ title, text, url }); return; } catch { /* cancelled */ } } copyText(key, url); };
+  const setSeasonStatus = async (se, status) => { await sb.from("pick_seasons").update({ status, updated_at: new Date().toISOString() }).eq("id", se.id); load(); };
   useEffect(() => { load(); }, [sb]); // eslint-disable-line
   const copy = async s => { try { await navigator.clipboard.writeText(reviewUrl(s.id)); setCopied(s.id); setTimeout(() => setCopied(null), 1500); } catch { window.prompt("Copy this link", reviewUrl(s.id)); } };
   const share = async s => { const url = reviewUrl(s.id); if (navigator.share) { try { await navigator.share({ title: s.title, text: `${s.title} — plan review`, url }); return; } catch { /* cancelled */ } } copy(s); };
@@ -261,9 +270,71 @@ export default function ReviewSheets({ embedded }) {
         <h2 style={{ fontFamily: SERIF, color: C.dark, margin: 0, fontSize: 26 }}>🗳 Plan reviews</h2>
         <span style={{ color: C.muted, fontSize: 13 }}>Propose → sales feedback → decide. Sheets are built from the plan; the link needs no login.</span>
       </div>
-      {sheets.length === 0 && <div style={{ color: C.muted, padding: 20 }}>No review sheets yet.</div>}
+      {seasons.map(se => {
+        const seSheets = sheets.filter(s => s.season_id === se.id).sort((a, b) => (a.sort || 0) - (b.sort || 0));
+        const seRev = reviewers.filter(r => r.season_id === se.id);
+        const deciders = seRev.filter(r => r.role === "decider"); const voters = seRev.filter(r => r.role === "voter");
+        const isOpen = openSeason === se.id;
+        const seItems = items.filter(i => seSheets.some(s => s.id === i.sheet_id));
+        const seResps = resps.filter(r => r.reviewer && seSheets.some(s => s.id === r.sheet_id));
+        const byKey = {}; seResps.forEach(r => { byKey[r.item_id + "|" + r.reviewer] = r; });
+        const tot = {}; deciders.forEach(d => { tot[d.name] = seResps.filter(r => r.reviewer === d.name).reduce((a, r) => a + (+r.suggested_qty || 0), 0); });
+        return (
+          <div key={se.id} style={{ background: "#fff", border: `1.5px solid ${C.light}`, borderRadius: 12, padding: "12px 14px", marginBottom: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <div style={{ flex: 1, minWidth: 220 }}>
+                <div style={{ fontFamily: SERIF, fontSize: 21, color: C.dark }}>{se.title}</div>
+                <div style={{ fontSize: 12.5, color: C.muted }}>{seSheets.map(s => `${s.crop || s.title} (${items.filter(i => i.sheet_id === s.id).length})`).join(" · ")} · step {se.step} pots · {se.status}</div>
+              </div>
+              {deciders.map(d => tot[d.name] ? <span key={d.id} style={{ fontSize: 12, fontWeight: 800, color: "#fff", background: C.dark, borderRadius: 999, padding: "2px 9px" }}>{d.name} {n(tot[d.name])} pots</span> : null)}
+              <button onClick={() => setOpenSeason(isOpen ? null : se.id)} style={btn("#fff", C.dark)}>{isOpen ? "Hide" : "Responses"}</button>
+              {se.status !== "closed" ? <button onClick={() => setSeasonStatus(se, "closed")} style={btn("#fff", C.muted)}>Close</button> : <button onClick={() => setSeasonStatus(se, "open")} style={btn("#fff", C.muted)}>Reopen</button>}
+            </div>
+            <div style={{ display: "grid", gap: 4, marginTop: 10 }}>
+              {seRev.map(r => (
+                <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 13 }}>
+                  <b style={{ width: 64, color: C.dark }}>{r.name}</b>
+                  <span style={{ fontSize: 11, color: r.role === "decider" ? "#fff" : C.dark, background: r.role === "decider" ? C.dark : C.chip, borderRadius: 999, padding: "1px 8px", fontWeight: 800 }}>{r.role === "decider" ? "sets numbers" : "like / dislike"}</span>
+                  <span style={{ color: C.muted, flex: 1 }}>{r.open_count ? `opened ${r.open_count}×` : "not opened"}{r.submitted_at ? ` · sent ${fmtWhen(r.submitted_at)}` : ""}{r.note ? ` · "${r.note}"` : ""}</span>
+                  <button onClick={() => shareText(r.id, se.title, `${se.title} — your picks`, picksUrl(r.token))} style={btn(C.dark, "#fff")}>{copied === r.id ? "Link copied" : "Share link"}</button>
+                  <a href={`/?picks=${r.token}`} target="_blank" rel="noreferrer" style={{ ...btn("#fff", C.dark), textDecoration: "none" }}>Open</a>
+                </div>
+              ))}
+            </div>
+            {isOpen && (
+              <div style={{ marginTop: 10, borderTop: `1px solid ${C.border}`, paddingTop: 8, overflowX: "auto" }}>
+                {seSheets.map(sh => (
+                  <div key={sh.id} style={{ marginBottom: 12 }}>
+                    <div style={{ fontFamily: SERIF, fontSize: 17, color: C.dark, margin: "6px 0" }}>{sh.crop || sh.title}</div>
+                    <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
+                      <thead><tr style={{ color: C.muted, textAlign: "left" }}><th style={th}>Variety</th>{deciders.map(d => <th key={d.id} style={{ ...th, textAlign: "right" }}>{d.name}</th>)}<th style={{ ...th, textAlign: "right" }}>👍</th><th style={{ ...th, textAlign: "right" }}>👎</th><th style={th}>Notes</th></tr></thead>
+                      <tbody>{seItems.filter(i => i.sheet_id === sh.id).map(i => {
+                        const likes = voters.filter(v => byKey[i.id + "|" + v.name]?.reaction === "like").map(v => v.name);
+                        const dislikes = voters.filter(v => byKey[i.id + "|" + v.name]?.reaction === "dislike").map(v => v.name);
+                        const notes = seRev.map(v => { const r = byKey[i.id + "|" + v.name]; return r?.comment ? `${v.name}: ${r.comment}` : null; }).filter(Boolean).join(" · ");
+                        const any = deciders.some(d => byKey[i.id + "|" + d.name]?.suggested_qty) || likes.length || dislikes.length || notes;
+                        if (!any) return null;
+                        return (
+                          <tr key={i.id} style={{ borderTop: `1px solid ${C.border}` }}>
+                            <td style={td}>{i.name}</td>
+                            {deciders.map(d => <td key={d.id} style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 800, color: C.dark }}>{byKey[i.id + "|" + d.name]?.suggested_qty ? n(byKey[i.id + "|" + d.name].suggested_qty) : ""}</td>)}
+                            <td style={{ ...td, textAlign: "right", color: "#4f8a3a", fontWeight: 800 }} title={likes.join(", ")}>{likes.length || ""}</td>
+                            <td style={{ ...td, textAlign: "right", color: C.red, fontWeight: 800 }} title={dislikes.join(", ")}>{dislikes.length || ""}</td>
+                            <td style={{ ...td, color: C.text }}>{notes}</td>
+                          </tr>
+                        ); })}</tbody>
+                    </table>
+                    {!seItems.some(i => i.sheet_id === sh.id && (deciders.some(d => byKey[i.id + "|" + d.name]?.suggested_qty) || seRev.some(v => byKey[i.id + "|" + v.name]?.reaction || byKey[i.id + "|" + v.name]?.comment))) && <div style={{ color: C.muted, fontSize: 13 }}>Nothing sent yet for this crop.</div>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+      {sheets.filter(s => !s.season_id).length === 0 && seasons.length === 0 && <div style={{ color: C.muted, padding: 20 }}>No review sheets yet.</div>}
       <div style={{ display: "grid", gap: 10 }}>
-        {sheets.map(s => {
+        {sheets.filter(s => !s.season_id).map(s => {
           const its = items.filter(i => i.sheet_id === s.id);
           const rs = resps.filter(r => r.sheet_id === s.id);
           const byItem = Object.fromEntries(rs.map(r => [r.item_id, r]));
