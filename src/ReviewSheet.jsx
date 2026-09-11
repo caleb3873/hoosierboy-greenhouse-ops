@@ -51,7 +51,8 @@ function Card({ it, r, set, closed, onOpen }) {
           {it.description && <div className="d">{it.description}</div>}
           <div className="q">
             {isProposed ? <><b>{n(it.proposed_qty)}</b> {it.unit || "pots"} proposed{it.size_label ? ` · ${it.size_label}` : ""}</> : <span>Not in the plan{it.size_label ? ` · ${it.size_label}` : ""}</span>}
-            {m.sold_2026 != null && <span className="h"> · sold {n(m.sold_2026)} in 2026</span>}
+            {(m.grown_2026 != null || m.sold_2026 != null) && <span className="h"> · 2026: {m.grown_2026 != null ? `grew ${n(m.grown_2026)}` : ""}{m.grown_2026 != null && m.sold_2026 != null ? ", " : ""}{m.sold_2026 != null ? `sold ${n(m.sold_2026)}` : ""}</span>}
+            {m.wholesale != null && <span className="h"> · ${(+m.wholesale).toFixed(2)} wholesale</span>}
           </div>
           {isProposed ? (
             <div className="v">
@@ -110,8 +111,8 @@ export function ReviewSheetViewer({ id }) {
   }, [sb, id]);
 
   const set = (itemId, patch) => setResp(r => ({ ...r, [itemId]: { verdict: null, suggested_qty: null, comment: "", ...(r[itemId] || {}), ...patch } }));
-  const proposed = useMemo(() => items.filter(i => (i.proposed_qty || 0) > 0), [items]);
-  const available = useMemo(() => items.filter(i => !(i.proposed_qty > 0)), [items]);
+  // Sections: the sheet author names them ("Floriline Mini · proposed"); order = first appearance.
+  const sections = useMemo(() => { const seen = []; items.forEach(i => { const k = i.section || "proposed"; if (!seen.includes(k)) seen.push(k); }); return seen.map(k => ({ key: k, items: items.filter(i => (i.section || "proposed") === k) })); }, [items]);
   const answered = Object.values(resp).filter(r => r.verdict).length;
 
   const submit = async () => {
@@ -199,16 +200,13 @@ export function ReviewSheetViewer({ id }) {
         {savedAt && <div className="rv-saved">Feedback saved {fmtWhen(savedAt)}{sheet.submitted_name ? ` by ${sheet.submitted_name}` : ""}. Change anything and send again to update.</div>}
         {closed && <div className="rv-saved" style={{ background: "#fff7ec" }}>This review is closed. The decision has been made.</div>}
 
-        {proposed.length > 0 && <>
-          <div className="rv-sec">Proposed</div>
-          <div className="rv-secsub">Tap one: more, just right, less, or don't grow it. Add a note if it helps.</div>
-          <div className="rv-grid">{proposed.map(it => <Card key={it.id} it={it} r={resp[it.id] || {}} set={set} closed={closed} onOpen={setPhoto} />)}</div>
-        </>}
-        {available.length > 0 && <>
-          <div className="rv-sec">Also available, not in the plan</div>
-          <div className="rv-secsub">Tap "Add" on anything you would rather see instead of, or on top of, the proposal.</div>
-          <div className="rv-grid">{available.map(it => <Card key={it.id} it={it} r={resp[it.id] || {}} set={set} closed={closed} onOpen={setPhoto} />)}</div>
-        </>}
+        {sections.map(sec => { const hasProposed = sec.items.some(i => (i.proposed_qty || 0) > 0); const title = sec.key === "proposed" ? "Proposed" : sec.key === "available" ? "Also available, not in the plan" : sec.key; return (
+          <div key={sec.key}>
+            <div className="rv-sec">{title}</div>
+            <div className="rv-secsub">{hasProposed ? "Tap one: more, just right, less, or don't grow it. Add a note if it helps." : "Not in the plan. Tap \"Add\" on anything you would rather see instead of, or on top of, the proposal."}</div>
+            <div className="rv-grid">{sec.items.map(it => <Card key={it.id} it={it} r={resp[it.id] || {}} set={set} closed={closed} onOpen={setPhoto} />)}</div>
+          </div>
+        ); })}
 
         {!closed && (
           <div className="rv-sum">
