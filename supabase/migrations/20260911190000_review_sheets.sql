@@ -65,3 +65,6 @@ do $$ begin
   create policy "review_items_all"     on review_items     for all using (true) with check (true);
   create policy "review_responses_all" on review_responses for all using (true) with check (true);
 exception when duplicate_object then null; end $$;
+
+-- 9/11 later: quantity mode — the reviewer types their own pot count per item instead of More/Less.
+alter table review_sheets add column if not exists mode text not null default 'verdict' check (mode in ('verdict','quantity'));

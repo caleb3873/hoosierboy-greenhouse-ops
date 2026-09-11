@@ -40,7 +40,7 @@ function Photo({ item, big, onOpen }) {
   return <div title="no photo yet" style={{ width: "100%", aspectRatio: big ? "4/3" : "1", background: bg, display: "flex", alignItems: "flex-end", padding: 8 }}><span style={{ fontSize: 10.5, color: "rgba(0,0,0,.45)", fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase" }}>no photo yet</span></div>;
 }
 
-function Card({ it, r, set, closed, onOpen }) {
+function Card({ it, r, set, closed, onOpen, mode }) {
     const isProposed = (it.proposed_qty || 0) > 0;
     const m = it.meta || {};
     return (
@@ -54,7 +54,9 @@ function Card({ it, r, set, closed, onOpen }) {
             {(m.grown_2026 != null || m.sold_2026 != null) && <span className="h"> · 2026: {m.grown_2026 != null ? `grew ${n(m.grown_2026)}` : ""}{m.grown_2026 != null && m.sold_2026 != null ? ", " : ""}{m.sold_2026 != null ? `sold ${n(m.sold_2026)}` : ""}</span>}
             {m.wholesale != null && <span className="h"> · ${(+m.wholesale).toFixed(2)} wholesale</span>}
           </div>
-          {isProposed ? (
+          {mode === "quantity" ? (
+            <label className="sq big">How many {it.unit || "pots"}? <input inputMode="numeric" value={r.suggested_qty ?? ""} onChange={e => set(it.id, { suggested_qty: e.target.value.replace(/[^\d]/g, ""), verdict: e.target.value ? "add" : null })} placeholder="0" disabled={closed} /></label>
+          ) : isProposed ? (
             <div className="v">
               {VERDICTS.map(([k, label, col]) => (
                 <button key={k} onClick={() => set(it.id, { verdict: r.verdict === k ? null : k })} disabled={closed}
@@ -67,7 +69,7 @@ function Card({ it, r, set, closed, onOpen }) {
                 style={{ borderColor: r.verdict === "add" ? "#2f6ea5" : C.border, background: r.verdict === "add" ? "#2f6ea5" : "#fff", color: r.verdict === "add" ? "#fff" : C.text }}>{r.verdict === "add" ? "✓ Add this one" : "+ Add this one"}</button>
             </div>
           )}
-          {(r.verdict === "more" || r.verdict === "less" || r.verdict === "add") && (
+          {mode !== "quantity" && (r.verdict === "more" || r.verdict === "less" || r.verdict === "add") && (
             <label className="sq">How many {it.unit || "pots"}? <input inputMode="numeric" value={r.suggested_qty ?? ""} onChange={e => set(it.id, { suggested_qty: e.target.value.replace(/[^\d]/g, "") })} placeholder={isProposed ? String(it.proposed_qty) : "e.g. 128"} /></label>
           )}
           <input className="cm" value={r.comment || ""} onChange={e => set(it.id, { comment: e.target.value })} placeholder="Note (optional)" disabled={closed} />
@@ -132,6 +134,8 @@ export function ReviewSheetViewer({ id }) {
   if (sheet === null) return <div style={{ fontFamily: FONT, padding: 40, textAlign: "center", color: C.muted }}>This review link is not active.</div>;
   const ctx = sheet.context || {};
   const closed = sheet.status === "closed";
+  const qtyMode = sheet.mode === "quantity";
+  const totalQty = Object.values(resp).reduce((a, r) => a + (+(r.suggested_qty || 0) || 0), 0);
   const savedAt = sent || sheet.submitted_at;
 
   return (
@@ -165,7 +169,7 @@ export function ReviewSheetViewer({ id }) {
         .rv-c .v button{padding:11px 6px;border-radius:10px;border:1.5px solid;font-weight:800;font-size:14px;cursor:pointer;font-family:inherit;line-height:1.1}
         .rv-c .v button:disabled{opacity:.6;cursor:default}
         .rv-c .sq{display:flex;align-items:center;gap:8px;margin-top:8px;font-size:13.5px;color:${C.muted}}
-        .rv-c .sq input{width:96px;height:40px;text-align:center;font-size:18px;font-weight:800;border:1.5px solid ${C.border};border-radius:10px;font-family:inherit;color:${C.dark}}
+        .rv-c .sq.big input{width:130px;height:48px;font-size:22px} .rv-c .sq input{width:96px;height:40px;text-align:center;font-size:18px;font-weight:800;border:1.5px solid ${C.border};border-radius:10px;font-family:inherit;color:${C.dark}}
         .rv-c .cm{width:100%;margin-top:8px;padding:10px 12px;border:1.5px solid ${C.border};border-radius:10px;font-size:15px;font-family:inherit;background:#fff}
         .rv-sum{background:#fff;border:1px solid ${C.border};border-radius:16px;padding:16px;margin-top:28px}
         .rv-sum h3{font-family:${SERIF};font-size:24px;color:${C.dark};margin:0 0 10px;font-weight:400}
@@ -203,8 +207,8 @@ export function ReviewSheetViewer({ id }) {
         {sections.map(sec => { const hasProposed = sec.items.some(i => (i.proposed_qty || 0) > 0); const title = sec.key === "proposed" ? "Proposed" : sec.key === "available" ? "Also available, not in the plan" : sec.key; return (
           <div key={sec.key}>
             <div className="rv-sec">{title}</div>
-            <div className="rv-secsub">{hasProposed ? "Tap one: more, just right, less, or don't grow it. Add a note if it helps." : "Not in the plan. Tap \"Add\" on anything you would rather see instead of, or on top of, the proposal."}</div>
-            <div className="rv-grid">{sec.items.map(it => <Card key={it.id} it={it} r={resp[it.id] || {}} set={set} closed={closed} onOpen={setPhoto} />)}</div>
+            <div className="rv-secsub">{qtyMode ? `Type how many pots you want of each. Leave it blank for none.${sec.items.reduce((a, i) => a + (+(resp[i.id]?.suggested_qty || 0) || 0), 0) ? ` · ${n(sec.items.reduce((a, i) => a + (+(resp[i.id]?.suggested_qty || 0) || 0), 0))} so far in this group` : ""}` : hasProposed ? "Tap one: more, just right, less, or don't grow it. Add a note if it helps." : "Not in the plan. Tap \"Add\" on anything you would rather see instead of, or on top of, the proposal."}</div>
+            <div className="rv-grid">{sec.items.map(it => <Card key={it.id} it={it} r={resp[it.id] || {}} set={set} closed={closed} onOpen={setPhoto} mode={sheet.mode} />)}</div>
           </div>
         ); })}
 
@@ -216,7 +220,7 @@ export function ReviewSheetViewer({ id }) {
             </div>
             <textarea className="rv-in" rows={3} value={note} onChange={e => setNote(e.target.value)} placeholder="Anything else — customers asking for something, colours that never move, pot size thoughts…" />
             <input className="rv-in" value={name} onChange={e => setName(e.target.value)} placeholder="Your name" />
-            <button className="rv-cta" onClick={submit} disabled={saving || (!answered && !overall && !note.trim())}>{saving ? "Sending…" : `Send feedback${answered ? ` (${answered} items)` : ""}`}</button>
+            <button className="rv-cta" onClick={submit} disabled={saving || (!answered && !overall && !note.trim())}>{saving ? "Sending…" : qtyMode ? `Send my numbers${totalQty ? ` (${n(totalQty)} pots)` : ""}` : `Send feedback${answered ? ` (${answered} items)` : ""}`}</button>
             {err && <div style={{ color: C.red, marginTop: 8, fontSize: 14 }}>{err}</div>}
           </div>
         )}
