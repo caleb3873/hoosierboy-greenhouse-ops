@@ -81,7 +81,7 @@ export default function PicksViewer({ token }) {
   const sb = getSupabase();
   const [state, setState] = useState(undefined);   // {reviewer, season, sheets, items}
   const [resp, setResp] = useState({});             // item_id → {suggested_qty, reaction, comment}
-  const [openCrop, setOpenCrop] = useState(null);
+  const [crop, setCrop] = useState(() => new URLSearchParams(window.location.search).get("crop"));   // sheet id = one crop's own page
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [sent, setSent] = useState(null);
@@ -108,7 +108,7 @@ export default function PicksViewer({ token }) {
       setResp(m); setNote(rv.note || "");
       const cropOf = Object.fromEntries((sheets || []).map(s => [s.id, s.crop || s.title]));
       setState({ reviewer: rv, season: season || {}, sheets: sheets || [], items: (items || []).map(i => ({ ...i, crop: cropOf[i.sheet_id] })) });
-      setOpenCrop((sheets || [])[0]?.id || null);
+
       try {
         const now = new Date().toISOString();
         await sb.from("pick_reviewers").update({ first_opened_at: rv.first_opened_at || now, last_opened_at: now, open_count: (rv.open_count || 0) + 1 }).eq("id", rv.id);
@@ -117,6 +117,9 @@ export default function PicksViewer({ token }) {
   }, [sb, token]);
 
   const filtering = Object.values(filters).some(a => a.length);
+  // Each crop is its own page: /?picks=<token>&crop=<sheet id>. Back button and browser back both work.
+  const goCrop = id => { const u = new URL(window.location.href); if (id) u.searchParams.set("crop", id); else u.searchParams.delete("crop"); window.history.pushState({}, "", u); setCrop(id); setShowMix(false); window.scrollTo({ top: 0 }); };
+  useEffect(() => { const h = () => setCrop(new URLSearchParams(window.location.search).get("crop")); window.addEventListener("popstate", h); return () => window.removeEventListener("popstate", h); }, []);
   const set = (itemId, patch) => setResp(r => ({ ...r, [itemId]: { suggested_qty: "", reaction: null, comment: "", ...(r[itemId] || {}), ...patch } }));
   const perSheet = useMemo(() => {
     if (!state) return [];
@@ -134,15 +137,18 @@ export default function PicksViewer({ token }) {
   }, [state, resp, filters, filtering]);
   const options = useMemo(() => {
     if (!state) return {};
-    const o = {}; FILTER_DIMS.forEach(([dim]) => { o[dim] = [...new Set(state.items.map(i => dimValue(i, dim)))].filter(v => v && v !== "—"); });
+    const pool = crop ? state.items.filter(i => i.sheet_id === crop) : state.items;
+    const o = {}; FILTER_DIMS.forEach(([dim]) => { o[dim] = [...new Set(pool.map(i => dimValue(i, dim)))].filter(v => v && v !== "—"); });
     o.vigor.sort((a, b) => VIGOR_ORDER.indexOf(a) - VIGOR_ORDER.indexOf(b));
     o.breeder.sort();
     const ci = c => { const i = COLOR_FAMILIES.findIndex(([k]) => k === c); return i < 0 ? 99 : i; }; o.color.sort((a, b) => ci(a) - ci(b));
     return o;
-  }, [state]);
+  }, [state, crop]);
   const toggle = (dim, v) => setFilters(f => ({ ...f, [dim]: f[dim].includes(v) ? f[dim].filter(x => x !== v) : [...f[dim], v] }));
   const isActive = (dim, v) => (filters[dim] || []).includes(v);
-  const pick = sheetId => (dim, v) => { if (dim === "newness") return; setFilters(f => ({ ...f, [dim]: [v] })); setOpenCrop(sheetId); setShowMix(false); window.scrollTo({ top: 0 }); };
+  const pick = (dim, v) => { if (dim === "newness") return; setFilters(f => ({ ...f, [dim]: [v] })); setShowMix(false); window.scrollTo({ top: 0 }); };
+  // Cover photo for a crop tile: the variety with the most pots (or a like), else the first with a photo.
+  const coverOf = s => { const its = state.items.filter(i => i.sheet_id === s.id && i.image_url); const top = its.slice().sort((a, b) => (+(resp[b.id]?.suggested_qty || 0) || (resp[b.id]?.reaction === "like" ? 1 : 0)) - (+(resp[a.id]?.suggested_qty || 0) || (resp[a.id]?.reaction === "like" ? 1 : 0)))[0]; return top || its[0]; };
   const shownTotal = perSheet.reduce((a, s) => a + s.shown, 0);
   const totalPots = perSheet.reduce((a, s) => a + s.pots, 0);
   const totalLikes = perSheet.reduce((a, s) => a + s.likes, 0);
@@ -174,6 +180,7 @@ export default function PicksViewer({ token }) {
   const closed = season.status === "closed";
   const step = season.step || 100;
   const savedAt = sent || reviewer.submitted_at;
+  const cur = crop ? perSheet.find(s => s.sheet.id === crop) : null;
 
   return (
     <div style={{ fontFamily: FONT, background: C.paper, minHeight: "100vh", color: C.text, WebkitTextSizeAdjust: "100%" }}>
@@ -197,7 +204,7 @@ export default function PicksViewer({ token }) {
         .pk-crop>button .s{font-size:13px;color:${C.muted};font-variant-numeric:tabular-nums}
         .pk-crop>button .s b{color:${C.dark}}
         .pk-crop .body{padding:0 12px 14px}
-        .pk-sec{margin:18px -12px 10px;padding:10px 12px;background:${C.chip};border-top:3px solid ${C.dark};display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+        .pk-sec{margin:18px 0 10px;padding:10px 12px;border-radius:10px 10px 0 0;background:${C.chip};border-top:3px solid ${C.dark};display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
         .pk-sec .who{display:flex;align-items:center;gap:10px;min-height:34px}
         .pk-sec .who img{height:30px;width:auto;max-width:150px;object-fit:contain;display:block}
         .pk-sec .who b{font-family:${SERIF};font-size:20px;color:${C.dark};font-weight:400}
@@ -233,6 +240,18 @@ export default function PicksViewer({ token }) {
         .pk-mix h3{font-family:${SERIF};font-size:22px;color:${C.dark};margin:0 0 2px;font-weight:400}
         .pk-mix .hint{font-size:12.5px;color:${C.muted};margin-bottom:10px}
         .pk-none{color:${C.muted};font-size:14px;padding:16px 4px}
+        .pk-tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:18px}
+        @media (min-width:640px){.pk-tiles{grid-template-columns:repeat(3,minmax(0,1fr))}}
+        .pk-tile{position:relative;display:block;padding:0;border:1.5px solid ${C.border};border-radius:14px;background:#fff;overflow:hidden;text-align:left;cursor:pointer;font-family:inherit;color:${C.text}}
+        .pk-tile.done{border-color:${C.light};box-shadow:0 0 0 2px ${C.cream}}
+        .pk-tile img,.pk-tile .ph{width:100%;aspect-ratio:1;object-fit:cover;display:block;background:${C.chip}}
+        .pk-tile .tb{padding:10px 11px 12px}
+        .pk-tile .tn{font-family:${SERIF};font-size:22px;line-height:1.1;color:${C.dark}}
+        .pk-tile .ts{font-size:12px;color:${C.muted};margin-top:3px;font-variant-numeric:tabular-nums}
+        .pk-tile .go{position:absolute;right:10px;bottom:10px;font-size:26px;line-height:1;color:${C.light}}
+        .pk-back{background:#fff;border:1.5px solid ${C.border};border-radius:999px;padding:5px 12px;font-weight:800;font-size:12.5px;color:${C.dark};cursor:pointer;font-family:inherit}
+        .pk-back.big{display:block;width:100%;margin-top:18px;padding:14px;border-radius:12px;font-size:15px}
+        .pk-sum .hint{font-size:12.5px;color:${C.muted};margin-bottom:4px}
         .pk-c.on{border-color:${C.light};box-shadow:0 0 0 2px ${C.cream}}
         .pk-c.like{border-color:#4f8a3a} .pk-c.dislike{border-color:${C.red};opacity:.85}
         .pk-c .b{padding:8px 9px 10px}
@@ -260,68 +279,74 @@ export default function PicksViewer({ token }) {
         <span style={{ color: C.cream, fontSize: 12.5, letterSpacing: ".08em", textTransform: "uppercase" }}>{season.season || "Season"} picks</span>
       </div></div>
       <div className="pk-wrap">
-        <div className="pk-tot">
-          {decider ? <>
-            <span className="grand"><b>{n(totalPots)}</b> pots picked</span>
-            {perSheet.map(s => <span key={s.sheet.id}>{s.sheet.crop || s.sheet.title} <b>{n(s.pots)}</b></span>)}
-          </> : <>
-            <span className="grand"><b>{totalLikes}</b> liked · <b>{totalDislikes}</b> passed</span>
-            {perSheet.map(s => <span key={s.sheet.id}>{s.sheet.crop || s.sheet.title} <b>{s.likes}</b>👍 <b>{s.dislikes}</b>👎</span>)}
-          </>}
-          {filtering && <span className="shown" onClick={() => setFilters(EMPTY_FILTERS)} title="Clear filters"><b>{shownTotal}</b> shown ✕</span>}
-          <button className={`pk-mixbtn${showMix ? " on" : ""}`} onClick={() => setShowMix(v => !v)}>{showMix ? "Close mix" : "Mix"}</button>
-        </div>
-        {showMix && (
-          <div className="pk-mix">
-            <h3>{decider ? "Your mix so far" : "What you liked so far"}</h3>
-            <div className="hint">{decider ? `${n(totalPots)} pots` : `${totalLikes} liked`} across {perSheet.filter(s => decider ? s.pots : s.likes).length || "no"} crops · tap a bar to see just those varieties, picked or not.</div>
-            {perSheet.filter(s => decider ? s.pots : s.likes).map(s => (
-              <div className="crop" key={s.sheet.id}>
-                <h4>Our {(s.sheet.crop || s.sheet.title).toLowerCase()} mix <span>· {decider ? `${n(s.pots)} pots` : `${s.likes} liked`}</span></h4>
-                <MixBars mix={s.mix} total={decider ? s.pots : s.likes} unit={decider ? "pots" : "likes"} dims={MIX_CROP_DIMS} isActive={isActive} onPick={pick(s.sheet.id)} />
+        {!cur ? (<>
+          <div className="pk-tot">
+            {decider ? <>
+              <span className="grand"><b>{n(totalPots)}</b> pots picked</span>
+              {perSheet.map(s => <span key={s.sheet.id}>{s.sheet.crop || s.sheet.title} <b>{n(s.pots)}</b></span>)}
+            </> : <>
+              <span className="grand"><b>{totalLikes}</b> liked · <b>{totalDislikes}</b> passed</span>
+              {perSheet.map(s => <span key={s.sheet.id}>{s.sheet.crop || s.sheet.title} <b>{s.likes}</b>👍 <b>{s.dislikes}</b>👎</span>)}
+            </>}
+          </div>
+          <h1 className="pk-h1">{season.title}</h1>
+          <div className="pk-for">For <b>{reviewer.name}</b> · {decider ? `you set the numbers, in flats of ten (${step} pots)` : "tell us what your customers want"}</div>
+          {season.story && <div className="pk-story">{season.story}</div>}
+          {savedAt && <div className="pk-saved">Saved {fmtWhen(savedAt)}. Change anything and send again to update.</div>}
+          {closed && <div className="pk-saved" style={{ background: "#fff7ec" }}>This season's picks are closed. The decisions have been made.</div>}
+          <div className="pk-tiles">
+            {perSheet.map(s => { const cv = coverOf(s.sheet); const done = decider ? s.pots > 0 : (s.likes + s.dislikes) > 0; return (
+              <button className={`pk-tile${done ? " done" : ""}`} key={s.sheet.id} onClick={() => goCrop(s.sheet.id)}>
+                {cv ? <img src={cv.image_url} alt={s.sheet.crop || s.sheet.title} /> : <div className="ph" />}
+                <div className="tb">
+                  <div className="tn">{s.sheet.crop || s.sheet.title}</div>
+                  <div className="ts">{s.count} colours{decider ? (s.pots ? ` · ${n(s.pots)} pots picked` : " · nothing picked yet") : (s.likes + s.dislikes ? ` · ${s.likes} liked · ${s.dislikes} passed` : " · nothing marked yet")}</div>
+                </div>
+                <span className="go">›</span>
+              </button>
+            ); })}
+            {!perSheet.length && <div className="pk-none">No crops on this season yet.</div>}
+          </div>
+        </>) : (<>
+          <div className="pk-tot">
+            <button className="pk-back" onClick={() => goCrop(null)}>‹ All crops</button>
+            {decider ? <span className="grand"><b>{n(cur.pots)}</b> {cur.sheet.crop || cur.sheet.title} pots</span> : <span className="grand"><b>{cur.likes}</b> liked · <b>{cur.dislikes}</b> passed</span>}
+            {filtering && <span className="shown" onClick={() => setFilters(EMPTY_FILTERS)} title="Clear filters"><b>{cur.shown}</b> shown ✕</span>}
+            <button className={`pk-mixbtn${showMix ? " on" : ""}`} onClick={() => setShowMix(v => !v)}>{showMix ? "Close mix" : "Mix"}</button>
+          </div>
+          {showMix && (
+            <div className="pk-mix">
+              <h3>Our {(cur.sheet.crop || cur.sheet.title).toLowerCase()} mix</h3>
+              <div className="hint">{decider ? `${n(cur.pots)} pots across ${cur.picked} colours` : `${cur.likes} liked`} · tap a bar to see just those varieties, picked or not.</div>
+              {(decider ? cur.pots : cur.likes) ? <MixBars mix={cur.mix} total={decider ? cur.pots : cur.likes} unit={decider ? "pots" : "likes"} dims={MIX_CROP_DIMS} isActive={isActive} onPick={pick} />
+                : <div style={{ color: C.muted, fontSize: 14 }}>Nothing picked yet — pick a few and come back.</div>}
+            </div>
+          )}
+          <div className="pk-fb">
+            {FILTER_DIMS.map(([dim, label]) => (
+              <div className="pk-fr" key={dim}>
+                <span className="lb">{label}</span>
+                {(options[dim] || []).map(v => <button key={v} className={isActive(dim, v) ? "on" : ""} onClick={() => toggle(dim, v)}>{dim === "color" && <i style={{ background: colorHex(v) }} />}{v}</button>)}
               </div>
             ))}
-            {!perSheet.some(s => decider ? s.pots : s.likes) && <div style={{ color: C.muted, fontSize: 14 }}>Nothing picked yet — pick a few and come back.</div>}
+            {filtering && <div className="pk-fr"><span className="lb" /><button className="clear" onClick={() => setFilters(EMPTY_FILTERS)}>Show all {cur.count}</button></div>}
           </div>
-        )}
-        <div className="pk-fb">
-          {FILTER_DIMS.map(([dim, label]) => (
-            <div className="pk-fr" key={dim}>
-              <span className="lb">{label}</span>
-              {(options[dim] || []).map(v => <button key={v} className={isActive(dim, v) ? "on" : ""} onClick={() => toggle(dim, v)}>{dim === "color" && <i style={{ background: colorHex(v) }} />}{v}</button>)}
+          <h1 className="pk-h1">{cur.sheet.crop || cur.sheet.title}</h1>
+          <div className="pk-for">{cur.count} colours · {decider ? `${cur.picked} picked` : `${cur.likes} liked · ${cur.dislikes} passed`}{closed ? " · closed" : ""}</div>
+          {filtering && !cur.shown && <div className="pk-none">Nothing matches those filters.</div>}
+          {cur.sections.map(sec => { const secPots = sec.items.reduce((a, i) => a + (+(resp[i.id]?.suggested_qty || 0) || 0), 0); return (
+            <div key={sec.key}>
+              <SectionHead sec={sec} pots={decider ? secPots : 0} />
+              <div className="pk-grid">{sec.items.map(it => <PickCard key={it.id} it={it} r={resp[it.id] || {}} set={set} role={reviewer.role} step={step} closed={closed} onOpen={setPhoto} />)}</div>
             </div>
-          ))}
-          {filtering && <div className="pk-fr"><span className="lb" /><button className="clear" onClick={() => setFilters(EMPTY_FILTERS)}>Show everything ({n(state.items.length)})</button></div>}
-        </div>
-        <h1 className="pk-h1">{season.title}</h1>
-        <div className="pk-for">For <b>{reviewer.name}</b> · {decider ? `you set the numbers, in flats of ten (${step} pots)` : "tell us what your customers want"}</div>
-        {season.story && <div className="pk-story">{season.story}</div>}
-        {savedAt && <div className="pk-saved">Saved {fmtWhen(savedAt)}. Change anything and send again to update.</div>}
-        {closed && <div className="pk-saved" style={{ background: "#fff7ec" }}>This season's picks are closed. The decisions have been made.</div>}
-
-        {filtering && !shownTotal && <div className="pk-none">Nothing matches those filters.</div>}
-        {perSheet.map(s => { if (filtering && !s.shown) return null; const isOpen = openCrop === s.sheet.id; return (
-          <div className="pk-crop" key={s.sheet.id}>
-            <button onClick={() => setOpenCrop(isOpen ? null : s.sheet.id)}>
-              <span className="t">{s.sheet.crop || s.sheet.title}</span>
-              <span className="s">{decider ? <><b>{n(s.pots)}</b> pots · {s.picked} of {s.count} picked</> : <><b>{s.likes}</b> liked · {s.dislikes} passed · {s.count} colours</>}{filtering ? ` · ${s.shown} shown` : ""} {isOpen ? "▴" : "▾"}</span>
-            </button>
-            {isOpen && (
-              <div className="body">
-                {s.sections.map(sec => { const secPots = sec.items.reduce((a, i) => a + (+(resp[i.id]?.suggested_qty || 0) || 0), 0); return (
-                  <div key={sec.key}>
-                    <SectionHead sec={sec} pots={decider ? secPots : 0} />
-                    <div className="pk-grid">{sec.items.map(it => <PickCard key={it.id} it={it} r={resp[it.id] || {}} set={set} role={reviewer.role} step={step} closed={closed} onOpen={setPhoto} />)}</div>
-                  </div>
-                ); })}
-              </div>
-            )}
-          </div>
-        ); })}
+          ); })}
+          <button className="pk-back big" onClick={() => goCrop(null)}>‹ Back to all crops</button>
+        </>)}
 
         {!closed && (
           <div className="pk-sum">
             <h3>{decider ? "Send your numbers" : "Send your picks"}</h3>
+            <div className="hint">Sends everything from every crop, not just this page.</div>
             <textarea className="pk-in" rows={3} value={note} onChange={e => setNote(e.target.value)} placeholder={decider ? "Anything else — customers asking for something, colours that never move…" : "Anything your customers keep asking for that is not here?"} />
             <button className="pk-cta" onClick={submit} disabled={saving || (decider ? !totalPots : !(totalLikes + totalDislikes)) && !note.trim()}>{saving ? "Sending…" : decider ? `Send ${n(totalPots)} pots` : `Send ${totalLikes + totalDislikes} picks`}</button>
             {err && <div style={{ color: C.red, marginTop: 8, fontSize: 14 }}>{err}</div>}
