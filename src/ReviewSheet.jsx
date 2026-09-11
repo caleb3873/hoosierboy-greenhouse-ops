@@ -26,7 +26,7 @@ export const n = v => (v == null ? "" : (+v).toLocaleString());
 export const COLOR_FAMILIES = [["white", "#f1eee2"], ["yellow", "#f2c94c"], ["orange", "#ef7f2c"], ["red", "#c9332b"], ["hot pink", "#e0409a"], ["pink", "#ef9ab8"], ["magenta", "#b5176f"], ["purple", "#6a3d9a"], ["lavender", "#b8a4d9"], ["blue", "#3b64c4"], ["black", "#2b2430"], ["green", "#8cc63f"], ["mix", "linear-gradient(135deg,#f2c94c,#ef7f2c,#c9332b,#ef9ab8,#b79bd6)"], ["other", "#c8d5bf"]];
 export const colorHex = c => (COLOR_FAMILIES.find(([k]) => k === c) || [null, "#c8d5bf"])[1];
 export const MIX_DIMS = [["crop", "Crop"], ["color", "Colour"], ["vigor", "Vigor"], ["breeder", "Breeder"], ["newness", "New vs proven"]];
-export const dimValue = (it, dim) => { const m = it.meta || {}; if (dim === "crop") return it.crop || "—"; if (dim === "newness") return m.is_new ? "New for us" : "Grew it before"; return m[dim] || "—"; };
+export const dimValue = (it, dim) => { const m = it.meta || {}; if (dim === "crop") return it.crop || "—"; if (dim === "newness") return m.is_new ? "New for us" : "Grew it before"; if (dim === "form") return /\bdouble\b/i.test(it.name || "") ? "double" : "single"; return m[dim] || "—"; };
 const colorRank = c => { const i = COLOR_FAMILIES.findIndex(([k]) => k === c); return i < 0 ? 99 : i; };
 // Sum valueOf(item) into buckets per dimension → { dim: [[label, value], …] } sorted big → small (colours keep the family order).
 export function mixOf(items, valueOf, dims = MIX_DIMS) {

@@ -16,10 +16,10 @@ import { C, FONT, SERIF, Photo, Lightbox, n, fmtWhen, mixOf, MixBars, colorHex, 
 
 // Breeder logos live in the public preorder-photos bucket (logos/, uploaded 9/11/2026).
 const LOGO_BASE = `${process.env.REACT_APP_SUPABASE_URL}/storage/v1/object/public/preorder-photos/logos/`;
-const LOGOS = { "Ball FloraPlant": "ball-floraplant.svg", Selecta: "selecta.svg", Westhoff: "westhoff.svg", "Dümmen": "dummen.png", Beekenkamp: "beekenkamp.png", Danziger: "danziger.webp" };
+const LOGOS = { "Ball FloraPlant": "ball-floraplant.svg", Selecta: "selecta.svg", Westhoff: "westhoff.svg", "Dümmen": "dummen.png", Beekenkamp: "beekenkamp.png", Danziger: "danziger.webp", Sakata: "sakata-supercal.png" };
 const logoUrl = breeder => LOGOS[breeder] ? LOGO_BASE + LOGOS[breeder] : null;
 const money = v => `$${(+v).toFixed(2)}`;
-const FILTER_DIMS = [["vigor", "Vigor"], ["breeder", "Breeder"], ["color", "Colour"]];
+const FILTER_DIMS = [["form", "Form"], ["vigor", "Vigor"], ["breeder", "Breeder"], ["color", "Colour"]];   // Form row only shows when a crop has doubles
 const VIGOR_ORDER = ["compact", "medium", "vigorous"];
 const EMPTY_FILTERS = { vigor: [], breeder: [], color: [] };
 const MIX_CROP_DIMS = MIX_DIMS.filter(([k]) => k !== "crop");
@@ -143,6 +143,7 @@ export default function PicksViewer({ token }) {
     if (!state) return {};
     const pool = crop ? state.items.filter(i => i.sheet_id === crop) : state.items;
     const o = {}; FILTER_DIMS.forEach(([dim]) => { o[dim] = [...new Set(pool.map(i => dimValue(i, dim)))].filter(v => v && v !== "—"); });
+    o.form.sort((a, b) => (a === "single" ? 0 : 1) - (b === "single" ? 0 : 1));
     o.vigor.sort((a, b) => VIGOR_ORDER.indexOf(a) - VIGOR_ORDER.indexOf(b));
     o.breeder.sort();
     const ci = c => { const i = COLOR_FAMILIES.findIndex(([k]) => k === c); return i < 0 ? 99 : i; }; o.color.sort((a, b) => ci(a) - ci(b));
@@ -327,7 +328,7 @@ export default function PicksViewer({ token }) {
             </div>
           )}
           <div className="pk-fb">
-            {FILTER_DIMS.map(([dim, label]) => (
+            {FILTER_DIMS.map(([dim, label]) => (options[dim] || []).length < 2 ? null : (
               <div className="pk-fr" key={dim}>
                 <span className="lb">{label}</span>
                 {(options[dim] || []).map(v => <button key={v} className={isActive(dim, v) ? "on" : ""} onClick={() => toggle(dim, v)}>{dim === "color" && <i style={{ background: colorHex(v) }} />}{v}</button>)}
