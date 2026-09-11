@@ -217,6 +217,7 @@ function PlannerShell() {
           .pp-root [style*="grid-template-columns: repeat("] { grid-template-columns: 1fr !important; }
           .pp-root [style*="grid-template-columns: 1fr 1fr"] { grid-template-columns: 1fr !important; }
           .pp-root [style*="min-width"] { min-width: 0 !important; }
+          .pp-root [style*="overflow-x: auto"], .pp-root [style*="overflow: auto"] { touch-action: pan-x pan-y; -webkit-overflow-scrolling: touch; }
           .pp-root input, .pp-root select, .pp-root textarea { max-width: 100%; }
           .sm-two-col { grid-template-columns: 1fr !important; }
           .sm-two-col > * { grid-column: 1 !important; grid-row: auto !important; }
@@ -328,7 +329,8 @@ function PlannerShell() {
       )}
 
       {/* Page content */}
-      <div style={{ maxWidth: 1100, margin: "0 auto", padding: isMobile ? "10px 6px calc(24px + env(safe-area-inset-bottom))" : "28px 24px" }}>
+      <div style={{ maxWidth: 1100, margin: "0 auto", padding: isMobile ? "10px 6px calc(24px + env(safe-area-inset-bottom))" : "28px 24px",
+        ...(isMobile ? { overflowX: "auto", WebkitOverflowScrolling: "touch", touchAction: "pan-x pan-y pinch-zoom" } : {}) }}>
         {page === "home"       && <PlannerHome    onNavigate={setPage} />}
         {page === "spraylog"  && <WorkRecords />}
         {page === "head-grower" && <GrowerProgram />}
