@@ -277,7 +277,7 @@ export function ReviewSheetViewer({ id }) {
 }
 
 // ── PLANNER SIDE: list of sheets + responses ────────────────────────────────
-export default function ReviewSheets({ embedded }) {
+export default function ReviewSheets({ embedded, onBack }) {
   const sb = getSupabase();
   const [sheets, setSheets] = useState([]);
   const [items, setItems] = useState([]);
@@ -310,6 +310,7 @@ export default function ReviewSheets({ embedded }) {
   return (
     <div style={{ fontFamily: FONT, color: C.text }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;600;700;800&display=swap" rel="stylesheet" />
+      {onBack && <button onClick={onBack} style={{ background: C.dark, color: C.cream, border: "none", padding: "11px 16px", fontSize: 14, fontWeight: 700, cursor: "pointer", width: "100%", textAlign: "left", fontFamily: "inherit", borderRadius: 10, marginBottom: 12 }}>← Back</button>}
       <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
         <h2 style={{ fontFamily: SERIF, color: C.dark, margin: 0, fontSize: 26 }}>🗳 Plan reviews</h2>
         <span style={{ color: C.muted, fontSize: 13 }}>Propose → sales feedback → decide. Sheets are built from the plan; the link needs no login.</span>
