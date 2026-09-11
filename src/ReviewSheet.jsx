@@ -38,7 +38,7 @@ export function mixOf(items, valueOf, dims = MIX_DIMS) {
   });
   return out;
 }
-export function MixBars({ mix, total, unit = "pots", dims = MIX_DIMS, active, onPick, compact }) {
+export function MixBars({ mix, total, unit = "pots", dims = MIX_DIMS, active, isActive, onPick, compact }) {
   const fs = compact ? 12 : 13.5;
   return (
     <div style={{ display: "grid", gap: compact ? 10 : 16 }}>
@@ -49,7 +49,7 @@ export function MixBars({ mix, total, unit = "pots", dims = MIX_DIMS, active, on
           <div key={dim}>
             <div style={{ fontSize: compact ? 10.5 : 11.5, fontWeight: 800, letterSpacing: ".06em", textTransform: "uppercase", color: C.muted, marginBottom: 4 }}>{label}</div>
             <div style={{ display: "grid", gap: 3 }}>
-              {rows.map(([k, v]) => { const on = active && active.dim === dim && active.value === k; return (
+              {rows.map(([k, v]) => { const on = isActive ? isActive(dim, k) : (active && active.dim === dim && active.value === k); return (
                 <button key={k} onClick={onPick ? () => onPick(dim, k) : undefined} disabled={!onPick} style={{ display: "grid", gridTemplateColumns: `${compact ? 92 : 118}px 1fr ${compact ? 62 : 84}px`, alignItems: "center", gap: 8, padding: compact ? "2px 4px" : "4px 6px", border: "none", borderRadius: 6, background: on ? C.cream : "transparent", cursor: onPick ? "pointer" : "default", font: "inherit", textAlign: "left", color: C.text, fontSize: fs }}>
                   <span style={{ display: "flex", alignItems: "center", gap: 6, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis", textTransform: dim === "color" ? "capitalize" : "none" }}>{dim === "color" && <i style={{ width: 10, height: 10, borderRadius: 999, flex: "0 0 auto", background: colorHex(k), border: "1px solid rgba(0,0,0,.15)" }} />}{k}</span>
                   <span style={{ height: compact ? 8 : 12, background: C.chip, borderRadius: 999, overflow: "hidden" }}><span style={{ display: "block", height: "100%", width: `${Math.max(2, v / max * 100)}%`, background: dim === "color" ? colorHex(k) : C.light, borderRadius: 999 }} /></span>

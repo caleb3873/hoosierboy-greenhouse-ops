@@ -4,19 +4,26 @@
 // Crops collapse to a heading with their total; the top bar keeps running totals. Answers are
 // per reviewer (review_responses.reviewer). Tables: pick_seasons, pick_reviewers, review_sheets
 // (season_id, crop), review_items, review_responses (migration 20260911230000).
-// Phase 2 (9/11): "Mix" = bird's-eye of what's picked by crop / colour / vigor / breeder / new vs
-// proven; tapping a bar filters the cards to that bucket (picked or not). Cards carry a NEW badge
+// Phase 2 (9/11): "Mix" = bird's-eye of what's picked, per crop (our calibrachoa colour mix, our
+// verbena colour mix…) by colour / vigor / breeder / new vs proven; tapping a bar jumps to those
+// cards. Filter bar (vigor · breeder · colour, multi-select, AND across rows / OR within a row)
+// cuts the page down to what the reviewer wants to look at. Cards carry a NEW badge
 // (nothing grown or sold in 2026), a colour-family chip and last year's grown/sold (meta).
 import { useEffect, useMemo, useState } from "react";
 import { getSupabase } from "./supabase";
 import { LOGO_WHITE } from "./PreOrder";
-import { C, FONT, SERIF, Photo, Lightbox, n, fmtWhen, mixOf, MixBars, colorHex, dimValue, MIX_DIMS } from "./ReviewSheet";
+import { C, FONT, SERIF, Photo, Lightbox, n, fmtWhen, mixOf, MixBars, colorHex, dimValue, MIX_DIMS, COLOR_FAMILIES } from "./ReviewSheet";
 
 // Breeder logos live in the public preorder-photos bucket (logos/, uploaded 9/11/2026).
 const LOGO_BASE = `${process.env.REACT_APP_SUPABASE_URL}/storage/v1/object/public/preorder-photos/logos/`;
 const LOGOS = { "Ball FloraPlant": "ball-floraplant.svg", Selecta: "selecta.svg", Westhoff: "westhoff.svg", "Dümmen": "dummen.png", Beekenkamp: "beekenkamp.png", Danziger: "danziger.webp" };
 const logoUrl = breeder => LOGOS[breeder] ? LOGO_BASE + LOGOS[breeder] : null;
 const money = v => `$${(+v).toFixed(2)}`;
+const FILTER_DIMS = [["vigor", "Vigor"], ["breeder", "Breeder"], ["color", "Colour"]];
+const VIGOR_ORDER = ["compact", "medium", "vigorous"];
+const EMPTY_FILTERS = { vigor: [], breeder: [], color: [] };
+const MIX_CROP_DIMS = MIX_DIMS.filter(([k]) => k !== "crop");
+const passes = (it, f) => FILTER_DIMS.every(([dim]) => !f[dim].length || f[dim].includes(dimValue(it, dim)));
 const roundUp = (v, step) => { const x = Math.max(0, Math.round(+v || 0)); return x ? Math.ceil(x / step) * step : 0; };
 
 function PickCard({ it, r, set, role, step, closed, onOpen }) {
@@ -81,7 +88,7 @@ export default function PicksViewer({ token }) {
   const [err, setErr] = useState(null);
   const [photo, setPhoto] = useState(null);
   const [showMix, setShowMix] = useState(false);
-  const [filter, setFilter] = useState(null);       // {dim, value} from a tapped mix bar
+  const [filters, setFilters] = useState(EMPTY_FILTERS);   // {vigor:[…], breeder:[…], color:[…]}
 
   useEffect(() => {
     (async () => {
@@ -109,23 +116,34 @@ export default function PicksViewer({ token }) {
     })();
   }, [sb, token]);
 
+  const filtering = Object.values(filters).some(a => a.length);
   const set = (itemId, patch) => setResp(r => ({ ...r, [itemId]: { suggested_qty: "", reaction: null, comment: "", ...(r[itemId] || {}), ...patch } }));
   const perSheet = useMemo(() => {
     if (!state) return [];
     return state.sheets.map(s => {
       const its = state.items.filter(i => i.sheet_id === s.id);
-      const shown = filter ? its.filter(i => dimValue(i, filter.dim) === filter.value) : its;
+      const shown = filtering ? its.filter(i => passes(i, filters)) : its;
       const secs = []; shown.forEach(i => { const k = i.section || "All"; let sec = secs.find(x => x.key === k); if (!sec) { sec = { key: k, items: [] }; secs.push(sec); } sec.items.push(i); });
       const pots = its.reduce((a, i) => a + (+(resp[i.id]?.suggested_qty || 0) || 0), 0);
       const likes = its.filter(i => resp[i.id]?.reaction === "like").length;
       const dislikes = its.filter(i => resp[i.id]?.reaction === "dislike").length;
       const picked = its.filter(i => (+(resp[i.id]?.suggested_qty || 0) || 0) > 0).length;
-      return { sheet: s, sections: secs, pots, likes, dislikes, picked, count: its.length, shown: shown.length };
+      const valueOf = i => state.reviewer.role === "decider" ? (+(resp[i.id]?.suggested_qty || 0) || 0) : (resp[i.id]?.reaction === "like" ? 1 : 0);
+      return { sheet: s, sections: secs, pots, likes, dislikes, picked, count: its.length, shown: shown.length, mix: mixOf(its, valueOf, MIX_CROP_DIMS) };
     });
-  }, [state, resp, filter]);
-  const mix = useMemo(() => state ? mixOf(state.items, i => state.reviewer.role === "decider" ? (+(resp[i.id]?.suggested_qty || 0) || 0) : (resp[i.id]?.reaction === "like" ? 1 : 0)) : {}, [state, resp]);
-  const pick = (dim, value) => { setFilter(f => f && f.dim === dim && f.value === value ? null : { dim, value }); setShowMix(false); window.scrollTo({ top: 0 }); };
-  const filterLabel = filter ? `${(MIX_DIMS.find(([k]) => k === filter.dim) || [])[1] || filter.dim}: ${filter.value}` : "";
+  }, [state, resp, filters, filtering]);
+  const options = useMemo(() => {
+    if (!state) return {};
+    const o = {}; FILTER_DIMS.forEach(([dim]) => { o[dim] = [...new Set(state.items.map(i => dimValue(i, dim)))].filter(v => v && v !== "—"); });
+    o.vigor.sort((a, b) => VIGOR_ORDER.indexOf(a) - VIGOR_ORDER.indexOf(b));
+    o.breeder.sort();
+    const ci = c => { const i = COLOR_FAMILIES.findIndex(([k]) => k === c); return i < 0 ? 99 : i; }; o.color.sort((a, b) => ci(a) - ci(b));
+    return o;
+  }, [state]);
+  const toggle = (dim, v) => setFilters(f => ({ ...f, [dim]: f[dim].includes(v) ? f[dim].filter(x => x !== v) : [...f[dim], v] }));
+  const isActive = (dim, v) => (filters[dim] || []).includes(v);
+  const pick = sheetId => (dim, v) => { if (dim === "newness") return; setFilters(f => ({ ...f, [dim]: [v] })); setOpenCrop(sheetId); setShowMix(false); window.scrollTo({ top: 0 }); };
+  const shownTotal = perSheet.reduce((a, s) => a + s.shown, 0);
   const totalPots = perSheet.reduce((a, s) => a + s.pots, 0);
   const totalLikes = perSheet.reduce((a, s) => a + s.likes, 0);
   const totalDislikes = perSheet.reduce((a, s) => a + s.dislikes, 0);
@@ -198,7 +216,19 @@ export default function PicksViewer({ token }) {
         .pk-c .chips .pr{background:${C.dark};color:#fff;font-weight:800;font-variant-numeric:tabular-nums}
         .pk-mixbtn{margin-left:auto;background:${C.dark};color:#fff;border:none;border-radius:999px;padding:5px 12px;font-weight:800;font-size:12.5px;cursor:pointer;font-family:inherit}
         .pk-mixbtn.on{background:${C.light};color:${C.dark}}
-        .pk-filter{background:${C.cream}!important;border-color:${C.light}!important;color:${C.dark}!important;cursor:pointer;text-transform:capitalize}
+        .pk-tot .shown{background:${C.cream};border-color:${C.light};color:${C.dark};cursor:pointer}
+        .pk-fb{margin-top:10px;display:grid;gap:5px}
+        .pk-fr{display:flex;align-items:center;gap:5px;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;padding-bottom:2px}
+        .pk-fr::-webkit-scrollbar{display:none}
+        .pk-fr .lb{flex:0 0 58px;font-size:10.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:${C.muted}}
+        .pk-fr button{flex:0 0 auto;display:inline-flex;align-items:center;gap:5px;padding:5px 10px;border-radius:999px;border:1.5px solid ${C.border};background:#fff;font-family:inherit;font-size:12.5px;font-weight:700;color:${C.text};cursor:pointer;white-space:nowrap;text-transform:capitalize}
+        .pk-fr button.on{background:${C.dark};border-color:${C.dark};color:#fff}
+        .pk-fr button i{width:10px;height:10px;border-radius:999px;border:1px solid rgba(0,0,0,.15)}
+        .pk-fr button.clear{border-style:dashed;color:${C.muted};text-transform:none}
+        .pk-mix .crop{margin-top:14px;padding-top:12px;border-top:1px solid ${C.border}}
+        .pk-mix .crop:first-of-type{margin-top:0;padding-top:0;border-top:none}
+        .pk-mix .crop h4{font-family:${SERIF};font-size:19px;color:${C.dark};margin:0 0 8px;font-weight:400}
+        .pk-mix .crop h4 span{font-family:${FONT};font-size:12px;color:${C.muted}}
         .pk-mix{background:#fff;border:1px solid ${C.border};border-radius:14px;padding:14px 14px 10px;margin-top:14px}
         .pk-mix h3{font-family:${SERIF};font-size:22px;color:${C.dark};margin:0 0 2px;font-weight:400}
         .pk-mix .hint{font-size:12.5px;color:${C.muted};margin-bottom:10px}
@@ -238,28 +268,43 @@ export default function PicksViewer({ token }) {
             <span className="grand"><b>{totalLikes}</b> liked · <b>{totalDislikes}</b> passed</span>
             {perSheet.map(s => <span key={s.sheet.id}>{s.sheet.crop || s.sheet.title} <b>{s.likes}</b>👍 <b>{s.dislikes}</b>👎</span>)}
           </>}
-          {filter && <span className="pk-filter" onClick={() => setFilter(null)} title="Clear">{filterLabel} ✕</span>}
+          {filtering && <span className="shown" onClick={() => setFilters(EMPTY_FILTERS)} title="Clear filters"><b>{shownTotal}</b> shown ✕</span>}
           <button className={`pk-mixbtn${showMix ? " on" : ""}`} onClick={() => setShowMix(v => !v)}>{showMix ? "Close mix" : "Mix"}</button>
         </div>
         {showMix && (
           <div className="pk-mix">
             <h3>{decider ? "Your mix so far" : "What you liked so far"}</h3>
-            <div className="hint">{decider ? `${n(totalPots)} pots` : `${totalLikes} liked`} · tap a bar to see just those varieties, picked or not.</div>
-            <MixBars mix={mix} total={decider ? totalPots : totalLikes} unit={decider ? "pots" : "likes"} active={filter} onPick={pick} />
+            <div className="hint">{decider ? `${n(totalPots)} pots` : `${totalLikes} liked`} across {perSheet.filter(s => decider ? s.pots : s.likes).length || "no"} crops · tap a bar to see just those varieties, picked or not.</div>
+            {perSheet.filter(s => decider ? s.pots : s.likes).map(s => (
+              <div className="crop" key={s.sheet.id}>
+                <h4>Our {(s.sheet.crop || s.sheet.title).toLowerCase()} mix <span>· {decider ? `${n(s.pots)} pots` : `${s.likes} liked`}</span></h4>
+                <MixBars mix={s.mix} total={decider ? s.pots : s.likes} unit={decider ? "pots" : "likes"} dims={MIX_CROP_DIMS} isActive={isActive} onPick={pick(s.sheet.id)} />
+              </div>
+            ))}
+            {!perSheet.some(s => decider ? s.pots : s.likes) && <div style={{ color: C.muted, fontSize: 14 }}>Nothing picked yet — pick a few and come back.</div>}
           </div>
         )}
+        <div className="pk-fb">
+          {FILTER_DIMS.map(([dim, label]) => (
+            <div className="pk-fr" key={dim}>
+              <span className="lb">{label}</span>
+              {(options[dim] || []).map(v => <button key={v} className={isActive(dim, v) ? "on" : ""} onClick={() => toggle(dim, v)}>{dim === "color" && <i style={{ background: colorHex(v) }} />}{v}</button>)}
+            </div>
+          ))}
+          {filtering && <div className="pk-fr"><span className="lb" /><button className="clear" onClick={() => setFilters(EMPTY_FILTERS)}>Show everything ({n(state.items.length)})</button></div>}
+        </div>
         <h1 className="pk-h1">{season.title}</h1>
         <div className="pk-for">For <b>{reviewer.name}</b> · {decider ? `you set the numbers, in flats of ten (${step} pots)` : "tell us what your customers want"}</div>
         {season.story && <div className="pk-story">{season.story}</div>}
         {savedAt && <div className="pk-saved">Saved {fmtWhen(savedAt)}. Change anything and send again to update.</div>}
         {closed && <div className="pk-saved" style={{ background: "#fff7ec" }}>This season's picks are closed. The decisions have been made.</div>}
 
-        {filter && !perSheet.some(s => s.shown) && <div className="pk-none">Nothing matches {filterLabel}.</div>}
-        {perSheet.map(s => { if (filter && !s.shown) return null; const isOpen = filter ? true : openCrop === s.sheet.id; return (
+        {filtering && !shownTotal && <div className="pk-none">Nothing matches those filters.</div>}
+        {perSheet.map(s => { if (filtering && !s.shown) return null; const isOpen = openCrop === s.sheet.id; return (
           <div className="pk-crop" key={s.sheet.id}>
-            <button onClick={() => filter ? setFilter(null) : setOpenCrop(isOpen ? null : s.sheet.id)}>
+            <button onClick={() => setOpenCrop(isOpen ? null : s.sheet.id)}>
               <span className="t">{s.sheet.crop || s.sheet.title}</span>
-              <span className="s">{decider ? <><b>{n(s.pots)}</b> pots · {s.picked} of {s.count} picked</> : <><b>{s.likes}</b> liked · {s.dislikes} passed · {s.count} colours</>}{filter ? ` · ${s.shown} shown` : ""} {isOpen ? "▴" : "▾"}</span>
+              <span className="s">{decider ? <><b>{n(s.pots)}</b> pots · {s.picked} of {s.count} picked</> : <><b>{s.likes}</b> liked · {s.dislikes} passed · {s.count} colours</>}{filtering ? ` · ${s.shown} shown` : ""} {isOpen ? "▴" : "▾"}</span>
             </button>
             {isOpen && (
               <div className="body">
