@@ -20,6 +20,50 @@ const VERDICTS = [
 const OVERALL = [["too_many", "Too many overall"], ["about_right", "About right"], ["room_for_more", "Room for more"]];
 export const fmtWhen = iso => iso ? new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
 export const n = v => (v == null ? "" : (+v).toLocaleString());
+// Colour families + the "mix" maths shared by the picks page (Mario's bird's-eye view) and the
+// 🗳 Reviews season block. review_items.meta.color / is_new / grown_2026 / sold_2026 are set by
+// the data pass (scratchpad picks_meta2.py, 9/11/2026); fix a wrong colour by editing meta.color.
+export const COLOR_FAMILIES = [["white", "#f1eee2"], ["yellow", "#f2c94c"], ["orange", "#ef7f2c"], ["red", "#c9332b"], ["hot pink", "#e0409a"], ["pink", "#ef9ab8"], ["magenta", "#b5176f"], ["purple", "#6a3d9a"], ["lavender", "#b8a4d9"], ["blue", "#3b64c4"], ["black", "#2b2430"], ["green", "#8cc63f"], ["mix", "linear-gradient(135deg,#f2c94c,#ef7f2c,#c9332b,#ef9ab8,#b79bd6)"], ["other", "#c8d5bf"]];
+export const colorHex = c => (COLOR_FAMILIES.find(([k]) => k === c) || [null, "#c8d5bf"])[1];
+export const MIX_DIMS = [["crop", "Crop"], ["color", "Colour"], ["vigor", "Vigor"], ["breeder", "Breeder"], ["newness", "New vs proven"]];
+export const dimValue = (it, dim) => { const m = it.meta || {}; if (dim === "crop") return it.crop || "—"; if (dim === "newness") return m.is_new ? "New for us" : "Grew it before"; return m[dim] || "—"; };
+const colorRank = c => { const i = COLOR_FAMILIES.findIndex(([k]) => k === c); return i < 0 ? 99 : i; };
+// Sum valueOf(item) into buckets per dimension → { dim: [[label, value], …] } sorted big → small (colours keep the family order).
+export function mixOf(items, valueOf, dims = MIX_DIMS) {
+  const out = {};
+  dims.forEach(([dim]) => {
+    const b = {};
+    items.forEach(it => { const v = +valueOf(it) || 0; if (!v) return; const k = dimValue(it, dim); b[k] = (b[k] || 0) + v; });
+    out[dim] = Object.entries(b).sort((x, y) => dim === "color" ? colorRank(x[0]) - colorRank(y[0]) : y[1] - x[1]);
+  });
+  return out;
+}
+export function MixBars({ mix, total, unit = "pots", dims = MIX_DIMS, active, onPick, compact }) {
+  const fs = compact ? 12 : 13.5;
+  return (
+    <div style={{ display: "grid", gap: compact ? 10 : 16 }}>
+      {dims.map(([dim, label]) => {
+        const rows = mix[dim] || []; if (!rows.length) return null;
+        const max = Math.max(...rows.map(r => r[1]));
+        return (
+          <div key={dim}>
+            <div style={{ fontSize: compact ? 10.5 : 11.5, fontWeight: 800, letterSpacing: ".06em", textTransform: "uppercase", color: C.muted, marginBottom: 4 }}>{label}</div>
+            <div style={{ display: "grid", gap: 3 }}>
+              {rows.map(([k, v]) => { const on = active && active.dim === dim && active.value === k; return (
+                <button key={k} onClick={onPick ? () => onPick(dim, k) : undefined} disabled={!onPick} style={{ display: "grid", gridTemplateColumns: `${compact ? 92 : 118}px 1fr ${compact ? 62 : 84}px`, alignItems: "center", gap: 8, padding: compact ? "2px 4px" : "4px 6px", border: "none", borderRadius: 6, background: on ? C.cream : "transparent", cursor: onPick ? "pointer" : "default", font: "inherit", textAlign: "left", color: C.text, fontSize: fs }}>
+                  <span style={{ display: "flex", alignItems: "center", gap: 6, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis", textTransform: dim === "color" ? "capitalize" : "none" }}>{dim === "color" && <i style={{ width: 10, height: 10, borderRadius: 999, flex: "0 0 auto", background: colorHex(k), border: "1px solid rgba(0,0,0,.15)" }} />}{k}</span>
+                  <span style={{ height: compact ? 8 : 12, background: C.chip, borderRadius: 999, overflow: "hidden" }}><span style={{ display: "block", height: "100%", width: `${Math.max(2, v / max * 100)}%`, background: dim === "color" ? colorHex(k) : C.light, borderRadius: 999 }} /></span>
+                  <span style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}><b style={{ color: C.dark }}>{n(v)}</b>{total ? <span style={{ color: C.muted, fontSize: fs - 2 }}> · {Math.round(v / total * 100)}%</span> : null}</span>
+                </button>
+              ); })}
+            </div>
+          </div>
+        );
+      })}
+      {!Object.values(mix).some(r => r && r.length) && <div style={{ color: C.muted, fontSize: fs }}>Nothing picked yet.</div>}
+    </div>
+  );
+}
 // Colour swatch fallback when an item has no photo — reads the colour out of the name.
 const SWATCH = [["white", "#f4f2ea"], ["yellow", "#f2c94c"], ["golden", "#e6a92b"], ["orange", "#ef7f2c"], ["red", "#c9332b"], ["scarlet", "#d63a2f"], ["hot pink", "#e0409a"], ["pink", "#ef9ab8"], ["salmon", "#f2a07b"], ["peach", "#f5b98e"], ["coral", "#f07a6a"], ["lilac", "#b79bd6"], ["purple", "#6a3d9a"], ["lavender", "#b8a4d9"], ["mix", "linear-gradient(135deg,#f2c94c,#ef7f2c,#c9332b,#ef9ab8,#b79bd6)"]];
 export const swatchFor = (name, given) => given || (SWATCH.find(([k]) => name.toLowerCase().includes(k)) || [null, "#c8d5bf"])[1];
@@ -276,6 +320,7 @@ export default function ReviewSheets({ embedded }) {
         const deciders = seRev.filter(r => r.role === "decider"); const voters = seRev.filter(r => r.role === "voter");
         const isOpen = openSeason === se.id;
         const seItems = items.filter(i => seSheets.some(s => s.id === i.sheet_id));
+        const seItemsC = seItems.map(i => ({ ...i, crop: (seSheets.find(s => s.id === i.sheet_id) || {}).crop }));
         const seResps = resps.filter(r => r.reviewer && seSheets.some(s => s.id === r.sheet_id));
         const byKey = {}; seResps.forEach(r => { byKey[r.item_id + "|" + r.reviewer] = r; });
         const tot = {}; deciders.forEach(d => { tot[d.name] = seResps.filter(r => r.reviewer === d.name).reduce((a, r) => a + (+r.suggested_qty || 0), 0); });
@@ -303,6 +348,20 @@ export default function ReviewSheets({ embedded }) {
             </div>
             {isOpen && (
               <div style={{ marginTop: 10, borderTop: `1px solid ${C.border}`, paddingTop: 8, overflowX: "auto" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12, marginBottom: 14 }}>
+                  {deciders.filter(d => tot[d.name]).map(d => (
+                    <div key={d.id} style={{ background: C.paper, border: `1px solid ${C.border}`, borderRadius: 10, padding: "10px 12px" }}>
+                      <div style={{ fontFamily: SERIF, fontSize: 17, color: C.dark, marginBottom: 6 }}>{d.name}'s mix <span style={{ fontFamily: FONT, fontSize: 12, color: C.muted }}>· {n(tot[d.name])} pots</span></div>
+                      <MixBars compact mix={mixOf(seItemsC, i => byKey[i.id + "|" + d.name]?.suggested_qty)} total={tot[d.name]} dims={MIX_DIMS.filter(([k]) => k !== "crop")} />
+                    </div>
+                  ))}
+                  {voters.some(v => seResps.some(r => r.reviewer === v.name && r.reaction === "like")) && (
+                    <div style={{ background: C.paper, border: `1px solid ${C.border}`, borderRadius: 10, padding: "10px 12px" }}>
+                      <div style={{ fontFamily: SERIF, fontSize: 17, color: C.dark, marginBottom: 6 }}>What the team liked <span style={{ fontFamily: FONT, fontSize: 12, color: C.muted }}>· 👍 count</span></div>
+                      <MixBars compact unit="likes" mix={mixOf(seItemsC, i => voters.filter(v => byKey[i.id + "|" + v.name]?.reaction === "like").length)} dims={MIX_DIMS.filter(([k]) => k !== "crop")} />
+                    </div>
+                  )}
+                </div>
                 {seSheets.map(sh => (
                   <div key={sh.id} style={{ marginBottom: 12 }}>
                     <div style={{ fontFamily: SERIF, fontSize: 17, color: C.dark, margin: "6px 0" }}>{sh.crop || sh.title}</div>

@@ -4,10 +4,13 @@
 // Crops collapse to a heading with their total; the top bar keeps running totals. Answers are
 // per reviewer (review_responses.reviewer). Tables: pick_seasons, pick_reviewers, review_sheets
 // (season_id, crop), review_items, review_responses (migration 20260911230000).
+// Phase 2 (9/11): "Mix" = bird's-eye of what's picked by crop / colour / vigor / breeder / new vs
+// proven; tapping a bar filters the cards to that bucket (picked or not). Cards carry a NEW badge
+// (nothing grown or sold in 2026), a colour-family chip and last year's grown/sold (meta).
 import { useEffect, useMemo, useState } from "react";
 import { getSupabase } from "./supabase";
 import { LOGO_WHITE } from "./PreOrder";
-import { C, FONT, SERIF, Photo, Lightbox, n, fmtWhen } from "./ReviewSheet";
+import { C, FONT, SERIF, Photo, Lightbox, n, fmtWhen, mixOf, MixBars, colorHex, dimValue, MIX_DIMS } from "./ReviewSheet";
 
 const roundUp = (v, step) => { const x = Math.max(0, Math.round(+v || 0)); return x ? Math.ceil(x / step) * step : 0; };
 
@@ -16,10 +19,14 @@ function PickCard({ it, r, set, role, step, closed, onOpen }) {
   const qty = +(r.suggested_qty || 0) || 0;
   return (
     <div className={`pk-c${role === "decider" && qty > 0 ? " on" : ""}${r.reaction ? " " + r.reaction : ""}`}>
-      <Photo item={it} big onOpen={onOpen} />
+      <div className="ph"><Photo item={it} big onOpen={onOpen} />{m.is_new && <span className="new">New</span>}</div>
       <div className="b">
         <div className="n">{it.name}</div>
-        <div className="chips">{m.breeder && <span>{m.breeder}</span>}{m.vigor && <span>{m.vigor}</span>}{(m.grown_2026 != null || m.sold_2026 != null) && <span>2026: {m.grown_2026 != null ? `grew ${n(m.grown_2026)}` : ""}{m.grown_2026 != null && m.sold_2026 != null ? ", " : ""}{m.sold_2026 != null ? `sold ${n(m.sold_2026)}` : ""}</span>}</div>
+        <div className="chips">
+          {m.color && <span className="col"><i style={{ background: colorHex(m.color) }} />{m.color}</span>}
+          {m.vigor && <span>{m.vigor}</span>}{m.breeder && <span>{m.breeder}</span>}
+          {(m.grown_2026 != null || m.sold_2026 != null) ? <span className="ly">2026: {m.grown_2026 != null ? `grew ${n(m.grown_2026)}` : ""}{m.grown_2026 != null && m.sold_2026 != null ? " · " : ""}{m.sold_2026 != null ? `sold ${n(m.sold_2026)}` : ""}</span> : null}
+        </div>
         {role === "decider" ? (
           <div className="st">
             <button aria-label="less" disabled={closed || qty <= 0} onClick={() => set(it.id, { suggested_qty: Math.max(0, qty - step) })}>−</button>
@@ -51,6 +58,8 @@ export default function PicksViewer({ token }) {
   const [sent, setSent] = useState(null);
   const [err, setErr] = useState(null);
   const [photo, setPhoto] = useState(null);
+  const [showMix, setShowMix] = useState(false);
+  const [filter, setFilter] = useState(null);       // {dim, value} from a tapped mix bar
 
   useEffect(() => {
     (async () => {
@@ -68,7 +77,8 @@ export default function PicksViewer({ token }) {
       ]) : [{ data: [] }, { data: [] }];
       const m = {}; (rs || []).forEach(r => { m[r.item_id] = { suggested_qty: r.suggested_qty || "", reaction: r.reaction, comment: r.comment || "" }; });
       setResp(m); setNote(rv.note || "");
-      setState({ reviewer: rv, season: season || {}, sheets: sheets || [], items: items || [] });
+      const cropOf = Object.fromEntries((sheets || []).map(s => [s.id, s.crop || s.title]));
+      setState({ reviewer: rv, season: season || {}, sheets: sheets || [], items: (items || []).map(i => ({ ...i, crop: cropOf[i.sheet_id] })) });
       setOpenCrop((sheets || [])[0]?.id || null);
       try {
         const now = new Date().toISOString();
@@ -82,14 +92,18 @@ export default function PicksViewer({ token }) {
     if (!state) return [];
     return state.sheets.map(s => {
       const its = state.items.filter(i => i.sheet_id === s.id);
-      const secs = []; its.forEach(i => { const k = i.section || "All"; let sec = secs.find(x => x.key === k); if (!sec) { sec = { key: k, items: [] }; secs.push(sec); } sec.items.push(i); });
+      const shown = filter ? its.filter(i => dimValue(i, filter.dim) === filter.value) : its;
+      const secs = []; shown.forEach(i => { const k = i.section || "All"; let sec = secs.find(x => x.key === k); if (!sec) { sec = { key: k, items: [] }; secs.push(sec); } sec.items.push(i); });
       const pots = its.reduce((a, i) => a + (+(resp[i.id]?.suggested_qty || 0) || 0), 0);
       const likes = its.filter(i => resp[i.id]?.reaction === "like").length;
       const dislikes = its.filter(i => resp[i.id]?.reaction === "dislike").length;
       const picked = its.filter(i => (+(resp[i.id]?.suggested_qty || 0) || 0) > 0).length;
-      return { sheet: s, sections: secs, pots, likes, dislikes, picked, count: its.length };
+      return { sheet: s, sections: secs, pots, likes, dislikes, picked, count: its.length, shown: shown.length };
     });
-  }, [state, resp]);
+  }, [state, resp, filter]);
+  const mix = useMemo(() => state ? mixOf(state.items, i => state.reviewer.role === "decider" ? (+(resp[i.id]?.suggested_qty || 0) || 0) : (resp[i.id]?.reaction === "like" ? 1 : 0)) : {}, [state, resp]);
+  const pick = (dim, value) => { setFilter(f => f && f.dim === dim && f.value === value ? null : { dim, value }); setShowMix(false); window.scrollTo({ top: 0 }); };
+  const filterLabel = filter ? `${(MIX_DIMS.find(([k]) => k === filter.dim) || [])[1] || filter.dim}: ${filter.value}` : "";
   const totalPots = perSheet.reduce((a, s) => a + s.pots, 0);
   const totalLikes = perSheet.reduce((a, s) => a + s.likes, 0);
   const totalDislikes = perSheet.reduce((a, s) => a + s.dislikes, 0);
@@ -148,6 +162,17 @@ export default function PicksViewer({ token }) {
         .pk-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
         @media (min-width:640px){.pk-grid{grid-template-columns:1fr 1fr 1fr}}
         .pk-c{background:#fff;border:1.5px solid ${C.border};border-radius:12px;overflow:hidden}
+        .pk-c .ph{position:relative}
+        .pk-c .new{position:absolute;top:6px;left:6px;background:${C.amber};color:#fff;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;padding:2px 7px;border-radius:999px;box-shadow:0 1px 3px rgba(0,0,0,.25)}
+        .pk-c .chips .col{display:inline-flex;align-items:center;gap:4px;text-transform:capitalize} .pk-c .chips .col i{width:9px;height:9px;border-radius:999px;border:1px solid rgba(0,0,0,.15);flex:0 0 auto}
+        .pk-c .chips .ly{background:#fff7ec;color:#7a5a2a}
+        .pk-mixbtn{margin-left:auto;background:${C.dark};color:#fff;border:none;border-radius:999px;padding:5px 12px;font-weight:800;font-size:12.5px;cursor:pointer;font-family:inherit}
+        .pk-mixbtn.on{background:${C.light};color:${C.dark}}
+        .pk-filter{background:${C.cream}!important;border-color:${C.light}!important;color:${C.dark}!important;cursor:pointer;text-transform:capitalize}
+        .pk-mix{background:#fff;border:1px solid ${C.border};border-radius:14px;padding:14px 14px 10px;margin-top:14px}
+        .pk-mix h3{font-family:${SERIF};font-size:22px;color:${C.dark};margin:0 0 2px;font-weight:400}
+        .pk-mix .hint{font-size:12.5px;color:${C.muted};margin-bottom:10px}
+        .pk-none{color:${C.muted};font-size:14px;padding:16px 4px}
         .pk-c.on{border-color:${C.light};box-shadow:0 0 0 2px ${C.cream}}
         .pk-c.like{border-color:#4f8a3a} .pk-c.dislike{border-color:${C.red};opacity:.85}
         .pk-c .b{padding:8px 9px 10px}
@@ -182,18 +207,28 @@ export default function PicksViewer({ token }) {
             <span className="grand"><b>{totalLikes}</b> liked · <b>{totalDislikes}</b> passed</span>
             {perSheet.map(s => <span key={s.sheet.id}>{s.sheet.crop || s.sheet.title} <b>{s.likes}</b>👍 <b>{s.dislikes}</b>👎</span>)}
           </>}
+          {filter && <span className="pk-filter" onClick={() => setFilter(null)} title="Clear">{filterLabel} ✕</span>}
+          <button className={`pk-mixbtn${showMix ? " on" : ""}`} onClick={() => setShowMix(v => !v)}>{showMix ? "Close mix" : "Mix"}</button>
         </div>
+        {showMix && (
+          <div className="pk-mix">
+            <h3>{decider ? "Your mix so far" : "What you liked so far"}</h3>
+            <div className="hint">{decider ? `${n(totalPots)} pots` : `${totalLikes} liked`} · tap a bar to see just those varieties, picked or not.</div>
+            <MixBars mix={mix} total={decider ? totalPots : totalLikes} unit={decider ? "pots" : "likes"} active={filter} onPick={pick} />
+          </div>
+        )}
         <h1 className="pk-h1">{season.title}</h1>
         <div className="pk-for">For <b>{reviewer.name}</b> · {decider ? `you set the numbers, in flats of ten (${step} pots)` : "tell us what your customers want"}</div>
         {season.story && <div className="pk-story">{season.story}</div>}
         {savedAt && <div className="pk-saved">Saved {fmtWhen(savedAt)}. Change anything and send again to update.</div>}
         {closed && <div className="pk-saved" style={{ background: "#fff7ec" }}>This season's picks are closed. The decisions have been made.</div>}
 
-        {perSheet.map(s => { const isOpen = openCrop === s.sheet.id; return (
+        {filter && !perSheet.some(s => s.shown) && <div className="pk-none">Nothing matches {filterLabel}.</div>}
+        {perSheet.map(s => { if (filter && !s.shown) return null; const isOpen = filter ? true : openCrop === s.sheet.id; return (
           <div className="pk-crop" key={s.sheet.id}>
-            <button onClick={() => setOpenCrop(isOpen ? null : s.sheet.id)}>
+            <button onClick={() => filter ? setFilter(null) : setOpenCrop(isOpen ? null : s.sheet.id)}>
               <span className="t">{s.sheet.crop || s.sheet.title}</span>
-              <span className="s">{decider ? <><b>{n(s.pots)}</b> pots · {s.picked} of {s.count} picked</> : <><b>{s.likes}</b> liked · {s.dislikes} passed · {s.count} colours</>} {isOpen ? "▴" : "▾"}</span>
+              <span className="s">{decider ? <><b>{n(s.pots)}</b> pots · {s.picked} of {s.count} picked</> : <><b>{s.likes}</b> liked · {s.dislikes} passed · {s.count} colours</>}{filter ? ` · ${s.shown} shown` : ""} {isOpen ? "▴" : "▾"}</span>
             </button>
             {isOpen && (
               <div className="body">
