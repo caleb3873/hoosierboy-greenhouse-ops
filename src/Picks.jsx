@@ -12,6 +12,11 @@ import { getSupabase } from "./supabase";
 import { LOGO_WHITE } from "./PreOrder";
 import { C, FONT, SERIF, Photo, Lightbox, n, fmtWhen, mixOf, MixBars, colorHex, dimValue, MIX_DIMS } from "./ReviewSheet";
 
+// Breeder logos live in the public preorder-photos bucket (logos/, uploaded 9/11/2026).
+const LOGO_BASE = `${process.env.REACT_APP_SUPABASE_URL}/storage/v1/object/public/preorder-photos/logos/`;
+const LOGOS = { "Ball FloraPlant": "ball-floraplant.svg", Selecta: "selecta.svg", Westhoff: "westhoff.svg", "Dümmen": "dummen.png", Beekenkamp: "beekenkamp.png", Danziger: "danziger.webp" };
+const logoUrl = breeder => LOGOS[breeder] ? LOGO_BASE + LOGOS[breeder] : null;
+const money = v => `$${(+v).toFixed(2)}`;
 const roundUp = (v, step) => { const x = Math.max(0, Math.round(+v || 0)); return x ? Math.ceil(x / step) * step : 0; };
 
 function PickCard({ it, r, set, role, step, closed, onOpen }) {
@@ -23,8 +28,10 @@ function PickCard({ it, r, set, role, step, closed, onOpen }) {
       <div className="b">
         <div className="n">{it.name}</div>
         <div className="chips">
+          {logoUrl(m.breeder) ? <span className="lg" title={m.breeder}><img src={logoUrl(m.breeder)} alt={m.breeder} /></span> : m.breeder ? <span>{m.breeder}</span> : null}
+          {m.cutting_cost != null && <span className="pr" title={`${m.cutting_form === "urc" ? "unrooted cutting" : m.cutting_form} · ${m.cutting_supplier || ""} via ${m.cutting_broker || ""}`}>{money(m.cutting_cost)} {m.cutting_form === "urc" ? "cutting" : m.cutting_form}</span>}
           {m.color && <span className="col"><i style={{ background: colorHex(m.color) }} />{m.color}</span>}
-          {m.vigor && <span>{m.vigor}</span>}{m.breeder && <span>{m.breeder}</span>}
+          {m.vigor && <span>{m.vigor}</span>}
           {(m.grown_2026 != null || m.sold_2026 != null) ? <span className="ly">2026: {m.grown_2026 != null ? `grew ${n(m.grown_2026)}` : ""}{m.grown_2026 != null && m.sold_2026 != null ? " · " : ""}{m.sold_2026 != null ? `sold ${n(m.sold_2026)}` : ""}</span> : null}
         </div>
         {role === "decider" ? (
@@ -44,6 +51,21 @@ function PickCard({ it, r, set, role, step, closed, onOpen }) {
         )}
         <input className="cm" value={r.comment || ""} onChange={e => set(it.id, { comment: e.target.value })} placeholder="Note (optional)" disabled={closed} />
       </div>
+    </div>
+  );
+}
+
+// Section = one vigor group of one breeder. The breeder gets its logo, big, so the eye catches
+// the change from one breeder to the next while scrolling.
+function SectionHead({ sec, pots }) {
+  const m = (sec.items[0] || {}).meta || {};
+  const [vigorLabel, breederLabel] = sec.key.includes(" · ") ? sec.key.split(" · ") : [sec.key, m.breeder];
+  const breeder = m.breeder || breederLabel;
+  const logo = logoUrl(breeder);
+  return (
+    <div className="pk-sec">
+      <div className="who">{logo ? <img src={logo} alt={breeder} /> : <b>{breeder}</b>}{logo && <b className="nm">{breeder}</b>}</div>
+      <div className="vg">{vigorLabel}<span className="ct">{sec.items.length} colours{pots ? ` · ${n(pots)} pots` : ""}</span></div>
     </div>
   );
 }
@@ -157,15 +179,23 @@ export default function PicksViewer({ token }) {
         .pk-crop>button .s{font-size:13px;color:${C.muted};font-variant-numeric:tabular-nums}
         .pk-crop>button .s b{color:${C.dark}}
         .pk-crop .body{padding:0 12px 14px}
-        .pk-sec{font-size:12px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:${C.muted};margin:16px 0 8px;padding-top:12px;border-top:1px solid ${C.border}}
-        .pk-sec .st{float:right;font-weight:600;letter-spacing:0;text-transform:none;font-variant-numeric:tabular-nums}
-        .pk-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-        @media (min-width:640px){.pk-grid{grid-template-columns:1fr 1fr 1fr}}
-        .pk-c{background:#fff;border:1.5px solid ${C.border};border-radius:12px;overflow:hidden}
+        .pk-sec{margin:18px -12px 10px;padding:10px 12px;background:${C.chip};border-top:3px solid ${C.dark};display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+        .pk-sec .who{display:flex;align-items:center;gap:10px;min-height:34px}
+        .pk-sec .who img{height:30px;width:auto;max-width:150px;object-fit:contain;display:block}
+        .pk-sec .who b{font-family:${SERIF};font-size:20px;color:${C.dark};font-weight:400}
+        .pk-sec .who .nm{font-size:15px}
+        .pk-sec .vg{font-size:11.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:${C.muted};text-align:right}
+        .pk-sec .vg .ct{display:block;font-weight:600;letter-spacing:0;text-transform:none;font-variant-numeric:tabular-nums}
+        .pk-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+        @media (min-width:640px){.pk-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+        .pk-c{background:#fff;border:1.5px solid ${C.border};border-radius:12px;overflow:hidden;min-width:0}
         .pk-c .ph{position:relative}
         .pk-c .new{position:absolute;top:6px;left:6px;background:${C.amber};color:#fff;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;padding:2px 7px;border-radius:999px;box-shadow:0 1px 3px rgba(0,0,0,.25)}
         .pk-c .chips .col{display:inline-flex;align-items:center;gap:4px;text-transform:capitalize} .pk-c .chips .col i{width:9px;height:9px;border-radius:999px;border:1px solid rgba(0,0,0,.15);flex:0 0 auto}
         .pk-c .chips .ly{background:#fff7ec;color:#7a5a2a}
+        .pk-c .chips .lg{background:#fff;border:1px solid ${C.border};padding:2px 6px;display:inline-flex;align-items:center;height:20px}
+        .pk-c .chips .lg img{height:13px;width:auto;max-width:70px;object-fit:contain;display:block}
+        .pk-c .chips .pr{background:${C.dark};color:#fff;font-weight:800;font-variant-numeric:tabular-nums}
         .pk-mixbtn{margin-left:auto;background:${C.dark};color:#fff;border:none;border-radius:999px;padding:5px 12px;font-weight:800;font-size:12.5px;cursor:pointer;font-family:inherit}
         .pk-mixbtn.on{background:${C.light};color:${C.dark}}
         .pk-filter{background:${C.cream}!important;border-color:${C.light}!important;color:${C.dark}!important;cursor:pointer;text-transform:capitalize}
@@ -178,11 +208,12 @@ export default function PicksViewer({ token }) {
         .pk-c .b{padding:8px 9px 10px}
         .pk-c .n{font-family:${SERIF};font-size:15.5px;line-height:1.15;color:${C.dark};min-height:2.3em}
         .pk-c .chips{display:flex;flex-wrap:wrap;gap:4px;margin:5px 0 7px} .pk-c .chips span{font-size:10.5px;color:${C.muted};background:${C.chip};border-radius:999px;padding:2px 7px}
-        .pk-c .st{display:flex;align-items:center;gap:4px}
-        .pk-c .st button{width:38px;height:40px;border-radius:9px;border:1.5px solid ${C.border};background:#fff;font-size:22px;font-weight:700;color:${C.dark};cursor:pointer;line-height:1;flex:0 0 auto}
+        .pk-c .st{display:flex;align-items:center;gap:4px;width:100%}
+        .pk-c .st button{width:36px;height:40px;padding:0;border-radius:9px;border:1.5px solid ${C.border};background:#fff;font-size:22px;font-weight:700;color:${C.dark};cursor:pointer;line-height:1;flex:0 0 36px}
         .pk-c .st button:disabled{opacity:.35}
-        .pk-c .st input{flex:1;min-width:0;height:40px;text-align:center;font-size:17px;font-weight:800;border:1.5px solid ${C.border};border-radius:9px;font-family:inherit;color:${C.dark};background:#fff}
-        .pk-c .st input::placeholder{color:#b9c2b3} .pk-c .st .u{font-size:11px;color:${C.muted}}
+        .pk-c .st input{flex:1 1 0;width:0;min-width:0;height:40px;padding:0 2px;text-align:center;font-size:17px;font-weight:800;border:1.5px solid ${C.border};border-radius:9px;font-family:inherit;color:${C.dark};background:#fff;-webkit-appearance:none;appearance:none}
+        .pk-c .st input::placeholder{color:#b9c2b3} .pk-c .st .u{font-size:11px;color:${C.muted};flex:0 0 auto}
+        @media (max-width:639px){.pk-c .st .u{display:none} .pk-c .st button{flex:0 0 32px;width:32px;font-size:20px} .pk-c .b{padding:8px 7px 10px}}
         .pk-c .vote{display:grid;grid-template-columns:1fr 1fr;gap:5px}
         .pk-c .vote button{padding:9px 4px;border-radius:9px;border:1.5px solid ${C.border};background:#fff;font-weight:800;font-size:12.5px;cursor:pointer;font-family:inherit;color:${C.text};line-height:1.1}
         .pk-c .vote button.on.like{background:#4f8a3a;border-color:#4f8a3a;color:#fff} .pk-c .vote button.on.dislike{background:${C.red};border-color:${C.red};color:#fff}
@@ -234,7 +265,7 @@ export default function PicksViewer({ token }) {
               <div className="body">
                 {s.sections.map(sec => { const secPots = sec.items.reduce((a, i) => a + (+(resp[i.id]?.suggested_qty || 0) || 0), 0); return (
                   <div key={sec.key}>
-                    <div className="pk-sec">{sec.key}{decider && secPots ? <span className="st">{n(secPots)} pots</span> : null}</div>
+                    <SectionHead sec={sec} pots={decider ? secPots : 0} />
                     <div className="pk-grid">{sec.items.map(it => <PickCard key={it.id} it={it} r={resp[it.id] || {}} set={set} role={reviewer.role} step={step} closed={closed} onOpen={setPhoto} />)}</div>
                   </div>
                 ); })}
