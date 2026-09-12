@@ -21,9 +21,9 @@ const logoUrl = breeder => LOGOS[breeder] ? LOGO_BASE + LOGOS[breeder] : null;
 const money = v => `$${(+v).toFixed(2)}`;
 const FILTER_DIMS = [["form", "Form"], ["vigor", "Vigor"], ["breeder", "Breeder"], ["color", "Colour"]];   // Form row only shows when a crop has doubles
 const VIGOR_ORDER = ["compact", "medium", "vigorous"];
-const EMPTY_FILTERS = { vigor: [], breeder: [], color: [] };
+const EMPTY_FILTERS = { form: [], vigor: [], breeder: [], color: [] };
 const MIX_CROP_DIMS = MIX_DIMS.filter(([k]) => k !== "crop");
-const passes = (it, f) => FILTER_DIMS.every(([dim]) => !f[dim].length || f[dim].includes(dimValue(it, dim)));
+const passes = (it, f) => FILTER_DIMS.every(([dim]) => !(f[dim] || []).length || f[dim].includes(dimValue(it, dim)));
 const roundUp = (v, step) => { const x = Math.max(0, Math.round(+v || 0)); return x ? Math.ceil(x / step) * step : 0; };
 
 function PickCard({ it, r, set, role, step, closed, onOpen }) {
@@ -149,7 +149,7 @@ export default function PicksViewer({ token }) {
     const ci = c => { const i = COLOR_FAMILIES.findIndex(([k]) => k === c); return i < 0 ? 99 : i; }; o.color.sort((a, b) => ci(a) - ci(b));
     return o;
   }, [state, crop]);
-  const toggle = (dim, v) => setFilters(f => ({ ...f, [dim]: f[dim].includes(v) ? f[dim].filter(x => x !== v) : [...f[dim], v] }));
+  const toggle = (dim, v) => setFilters(f => { const cur = f[dim] || []; return { ...f, [dim]: cur.includes(v) ? cur.filter(x => x !== v) : [...cur, v] }; });
   const isActive = (dim, v) => (filters[dim] || []).includes(v);
   const pick = (dim, v) => { if (dim === "newness") return; setFilters(f => ({ ...f, [dim]: [v] })); setShowMix(false); window.scrollTo({ top: 0 }); };
   // Cover photo for a crop tile: the variety with the most pots (or a like), else the first with a photo.
