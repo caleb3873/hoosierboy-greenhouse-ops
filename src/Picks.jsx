@@ -100,10 +100,12 @@ export default function PicksViewer({ token }) {
         sb.from("review_sheets").select("id,crop,title,sort").eq("season_id", rv.season_id).order("sort").order("title"),
       ]);
       const ids = (sheets || []).map(s => s.id);
-      const [{ data: items }, { data: rs }] = ids.length ? await Promise.all([
-        sb.from("review_items").select("*").in("sheet_id", ids).eq("active", true).order("sort").order("name"),
-        sb.from("review_responses").select("item_id,suggested_qty,reaction,comment").in("sheet_id", ids).eq("reviewer", rv.name),
-      ]) : [{ data: [] }, { data: [] }];
+      // PostgREST caps a query at 1,000 rows; a season now holds more varieties than that, so page.
+      const pageAll = async (build) => { const out = []; for (let from = 0; ; from += 1000) { const { data } = await build().range(from, from + 999); out.push(...(data || [])); if (!data || data.length < 1000) break; } return out; };
+      const [items, rs] = ids.length ? await Promise.all([
+        pageAll(() => sb.from("review_items").select("*").in("sheet_id", ids).eq("active", true).order("sort").order("name")),
+        pageAll(() => sb.from("review_responses").select("item_id,suggested_qty,reaction,comment").in("sheet_id", ids).eq("reviewer", rv.name)),
+      ]) : [[], []];
       const m = {}; (rs || []).forEach(r => { m[r.item_id] = { suggested_qty: r.suggested_qty || "", reaction: r.reaction, comment: r.comment || "" }; });
       setResp(m); setNote(rv.note || "");
       const cropOf = Object.fromEntries((sheets || []).map(s => [s.id, s.crop || s.title]));

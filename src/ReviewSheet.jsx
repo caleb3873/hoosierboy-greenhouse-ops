@@ -289,14 +289,15 @@ export default function ReviewSheets({ embedded, onBack }) {
   const [openSeason, setOpenSeason] = useState(null);
   const load = async () => {
     if (!sb) return;
-    const [{ data: s }, { data: it }, { data: r }, { data: se }, { data: rv }] = await Promise.all([
+    const pageAll = async (build) => { const out = []; for (let from = 0; ; from += 1000) { const { data } = await build().range(from, from + 999); out.push(...(data || [])); if (!data || data.length < 1000) break; } return out; };   // PostgREST 1,000-row cap
+    const [{ data: s }, it, r, { data: se }, { data: rv }] = await Promise.all([
       sb.from("review_sheets").select("*").order("created_at", { ascending: false }),
-      sb.from("review_items").select("*").order("sort").order("name"),
-      sb.from("review_responses").select("*"),
+      pageAll(() => sb.from("review_items").select("*").order("sort").order("name")),
+      pageAll(() => sb.from("review_responses").select("*").order("updated_at")),
       sb.from("pick_seasons").select("*").order("created_at", { ascending: false }),
       sb.from("pick_reviewers").select("*").order("role").order("name"),
     ]);
-    setSheets(s || []); setItems(it || []); setResps(r || []); setSeasons(se || []); setReviewers(rv || []);
+    setSheets(s || []); setItems(it); setResps(r); setSeasons(se || []); setReviewers(rv || []);
   };
   const copyText = async (key, text) => { try { await navigator.clipboard.writeText(text); setCopied(key); setTimeout(() => setCopied(null), 1500); } catch { window.prompt("Copy this link", text); } };
   const shareText = async (key, title, text, url) => { if (navigator.share) { try { await navigator.share({ title, text, url }); return; } catch { /* cancelled */ } } copyText(key, url); };
