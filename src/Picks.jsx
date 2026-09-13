@@ -34,6 +34,7 @@ function PickCard({ it, r, set, role, step, closed, onOpen }) {
       <div className="ph"><Photo item={it} big onOpen={onOpen} />{m.is_new && <span className="new">New</span>}</div>
       <div className="b">
         <div className="n">{it.name}</div>
+        {it.description && <div className="d">{it.description}</div>}
         <div className="chips">
           {logoUrl(m.breeder) ? <span className="lg" title={m.breeder}><img src={logoUrl(m.breeder)} alt={m.breeder} /></span> : m.breeder ? <span>{m.breeder}</span> : null}
           {m.cutting_cost != null && <span className="pr" title={`${m.cutting_form === "urc" ? "unrooted cutting" : m.cutting_form} · ${m.cutting_supplier || ""} via ${m.cutting_broker || ""}`}>{money(m.cutting_cost)} {m.cutting_form === "urc" ? "cutting" : m.cutting_form}</span>}
@@ -263,6 +264,7 @@ export default function PicksViewer({ token }) {
         .pk-c.like{border-color:#4f8a3a} .pk-c.dislike{border-color:${C.red};opacity:.85}
         .pk-c .b{padding:8px 9px 10px}
         .pk-c .n{font-family:${SERIF};font-size:15.5px;line-height:1.15;color:${C.dark};min-height:2.3em}
+        .pk-c .d{font-size:11px;line-height:1.3;color:${C.muted};margin-top:3px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
         .pk-c .chips{display:flex;flex-wrap:wrap;gap:4px;margin:5px 0 7px} .pk-c .chips span{font-size:10.5px;color:${C.muted};background:${C.chip};border-radius:999px;padding:2px 7px}
         .pk-c .st{display:flex;align-items:center;gap:4px;width:100%}
         .pk-c .st button{width:36px;height:40px;padding:0;border-radius:9px;border:1.5px solid ${C.border};background:#fff;font-size:22px;font-weight:700;color:${C.dark};cursor:pointer;line-height:1;flex:0 0 36px}
