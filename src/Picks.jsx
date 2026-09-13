@@ -98,7 +98,7 @@ export default function PicksViewer({ token }) {
       if (!rv) { setState(null); return; }
       const [{ data: season }, { data: sheets }] = await Promise.all([
         sb.from("pick_seasons").select("*").eq("id", rv.season_id).maybeSingle(),
-        sb.from("review_sheets").select("id,crop,title,sort").eq("season_id", rv.season_id).order("sort").order("title"),
+        sb.from("review_sheets").select("id,crop,title,sort").eq("season_id", rv.season_id),
       ]);
       const ids = (sheets || []).map(s => s.id);
       // PostgREST caps a query at 1,000 rows; a season now holds more varieties than that, so page.
@@ -109,6 +109,8 @@ export default function PicksViewer({ token }) {
       ]) : [[], []];
       const m = {}; (rs || []).forEach(r => { m[r.item_id] = { suggested_qty: r.suggested_qty || "", reaction: r.reaction, comment: r.comment || "" }; });
       setResp(m); setNote(rv.note || "");
+      // Crops sit A→Z on the grid (Caleb 9/13), not in the order the sheets were made.
+      (sheets || []).sort((a, b) => (a.crop || a.title || "").localeCompare(b.crop || b.title || "", "en", { numeric: true }));
       const cropOf = Object.fromEntries((sheets || []).map(s => [s.id, s.crop || s.title]));
       setState({ reviewer: rv, season: season || {}, sheets: sheets || [], items: (items || []).map(i => ({ ...i, crop: cropOf[i.sheet_id] })) });
 
