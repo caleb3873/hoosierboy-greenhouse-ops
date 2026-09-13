@@ -130,10 +130,9 @@ export default function PicksViewer({ token }) {
       const its = state.items.filter(i => i.sheet_id === s.id);
       const shown = filtering ? its.filter(i => passes(i, filters)) : its;
       const secs = []; shown.forEach(i => { const k = i.section || "All"; let sec = secs.find(x => x.key === k); if (!sec) { sec = { key: k, items: [] }; secs.push(sec); } sec.items.push(i); });
-      // Inside a breeder block: series A→Z, singles before doubles, then colour A→Z (never the sheet-build order).
-      const isDbl = i => /\bdouble\b/i.test(i.name) ? 1 : 0;
-      const bySeries = (a, b) => ((a.meta || {}).series || "").localeCompare((b.meta || {}).series || "", "en", { numeric: true }) || isDbl(a) - isDbl(b) || a.name.localeCompare(b.name, "en", { numeric: true });
-      secs.forEach(sec => sec.items.sort(bySeries));
+      // Inside a breeder block: straight A→Z by variety name (Caleb 9/13). Series still cluster because the
+      // name starts with the series; doubles interleave with their singles, and the Form filter isolates them.
+      secs.forEach(sec => sec.items.sort((a, b) => a.name.localeCompare(b.name, "en", { numeric: true })));
       const pots = its.reduce((a, i) => a + (+(resp[i.id]?.suggested_qty || 0) || 0), 0);
       const likes = its.filter(i => resp[i.id]?.reaction === "like").length;
       const dislikes = its.filter(i => resp[i.id]?.reaction === "dislike").length;
