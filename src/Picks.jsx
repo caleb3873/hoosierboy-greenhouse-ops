@@ -19,7 +19,7 @@ const LOGO_BASE = `${process.env.REACT_APP_SUPABASE_URL}/storage/v1/object/publi
 const LOGOS = { "Ball FloraPlant": "ball-floraplant.svg", Selecta: "selecta.svg", Westhoff: "westhoff.svg", "Dümmen": "dummen.png", Beekenkamp: "beekenkamp.png", Danziger: "danziger.webp", Sakata: "sakata-supercal.png" };
 const logoUrl = breeder => LOGOS[breeder] ? LOGO_BASE + LOGOS[breeder] : null;
 const money = v => `$${(+v).toFixed(2)}`;
-const FILTER_DIMS = [["form", "Form"], ["vigor", "Vigor"], ["breeder", "Breeder"], ["color", "Colour"]];   // Form row only shows when a crop has doubles
+const FILTER_DIMS = [["form", "Form"], ["light", "Light"], ["type", "Type"], ["habit", "Habit"], ["vigor", "Vigor"], ["breeder", "Breeder"], ["color", "Colour"]];   // a row only shows when the crop has 2+ values for it
 const VIGOR_ORDER = ["compact", "medium", "vigorous"];
 const EMPTY_FILTERS = { form: [], vigor: [], breeder: [], color: [] };
 const MIX_CROP_DIMS = MIX_DIMS.filter(([k]) => k !== "crop");
@@ -39,7 +39,7 @@ function PickCard({ it, r, set, role, step, closed, onOpen }) {
           {logoUrl(m.breeder) ? <span className="lg" title={m.breeder}><img src={logoUrl(m.breeder)} alt={m.breeder} /></span> : m.breeder ? <span>{m.breeder}</span> : null}
           {m.cutting_cost != null && <span className="pr" title={`${m.cutting_form === "urc" ? "unrooted cutting" : m.cutting_form} · ${m.cutting_supplier || ""} via ${m.cutting_broker || ""}`}>{money(m.cutting_cost)} {m.cutting_form === "urc" ? "cutting" : m.cutting_form}</span>}
           {m.color && <span className="col"><i style={{ background: colorHex(m.color) }} />{m.color}</span>}
-          {m.vigor && <span>{m.vigor}</span>}
+          {m.vigor && <span>{m.vigor}</span>}{m.habit && <span>{m.habit}</span>}{m.light && <span className="lt">{m.light}</span>}{m.type && <span>{m.type}</span>}
           {(m.grown_2026 != null || m.sold_2026 != null) ? <span className="ly">2026: {m.grown_2026 != null ? `grew ${n(m.grown_2026)}` : ""}{m.grown_2026 != null && m.sold_2026 != null ? " · " : ""}{m.sold_2026 != null ? `sold ${n(m.sold_2026)}` : ""}</span> : null}
         </div>
         {role === "decider" ? (
@@ -147,6 +147,7 @@ export default function PicksViewer({ token }) {
     const pool = crop ? state.items.filter(i => i.sheet_id === crop) : state.items;
     const o = {}; FILTER_DIMS.forEach(([dim]) => { o[dim] = [...new Set(pool.map(i => dimValue(i, dim)))].filter(v => v && v !== "—"); });
     o.form.sort((a, b) => (a === "single" ? 0 : 1) - (b === "single" ? 0 : 1));
+    const LIGHT = ["full sun", "sun to part shade", "part shade", "shade"]; o.light.sort((a, b) => LIGHT.indexOf(a) - LIGHT.indexOf(b));
     o.vigor.sort((a, b) => VIGOR_ORDER.indexOf(a) - VIGOR_ORDER.indexOf(b));
     o.breeder.sort();
     const ci = c => { const i = COLOR_FAMILIES.findIndex(([k]) => k === c); return i < 0 ? 99 : i; }; o.color.sort((a, b) => ci(a) - ci(b));
@@ -226,6 +227,7 @@ export default function PicksViewer({ token }) {
         .pk-c .new{position:absolute;top:6px;left:6px;background:${C.amber};color:#fff;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;padding:2px 7px;border-radius:999px;box-shadow:0 1px 3px rgba(0,0,0,.25)}
         .pk-c .chips .col{display:inline-flex;align-items:center;gap:4px;text-transform:capitalize} .pk-c .chips .col i{width:9px;height:9px;border-radius:999px;border:1px solid rgba(0,0,0,.15);flex:0 0 auto}
         .pk-c .chips .ly{background:#fff7ec;color:#7a5a2a}
+        .pk-c .chips .lt{background:#fdf6d8;color:#6b5a12}
         .pk-c .chips .lg{background:#fff;border:1px solid ${C.border};padding:2px 6px;display:inline-flex;align-items:center;height:20px}
         .pk-c .chips .lg img{height:13px;width:auto;max-width:70px;object-fit:contain;display:block}
         .pk-c .chips .pr{background:${C.dark};color:#fff;font-weight:800;font-variant-numeric:tabular-nums}
