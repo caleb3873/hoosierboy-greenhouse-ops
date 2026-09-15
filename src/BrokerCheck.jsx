@@ -162,6 +162,24 @@ export default function BrokerCheck({ plan }) {
   }, [report, ledger]);
 
   const copy = txt => { try { navigator.clipboard.writeText(txt); } catch { /* clipboard blocked — text is on screen anyway */ } };
+
+  // The one write this page makes, and it only adds: a report listing an order we already
+  // hold is evidence for it ("confirmation or order report — need at least one"). Stamps
+  // report_seen_at / report_source on every ledger order the report contains.
+  const [stamped, setStamped] = useState(null);
+  const stampable = useMemo(() => diff ? [...diff.matched, ...diff.changed].map(o => o.orderNo).filter(no => ledger[no]) : [], [diff, ledger]);
+  async function stampSeen() {
+    if (!sb || !stampable.length) return;
+    setBusy(true); setError(null);
+    try {
+      const { error: err } = await sb.from("purchase_orders")
+        .update({ report_seen_at: new Date().toISOString(), report_source: `${report.broker} ${fileName}` })
+        .eq("plan_id", plan.id).in("order_number", stampable);
+      if (err) throw err;
+      setStamped(stampable.length);
+    } catch (e) { setError(e.message || String(e)); }
+    finally { setBusy(false); }
+  }
   const th = (t, right) => <th style={{ textAlign: right ? "right" : "left", padding: "6px 8px", fontSize: 11.5, color: C.muted, textTransform: "uppercase", letterSpacing: ".05em", fontWeight: 700 }}>{t}</th>;
   const td = (v, right, extra) => <td style={{ padding: "6px 8px", textAlign: right ? "right" : "left", fontVariantNumeric: "tabular-nums", ...extra }}>{v}</td>;
   const section = (title, color, count, hint) => (
@@ -202,6 +220,9 @@ export default function BrokerCheck({ plan }) {
             <span style={{ color: diff.changed.length ? C.amber : C.muted }}><b>{diff.changed.length}</b> differ</span>
             <span style={{ color: diff.dropped.length ? C.amber : C.muted }}><b>{diff.dropped.length}</b> in ledger, not on report</span>
             <span style={{ color: C.muted }}><b>{diff.matched.length}</b> match</span>
+            {stampable.length > 0 && (stamped == null
+              ? <button onClick={stampSeen} disabled={busy} title="records that this broker report vouches for these orders (report_seen_at) — the only thing this page writes" style={{ font: "inherit", fontSize: 12.5, fontWeight: 800, padding: "5px 12px", borderRadius: 999, border: "none", background: C.dark, color: "#fff", cursor: "pointer", marginLeft: "auto" }}>{busy ? "Stamping…" : `Mark ${stampable.length} as seen on this report`}</button>
+              : <span style={{ marginLeft: "auto", fontSize: 12.5, fontWeight: 700, color: C.light }}>✓ {stamped} orders stamped as seen on {report.broker}'s report</span>)}
           </div>
 
           {diff.missing.length > 0 && <>
