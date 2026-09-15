@@ -75,8 +75,8 @@ export default function Coverage({ plan }) {
     if (!rows) return [];
     const by = {};
     rows.forEach(r => {
-      const v = by[r.variety_id] || (by[r.variety_id] = { id: r.variety_id, crop: r.crop_name || "—", name: r.variety, need: 0, ordered: 0, confirmed: 0, inHouse: +r.in_house_plants || 0, weeks: [], late: false });
-      v.need += +r.need || 0; v.ordered += +r.ordered || 0; v.confirmed += +r.confirmed || 0;
+      const v = by[r.variety_id] || (by[r.variety_id] = { id: r.variety_id, crop: r.crop_name || "—", name: r.variety, need: 0, ordered: 0, confirmed: 0, inHouse: +r.in_house_plants || 0, longLead: 0, weeks: [], late: false });
+      v.need += +r.need || 0; v.ordered += +r.ordered || 0; v.confirmed += +r.confirmed || 0; v.longLead += +r.long_lead_need || 0;
       v.weeks.push(r);
       if (+r.cum_gap_ordered < 0 && +r.need > 0) v.late = true;
     });
@@ -164,7 +164,7 @@ export default function Coverage({ plan }) {
                 return [
                   <tr key={v.id} onClick={() => setOpen(o => ({ ...o, [v.id]: !o[v.id] }))} style={{ borderTop: `1px solid ${C.border}`, cursor: "pointer", background: isOpen ? C.chip : "transparent" }}>
                     <td style={{ padding: "7px 8px", color: C.muted, whiteSpace: "nowrap" }}>{v.crop}</td>
-                    <td style={{ padding: "7px 8px", fontWeight: 700 }}>{v.name}{v.inHouse > 0 && <span title="own cuttings — not in the bought-in need" style={{ marginLeft: 6, fontSize: 11, color: C.muted, fontWeight: 600 }}>+{n(v.inHouse)} in-house</span>}{v.late && v.state !== "short" && <span title="a week's cumulative arrivals fall short before later orders catch up" style={{ marginLeft: 6, fontSize: 10.5, fontWeight: 800, padding: "1px 6px", borderRadius: 8, background: "#fdebd3", color: C.amber }}>LATE WEEK</span>}</td>
+                    <td style={{ padding: "7px 8px", fontWeight: 700 }}>{v.name}{v.inHouse > 0 && <span title="own cuttings — not in the bought-in need" style={{ marginLeft: 6, fontSize: 11, color: C.muted, fontWeight: 600 }}>+{n(v.inHouse)} in-house</span>}{v.longLead > 0 && <span title="arrives more than 16 weeks before it is planted — held stock (ivy, spikes) propagated and drawn down all season" style={{ marginLeft: 6, fontSize: 10.5, fontWeight: 800, padding: "1px 6px", borderRadius: 8, background: C.chip, color: C.muted }}>HELD STOCK</span>}{v.late && v.state !== "short" && <span title="a week's cumulative arrivals fall short before later orders catch up" style={{ marginLeft: 6, fontSize: 10.5, fontWeight: 800, padding: "1px 6px", borderRadius: 8, background: "#fdebd3", color: C.amber }}>LATE WEEK</span>}</td>
                     <td style={{ padding: "7px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{n(v.need)}</td>
                     <td style={{ padding: "7px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{n(v.ordered)}</td>
                     <td style={{ padding: "7px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{n(v.confirmed)}</td>
