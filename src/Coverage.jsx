@@ -8,6 +8,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { getSupabase } from "./supabase";
 import useIsMobile from "./useIsMobile";
+import { plantOrder, sizeLabelForItem } from "./shared";
 
 const C = { dark: "#1e2d1a", light: "#7fb069", cream: "#c8e6b8", muted: "#7a8c74", red: "#d94f3d", amber: "#e89a3a", border: "#dfe7d8", chip: "#eef3e8", card: "#fff", text: "#1e2d1a" };
 const FONT = "'DM Sans', sans-serif";
@@ -49,6 +50,7 @@ export default function Coverage({ plan }) {
   const [week, setWeek] = useState("");
   const [q, setQ] = useState("");
   const [showUnlinked, setShowUnlinked] = useState(false);
+  const [sort, setSort] = useState({ col: "default", dir: 1 });
 
   useEffect(() => {
     if (!sb || !plan?.id) return;
@@ -104,53 +106,83 @@ export default function Coverage({ plan }) {
     return "confirmed";
   };
 
-  // week → item → components
-  const weeks = useMemo(() => {
+  // One flat row per item component: the item (what's on the bench) + the plant it
+  // needs + the pool of orders behind that plant by this week. A combo's item state is
+  // the worst of its components, carried on every one of its rows.
+  const rows = useMemo(() => {
     if (!items) return [];
-    const byWeek = {};
-    items.forEach(r => {
+    const byItem = {};
+    const out = items.map(r => {
       const wk = wkKey(r.arrive_year, r.arrive_week);
-      const w = byWeek[wk] || (byWeek[wk] = { key: wk, yr: r.arrive_year, wk: r.arrive_week, items: {} });
-      const ik = `${r.item_name}||${r.bench || ""}`;
-      const it = w.items[ik] || (w.items[ik] = { key: ik, name: r.item_name, bench: r.bench, crop: r.crop_name, pots: +r.pots || 0, plantWeek: r.plant_week, comps: [] });
+      const ik = `${wk}||${r.item_name}||${r.bench || ""}`;
       const p = pools[r.variety_id]?.[wk] || {};
-      it.comps.push({ variety: r.variety, crop: r.crop_name, vid: r.variety_id, plants: +r.plants || 0, perPot: r.per_pot, inHouse: r.in_house, supplier: r.supplier, form: r.prop_method, state: stateFor(r), pool: p, orders: ordersFor(r.variety_id, wk) });
+      const row = { ik, wk, yr: r.arrive_year, week: r.arrive_week, size: sizeLabelForItem(r.item_name), item: r.item_name, bench: r.bench || "", pots: +r.pots || 0, plantWeek: r.plant_week,
+        crop: r.crop_name, variety: r.variety, vid: r.variety_id, form: r.prop_method, supplier: r.supplier, inHouse: r.in_house, perPot: r.per_pot, plants: +r.plants || 0,
+        need: p.cumNeed ?? null, ordered: p.cumOrdered ?? null, confirmed: p.cumConfirmed ?? null, state: stateFor(r), orders: ordersFor(r.variety_id, wk) };
+      row.gap = row.inHouse ? 0 : Math.max(0, (row.need ?? row.plants) - (row.ordered ?? 0));
+      (byItem[ik] = byItem[ik] || []).push(row);
+      return row;
     });
     const rank = s => STATES[s].rank;
-    return Object.values(byWeek).sort((a, b) => a.key - b.key).map(w => {
-      const its = Object.values(w.items).map(it => {
-        const live = it.comps.filter(c => !c.inHouse);
-        it.state = live.length ? live.reduce((a, c) => rank(c.state) < rank(a) ? c.state : a, "confirmed") : "inhouse";
-        it.brokers = [...new Set(it.comps.flatMap(c => c.orders.map(o => o.broker)).filter(Boolean))];
-        it.comps.sort((a, b) => rank(a.state) - rank(b.state) || b.plants - a.plants);
-        return it;
-      }).sort((a, b) => rank(a.state) - rank(b.state) || String(a.bench || "").localeCompare(String(b.bench || "")) || a.name.localeCompare(b.name));
-      const counts = its.reduce((a, it) => { a[it.state] = (a[it.state] || 0) + 1; return a; }, {});
-      return { ...w, items: its, counts };
+    Object.values(byItem).forEach(list => {
+      const live = list.filter(c => !c.inHouse);
+      const st = live.length ? live.reduce((a, c) => rank(c.state) < rank(a) ? c.state : a, "confirmed") : "inhouse";
+      list.forEach(c => { c.itemState = st; c.comps = list.length; });
     });
+    return out;
   }, [items, pools]);
 
   const crops = useMemo(() => [...new Set((items || []).map(r => r.crop_name).filter(Boolean))].sort(), [items]);
-  const totals = useMemo(() => weeks.reduce((a, w) => { Object.entries(w.counts).forEach(([k, v]) => { a[k] = (a[k] || 0) + v; }); a.items += w.items.length; return a; }, { items: 0 }), [weeks]);
+  const weeks = useMemo(() => { const m = {}; rows.forEach(r => { m[r.wk] = m[r.wk] || { key: r.wk, yr: r.yr, wk: r.week, n: 0 }; m[r.wk].n++; }); return Object.values(m).sort((a, b) => a.key - b.key); }, [rows]);
+  const totals = useMemo(() => { const t = { items: new Set() }; rows.forEach(r => { t.items.add(r.ik); t[r.itemState] = (t[r.itemState] || 0); }); const seen = new Set(); rows.forEach(r => { if (seen.has(r.ik)) return; seen.add(r.ik); t[r.itemState] = (t[r.itemState] || 0) + 1; }); t.items = t.items.size; return t; }, [rows]);
+
+  const COLS = [
+    { id: "week", label: "Arrives", get: r => r.wk, render: r => wkLabel(r.yr, r.week) },
+    { id: "size", label: "Size", get: r => r.size, cmp: (a, b) => plantOrder(a.size, b.size) },
+    { id: "item", label: "Item", get: r => r.item, cmp: (a, b) => plantOrder(a.item, b.item) },
+    { id: "bench", label: "Bench", get: r => r.bench },
+    { id: "pots", label: "Pots", get: r => r.pots, num: true },
+    { id: "plantWeek", label: "Plant wk", get: r => r.plantWeek ?? 99, render: r => r.plantWeek ? `wk${r.plantWeek}` : "—" },
+    { id: "variety", label: "Plant", get: r => `${r.crop} ${r.variety}` },
+    { id: "perPot", label: "Per pot", get: r => r.perPot, num: true },
+    { id: "plants", label: "Plants", get: r => r.plants, num: true },
+    { id: "ordered", label: "Ordered", get: r => r.ordered ?? -1, num: true },
+    { id: "confirmed", label: "Confirmed", get: r => r.confirmed ?? -1, num: true },
+    { id: "gap", label: "Gap", get: r => r.gap, num: true },
+    { id: "orders", label: "Orders", get: r => r.orders.map(o => o.no).join(" ") },
+    { id: "state", label: "Status", get: r => STATES[r.state].rank },
+  ];
+  const defaultCmp = (a, b) => a.wk - b.wk || plantOrder(a.size, b.size) || plantOrder(a.item, b.item) || a.bench.localeCompare(b.bench) || b.plants - a.plants;
   const shown = useMemo(() => {
     const s = q.trim().toLowerCase();
-    return weeks.filter(w => !week || String(w.key) === week).map(w => ({ ...w, items: w.items.filter(it => (!state || it.state === state) && (!crop || it.crop === crop || it.comps.some(c => c.crop === crop)) && (!s || it.name.toLowerCase().includes(s) || String(it.bench || "").toLowerCase().includes(s) || it.comps.some(c => c.variety.toLowerCase().includes(s)))) })).filter(w => w.items.length);
-  }, [weeks, state, crop, week, q]);
+    const list = rows.filter(r => (!state || r.itemState === state) && (!crop || r.crop === crop) && (!week || String(r.wk) === week)
+      && (!s || r.item.toLowerCase().includes(s) || r.bench.toLowerCase().includes(s) || r.variety.toLowerCase().includes(s) || r.crop.toLowerCase().includes(s) || r.orders.some(o => o.no.includes(s) || o.broker.toLowerCase().includes(s))));
+    const col = COLS.find(c => c.id === sort.col);
+    const cmp = !col ? defaultCmp : (a, b) => {
+      const d = col.cmp ? col.cmp(a, b) : (col.num ? (col.get(a) - col.get(b)) : String(col.get(a)).localeCompare(String(col.get(b)), undefined, { numeric: true }));
+      return d * sort.dir || defaultCmp(a, b);
+    };
+    return [...list].sort(cmp);
+  }, [rows, state, crop, week, q, sort]);
   const unlinkedQty = unlinked.reduce((a, l) => a + (+l.qty_ordered || 0), 0);
+  const clickSort = id => setSort(s => s.col === id ? (s.dir === 1 ? { col: id, dir: -1 } : { col: "default", dir: 1 }) : { col: id, dir: 1 });
 
   const chip = (label, on, onClick, s) => <button key={label} onClick={onClick} style={{ font: "inherit", fontSize: 12.5, fontWeight: 700, padding: "5px 11px", borderRadius: 999, cursor: "pointer", border: `1.5px solid ${on ? (s ? s.color : C.dark) : C.border}`, background: on ? (s ? s.color : C.dark) : (s ? s.bg : C.card), color: on ? "#fff" : (s ? s.color : C.text) }}>{label}</button>;
   const stateChip = s => <span title={STATES[s].hint} style={{ fontSize: 11, fontWeight: 800, padding: "2px 8px", borderRadius: 999, background: STATES[s].bg, color: STATES[s].color, whiteSpace: "nowrap" }}>{STATES[s].label}</span>;
   const evChip = ev => { const [t, hint] = EVID[ev] || EVID.none; return <span title={hint} style={{ fontSize: 10.5, fontWeight: 900, marginLeft: 3, color: ev === "none" ? C.amber : C.light }}>{t}</span>; };
+  const sel = { font: "inherit", fontSize: 13, padding: "5px 8px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.card };
+  const td = { padding: "5px 8px", borderTop: `1px solid ${C.border}`, verticalAlign: "top" };
+  const num = { ...td, textAlign: "right", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" };
 
   if (error) return <div style={{ padding: 24, fontFamily: FONT, color: C.red }}>Couldn't load coverage: {error}</div>;
   if (!items) return <div style={{ padding: 24, fontFamily: FONT, color: C.muted }}>Working out every item's components against orders…</div>;
-  if (!weeks.length) return <div style={{ padding: 24, fontFamily: FONT, color: C.muted }}>Nothing to cover yet — no placed plan items with a plant linked. Place items on the Space tab first.</div>;
+  if (!rows.length) return <div style={{ padding: 24, fontFamily: FONT, color: C.muted }}>Nothing to cover yet — no placed plan items with a plant linked. Place items on the Space tab first.</div>;
 
   return (
-    <div style={{ fontFamily: FONT, color: C.text, padding: mobile ? 10 : 16, maxWidth: 1280 }}>
+    <div style={{ fontFamily: FONT, color: C.text, padding: mobile ? 10 : 16 }}>
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 12, marginBottom: 6 }}>
         <h2 style={{ fontFamily: "'DM Serif Display', serif", fontWeight: 400, fontSize: 24, margin: 0 }}>Coverage</h2>
-        <span style={{ color: C.muted, fontSize: 13 }}>week by week, item by item. Placed items only; live orders only; an early arrival counts toward later weeks. ✓✓ = confirmation on file and on the broker's report · ✓ = one of the two · ⚠ = neither.</span>
+        <span style={{ color: C.muted, fontSize: 13 }}>one row per item + plant. Placed items only; live orders only; an early arrival counts toward later weeks. Ordered / Confirmed are running totals for that plant by that week. ✓✓ = confirmation on file and on the broker's report · ✓ = one of the two · ⚠ = neither. Click a column to sort.</span>
       </div>
 
       {unlinked.length > 0 && (
@@ -164,56 +196,55 @@ export default function Coverage({ plan }) {
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", margin: "10px 0 12px" }}>
         {chip(`All items ${totals.items}`, !state, () => setState(""))}
         {Object.entries(STATES).map(([k, s]) => totals[k] ? chip(`${s.label} ${totals[k]}`, state === k, () => setState(state === k ? "" : k), s) : null)}
-        <select value={week} onChange={e => setWeek(e.target.value)} style={{ font: "inherit", fontSize: 13, padding: "5px 8px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.card }}>
-          <option value="">All weeks</option>{weeks.map(w => <option key={w.key} value={String(w.key)}>{wkLabel(w.yr, w.wk)} · {w.items.length} items</option>)}
+        <select value={week} onChange={e => setWeek(e.target.value)} style={sel}>
+          <option value="">All weeks</option>{weeks.map(w => <option key={w.key} value={String(w.key)}>{wkLabel(w.yr, w.wk)} · {w.n} rows</option>)}
         </select>
-        <select value={crop} onChange={e => setCrop(e.target.value)} style={{ font: "inherit", fontSize: 13, padding: "5px 8px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.card }}>
+        <select value={crop} onChange={e => setCrop(e.target.value)} style={sel}>
           <option value="">All crops</option>{crops.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
-        <input value={q} onChange={e => setQ(e.target.value)} placeholder="find an item, bench, or plant" style={{ font: "inherit", fontSize: 13, padding: "5px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`, minWidth: 200 }} />
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder="search item, bench, plant, order #, broker" style={{ font: "inherit", fontSize: 13, padding: "5px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`, minWidth: 260 }} />
+        <span style={{ color: C.muted, fontSize: 12.5 }}>{shown.length} row{shown.length === 1 ? "" : "s"}</span>
       </div>
 
-      {!shown.length ? <div style={{ color: C.muted, padding: 16 }}>Nothing matches that filter.</div> : shown.map(w => (
-        <div key={w.key} style={{ marginBottom: 22 }}>
-          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 12, padding: "8px 12px", borderRadius: 10, background: C.dark, color: "#fff" }}>
-            <span style={{ fontFamily: "'DM Serif Display', serif", fontSize: 18 }}>Arrives {wkLabel(w.yr, w.wk)}</span>
-            <span style={{ fontSize: 12.5, opacity: .85 }}>{w.items.length} item{w.items.length === 1 ? "" : "s"}{w.counts.short ? ` · ${w.counts.short} short` : ""}{w.counts.unconfirmed ? ` · ${w.counts.unconfirmed} unconfirmed` : ""}{w.counts.confirmed ? ` · ${w.counts.confirmed} confirmed` : ""}{w.counts.inhouse ? ` · ${w.counts.inhouse} in-house` : ""}</span>
-          </div>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13.5 }}>
-              <tbody>
-                {w.items.map(it => [
-                  <tr key={it.key} style={{ borderTop: `2px solid ${C.border}`, background: C.chip }}>
-                    <td colSpan={7} style={{ padding: "7px 8px" }}>
-                      <span style={{ fontWeight: 800 }}>{it.name}</span>
-                      {it.bench && <span style={{ marginLeft: 8, color: C.muted, fontWeight: 600 }}>{it.bench}</span>}
-                      <span style={{ marginLeft: 8, color: C.muted }}>{n(it.pots)} pots{it.plantWeek ? ` · plant wk${it.plantWeek}` : ""}</span>
-                      {it.brokers.length > 1 && <span title="components come through more than one broker" style={{ marginLeft: 8, fontSize: 10.5, fontWeight: 800, padding: "1px 6px", borderRadius: 8, background: C.card, color: C.dark, border: `1px solid ${C.border}` }}>{it.brokers.join(" + ")}</span>}
-                      <span style={{ marginLeft: 10 }}>{stateChip(it.state)}</span>
+      {!shown.length ? <div style={{ color: C.muted, padding: 16 }}>Nothing matches that filter.</div> : (
+        <div style={{ overflowX: "auto", border: `1px solid ${C.border}`, borderRadius: 10, background: C.card }}>
+          <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: C.dark, color: "#fff", position: "sticky", top: 0 }}>
+                {COLS.map(c => (
+                  <th key={c.id} onClick={() => clickSort(c.id)} title="click to sort; click again to flip; a third click restores week → size → name" style={{ padding: "8px 8px", textAlign: c.num ? "right" : "left", whiteSpace: "nowrap", cursor: "pointer", userSelect: "none", fontWeight: 700, fontSize: 12 }}>
+                    {c.label}{sort.col === c.id ? (sort.dir === 1 ? " ▲" : " ▼") : ""}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {shown.map((r, i) => (
+                <tr key={r.ik + r.vid + i} style={{ background: r.state === "short" ? "#fff6f4" : r.state === "unconfirmed" ? "#fffaf2" : i % 2 ? "#fafcf8" : C.card }}>
+                  <td style={{ ...td, whiteSpace: "nowrap" }}>{wkLabel(r.yr, r.week)}</td>
+                  <td style={{ ...td, whiteSpace: "nowrap", color: C.muted, fontWeight: 600 }}>{r.size}</td>
+                  <td style={{ ...td, fontWeight: 700, minWidth: 220 }}>{r.item}{r.comps > 1 && <span title={`combo of ${r.comps} plants — item is ${STATES[r.itemState].label}`} style={{ marginLeft: 6, fontSize: 10.5, fontWeight: 800, padding: "1px 6px", borderRadius: 8, background: STATES[r.itemState].bg, color: STATES[r.itemState].color }}>combo · {STATES[r.itemState].label}</span>}</td>
+                  <td style={{ ...td, whiteSpace: "nowrap", color: C.muted }}>{r.bench || "—"}</td>
+                  <td style={num}>{n(r.pots)}</td>
+                  <td style={{ ...td, whiteSpace: "nowrap" }}>{r.plantWeek ? `wk${r.plantWeek}` : "—"}</td>
+                  <td style={{ ...td, minWidth: 200 }}><span style={{ color: C.muted }}>{r.crop}</span> <b>{r.variety}</b>{r.form ? <span style={{ marginLeft: 6, fontSize: 11, color: C.muted }}>{r.form}</span> : null}</td>
+                  <td style={num}>{r.perPot}</td>
+                  <td style={num}>{n(r.plants)}</td>
+                  {r.inHouse ? <td colSpan={4} style={{ ...td, color: C.muted }}>own cuttings ({r.supplier})</td> : (<>
+                    <td style={num} title="ordered for this plant by this week (all orders), vs needed by this week"><span style={{ color: r.ordered < r.need ? C.red : C.text }}>{n(r.ordered)}</span><span style={{ color: C.muted, fontSize: 11 }}> / {n(r.need)}</span></td>
+                    <td style={num} title="confirmed by this week vs needed by this week"><span style={{ color: r.confirmed < r.need ? C.amber : C.text }}>{n(r.confirmed)}</span></td>
+                    <td style={{ ...num, fontWeight: 800, color: r.gap > 0 ? C.red : C.light }}>{r.gap > 0 ? `−${n(r.gap)}` : "0"}</td>
+                    <td style={{ ...td, fontSize: 12.5, color: C.muted, minWidth: 160 }}>
+                      {r.orders.length ? r.orders.map((o, j) => <span key={j} style={{ whiteSpace: "nowrap", marginRight: 8 }}><b style={{ color: C.text }}>{o.broker}</b> {o.no}{o.wk !== r.wk ? <span style={{ fontSize: 10.5 }}> (wk{o.wk % 100})</span> : null}{evChip(o.ev)}</span>) : <span style={{ color: C.red, fontWeight: 700 }}>no order</span>}
                     </td>
-                  </tr>,
-                  ...it.comps.map((c, i) => (
-                    <tr key={it.key + i} style={{ borderTop: `1px solid ${C.border}` }}>
-                      <td style={{ padding: "5px 8px 5px 22px", whiteSpace: "nowrap" }}><span style={{ color: C.muted }}>{c.crop}</span> <b>{c.variety}</b>{c.form ? <span style={{ marginLeft: 6, fontSize: 11, color: C.muted }}>{c.form}</span> : null}</td>
-                      <td style={{ padding: "5px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{n(c.plants)}{c.perPot > 1 ? <span style={{ color: C.muted, fontSize: 11 }}> (×{c.perPot})</span> : null}</td>
-                      {c.inHouse ? (
-                        <td colSpan={4} style={{ padding: "5px 8px", color: C.muted }}>own cuttings ({c.supplier})</td>
-                      ) : (<>
-                        <td style={{ padding: "5px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }} title="ordered by this week, all orders for this plant, vs needed by this week"><span style={{ color: c.pool.cumOrdered < c.pool.cumNeed ? C.red : C.text }}>{n(c.pool.cumOrdered)}</span><span style={{ color: C.muted }}> / {n(c.pool.cumNeed)} ordered</span></td>
-                        <td style={{ padding: "5px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }} title="confirmed by this week vs needed by this week"><span style={{ color: c.pool.cumConfirmed < c.pool.cumNeed ? C.amber : C.text }}>{n(c.pool.cumConfirmed)}</span><span style={{ color: C.muted }}> confirmed</span></td>
-                        <td style={{ padding: "5px 8px", fontSize: 12.5, color: C.muted }}>
-                          {c.orders.length ? c.orders.map((o, j) => <span key={j} style={{ whiteSpace: "nowrap", marginRight: 8 }}><b style={{ color: C.text }}>{o.broker}</b> {o.no}{o.wk !== wkKey(w.yr, w.wk) ? <span style={{ fontSize: 10.5 }}> (wk{o.wk % 100})</span> : null}{evChip(o.ev)}</span>) : <span style={{ color: C.red, fontWeight: 700 }}>no order</span>}
-                        </td>
-                        <td style={{ padding: "5px 8px" }}>{stateChip(c.state)}</td>
-                      </>)}
-                    </tr>
-                  )),
-                ])}
-              </tbody>
-            </table>
-          </div>
+                  </>)}
+                  <td style={td}>{stateChip(r.state)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
-      ))}
+      )}
     </div>
   );
 }
