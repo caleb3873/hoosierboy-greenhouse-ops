@@ -156,8 +156,11 @@ export default function Coverage({ plan }) {
   const defaultCmp = (a, b) => plantOrder(a.size, b.size) || plantOrder(a.item, b.item) || a.bench.localeCompare(b.bench) || a.wk - b.wk || b.plants - a.plants;
   const shown = useMemo(() => {
     const s = q.trim().toLowerCase();
-    const list = rows.filter(r => (!state || r.itemState === state) && (!crop || r.crop === crop) && (!week || String(r.wk) === week)
-      && (!s || r.item.toLowerCase().includes(s) || r.bench.toLowerCase().includes(s) || r.variety.toLowerCase().includes(s) || r.crop.toLowerCase().includes(s) || r.orders.some(o => o.no.includes(s) || o.broker.toLowerCase().includes(s))));
+    // A search matches at the ITEM level: if any of an item's rows match, every one of its
+    // rows shows — so a search for "dracaena" also shows the geranium that makes the combo Short.
+    const hit = r => r.item.toLowerCase().includes(s) || r.bench.toLowerCase().includes(s) || r.variety.toLowerCase().includes(s) || r.crop.toLowerCase().includes(s) || r.orders.some(o => o.no.includes(s) || o.broker.toLowerCase().includes(s));
+    const hitItems = s ? new Set(rows.filter(hit).map(r => r.ik)) : null;
+    const list = rows.filter(r => (!state || r.itemState === state) && (!crop || r.crop === crop) && (!week || String(r.wk) === week) && (!hitItems || hitItems.has(r.ik)));
     const col = COLS.find(c => c.id === sort.col);
     const cmp = !col ? defaultCmp : (a, b) => {
       const d = col.cmp ? col.cmp(a, b) : (col.num ? (col.get(a) - col.get(b)) : String(col.get(a)).localeCompare(String(col.get(b)), undefined, { numeric: true }));
@@ -203,7 +206,7 @@ export default function Coverage({ plan }) {
         <select value={crop} onChange={e => setCrop(e.target.value)} style={sel}>
           <option value="">All crops</option>{crops.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
-        <input value={q} onChange={e => setQ(e.target.value)} placeholder="search item, bench, plant, order #, broker" style={{ font: "inherit", fontSize: 13, padding: "5px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`, minWidth: 260 }} />
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder="search item, bench, plant, order #, broker — shows every plant in a matching item" style={{ font: "inherit", fontSize: 13, padding: "5px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`, minWidth: 260 }} />
         <span style={{ color: C.muted, fontSize: 12.5 }}>{shown.length} row{shown.length === 1 ? "" : "s"}</span>
       </div>
 
