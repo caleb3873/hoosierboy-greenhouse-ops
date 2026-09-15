@@ -19,6 +19,7 @@ import OrderReconciliation from "./OrderReconciliation";
 import FamilyPage from "./FamilyPage";
 import SpaceMap from "./SpaceMap";
 import Coverage from "./Coverage";
+import BrokerCheck from "./BrokerCheck";
 import PotOrders from "./PotOrders";
 import SoilWorksheet from "./SoilWorksheet";
 
@@ -351,6 +352,7 @@ const PLAN_TABS = [
   { id: "orders",    label: "📋 Orders" },
   { id: "space",     label: "🗺 Space" },
   { id: "coverage",  label: "📦 Coverage" },
+  { id: "brokercheck", label: "📥 Broker Check" },
   { id: "sourcing",  label: "🧭 Sourcing" },
   { id: "inputs",    label: "⚙ Inputs" },
   { id: "pricing",   label: "💰 Pricing" },
@@ -508,6 +510,7 @@ function PlanDashboard({ plan, initialTab }) {
           {hasData && tab === "orders"    && <OrdersTab plan={plan} />}
           {hasData && tab === "space"     && <SpaceMap plan={plan} />}
           {hasData && tab === "coverage"  && <Coverage plan={plan} />}
+          {hasData && tab === "brokercheck" && <BrokerCheck plan={plan} />}
           {tab === "sourcing"  && <SourcingTab plan={plan} />}
           {hasData && tab === "inputs"    && <InputsTab plan={plan} />}
           {hasData && tab === "pricing"   && <PricingTab plan={plan} />}
