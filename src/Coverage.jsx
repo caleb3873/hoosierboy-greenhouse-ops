@@ -107,14 +107,15 @@ export default function Coverage({ plan }) {
   };
 
   // One flat row per item component: the item (what's on the bench) + the plant it
-  // needs + the pool of orders behind that plant by this week. A combo's item state is
-  // the worst of its components, carried on every one of its rows.
+  // needs + the pool of orders behind that plant by ITS week. An item's state is the worst
+  // of its components across every arrival week, carried on each of its rows — so a search
+  // for the item shows all its parts together and one verdict for the whole thing.
   const rows = useMemo(() => {
     if (!items) return [];
     const byItem = {};
     const out = items.map(r => {
       const wk = wkKey(r.arrive_year, r.arrive_week);
-      const ik = `${wk}||${r.item_name}||${r.bench || ""}`;
+      const ik = `${r.item_name}||${r.bench || ""}`;   // an item is one thing even when its plants arrive in different weeks
       const p = pools[r.variety_id]?.[wk] || {};
       const row = { ik, wk, yr: r.arrive_year, week: r.arrive_week, size: sizeLabelForItem(r.item_name), item: r.item_name, bench: r.bench || "", pots: +r.pots || 0, plantWeek: r.plant_week,
         crop: r.crop_name, variety: r.variety, vid: r.variety_id, form: r.prop_method, supplier: r.supplier, inHouse: r.in_house, perPot: r.per_pot, plants: +r.plants || 0,
@@ -152,7 +153,7 @@ export default function Coverage({ plan }) {
     { id: "orders", label: "Orders", get: r => r.orders.map(o => o.no).join(" ") },
     { id: "state", label: "Status", get: r => STATES[r.state].rank },
   ];
-  const defaultCmp = (a, b) => a.wk - b.wk || plantOrder(a.size, b.size) || plantOrder(a.item, b.item) || a.bench.localeCompare(b.bench) || b.plants - a.plants;
+  const defaultCmp = (a, b) => plantOrder(a.size, b.size) || plantOrder(a.item, b.item) || a.bench.localeCompare(b.bench) || a.wk - b.wk || b.plants - a.plants;
   const shown = useMemo(() => {
     const s = q.trim().toLowerCase();
     const list = rows.filter(r => (!state || r.itemState === state) && (!crop || r.crop === crop) && (!week || String(r.wk) === week)
@@ -182,7 +183,7 @@ export default function Coverage({ plan }) {
     <div style={{ fontFamily: FONT, color: C.text, padding: mobile ? 10 : 16 }}>
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 12, marginBottom: 6 }}>
         <h2 style={{ fontFamily: "'DM Serif Display', serif", fontWeight: 400, fontSize: 24, margin: 0 }}>Coverage</h2>
-        <span style={{ color: C.muted, fontSize: 13 }}>one row per item + plant. Placed items only; live orders only; an early arrival counts toward later weeks. Ordered / Confirmed are running totals for that plant by that week. ✓✓ = confirmation on file and on the broker's report · ✓ = one of the two · ⚠ = neither. Click a column to sort.</span>
+        <span style={{ color: C.muted, fontSize: 13 }}>one row per item + plant, an item's plants kept together even when they arrive in different weeks; the "item ·" badge is the verdict for the whole item. Placed items only; live orders only; an early arrival counts toward later weeks. Ordered / Confirmed are running totals for that plant by that week. ✓✓ = confirmation on file and on the broker's report · ✓ = one of the two · ⚠ = neither. Click a column to sort.</span>
       </div>
 
       {unlinked.length > 0 && (
@@ -212,7 +213,7 @@ export default function Coverage({ plan }) {
             <thead>
               <tr style={{ background: C.dark, color: "#fff", position: "sticky", top: 0 }}>
                 {COLS.map(c => (
-                  <th key={c.id} onClick={() => clickSort(c.id)} title="click to sort; click again to flip; a third click restores week → size → name" style={{ padding: "8px 8px", textAlign: c.num ? "right" : "left", whiteSpace: "nowrap", cursor: "pointer", userSelect: "none", fontWeight: 700, fontSize: 12 }}>
+                  <th key={c.id} onClick={() => clickSort(c.id)} title="click to sort; click again to flip; a third click restores size → name → bench → arrival" style={{ padding: "8px 8px", textAlign: c.num ? "right" : "left", whiteSpace: "nowrap", cursor: "pointer", userSelect: "none", fontWeight: 700, fontSize: 12 }}>
                     {c.label}{sort.col === c.id ? (sort.dir === 1 ? " ▲" : " ▼") : ""}
                   </th>
                 ))}
@@ -223,7 +224,7 @@ export default function Coverage({ plan }) {
                 <tr key={r.ik + r.vid + i} style={{ background: r.state === "short" ? "#fff6f4" : r.state === "unconfirmed" ? "#fffaf2" : i % 2 ? "#fafcf8" : C.card }}>
                   <td style={{ ...td, whiteSpace: "nowrap" }}>{wkLabel(r.yr, r.week)}</td>
                   <td style={{ ...td, whiteSpace: "nowrap", color: C.muted, fontWeight: 600 }}>{r.size}</td>
-                  <td style={{ ...td, fontWeight: 700, minWidth: 220 }}>{r.item}{r.comps > 1 && <span title={`combo of ${r.comps} plants — item is ${STATES[r.itemState].label}`} style={{ marginLeft: 6, fontSize: 10.5, fontWeight: 800, padding: "1px 6px", borderRadius: 8, background: STATES[r.itemState].bg, color: STATES[r.itemState].color }}>combo · {STATES[r.itemState].label}</span>}</td>
+                  <td style={{ ...td, fontWeight: 700, minWidth: 220 }}>{r.item}{r.comps > 1 && <span title={`${r.comps} plants make this item (arrivals may differ) — the whole item is ${STATES[r.itemState].label}`} style={{ marginLeft: 6, fontSize: 10.5, fontWeight: 800, padding: "1px 6px", borderRadius: 8, background: STATES[r.itemState].bg, color: STATES[r.itemState].color }}>item · {STATES[r.itemState].label}</span>}</td>
                   <td style={{ ...td, whiteSpace: "nowrap", color: C.muted }}>{r.bench || "—"}</td>
                   <td style={num}>{n(r.pots)}</td>
                   <td style={{ ...td, whiteSpace: "nowrap" }}>{r.plantWeek ? `wk${r.plantWeek}` : "—"}</td>
