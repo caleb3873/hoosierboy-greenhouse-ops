@@ -18,6 +18,7 @@ import { plantOrder } from "./shared";
 import OrderReconciliation from "./OrderReconciliation";
 import FamilyPage from "./FamilyPage";
 import SpaceMap from "./SpaceMap";
+import Coverage from "./Coverage";
 import PotOrders from "./PotOrders";
 import SoilWorksheet from "./SoilWorksheet";
 
@@ -349,6 +350,7 @@ const PLAN_TABS = [
   { id: "categories",label: "🏷 Categories" },
   { id: "orders",    label: "📋 Orders" },
   { id: "space",     label: "🗺 Space" },
+  { id: "coverage",  label: "📦 Coverage" },
   { id: "sourcing",  label: "🧭 Sourcing" },
   { id: "inputs",    label: "⚙ Inputs" },
   { id: "pricing",   label: "💰 Pricing" },
@@ -505,6 +507,7 @@ function PlanDashboard({ plan, initialTab }) {
           {hasData && tab === "baskets"    && <BasketPlanner plan={plan} onOpenCombos={() => setTab("combos")} />}
           {hasData && tab === "orders"    && <OrdersTab plan={plan} />}
           {hasData && tab === "space"     && <SpaceMap plan={plan} />}
+          {hasData && tab === "coverage"  && <Coverage plan={plan} />}
           {tab === "sourcing"  && <SourcingTab plan={plan} />}
           {hasData && tab === "inputs"    && <InputsTab plan={plan} />}
           {hasData && tab === "pricing"   && <PricingTab plan={plan} />}
@@ -8412,7 +8415,7 @@ export async function orderXlsxFile(o, actLines, famLabel) {
   XLSX.writeFile(wb, `${o.order_number}${famTag}.xlsx`, { bookType: "xlsx" });
 }
 
-function DraftOrderCard({ o, oLines, families, onOpenFamily, onChanged, startOpen }) {
+function DraftOrderCard({ o, oLines, families, onOpenFamily, onChanged, startOpen, plantMap }) {
   const sb = getSupabase();
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(!!startOpen);   // collapsed by default — header carries totals + the min warning
@@ -8514,7 +8517,7 @@ function DraftOrderCard({ o, oLines, families, onOpenFamily, onChanged, startOpe
                 <tr key={l.id}>
                   <td style={{ padding: "4px 8px", borderBottom: `1px solid ${COLORS.border}`, fontFamily: "ui-monospace,Menlo,monospace", fontSize: 11.5 }}>{l.material || <span style={{ color: COLORS.amber }}>—</span>}</td>
                   <td style={{ padding: "4px 8px", borderBottom: `1px solid ${COLORS.border}`, fontWeight: 600 }}>{l.variety_name}</td>
-                  <td style={{ padding: "4px 8px", borderBottom: `1px solid ${COLORS.border}`, fontSize: 11, color: COLORS.muted }}>{l.form ? (/^(URC|CALL)/i.test(l.form) ? `${l.form} · 105` : l.form) : "—"}</td>
+                  <td style={{ padding: "4px 8px", borderBottom: `1px solid ${COLORS.border}`, fontSize: 11, color: COLORS.muted }}><FormWithPlantWeek line={l} shipWeek={o.ship_week} plantMap={plantMap} /></td>
                   <td style={{ padding: "4px 8px", borderBottom: `1px solid ${COLORS.border}`, textAlign: "right" }}>
                     <input type="number" step={100} min={0} defaultValue={+l.qty_ordered || 0} disabled={busy}
                       onBlur={e => { const v = Math.max(0, Math.round(+e.target.value || 0)); if (v !== +l.qty_ordered) saveLine(l, { qty_ordered: v }); }}
@@ -8557,6 +8560,23 @@ function DraftOrderCard({ o, oLines, families, onOpenFamily, onChanged, startOpe
 }
 
 // ── Orders tab — broker order acks ──────────────────────────────────────────
+// "URC · ship wk6 → plant wk9 (+3)" — red when an unrooted/callused cutting lands on (or after) its plant week,
+// except 4.5" geraniums, which are direct-stuck the week they arrive.
+function FormWithPlantWeek({ line, shipWeek, plantMap }) {
+  const pm = plantMap?.[`${line.variety_id}|${shipWeek}`];
+  const form = line.form || "";
+  const cutting = /URC|CALL|Unrooted|Callus/i.test(form) || /URC|CALL/i.test(pm?.prop_method || "");
+  if (!pm) return form ? <span style={{ fontSize: 11, color: COLORS.muted }}>{form}</span> : <span style={{ color: COLORS.amber }} title="form not on the confirmation">—</span>;
+  const gap = (+pm.plant_week || 0) - (+shipWeek || 0);
+  const bad = cutting && !pm.ger45 && gap < 4;
+  const tip = bad ? `cutting ships wk${shipWeek} but plants wk${pm.plant_week} — only ${gap} wk to root (need ~4–5)` : `plant wk${pm.plant_week}, ${gap} wk after ship`;
+  return (
+    <span title={tip} style={{ fontSize: 11, color: bad ? COLORS.red : COLORS.muted, fontWeight: bad ? 800 : 400 }}>
+      {form || "—"} · plant wk{pm.plant_week} <span style={{ opacity: .8 }}>({gap >= 0 ? "+" : ""}{gap})</span>{bad ? " ⚠" : ""}
+    </span>
+  );
+}
+
 function OrdersTab({ plan }) {
   const sb = getSupabase();
   const [orders, setOrders] = useState([]);
@@ -8576,6 +8596,7 @@ function OrdersTab({ plan }) {
   const [fStatus, setFStatus] = useState("");
   const [selOrds, setSelOrds] = useState(() => new Set());  // multi-select → one combined XLSX
   const [famMap, setFamMap] = useState({});          // variety_id → {rid, label} for the adjust path
+  const [plantMap, setPlantMap] = useState({});      // `${variety_id}|${ship_week}` → {plant_week, prop_method, ger45}
   const [showFamily, setShowFamily] = useState(null);
 
   useEffect(() => {
@@ -8591,6 +8612,18 @@ function OrdersTab({ plan }) {
         setLines(pol || []);
         const vids = [...new Set((pol || []).map(l => l.variety_id).filter(Boolean))];
         if (vids.length) {
+          // plant week per variety × ship week, so each line can show the ship→plant gap
+          const { data: pw } = await sb.from("scheduled_crops").select("variety_id,ship_week,plant_week,prop_method,item_name")
+            .eq("plan_id", plan.id).in("variety_id", vids).not("plant_week", "is", null).limit(5000);
+          const pm = {};
+          (pw || []).forEach(x => {
+            const k = `${x.variety_id}|${x.ship_week}`;
+            const ger45 = /^4\.5"/.test(x.item_name || "") && /geranium/i.test(x.item_name || "");
+            const cur = pm[k];
+            // keep the EARLIEST plant week for that ship week (tightest window)
+            if (!cur || (+x.plant_week || 99) < (+cur.plant_week || 99)) pm[k] = { plant_week: x.plant_week, prop_method: x.prop_method, ger45 };
+          });
+          setPlantMap(pm);
           const { data: scr } = await sb.from("scheduled_crops").select("variety_id,recipe_id")
             .eq("plan_id", plan.id).in("variety_id", vids).not("recipe_id", "is", null).limit(2000);
           // recipes referenced by the LINES themselves (stamped at lock-in — the truth)
@@ -8602,7 +8635,7 @@ function OrdersTab({ plan }) {
           (pol || []).forEach(l => { if (l.recipe_id) fm[`line:${l.id}`] = { rid: l.recipe_id, label: rname[l.recipe_id] }; });
           (scr || []).forEach(x => { if (!fm[x.variety_id]) fm[x.variety_id] = { rid: x.recipe_id, label: rname[x.recipe_id] }; });
           setFamMap(fm);
-        } else setFamMap({});
+        } else { setFamMap({}); setPlantMap({}); }
       } else setLines([]);
     })();
   }, [sb, plan.id, tick]);
@@ -8729,7 +8762,7 @@ function OrdersTab({ plan }) {
                 onChange={e => setSelOrds(sv => { const n = new Set(sv); if (e.target.checked) n.add(o.id); else n.delete(o.id); return n; })}
                 style={{ marginTop: 22, width: 17, height: 17, flex: "0 0 auto", accentColor: "#7fb069" }} />
               <div style={{ flex: 1 }}>
-                <DraftOrderCard o={o} oLines={lines.filter(l => l.purchase_order_id === o.id)}
+                <DraftOrderCard plantMap={plantMap} o={o} oLines={lines.filter(l => l.purchase_order_id === o.id)}
                   startOpen={openNums.has(o.order_number)}
                   families={famsOf(o)} onOpenFamily={setShowFamily} onChanged={() => setTick(t => t + 1)} />
               </div>
@@ -8823,13 +8856,15 @@ function OrdersTab({ plan }) {
 
                 {/* Active lines */}
                 <SimpleTable
-                  cols={["#", "Variety", "Qty Ordered", "$/each", "Ext. Price", "Notes"]}
-                  aligns={["L", "L", "R", "R", "R", "L"]}
+                  cols={["#", "Variety", "Form", "Qty Ordered", "$/each", "Ext. Price", "Notes"]}
+                  aligns={["L", "L", "L", "R", "R", "R", "L"]}
                   rows={active.map(l => [
-                    l.line_no, l.variety_name, (+l.qty_ordered).toLocaleString(),
+                    l.line_no, l.variety_name,
+                    <FormWithPlantWeek line={l} shipWeek={o.ship_week} plantMap={plantMap} />,
+                    (+l.qty_ordered).toLocaleString(),
                     "$" + (+l.unit_price).toFixed(3), fmtMoney(+l.ext_price), l.notes || "—",
                   ])}
-                  totalRow={["", `${active.length} active`, active.reduce((s,l)=>s+(+l.qty_ordered),0).toLocaleString(), "", fmtMoney(+o.total_cost), ""]}
+                  totalRow={["", `${active.length} active`, "", active.reduce((s,l)=>s+(+l.qty_ordered),0).toLocaleString(), "", fmtMoney(+o.total_cost), ""]}
                 />
 
                 {cancelled.length > 0 && (

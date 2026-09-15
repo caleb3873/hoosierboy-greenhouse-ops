@@ -578,7 +578,22 @@ export async function lockBrokerOrders(sb, planId, specs) {
       .select("id,variety_name,line_no").eq("purchase_order_id", ord.id);
     if (exErr) throw new Error(exErr.message);
     let nextNo = Math.max(0, ...(exist || []).map(l => +l.line_no || 0)) + 1;
+    // Broker sheets list lines as "<Crop> <Variety>" (Geranium Solera Red, Lantana Shamrock White) —
+    // prefix the crop from the library so every line reads the same on the Orders page.
+    const vIds = [...new Set(ls.map(l => l.varietyId).filter(Boolean))];
+    const cropById = {};
+    if (vIds.length) {
+      const { data: vs } = await sb.from("variety_library").select("id,crop_name").in("id", vIds);
+      (vs || []).forEach(v => { cropById[v.id] = v.crop_name; });
+    }
+    const withCrop = l => {
+      const crop = String(cropById[l.varietyId] || "").trim();
+      const name = String(l.varietyName || "").trim();
+      if (!crop || name.toLowerCase().startsWith(crop.toLowerCase())) return name;
+      return crop.charAt(0).toUpperCase() + crop.slice(1).toLowerCase() + " " + name;
+    };
     for (const l of ls) {
+      l.varietyName = withCrop(l);
       const ext = l.price != null ? +(l.qty * l.price).toFixed(2) : null;
       const nrm = v => String(v).trim().toLowerCase();
       const match = (exist || []).find(x => nrm(x.variety_name) === nrm(l.varietyName)

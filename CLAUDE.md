@@ -4,9 +4,31 @@ Production planning + shipping + task management app for Schlegel Greenhouse (In
 
 ## Commands
 
+Verified against `package.json` (react-scripts 5.0.1; scripts are only `start`, `build`, `test`).
+
 - `npm start` — dev server
-- `npm run build` — production build (run after every change to verify)
-- `npm test` — test runner
+- `CI=true npm run build` — production build **and the lint step**. CRA runs ESLint (`eslint-config-react-app`) inside the build; `CI=true` turns warnings into failures. This is the required pre-completion check.
+- There is **no separate typecheck**: the codebase is plain JSX (no TypeScript, no `tsconfig.json`). The build above is the only compile check.
+- There is **no standalone lint command**: `npx eslint` fails because the repo has no ESLint config file; lint only runs inside the build.
+- `CI=true npm test -- --watchAll=false` — Jest via react-scripts. There are currently **no test files** (`src/**/*.test.*` matches 0); the command runs and finds nothing.
+
+## Definition of done
+
+- Before telling me a task is complete, run `CI=true npm run build`. Fix every error and warning. Do not report back until it passes clean. (No typecheck exists here; the build is the check.)
+- Never leave placeholder data, mock values, TODO comments, commented-out code, or stubbed functions in finished work. If something can't be finished, stop and tell me instead of faking it.
+- If a change touches the database, verify the real schema in Supabase before writing queries (`npx supabase db query --linked "select column_name, data_type from information_schema.columns where table_name='…'"`). Do not assume table or column names.
+- If a change touches the UI, check that every state renders: loading, empty, error, and populated.
+- Reuse existing components and patterns in this repo rather than inventing new ones (`useTable()`, inline styles, the palette and fonts in Code Conventions, one component per file). Match the conventions already here.
+- Finish every task with two short sections:
+  - **WHAT CHANGED** — plain English, no jargon.
+  - **HOW TO TEST** — numbered click-by-click steps I can follow in the browser.
+
+## How to work with me
+
+- I have no coding background. Explain tradeoffs in plain language.
+- For anything touching more than two files, show me the plan and wait for my approval before writing code.
+- If my request is ambiguous or you're making an assumption, ask first. A question is cheaper than a rewrite.
+- If you notice something broken outside the current task, tell me. Don't silently fix it and don't silently ignore it.
 
 ## Tech Stack
 

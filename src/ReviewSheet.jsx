@@ -43,7 +43,9 @@ export function MixBars({ mix, total, unit = "pots", dims = MIX_DIMS, active, is
   return (
     <div style={{ display: "grid", gap: compact ? 10 : 16 }}>
       {dims.map(([dim, label]) => {
-        const rows = mix[dim] || []; if (!rows.length) return null;
+        // A dimension the sheet doesn't carry buckets entirely into "—" (dimValue's fallback);
+        // a heading over one blank 100% bar says nothing, so drop it. Salvia has no vigor.
+        const rows = (mix[dim] || []).filter(r => r[0] !== "—"); if (!rows.length) return null;
         const max = Math.max(...rows.map(r => r[1]));
         return (
           <div key={dim}>
